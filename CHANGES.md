@@ -23,8 +23,43 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Persistence is selected per model-built artifact authority. Static or otherwise
   independently model-verifiable artifacts are saved, while a present artifact whose
   authority declares `NOT_PERSISTED` becomes an explicit omission in the restored
-  result. Adaptive NNBEGM policy meshes remain in that category until the model can
-  independently rederive their solve-generated coordinates.
+  result. The adaptive NNBEGM policy carries its solve-generated outer nodes as the
+  candidate axis of its descriptor, so it is model-verifiable and persists: a consuming
+  model admits the nodes after checking that they are exact finite floats, strictly
+  increasing, within the search's node budget and inside the outer state's domain for
+  that period.
+- Solver diagnostics are persisted. Each retained `SolverDiagnostics` payload is
+  described by a model-verifiable descriptor the solve generates from the payload
+  itself; a consuming model admits the descriptor only when it names exactly the
+  published fields with the dtypes they carry, and a restored archive reads its
+  diagnostics without a model. A diagnostic omission without a descriptor is refused
+  on both save and load. The solution-format version is 2.
+- A result restored by `load_solution` can be saved again without a model. Its payloads
+  are re-read from the archive they came from and verified against their checksums and
+  descriptors before they are written to the new archive.
+- A `SolutionResult` is consumed according to its provenance. A result the same model
+  instance solved for the same canonical parameters is read by reference, so a simulate
+  following a solve copies and re-validates nothing; every other result — restored,
+  unpickled, or from another instance — is validated in full and materialized once per
+  consuming model and parameter vector, and later simulations from it reuse that view.
+  The consumed result stays reachable as `SimulationResult.solution` until the
+  simulation result is saved.
+- A model is sealed when it is built. `Model(...)` records every global and closure
+  binding its declared callables read; rebinding one afterwards makes `solve()` and
+  `simulate()` refuse with `ModelSealError` naming the binding, and a model whose
+  callables cannot be fingerprinted is refused at build with
+  `ModelInitializationError`.
+- Every external solver declares how its decision is replayed. `SolutionKernels`
+  carries `replay_route`, which is an `ExecutableReplayRoute`,
+  `DeclaredReplay.GRID_RECOMPUTATION` (the shipped argmax over the declared action
+  grids), or `DeclaredReplay.UNSUPPORTED` (the model solves but refuses to simulate,
+  naming the regime and solver). A solver outside the shipped set that leaves the route
+  unset is refused at model build. `DeclaredReplay` is exported from `lcm.solvers`.
+- `TargetValueAccess`, `ValueArtifactAddress`, `ValueArtifactKind`,
+  `ValueConsumerAddress`, and `ValueInputChannel` are public through `lcm.solvers`, so a
+  core program that reads next-period stored values can declare each access;
+  `SolverBuildContext.solution_reachability.targets(period=..., source=...)` names the
+  targets to declare.
 - Retention now selects computation per exact artifact address. Replay alternatives and
   additive artifact programs declare `CoreProgram.retained_artifact_keys`; DCEGM,
   NB-EGM, NNBEGM, and external solvers avoid assembling outputs that the selected

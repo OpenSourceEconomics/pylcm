@@ -392,6 +392,10 @@ class SolutionPhase:
     external_replay_route: ExecutableReplayRoute | None = None
     """Plugin-owned replay implementation, or ``None`` for a built-in adapter."""
 
+    replay_unsupported: bool = False
+    """Whether the solver declared its decision unreplayable, so simulation is
+    refused for this regime."""
+
     artifact_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority] = (
         MappingProxyType({})
     )
@@ -622,6 +626,45 @@ class GridRecomputationRoute:
 
 # The route every regime without a published replay payload declares.
 GRID_RECOMPUTATION_ROUTE = GridRecomputationRoute()
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class UnsupportedReplayRoute:
+    """The route of a regime whose solved decision simulation cannot reproduce.
+
+    An external solver declares it when its decision is neither retained as a
+    payload nor equal to the argmax over the declared action grids. The solve
+    stays available; simulating the regime is refused before any forward step.
+    """
+
+    @property
+    def replay_mode(self) -> ReplayMode:
+        """The decision can be reproduced neither by replay nor by recomputation."""
+        return ReplayMode.UNSUPPORTED
+
+    @property
+    def payload_type(self) -> None:
+        """No payload is retained under this route."""
+        return None
+
+    @property
+    def policy_applicable(self) -> bool:
+        """No payload is structurally published."""
+        return False
+
+    @property
+    def policy_required(self) -> bool:
+        """No solve owes a payload here."""
+        return False
+
+    @property
+    def consumer_route(self) -> None:
+        """No payload reader consumes this route."""
+        return None
+
+
+# The route a regime declares when its solver reports its decision as unreplayable.
+UNSUPPORTED_REPLAY_ROUTE = UnsupportedReplayRoute()
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -918,6 +961,10 @@ class SimulationPhase:
     external_replay_route: ExecutableReplayRoute | None = None
     """Plugin route used in place of the engine's built-in replay adapters."""
 
+    replay_unsupported: bool = False
+    """Whether the solver declared its decision unreplayable, so the regime
+    declares the unsupported route and simulation refuses it."""
+
     @property
     def replay_route(self) -> ReplayRoute:
         """How this regime's simulated decision is obtained each period.
@@ -928,6 +975,8 @@ class SimulationPhase:
         """
         if self.external_replay_route is not None:
             return self.external_replay_route
+        if self.replay_unsupported:
+            return UNSUPPORTED_REPLAY_ROUTE
         if self.egm_policy_read is None:
             return GRID_RECOMPUTATION_ROUTE
         return self.egm_policy_read

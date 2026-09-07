@@ -43,7 +43,7 @@ SOLVER_API_VERSION = 1
 SOLUTION_SCHEMA_VERSION = 2
 # Version of the labelled in-memory solution schema.
 
-SOLUTION_FORMAT_VERSION = 1
+SOLUTION_FORMAT_VERSION = 2
 # Version of the durable solution archive format.
 
 
@@ -68,6 +68,25 @@ class PersistencePolicy(StrEnum):
 
     MODEL_VERIFIABLE = "model_verifiable"
     NOT_PERSISTED = "not_persisted"
+
+
+class DeclaredReplay(StrEnum):
+    """How simulation obtains an external solver's decision without a plugin route.
+
+    An external solver publishes no engine-owned replay adapter, so it states
+    what simulation may do with its stored solution:
+
+    - `GRID_RECOMPUTATION`: the solve's decision is exactly the argmax over the
+      regime's declared action grids at the realized state, so simulation
+      recomputes it there from the stored values.
+    - `UNSUPPORTED`: the decision cannot be reproduced from the stored solution;
+      simulating the regime is refused with the reason named.
+
+    A solver whose decision is neither implements `ExecutableReplayRoute`.
+    """
+
+    GRID_RECOMPUTATION = "grid_recomputation"
+    UNSUPPORTED = "unsupported"
 
 
 class SolutionSource(StrEnum):
@@ -145,7 +164,9 @@ class ArtifactKey:
     """
 
     type_id: str
+    """Qualified, globally meaningful name of the payload schema."""
     schema_version: int = 1
+    """Version of the payload's interpretation; a new one whenever it changes."""
 
     def __post_init__(self) -> None:
         if type(self.type_id) is not str:
@@ -163,8 +184,11 @@ class SolverIdentity:
     """Durable identity and compatibility version of an installed solver plugin."""
 
     plugin_id: str
+    """Qualified name of the installed solver package."""
     plugin_version: str
+    """Release version of that package."""
     solver_api_version: int = SOLVER_API_VERSION
+    """Public solver API version the package targets; it must match this release."""
 
     def __post_init__(self) -> None:
         if type(self.plugin_id) is not str:
@@ -190,7 +214,9 @@ class ReplayRouteIdentity:
     """Durable identity and schema version of one replay implementation."""
 
     route_id: str
+    """Qualified name of the replay implementation."""
     route_version: int
+    """Version of the payload schema the implementation reads."""
 
     def __post_init__(self) -> None:
         if type(self.route_id) is not str:
@@ -225,8 +251,11 @@ class CategoryDomain:
     """Exact labels, integer codes, and ordering of one categorical role."""
 
     labels: tuple[str, ...]
+    """Category labels in code order."""
     codes: tuple[int, ...]
+    """Integer code of each label, in the same order."""
     ordered: bool
+    """Whether the categories carry a meaningful order."""
 
     def __post_init__(self) -> None:
         labels = tuple(self.labels)
@@ -253,9 +282,13 @@ class AxisDescriptor:
     """Descriptive name, length, and mathematical role of one artifact axis."""
 
     name: str
+    """Name of the axis, unique within one artifact."""
     length: int
+    """Number of entries along the axis."""
     role: AxisRole
+    """Mathematical role of the axis."""
     coordinates: tuple[bool | int | float | str, ...] = ()
+    """Coordinate of each entry, or empty when the axis is positional only."""
 
     def __post_init__(self) -> None:
         if type(self.name) is not str or not self.name:
@@ -301,9 +334,13 @@ class AxisAuthority:
     """Model-owned axis description plus its exact canonical coordinates."""
 
     name: str
+    """Name of the axis, unique within one artifact."""
     length: int
+    """Number of entries along the axis."""
     role: AxisRole
+    """Mathematical role of the axis."""
     coordinates: tuple[bool | int | float | str, ...] = ()
+    """Exact canonical coordinate of each entry, or empty when positional only."""
 
     def __post_init__(self) -> None:
         descriptor = AxisDescriptor(
@@ -359,9 +396,13 @@ class LeafDescriptor:
     """Transport-safe schema of one numerical artifact leaf."""
 
     path: TreePath
+    """Stable path of the leaf inside the artifact PyTree; `()` for a root array."""
     shape: tuple[int, ...]
+    """Exact array shape."""
     dtype: str
+    """NumPy dtype name."""
     axis_names: tuple[str, ...]
+    """Name of the artifact axis behind each array dimension, in order."""
 
     def __post_init__(self) -> None:
         path = tuple(self.path)
@@ -398,10 +439,15 @@ class LeafAuthority:
     """Exact runtime type and schema of one model-authoritative PyTree leaf."""
 
     path: TreePath
+    """Stable path of the leaf inside the artifact PyTree; `()` for a root array."""
     runtime_type: type[object]
+    """Exact runtime class of the leaf."""
     shape: tuple[int, ...]
+    """Exact array shape."""
     dtype: str
+    """NumPy dtype name."""
     axis_names: tuple[str, ...]
+    """Name of the artifact axis behind each array dimension, in order."""
 
     def __post_init__(self) -> None:
         descriptor = LeafDescriptor(
@@ -529,17 +575,29 @@ class ArtifactDescriptor:
     """
 
     key: ArtifactKey
+    """Versioned schema identity of the payload."""
     channel: ArtifactChannel
+    """Semantic channel the payload is stored on."""
     persistence: PersistencePolicy
+    """Whether the payload may be written to a solution archive."""
     payload_type_id: str
+    """Qualified name of the payload's runtime type; `"jax.Array"` for a bare array."""
     payload_version: int = 1
+    """Version of the payload's container layout."""
     leaf_descriptors: tuple[LeafDescriptor, ...] = ()
+    """Schema of every numerical leaf, in PyTree flattening order."""
     named_axes: tuple[AxisDescriptor, ...] = ()
+    """Every axis a leaf dimension refers to by name."""
     state_roles: tuple[str, ...] = ()
+    """Names of the model states the leading axes index, in order."""
     action_roles: tuple[str, ...] = ()
+    """Names of the model actions some axes index, in order."""
     categorical_domains: _CategoricalDomainsBoundary = field(default_factory=dict)
+    """Exact label domain of each categorical state or action role."""
     required_for: frozenset[ReplayRouteIdentity] = frozenset()
+    """Replay routes that cannot run without this payload."""
     required: bool = False
+    """Whether every successful solve must retain the payload."""
 
     def __post_init__(self) -> None:  # noqa: C901, PLR0912, PLR0915
         if type(self.key) is not ArtifactKey:
@@ -723,19 +781,33 @@ class ArtifactAuthority:
     """Model-built validation authority for one artifact in one solution cell."""
 
     descriptor: ArtifactDescriptor
+    """Transport-safe description of the same artifact."""
     payload_runtime_type: type[object]
+    """Exact runtime class of the payload; `jax.Array` for a bare array."""
     template: object | None
+    """Engine-built payload of the declared layout, or `None` for an artifact the model
+    declares but never publishes in this cell.
+    """
     container_runtime_types: _ContainerRuntimeTypesBoundary = field(
         default_factory=dict
     )
+    """Exact container class at each container path of the PyTree."""
     leaves: _LeafAuthoritiesBoundary = field(default_factory=dict)
+    """Authority of every numerical leaf, keyed by its path."""
     axes: tuple[AxisAuthority, ...] = ()
+    """Every axis a leaf dimension refers to, with its canonical coordinates."""
     state_roles: tuple[str, ...] = ()
+    """Names of the model states the leading axes index, in order."""
     action_roles: tuple[str, ...] = ()
+    """Names of the model actions some axes index, in order."""
     categorical_domains: _CategoricalDomainsBoundary = field(default_factory=dict)
+    """Exact label domain of each categorical state or action role."""
     consumer_route: ReplayRouteIdentity | None = None
+    """The replay route that reads the payload, or `None` when none does."""
     applicable: bool = True
+    """Whether the model structurally publishes this artifact in this cell."""
     required: bool = False
+    """Whether every successful solve must retain the payload."""
 
     def __post_init__(self) -> None:  # noqa: C901, PLR0912, PLR0915
         _assert_artifact_authority_unbound(self)
@@ -2867,9 +2939,13 @@ def _canonicalize_declared_template(
 
 
 def _canonicalize_artifact_payload_snapshot(  # noqa: C901
-    *, payload: object, authority: ArtifactAuthority
+    *, payload: object, authority: ArtifactAuthority, borrow: bool = False
 ) -> _CanonicalArtifactPayload:
-    """Canonicalize one payload once and retain the exact validated leaves."""
+    """Canonicalize one payload once and retain the exact validated leaves.
+
+    The leaves are copied into private buffers unless `borrow` is set, which an
+    engine caller uses for buffers it allocated itself and nobody else holds.
+    """
     expected_type = authority.payload_runtime_type
     if not _payload_has_runtime_type(payload=payload, expected=expected_type):
         raise TypeError(
@@ -2940,7 +3016,9 @@ def _canonicalize_artifact_payload_snapshot(  # noqa: C901
                 f"the active JAX profile cannot preserve leaf {index} exactly"
             )
         canonical_leaves.append(
-            _copy_artifact_array_leaf(
+            canonical_leaf
+            if borrow
+            else _copy_artifact_array_leaf(
                 leaf=canonical_leaf,
                 label=f"Artifact payload leaf {path!r}",
             )
@@ -3044,21 +3122,31 @@ def _canonical_artifact_entry_from_authority(
     *,
     payload: object,
     authority: ArtifactAuthority,
+    borrow: bool = False,
 ) -> _CanonicalArtifactEntry:
-    """Detach one eager artifact before any other result callback may run."""
+    """Detach one eager artifact before any other result callback may run.
+
+    With `borrow` set the entry keeps the validated leaves themselves rather than
+    private copies: the engine uses it for buffers its own solve allocated.
+    """
     canonical = _canonicalize_artifact_payload_snapshot(
         payload=payload,
         authority=authority,
+        borrow=borrow,
     )
     plan_snapshot = _artifact_authority_template_snapshot(authority)
     if plan_snapshot is None:
         raise TypeError("Model authority supplies no artifact reconstruction plan.")
-    private_leaves = tuple(
-        _copy_artifact_array_leaf(
-            leaf=leaf,
-            label=f"Owned artifact private leaf {index}",
+    private_leaves = (
+        canonical.leaves
+        if borrow
+        else tuple(
+            _copy_artifact_array_leaf(
+                leaf=leaf,
+                label=f"Owned artifact private leaf {index}",
+            )
+            for index, leaf in enumerate(canonical.leaves)
         )
-        for index, leaf in enumerate(canonical.leaves)
     )
     return _CanonicalArtifactEntry(
         plan_snapshot=plan_snapshot,
@@ -3120,8 +3208,11 @@ class ReplayRouteSnapshot:
     """One immutable, preflighted cell passed unchanged to a replay route."""
 
     artifacts: Mapping[ArtifactKey, object]
+    """Materialized payloads of the cell, keyed by artifact key."""
     authorities: Mapping[ArtifactKey, ArtifactAuthority]
+    """Model-built authority of each payload."""
     metadata: SolutionMetadata
+    """Descriptive metadata of the consumed result."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "artifacts", MappingProxyType(dict(self.artifacts)))
@@ -3140,7 +3231,9 @@ class ReplayModelContext:
     """
 
     regime_name: RegimeName
+    """Name of the regime being replayed."""
     period: int
+    """Period of the solution cell."""
     state_names: tuple[str, ...]
     """Solution-state names in canonical product-map order."""
 
@@ -3173,6 +3266,7 @@ class ReplayRouteRequirements:
     """Exact artifact keys one external route requires in every active cell."""
 
     required_artifacts: frozenset[ArtifactKey]
+    """Artifact keys the route reads in every active cell."""
 
     def __post_init__(self) -> None:
         artifacts = frozenset(self.required_artifacts)
@@ -3194,7 +3288,9 @@ class SimulationBuildContext:
     """
 
     period: int
+    """Period of the solution cell the reader is built for."""
     regime_name: RegimeName
+    """Name of the regime the reader is built for."""
     state_names: tuple[str, ...]
     """Solution-state names in canonical product-map order."""
 
@@ -3223,6 +3319,7 @@ class ActionOutput:
     """Named action arrays returned by an external replay reader."""
 
     actions: Mapping[str, object]
+    """Immutable mapping of action names to their per-subject values."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "actions", MappingProxyType(dict(self.actions)))
@@ -3313,6 +3410,7 @@ def _replay_route_identity(route: ReplayRoute) -> ReplayRouteIdentity:
         return declared_identity
     route_ids: dict[tuple[ReplayMode, str | None], str] = {
         (ReplayMode.VALID_RECOMPUTATION, None): "pylcm.grid_recomputation",
+        (ReplayMode.UNSUPPORTED, None): "pylcm.replay_unsupported",
         (ReplayMode.EXACT_REPLAY, "egm_off_grid"): "pylcm.egm_off_grid",
         (ReplayMode.EXACT_REPLAY, "nnbegm_finite"): "pylcm.nnbegm_finite",
         (ReplayMode.EXACT_REPLAY, "nnbegm_nested"): "pylcm.nnbegm_nested",
@@ -3456,8 +3554,11 @@ class ArtifactRef:
     """Address of one artifact in a regime-period solution cell."""
 
     period: int
+    """Period of the solution cell."""
     regime: RegimeName
+    """Name of the regime of the solution cell."""
     key: ArtifactKey
+    """Versioned identity of the artifact schema."""
 
     def __post_init__(self) -> None:
         if type(self.period) is not int:
@@ -3863,8 +3964,11 @@ class ValueArraySchema:
     """
 
     shape: tuple[int, ...]
+    """Exact array shape."""
     dtype: str
+    """NumPy dtype name."""
     axis_names: tuple[str, ...]
+    """Canonical axis name behind each array dimension, in order."""
 
     def __post_init__(self) -> None:
         if any(size < 0 for size in self.shape):
@@ -3888,24 +3992,39 @@ class SolutionMetadata:
     """
 
     retention: ResultRetention
+    """The retention the solve was requested with."""
     n_periods: int
+    """Number of periods in the model's lifecycle."""
     regime_names: tuple[RegimeName, ...]
+    """Names of every regime, in model order."""
     solver_types: Mapping[RegimeName, str]
+    """Qualified class name of each regime's solver."""
     model_instance_id: str
+    """Token of the producing model instance; guards in-memory consumption."""
     params_fingerprint: str
+    """Digest of the canonical parameters the solve depends on."""
     value_schemas: Mapping[tuple[int, RegimeName], ValueArraySchema]
+    """Schema of every stored value array, keyed by period and regime."""
     model_fingerprint: str = "0" * _SHA256_HEX_LENGTH
+    """Durable digest of the model's semantics, binding restored results."""
     solver_identities: Mapping[RegimeName, SolverIdentity] = field(default_factory=dict)
+    """Package-owned identity of each regime's solver."""
     replay_routes: Mapping[RegimeName, ReplayRouteIdentity | None] = field(
         default_factory=dict
     )
+    """Durable identity of each regime's replay route."""
     artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor] = field(
         default_factory=dict
     )
+    """Descriptor of every artifact the solve accounted for, present or omitted."""
     source: SolutionSource = SolutionSource.IN_MEMORY
+    """Whether the result lives in the producing process or was restored."""
     pylcm_version: str = PYLCM_VERSION
+    """The pylcm release that produced the result."""
     solver_api_version: int = SOLVER_API_VERSION
+    """The public solver API version of that release."""
     solution_schema_version: int = SOLUTION_SCHEMA_VERSION
+    """Version of the result container's schema."""
 
     def __post_init__(self) -> None:  # noqa: C901
         if self.n_periods < 1:
@@ -4219,20 +4338,44 @@ class SolutionResult:
     """Labelled value functions, retained artifacts, and omission records."""
 
     values: _SolutionValuesInput
+    """Value function of every solved cell, keyed by period then regime."""
     metadata: SolutionMetadata
+    """Identity, retention, and schema facts of the solve."""
     retained_continuations: _ArtifactStoreBoundary = field(
         default_factory=ArtifactStore
     )
+    """Continuation payloads kept for persistence, addressed by cell and key."""
     replay_artifacts: _ArtifactStoreBoundary = field(default_factory=ArtifactStore)
+    """Payloads simulation replays decisions from, addressed by cell and key."""
     auxiliary_artifacts: _ArtifactStoreBoundary = field(default_factory=ArtifactStore)
+    """Additional solver-published payloads, addressed by cell and key."""
     omissions: _SolutionOmissionsInput = field(default_factory=dict)
+    """Why each accounted-for artifact that is absent was left out."""
     diagnostics: _ArtifactStoreBoundary = field(default_factory=ArtifactStore)
+    """Solver diagnostics kept according to the solve's log level."""
     _artifact_authority: Mapping[ArtifactRef, ArtifactAuthority] = field(
         default_factory=lambda: MappingProxyType({}),
         init=False,
         repr=False,
         compare=False,
     )
+    _engine_view: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    """The producing model's by-reference view of this result, when the engine
+    built it in this process; `None` for every other provenance and for any
+    copy made through `dataclasses.replace`."""
+    _consumed_views: dict[object, object] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    """Validated engine views keyed by the consuming model and parameters, so a
+    result from elsewhere is validated and materialized once per consumer."""
 
     def __post_init__(self) -> None:
         for field_name, store in (
@@ -4305,6 +4448,7 @@ __all__ = [
     "AxisRole",
     "CategoryDomain",
     "ContinuationArtifact",
+    "DeclaredReplay",
     "ExecutableReplayRoute",
     "KernelOutput",
     "LeafAuthority",

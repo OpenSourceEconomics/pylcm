@@ -44,7 +44,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     StreamableProductAxis,
-    _TargetValueAccess,
+    TargetValueAccess,
 )
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
@@ -392,9 +392,9 @@ def _target_value_accesses(
     same_period_ref_regimes: tuple[RegimeName, ...],
     edge_reference_regimes: tuple[RegimeName, ...],
     edge_target_regimes: tuple[RegimeName, ...],
-) -> tuple[_TargetValueAccess, ...]:
+) -> tuple[TargetValueAccess, ...]:
     """Declare every stored value leaf read by one GridSearch program."""
-    accesses: list[_TargetValueAccess] = []
+    accesses: list[TargetValueAccess] = []
     for target_regime in target_regimes:
         target = (
             ValueArtifactAddress(
@@ -457,9 +457,9 @@ def _target_value_access(
     target: ValueArtifactAddress,
     channel: ValueInputChannel,
     path: tuple[str | int, ...],
-) -> _TargetValueAccess:
+) -> TargetValueAccess:
     """Pair one logical target artifact with its exact program-argument leaf."""
-    return _TargetValueAccess(
+    return TargetValueAccess(
         target=target,
         source=ValueConsumerAddress(
             source_period=period,

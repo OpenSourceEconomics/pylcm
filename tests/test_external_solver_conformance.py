@@ -17,6 +17,7 @@ import lcm.model as model_module
 import lcm.solver_api as solver_api_module
 from _lcm.solution import fingerprint as fingerprint_module
 from _lcm.solution import period_replay as period_replay_module
+from _lcm.solution.fingerprint import fingerprint_solution_support
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
@@ -28,7 +29,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.exceptions import InvalidSimulationInputError
+from lcm.exceptions import InvalidSimulationInputError, ModelInitializationError
 from lcm.persistence import load_solution, replay_period
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
@@ -67,6 +68,11 @@ from lcm.solvers import (
     Solver,
     SolverBuildContext,
     StateAxesLeading,
+    TargetValueAccess,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
 )
 from lcm.typing import (
     ContinuousAction,
@@ -85,8 +91,10 @@ from tests.conformance_solver import (
     Policy,
     ReferenceReplayRoute,
     ReferenceSolver,
+    TargetValueSolver,
     TerminalCounterSolver,
 )
+from tests.conftest import DECIMAL_PRECISION
 
 _N_PERIODS = 3
 _WEALTH_GRID = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
@@ -227,7 +235,7 @@ class _CachedAuthorityMutatingLazyEntry(solver_api_module._LazyEntry):
     def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
         """Corrupt a cached nested authority wrapper after preflight copied it."""
         self.materialization_count += 1
-        authority = self._model._solution_authorities[self._fingerprint]
+        authority = self._model._declared_authority_cache[self._fingerprint]
         object.__setattr__(
             authority.artifacts[self._ref],
             "payload_runtime_type",
@@ -964,38 +972,14 @@ def test_reference_solver_scopes_planned_cores_to_requested_retention() -> None:
 
 
 def test_opaque_solver_marker_cannot_hide_a_distinct_accepted_core() -> None:
-    """Instance identity tokens fail closed before two semantics share a digest."""
-    plain = _model(solver=_OpaqueMarkerSolver(marker=object()))
-    shifted = _model(solver=_OpaqueMarkerSolver(marker=_OPAQUE_SHIFT_MARKER))
-    arguments = {
-        "wealth": jnp.asarray([1.0, 2.0]),
-        "productivity": jnp.asarray([0.5]),
-        "consumption": jnp.asarray([0.0, 0.5, 1.0]),
-        "next_count": jnp.asarray(0.0),
-        "candidate_width": 3,
-    }
-    plain_program = cast(
-        "Any", plain._regimes["active"].solution.period_kernels[0]
-    ).core_programs()["values"]
-    shifted_program = cast(
-        "Any", shifted._regimes["active"].solution.period_kernels[0]
-    ).core_programs()["values"]
-    plain_value = cast("tuple[FloatND, object]", plain_program.function(**arguments))[0]
-    shifted_value = cast(
-        "tuple[FloatND, object]", shifted_program.function(**arguments)
-    )[0]
-    assert not np.array_equal(np.asarray(plain_value), np.asarray(shifted_value))
+    """A solver carrying an instance identity token is refused at model build.
 
-    for model in (plain, shifted):
-        flat_params = model._process_params(_PARAMS)
-        with pytest.raises(TypeError, match="opaque semantic value"):
-            fingerprint_module.fingerprint_model(
-                ages=model.ages,
-                regimes=model._regimes,
-                user_regimes=model.user_regimes,
-                regime_names_to_ids=model.regime_names_to_ids,
-                flat_params=flat_params,
-            )
+    Two such solvers can differ in semantics while their tokens digest alike, so
+    the model fails closed before either could be solved under a shared digest.
+    """
+    for marker in (object(), _OPAQUE_SHIFT_MARKER):
+        with pytest.raises(ModelInitializationError, match="opaque semantic value"):
+            _model(solver=_OpaqueMarkerSolver(marker=marker))
 
     stateless = _model(solver=ReferenceSolver())
     stateless_flat_params = stateless._process_params(_PARAMS)
@@ -1327,13 +1311,15 @@ def test_lazy_value_cannot_mutate_cached_model_authority_used_for_replay() -> No
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
     flat_params = model._process_params(_PARAMS)
-    fingerprint = solution.metadata.params_fingerprint
+    fingerprint = fingerprint_solution_support(
+        regimes=model._regimes, flat_params=flat_params
+    )
     cached_authority = model_module.build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
         ages=model.ages,
     )
-    model._solution_authorities[fingerprint] = cached_authority
+    model._declared_authority_cache[fingerprint] = cached_authority
     policy_ref = next(ref for ref in solution.replay_artifacts if ref.key == POLICY_KEY)
     value_entries: dict[object, object] = {
         (period, regime_name): value
@@ -1369,13 +1355,20 @@ def test_lazy_value_cannot_mutate_cached_model_authority_used_for_replay() -> No
 
 
 def test_mutated_cached_authority_is_normalized_before_forward_simulation(
-    *, monkeypatch: pytest.MonkeyPatch
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Reject a beartype-invalid cached descriptor before forward execution."""
+    """Reject a beartype-invalid cached descriptor before forward execution.
+
+    A restored result is validated against the consuming model's declared
+    authority, so a corrupted cache entry surfaces there.
+    """
     model = _model(solver=ReferenceSolver())
-    solution = _solve(model=model)
+    _solve(model=model).save(path=tmp_path / "solution.lcm")
+    solution = load_solution(path=tmp_path / "solution.lcm")
     flat_params = model._process_params(_PARAMS)
-    fingerprint = solution.metadata.params_fingerprint
+    fingerprint = fingerprint_solution_support(
+        regimes=model._regimes, flat_params=flat_params
+    )
     cached_authority = model_module.build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
@@ -1389,7 +1382,7 @@ def test_mutated_cached_authority_is_normalized_before_forward_simulation(
         "channel",
         "replay",
     )
-    model._solution_authorities[fingerprint] = cached_authority
+    model._declared_authority_cache[fingerprint] = cached_authority
 
     def fail_if_forward_simulation_starts(**_kwargs: object) -> None:
         raise AssertionError("forward simulation started")
@@ -1457,13 +1450,15 @@ def test_hostile_cached_value_shape_is_rejected_before_materialization() -> None
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
     flat_params = model._process_params(_PARAMS)
-    fingerprint = solution.metadata.params_fingerprint
+    fingerprint = fingerprint_solution_support(
+        regimes=model._regimes, flat_params=flat_params
+    )
     cached = model_module.build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
         ages=model.ages,
     )
-    model._solution_authorities[fingerprint] = cached
+    model._declared_authority_cache[fingerprint] = cached
     authority_coordinate = next(iter(cached.values))
     value_descriptor = cached.values[authority_coordinate]
     object.__setattr__(
@@ -1509,13 +1504,15 @@ def test_type_different_descriptor_axis_is_rejected_before_forward_simulation(
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
     flat_params = model._process_params(_PARAMS)
-    fingerprint = solution.metadata.params_fingerprint
+    fingerprint = fingerprint_solution_support(
+        regimes=model._regimes, flat_params=flat_params
+    )
     cached = model_module.build_solution_authority(
         regimes=model._regimes,
         flat_params=flat_params,
         ages=model.ages,
     )
-    model._solution_authorities[fingerprint] = cached
+    model._declared_authority_cache[fingerprint] = cached
     ref = next(ref for ref in cached.artifacts if ref.key == POLICY_KEY)
     source_artifact = cached.artifacts[ref]
     coordinates = tuple(range(source_artifact.axes[0].length))
@@ -1546,7 +1543,7 @@ def test_type_different_descriptor_axis_is_rejected_before_forward_simulation(
             *cached.artifact_descriptors[ref].named_axes[1:],
         ),
     )
-    model._solution_authorities[fingerprint] = dataclasses.replace(
+    model._declared_authority_cache[fingerprint] = dataclasses.replace(
         cached,
         artifacts=MappingProxyType(dict(cached.artifacts) | {ref: expected_artifact}),
         artifact_descriptors=MappingProxyType(
@@ -2111,36 +2108,10 @@ def test_artifact_ledger_rejects_unaccounted_and_undeclared_standard_refs() -> N
         )
 
 
-def test_exact_nonpersisted_diagnostic_omission_is_replay_safe() -> None:
-    """A persisted diagnostic omission is outside the §11 artifact partition."""
-    model = _model(solver=ReferenceSolver())
-    solution = _solve(model=model)
-    diagnostic_ref = ArtifactRef(
-        period=0,
-        regime="active",
-        key=SOLVER_DIAGNOSTICS,
-    )
-    restored_shape = dataclasses.replace(
-        solution,
-        omissions={
-            **solution.omissions,
-            diagnostic_ref: OmissionReason.NOT_PERSISTED,
-        },
-    )
-
-    result = model.simulate(
-        params=_PARAMS,
-        initial_conditions=_initial_conditions(),
-        solution=restored_shape,
-        log_level="off",
-    )
-
-    assert not result.to_dataframe().empty
-
-
 @pytest.mark.parametrize(
     ("key", "reason"),
     [
+        (SOLVER_DIAGNOSTICS, OmissionReason.NOT_PERSISTED),
         (SOLVER_DIAGNOSTICS, OmissionReason.NOT_REQUESTED),
         (
             ArtifactKey(
@@ -2151,10 +2122,10 @@ def test_exact_nonpersisted_diagnostic_omission_is_replay_safe() -> None:
         ),
     ],
 )
-def test_only_exact_nonpersisted_diagnostic_omission_bypasses_descriptors(
+def test_a_diagnostic_omission_without_a_descriptor_is_refused(
     *, key: ArtifactKey, reason: OmissionReason
 ) -> None:
-    """Near-miss diagnostic omissions remain fail-closed."""
+    """Diagnostics are described like every other artifact, so a bare omission fails."""
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
     ref = ArtifactRef(period=0, regime="active", key=key)
@@ -2388,4 +2359,47 @@ def test_mutated_metadata_identity_types_fail_before_simulation(
             initial_conditions=_initial_conditions(),
             solution=malformed,
             log_level="off",
+        )
+
+
+def test_a_core_reading_next_period_target_values_declares_each_access() -> None:
+    """A period's program declares one target-value access per reachable target."""
+    model = _model(solver=TargetValueSolver())
+    program = cast(
+        "Any", model._regimes["active"].solution.period_kernels[0]
+    ).core_programs()["values"]
+    assert program.requirements.target_value_accesses == (
+        TargetValueAccess(
+            target=ValueArtifactAddress(
+                kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="active"
+            ),
+            source=ValueConsumerAddress(
+                source_period=0,
+                source_regime="active",
+                core_key="values",
+                channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                path=("active",),
+            ),
+        ),
+    )
+
+
+def test_declared_target_value_accesses_feed_the_core_the_stored_next_values() -> None:
+    """The core reads each target's stored value: `V_t = wealth + max V_{t+1}`."""
+    solution = _model(solver=TargetValueSolver()).solve(params=_PARAMS, log_level="off")
+    wealth = np.asarray(_WEALTH_GRID.to_jax())
+    best_next_value = 0.0
+    expected_by_period = {}
+    for period in reversed(range(_N_PERIODS)):
+        expected = np.broadcast_to(
+            (wealth + best_next_value)[:, None],
+            (len(wealth), len(_PRODUCTIVITY_GRID.to_jax())),
+        )
+        expected_by_period[period] = expected
+        best_next_value = float(expected.max())
+    for period, expected in expected_by_period.items():
+        np.testing.assert_array_almost_equal(
+            np.asarray(solution.values[period]["active"]),
+            expected,
+            decimal=DECIMAL_PRECISION,
         )

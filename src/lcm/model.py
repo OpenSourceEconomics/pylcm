@@ -3,10 +3,11 @@
 import logging
 import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAlias, cast
+from typing import TYPE_CHECKING, Protocol, TypeAlias, cast, runtime_checkable
 
 import jax
 import numpy as np
@@ -17,7 +18,7 @@ from beartype.roar import BeartypeCallHintViolation
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead
+from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, UnsupportedReplayRoute
 from _lcm.grids import DiscreteGrid
 from _lcm.model_processing import (
     _validate_param_types,
@@ -64,6 +65,7 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.artifacts import (
+    OwnedSolutionView,
     build_solution_result,
     fingerprint_flat_params,
 )
@@ -74,19 +76,24 @@ from _lcm.solution.backward_induction import (
 )
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.fingerprint import (
+    SolutionParamProjection,
     fingerprint_model,
     fingerprint_model_structure,
+    fingerprint_solution_support,
     project_solution_params,
+    solution_param_projection,
 )
 from _lcm.solution.model_authority import (
     ReplayCellDescriptor,
     SolutionAuthority,
     _replay_model_context_from_state_action_space,
     _state_action_space_for_period,
+    bind_declared_solution_authority,
     bind_generated_solution_authority,
     build_solution_authority,
     snapshot_solution_authority,
 )
+from _lcm.solution.model_seal import BindingRecorder, SealedBindings
 from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
@@ -133,6 +140,7 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
+    ModelInitializationError,
     UnsupportedOperationError,
 )
 from lcm.koopmans_aggregation import LinearAggregator
@@ -196,6 +204,26 @@ def _same_exactly_typed(*, actual: object, expected: object) -> bool:
 type _PeriodToRegimeToReplayReader = MappingProxyType[
     int, MappingProxyType[RegimeName, ReplayReader]
 ]
+
+# Engine replay inputs resolved from one consumed solution.
+type _ResolvedSolution = tuple[
+    PeriodToRegimeToVArr,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToDissolutionFlags,
+    _PeriodToRegimeToReplayReader,
+]
+
+
+@runtime_checkable
+class _ReplayPayloadSource(Protocol):
+    """How a plugin replay payload is obtained from a consumed solution."""
+
+    def __call__(self, *, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+        """Return the payload stored at `ref` in the form `authority` declares."""
+
+
+# Distinct grid supports whose declared solution authority a model keeps.
+_DECLARED_AUTHORITY_CACHE_SIZE = 4
 
 
 def _built_in_policy_payload_defect(  # noqa: PLR0911
@@ -482,8 +510,10 @@ class Model:
         # result round-tripped together remain compatible, but deliberately not
         # presented as a durable model-content fingerprint.
         self._solution_model_instance_id = uuid.uuid4().hex
-        self._solution_authorities: dict[str, SolutionAuthority] = {}
-        self._model_structure_fingerprint: str | None = None
+        self._declared_authority_cache: OrderedDict[str, SolutionAuthority] = (
+            OrderedDict()
+        )
+        self._declared_authority_lock = threading.Lock()
 
         # The single canonical activity schedule: every regime's `active`
         # predicate is evaluated exactly once, here, and threaded through
@@ -575,6 +605,39 @@ class Model:
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
+        self._solution_param_projection: SolutionParamProjection = (
+            solution_param_projection(self._regimes)
+        )
+        self._seal()
+
+    def _seal(self) -> None:
+        """Fix the model's durable identity and record the bindings it read.
+
+        The structure digest covers everything the model fixes at build, so it
+        is the same for every parameter vector this instance is ever solved
+        with; computing it walks every declared user callable once, here. The
+        walk also records each global and closure binding those callables
+        read, and `solve` and `simulate` refuse to run once one has been
+        rebound, since the digest would then describe code the model no longer
+        runs.
+        """
+        recorder = BindingRecorder()
+        try:
+            self._model_structure_fingerprint: str = fingerprint_model_structure(
+                ages=self.ages,
+                regimes=self._regimes,
+                user_regimes=self.user_regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
+                binding_recorder=recorder,
+            )
+        except (TypeError, ValueError) as error:
+            msg = (
+                "The model has no durable identity, so it cannot be built: a "
+                "solution it produced could not be told apart from one of a model "
+                f"with different semantics. {error}"
+            )
+            raise ModelInitializationError(msg) from error
+        self._sealed_bindings: SealedBindings = recorder.sealed()
 
     def __repr__(self) -> str:
         """Summarize the model; mention pruning when any regime was pruned."""
@@ -590,48 +653,100 @@ class Model:
         )
 
     def __getstate__(self) -> dict[str, object]:
-        """Return a copy of `__dict__` with per-process AOT compile state removed.
+        """Return a copy of `__dict__` with per-process state removed.
 
-        Drops `_simulate_compile_lock` (a `threading.Lock`, not pickleable),
-        `_simulate_compile_cache` (compiled XLA programs that can't survive
-        a process boundary), and `_warned_n_subjects` (its companion set).
-        `__setstate__` restores all three to their fresh state.
+        Drops the AOT compile state (`_simulate_compile_lock`, a
+        `threading.Lock`; `_simulate_compile_cache`, compiled XLA programs that
+        can't survive a process boundary; `_warned_n_subjects`, its companion
+        set), the declared-authority cache and its lock, the parameter
+        projection, and the sealed bindings, which name namespaces and closure
+        cells of this process. `__setstate__` rebuilds each of them.
         """
         state = self.__dict__.copy()
-        state.pop("_simulate_compile_lock", None)
-        state.pop("_simulate_compile_cache", None)
-        state.pop("_warned_n_subjects", None)
+        for transient in (
+            "_simulate_compile_lock",
+            "_simulate_compile_cache",
+            "_warned_n_subjects",
+            "_declared_authority_cache",
+            "_declared_authority_lock",
+            "_solution_param_projection",
+            "_sealed_bindings",
+        ):
+            state.pop(transient, None)
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
-        """Restore transient state and backfill legacy solution identity."""
+        """Restore transient state and reseal the model in this process.
+
+        The structure digest the model was pickled with stays its identity, so
+        results it labelled before remain compatible; the walk after
+        unpickling records which bindings this process's copies of the
+        callables read.
+        """
         self.__dict__.update(state)
         if "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
-        if "_model_structure_fingerprint" not in state:
-            self._model_structure_fingerprint = None
-        if "_solution_authorities" not in state:
-            self._solution_authorities = {}
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
+        self._declared_authority_cache = OrderedDict()
+        self._declared_authority_lock = threading.Lock()
+        self._solution_param_projection = solution_param_projection(self._regimes)
+        stored_structure = state.get("_model_structure_fingerprint")
+        self._seal()
+        if type(stored_structure) is str:
+            self._model_structure_fingerprint = stored_structure
 
-    def _structure_fingerprint(self) -> str:
-        """Return this model's parameter-free digest, hashing it at most once.
+    def _declared_solution_authority(
+        self, *, flat_params: FlatParams
+    ) -> SolutionAuthority:
+        """Return the model-owned solution authority for these parameters.
 
-        The digest covers what the model fixes at build, so it is the same for
-        every parameter vector this instance is ever solved with. Computing it
-        walks every declared user callable, which is the dominant cost of a warm
-        solve when it is repeated per parameter vector.
+        Declared authority depends on parameters only through the grid support
+        and the shape of every parameter leaf, so it is built once per distinct
+        support and shared by every solve and every consumed result with that
+        support. The few most recently used supports stay cached.
         """
-        if self._model_structure_fingerprint is None:
-            self._model_structure_fingerprint = fingerprint_model_structure(
-                ages=self.ages,
+        support = fingerprint_solution_support(
+            regimes=self._regimes, flat_params=flat_params
+        )
+        with self._declared_authority_lock:
+            cached = self._declared_authority_cache.get(support)
+            if cached is not None:
+                self._declared_authority_cache.move_to_end(support)
+                return cached
+        authority = build_solution_authority(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+        )
+        with self._declared_authority_lock:
+            self._declared_authority_cache[support] = authority
+            while len(self._declared_authority_cache) > _DECLARED_AUTHORITY_CACHE_SIZE:
+                self._declared_authority_cache.popitem(last=False)
+        return authority
+
+    def _params_fingerprint(self, *, flat_params: FlatParams) -> str:
+        """Digest the canonical parameters a solution depends on."""
+        return fingerprint_flat_params(
+            project_solution_params(
+                flat_params=flat_params,
                 regimes=self._regimes,
-                user_regimes=self.user_regimes,
-                regime_names_to_ids=self.regime_names_to_ids,
+                projection=self._solution_param_projection,
             )
-        return self._model_structure_fingerprint
+        )
+
+    def _model_fingerprint(self, *, flat_params: FlatParams) -> str:
+        """Digest the durable model identity under these parameters."""
+        return fingerprint_model(
+            ages=self.ages,
+            regimes=self._regimes,
+            user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            flat_params=flat_params,
+            structure=self._model_structure_fingerprint,
+            projection=self._solution_param_projection,
+        )
 
     def get_params_template(self) -> UserFacingParamsTemplate:
         """Get a human-readable params template.
@@ -685,6 +800,7 @@ class Model:
             An immutable labelled result containing values, metadata, retained replay
             and diagnostic artifacts, plus explicit artifact-omission reasons.
         """
+        self._sealed_bindings.fail_if_moved()
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
         validate_transitions(
@@ -716,15 +832,11 @@ class Model:
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
-        The solution authority is derived from the model and the canonical
-        parameters before the solve; the solve's generated replay facts are
-        bound into it afterwards.
+        The declared solution authority is the model's, shared across solves
+        with the same grid support; the solve's generated replay facts are
+        bound into a copy that belongs to this result alone.
         """
-        declared_authority = build_solution_authority(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-        )
+        declared_authority = self._declared_solution_authority(flat_params=flat_params)
         retain_all_persistable = retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
         persistable_artifact_refs = (
             frozenset(
@@ -750,30 +862,12 @@ class Model:
             persistable_artifact_refs=persistable_artifact_refs,
             collect_solver_diagnostics=True,
         )
-        params_fingerprint = fingerprint_flat_params(
-            project_solution_params(flat_params=flat_params, regimes=self._regimes)
-        )
-        model_fingerprint = fingerprint_model(
-            ages=self.ages,
-            regimes=self._regimes,
-            user_regimes=self.user_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            flat_params=flat_params,
-            structure=self._structure_fingerprint(),
-        )
         authority = bind_generated_solution_authority(
             authority=declared_authority,
             internal_result=internal_result,
             regimes=self._regimes,
             flat_params=flat_params,
         )
-        if retention.retains_replay and any(
-            descriptor.adaptive_outer_nodes is not None
-            for descriptor in authority.replay.values()
-        ):
-            self._solution_authorities[params_fingerprint] = (
-                snapshot_solution_authority(authority)
-            )
         return build_solution_result(
             internal_result=internal_result,
             retention=retention,
@@ -781,8 +875,8 @@ class Model:
             user_regimes=self.user_regimes,
             n_periods=self.n_periods,
             model_instance_id=self._solution_model_instance_id,
-            params_fingerprint=params_fingerprint,
-            model_fingerprint=model_fingerprint,
+            params_fingerprint=self._params_fingerprint(flat_params=flat_params),
+            model_fingerprint=self._model_fingerprint(flat_params=flat_params),
             authority=authority,
         )
 
@@ -900,30 +994,134 @@ class Model:
 
     def _resolve_solution_result(
         self, *, solution: _SolutionResultBoundary, flat_params: FlatParams
-    ) -> tuple[
-        PeriodToRegimeToVArr,
-        PeriodToRegimeToSimulationPolicy,
-        PeriodToRegimeToDissolutionFlags,
-        _PeriodToRegimeToReplayReader,
-    ]:
-        """Resolve one model-authoritative result into engine replay inputs."""
+    ) -> _ResolvedSolution:
+        """Resolve one labelled result into engine replay inputs.
+
+        A result this instance built in this process is consumed by reference:
+        the engine reads the buffers its solve allocated, after checking that
+        the parameters agree and that every replay artifact its routes require
+        is present. Any other result — restored from an archive, produced by
+        another instance, or copied — is copied into private buffers and
+        validated against model authority exactly once; the resolved inputs are
+        remembered on the result, so a later simulation with the same model and
+        parameters is a lookup.
+        """
+        if type(solution) is not SolutionResult:
+            msg = "SolutionResult has the wrong exact container type."
+            raise InvalidSimulationInputError(msg)
+        expected_fingerprint = self._params_fingerprint(flat_params=flat_params)
+        memo_key = (self._solution_model_instance_id, expected_fingerprint)
+        consumed_views = solution._consumed_views  # noqa: SLF001
+        remembered = consumed_views.get(memo_key)
+        if remembered is not None:
+            return cast("_ResolvedSolution", remembered)
+        engine_view = solution._engine_view  # noqa: SLF001
+        if (
+            type(engine_view) is OwnedSolutionView
+            and engine_view.model_instance_id == self._solution_model_instance_id
+        ):
+            if engine_view.params_fingerprint != expected_fingerprint:
+                msg = (
+                    "SolutionResult metadata is incompatible with this model: "
+                    "params_fingerprint does not match the canonical simulation "
+                    "params."
+                )
+                raise InvalidSimulationInputError(msg)
+            resolved = self._consume_owned_solution(
+                solution=solution,
+                engine_view=engine_view,
+                flat_params=flat_params,
+            )
+        else:
+            resolved = self._consume_foreign_solution(
+                solution=solution,
+                flat_params=flat_params,
+                expected_fingerprint=expected_fingerprint,
+            )
+        consumed_views[memo_key] = resolved
+        return resolved
+
+    def _consume_owned_solution(
+        self,
+        *,
+        solution: _SolutionResultBoundary,
+        engine_view: OwnedSolutionView,
+        flat_params: FlatParams,
+    ) -> _ResolvedSolution:
+        """Read a result this instance built, by reference, after the replay checks."""
+        self._check_solution_result_replay_policies(
+            solution=solution,
+            authority=engine_view.authority,
+            policies=engine_view.simulation_policies,
+            values=engine_view.values,
+        )
+        self._check_solution_result_dissolution_flags(
+            solution=solution,
+            authority=engine_view.authority,
+            dissolution_flags=engine_view.dissolution_flags,
+        )
+        replay_artifacts = engine_view.replay_artifacts
+
+        def owned_payload(*, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+            del authority
+            return replay_artifacts[ref]
+
+        external_readers = self._build_external_replay_readers(
+            solution=solution,
+            metadata=solution.metadata,
+            authority=engine_view.authority,
+            flat_params=flat_params,
+            replay_payload=owned_payload,
+        )
+        return (
+            engine_view.values,  # noqa: PD011
+            engine_view.simulation_policies,
+            engine_view.dissolution_flags,
+            external_readers,
+        )
+
+    def _consume_foreign_solution(
+        self,
+        *,
+        solution: _SolutionResultBoundary,
+        flat_params: FlatParams,
+        expected_fingerprint: str,
+    ) -> _ResolvedSolution:
+        """Copy and validate a result from elsewhere against model authority."""
         solution = self._snapshot_solution_envelope(solution=solution)
         metadata = solution.metadata
         authority, values, solution = self._check_solution_result_structure(
             solution=solution,
             metadata=metadata,
             flat_params=flat_params,
+            expected_fingerprint=expected_fingerprint,
         )
         policies, dissolution_flags = self._check_solution_result_artifacts(
             solution=solution,
             authority=authority,
             values=values,
         )
+
+        replay_store = solution.replay_artifacts
+
+        def validated_payload(
+            *, ref: ArtifactRef, authority: ArtifactAuthority
+        ) -> object:
+            materialized = replay_store._materialize_from_template_snapshot(  # noqa: SLF001
+                ref,
+                template_snapshot=snapshot_artifact_template_declaration(authority),
+            )
+            return _canonicalize_artifact_payload(
+                payload=materialized,
+                authority=authority,
+            )
+
         external_readers = self._build_external_replay_readers(
             solution=solution,
             metadata=metadata,
             authority=authority,
             flat_params=flat_params,
+            replay_payload=validated_payload,
         )
         return (
             values,
@@ -938,40 +1136,31 @@ class Model:
         solution: _SolutionResultBoundary,
         metadata: SolutionMetadata,
         flat_params: FlatParams,
+        expected_fingerprint: str,
     ) -> tuple[
         SolutionAuthority,
         PeriodToRegimeToVArr,
         _SolutionResultBoundary,
     ]:
         """Validate outer structure, then create the one canonical payload snapshot."""
-        expected_fingerprint = fingerprint_flat_params(
-            project_solution_params(flat_params=flat_params, regimes=self._regimes)
-        )
-        expected_model_fingerprint = fingerprint_model(
-            ages=self.ages,
-            regimes=self._regimes,
-            user_regimes=self.user_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            flat_params=flat_params,
-            structure=self._structure_fingerprint(),
-        )
         self._check_solution_result_metadata(
             metadata=metadata,
             expected_fingerprint=expected_fingerprint,
-            expected_model_fingerprint=expected_model_fingerprint,
+            expected_model_fingerprint=self._model_fingerprint(flat_params=flat_params),
         )
-        source_authority = self._solution_authorities.get(expected_fingerprint)
-        if source_authority is None:
-            source_authority = build_solution_authority(
-                regimes=self._regimes,
-                flat_params=flat_params,
-                ages=self.ages,
-            )
+        declared_authority = self._declared_solution_authority(flat_params=flat_params)
         try:
-            authority = snapshot_solution_authority(source_authority)
+            authority = snapshot_solution_authority(
+                bind_declared_solution_authority(
+                    authority=declared_authority,
+                    artifact_descriptors=metadata.artifact_descriptors,
+                    regimes=self._regimes,
+                    flat_params=flat_params,
+                )
+            )
         except (BeartypeCallHintViolation, TypeError, ValueError) as error:
             raise InvalidSimulationInputError(
-                f"Model solution authority cannot be snapshotted: {error}"
+                f"Model solution authority cannot be bound to this result: {error}"
             ) from error
         expected_descriptors = dict(authority.artifact_descriptors)
         if not _same_exact_artifact_contract(
@@ -1069,9 +1258,6 @@ class Model:
         *, solution: _SolutionResultBoundary
     ) -> _SolutionResultBoundary:
         """Own exact result stores and metadata before any lazy callback can run."""
-        if type(solution) is not SolutionResult:
-            msg = "SolutionResult has the wrong exact container type."
-            raise InvalidSimulationInputError(msg)
         supplied_metadata = solution.metadata
         supplied_values = solution.values  # noqa: PD011
         supplied_retained_continuations = solution.retained_continuations
@@ -1246,16 +1432,6 @@ class Model:
         present_ref_sets = tuple(set(store) for store in present_stores)
         present_refs = set().union(*present_ref_sets)
         omission_refs = set(solution.omissions)
-        diagnostic_present_refs = {
-            ref for ref in solution.diagnostics if ref.key == SOLVER_DIAGNOSTICS
-        }
-        diagnostic_omission_refs = {
-            ref
-            for ref, reason in solution.omissions.items()
-            if ref.key == SOLVER_DIAGNOSTICS and reason is OmissionReason.NOT_PERSISTED
-        }
-        artifact_present_refs = present_refs - diagnostic_present_refs
-        artifact_omission_refs = omission_refs - diagnostic_omission_refs
         unexpected = tuple(
             sorted(
                 ref
@@ -1320,13 +1496,11 @@ class Model:
         described_refs = set(metadata.artifact_descriptors)
         undeclared = tuple(
             sorted(
-                ref
-                for ref in artifact_present_refs | artifact_omission_refs
-                if ref not in described_refs
+                ref for ref in present_refs | omission_refs if ref not in described_refs
             )
         )
         missing_accounting = tuple(
-            sorted(described_refs - (artifact_present_refs | artifact_omission_refs))
+            sorted(described_refs - (present_refs | omission_refs))
         )
         if (
             unexpected
@@ -1355,10 +1529,15 @@ class Model:
         metadata: SolutionMetadata,
         authority: SolutionAuthority,
     ) -> None:
-        """Require each present model artifact to be applicable and selected."""
+        """Require each present model artifact to be applicable and selected.
+
+        Diagnostics follow the solve's log level rather than its retention, so
+        a present diagnostics payload is selected under every retention.
+        """
         present_refs = set(solution.retained_continuations)
         present_refs.update(solution.replay_artifacts)
         present_refs.update(solution.auxiliary_artifacts)
+        present_refs.update(solution.diagnostics)
         defects: list[str] = []
         for ref in sorted(present_refs):
             artifact_authority = authority.artifacts.get(ref)
@@ -1370,11 +1549,15 @@ class Model:
                 defects.append(f"{ref!r} is not applicable")
                 continue
             selected = (
-                metadata.retention is ResultRetention.VALUES_AND_REPLAY
-                and descriptor.channel is ArtifactChannel.REPLAY
-            ) or (
-                metadata.retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
-                and descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+                descriptor.channel is ArtifactChannel.DIAGNOSTIC
+                or (
+                    metadata.retention is ResultRetention.VALUES_AND_REPLAY
+                    and descriptor.channel is ArtifactChannel.REPLAY
+                )
+                or (
+                    metadata.retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+                    and descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+                )
             )
             if not selected:
                 defects.append(
@@ -1398,11 +1581,6 @@ class Model:
         for ref, reason in solution.omissions.items():
             artifact_authority = authority.artifacts.get(ref)
             if artifact_authority is None:
-                if (
-                    ref.key == SOLVER_DIAGNOSTICS
-                    and reason is OmissionReason.NOT_PERSISTED
-                ):
-                    continue
                 defects.append(f"{ref!r} has no model authority")
                 continue
             descriptor = artifact_authority.descriptor
@@ -1554,8 +1732,14 @@ class Model:
         metadata: SolutionMetadata,
         authority: SolutionAuthority,
         flat_params: FlatParams,
+        replay_payload: _ReplayPayloadSource,
     ) -> _PeriodToRegimeToReplayReader:
-        """Validate each plugin replay cell once and build its immutable reader."""
+        """Validate each plugin replay cell once and build its immutable reader.
+
+        `replay_payload` obtains the payload a route requires: a result this
+        instance built hands over its own buffers, any other result a validated
+        private copy.
+        """
         readers: dict[int, dict[RegimeName, ReplayReader]] = {}
         for regime_name, regime in self._regimes.items():
             route = regime.simulation.external_replay_route
@@ -1651,20 +1835,7 @@ class Model:
                         continue
                     if key in required_keys:
                         try:
-                            replay_store = solution.replay_artifacts
-                            materialize_from_snapshot = (
-                                replay_store._materialize_from_template_snapshot  # noqa: SLF001
-                            )
-                            materialized = materialize_from_snapshot(
-                                ref,
-                                template_snapshot=snapshot_artifact_template_declaration(
-                                    model_authority
-                                ),
-                            )
-                            payload = _canonicalize_artifact_payload(
-                                payload=materialized,
-                                authority=model_authority,
-                            )
+                            payload = replay_payload(ref=ref, authority=model_authority)
                         except (TypeError, ValueError) as error:
                             defects.append(
                                 f"{key.type_id!r} mismatched_payload: {error}"
@@ -1840,19 +2011,37 @@ class Model:
         return malformed
 
     def _fail_if_simulation_is_unsupported(self) -> None:
-        """Refuse model configurations whose solved decision cannot be replayed."""
-        fixed_cost_regimes = tuple(
-            regime_name
-            for regime_name, regime in self._regimes.items()
-            if regime.simulation.replay_route.replay_mode is ReplayMode.UNSUPPORTED
-        )
-        if not fixed_cost_regimes:
+        """Refuse model configurations whose solved decision cannot be replayed.
+
+        Two declarations put a regime on the unsupported route:
+        - an external solver returned `DeclaredReplay.UNSUPPORTED`;
+        - NNBEGM integrates a `UniformObservedFixedCost` analytically, which
+          simulation cannot draw and replay as the contingent keeper/adjuster
+          policy.
+        """
+        reasons = []
+        for regime_name, regime in self._regimes.items():
+            route = regime.simulation.replay_route
+            if route.replay_mode is not ReplayMode.UNSUPPORTED:
+                continue
+            if isinstance(route, UnsupportedReplayRoute):
+                solver_name = type(self.user_regimes[regime_name].solver).__name__
+                reasons.append(
+                    f"'{regime_name}': its solver '{solver_name}' declares that its "
+                    "solved decision cannot be reproduced in simulation"
+                )
+            else:
+                reasons.append(
+                    f"'{regime_name}': NNBEGM with UniformObservedFixedCost "
+                    "integrates the observed cost analytically, and simulation "
+                    "cannot yet draw it and replay the contingent keeper/adjuster "
+                    "policy"
+                )
+        if not reasons:
             return
         msg = (
-            "Simulation for NNBEGM with UniformObservedFixedCost is not implemented: "
-            "solution integrates the observed cost analytically, but simulation "
-            "cannot yet draw it and replay the contingent keeper/adjuster policy. "
-            f"Affected regimes: {fixed_cost_regimes}. Solve-only use remains supported."
+            "Simulation is not supported for the following regimes; solve-only use "
+            "remains supported. " + "; ".join(reasons) + "."
         )
         raise UnsupportedOperationError(msg)
 
@@ -1940,6 +2129,7 @@ class Model:
             optionally with additional_targets.
 
         """
+        self._sealed_bindings.fail_if_moved()
         log = get_logger(log_level=log_level)
         self._fail_if_simulation_is_unsupported()
         # The canonical parameters bind both the supplied result preflight and an
@@ -2088,6 +2278,7 @@ class Model:
         # the lazy regimes to keep the result cloudpickle-safe.
         if simulate_regimes is not self._regimes:
             result._regimes = self._regimes  # noqa: SLF001
+        result._solution = solution  # noqa: SLF001
         if log_path is not None and validation_raises(log):
             _save_simulate_snapshot(
                 model=self,
@@ -2212,20 +2403,9 @@ def _missing_policy_message(
     *, missing_or_mismatched_policies: tuple[tuple[int, RegimeName, str], ...]
 ) -> str:
     """Explain which replay policies are absent or invalid and how to obtain them."""
-    msg = (
+    return (
         f"Required artifact {SIMULATION_POLICY.type_id!r} is absent or "
         "invalid at (period, regime, reason): "
         f"{missing_or_mismatched_policies}. Re-solve with "
         "retention=ResultRetention.VALUES_AND_REPLAY."
     )
-    if any(
-        reason == OmissionReason.NOT_PERSISTED.value
-        for _period, _regime_name, reason in missing_or_mismatched_policies
-    ):
-        msg += (
-            " A policy omitted as 'not_persisted' is the NNBEGM replay policy of "
-            "an AdaptiveOuterMesh search: it is read against the solve-generated "
-            "mesh this model instance holds beside the result, so no persistable "
-            "retention keeps it; only VALUES_AND_REPLAY retains it."
-        )
-    return msg

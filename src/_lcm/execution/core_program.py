@@ -6,8 +6,6 @@ before lowering. Every kernel publishes its own graph: the engine plans a progra
 or runs it deliberately dense, and refuses a kernel that publishes no graph.
 """
 
-from __future__ import annotations
-
 import inspect
 import math
 import weakref
@@ -41,7 +39,7 @@ else:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _TargetValueAccess:
+class TargetValueAccess:
     """One exact target-value read declared by a solver core.
 
     The target preserves artifact identity for liveness; the source preserves the
@@ -108,7 +106,7 @@ class CoreExecutionRequirements:
     """Static requirements that the execution planner must resolve for a core."""
 
     streamable_axes: tuple[StreamableProductAxis, ...] = ()
-    target_value_accesses: tuple[_TargetValueAccess, ...] = ()
+    target_value_accesses: tuple[TargetValueAccess, ...] = ()
 
     def __post_init__(self) -> None:
         """Snapshot the declared axes and exact target-value reads."""
@@ -929,8 +927,8 @@ def _validate_target_value_accesses(*, program: MaterializedCoreProgram) -> None
     locators: set[tuple[object, tuple[str | int, ...]]] = set()
     source_node: tuple[int, str, str] | None = None
     for access in program.requirements.target_value_accesses:
-        if not isinstance(access, _TargetValueAccess):
-            msg = "Core target_value_accesses must contain _TargetValueAccess entries."
+        if not isinstance(access, TargetValueAccess):
+            msg = "Core target_value_accesses must contain TargetValueAccess entries."
             raise TypeError(msg)
 
         node = (
@@ -958,7 +956,7 @@ def _validate_target_value_accesses(*, program: MaterializedCoreProgram) -> None
 
 
 def _target_value_argument_leaf(
-    *, program: MaterializedCoreProgram, access: _TargetValueAccess
+    *, program: MaterializedCoreProgram, access: TargetValueAccess
 ) -> _TransferArgumentLeaf:
     """Resolve one declared consumer path to an array-like lowering leaf."""
     channel = access.source.channel.value
@@ -1007,7 +1005,7 @@ def _target_value_argument_leaf(
 def _validate_transfer_argument_metadata(
     *,
     program: MaterializedCoreProgram,
-    access: _TargetValueAccess,
+    access: TargetValueAccess,
     transfer: ResolvedValueTransfer,
 ) -> None:
     """Reject a correctly addressed transfer resolved from a stale template."""

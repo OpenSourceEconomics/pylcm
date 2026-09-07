@@ -7,6 +7,9 @@ labelled-result preflight has one immutable source for shapes, dtypes, routes, a
 applicability.
 """
 
+import itertools
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from types import MappingProxyType
@@ -23,6 +26,7 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
 from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
+from _lcm.egm.outer_search import AdaptiveOuterMesh
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime, StateActionSpace
 from _lcm.execution.core_program import (
@@ -44,6 +48,10 @@ from _lcm.solution.result_snapshot import (
     snapshot_artifact_descriptor,
     snapshot_artifact_ref,
 )
+from _lcm.solution.solver_diagnostics import (
+    SolverDiagnostics,
+    diagnostics_template_from_descriptor,
+)
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.typing import (
     ContinuousState,
@@ -56,12 +64,14 @@ from lcm.ages import AgeGrid
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
+    SOLVER_DIAGNOSTICS,
     ArtifactAuthority,
     ArtifactChannel,
     ArtifactDescriptor,
     ArtifactKey,
     ArtifactRef,
     AxisAuthority,
+    AxisDescriptor,
     AxisRole,
     CategoryDomain,
     ExecutableReplayRoute,
@@ -89,6 +99,8 @@ _DISSOLUTION_ROUTE = ReplayRouteIdentity(
     route_id="pylcm.gated_edge_dissolution",
     route_version=1,
 )
+_NNBEGM_NESTED_ROUTE = "nnbegm_nested"
+_NNBEGM_CANDIDATE_AXIS = "pylcm:nnbegm:outer_candidate"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1483,7 +1495,7 @@ def _nested_policy_artifact_layout(
             or any(shape != row_lengths for shape in shapes[:4])
         ):
             raise TypeError("A nested NNBEGM keeper has inconsistent row axes.")
-        candidate_axis = "pylcm:nnbegm:outer_candidate"
+        candidate_axis = _NNBEGM_CANDIDATE_AXIS
         n_candidates = len(adaptive_outer_nodes)
         if shapes[4] != (n_candidates,) or any(
             shape != (n_candidates, *row_lengths) for shape in shapes[5:]
@@ -2046,17 +2058,18 @@ def bind_generated_solution_authority(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
 ) -> SolutionAuthority:
-    """Bind data-dependent axis coordinates before a result leaves the model.
+    """Bind the outer nodes an adaptive solve settled on into the solve's authority.
 
     Adaptive NNBEGM decides its final shared outer mesh from exact solves, so its
     candidate coordinates cannot be reconstructed from declarations alone without
-    repeating the solve. The producing kernel emits those coordinates on a private
-    sidecar beside the replay payload. The model records that sidecar in immutable
-    authority; the returned payload and metadata do not carry the trusted copy.
+    repeating the solve. The producing kernel emits those coordinates on a
+    sidecar beside the replay payload; the returned authority carries them as the
+    candidate axis of the nested policy, and so does the descriptor the result
+    publishes. The nodes are solution-owned data: a result restored elsewhere
+    presents them to its consumer through that descriptor, see
+    `bind_declared_adaptive_authority`.
     """
-    replay = dict(authority.replay)
-    artifacts = dict(authority.artifacts)
-    bound_refs: set[ArtifactRef] = set()
+    bound = _AuthorityBinding(authority=authority)
     for (
         period,
         regime_to_authority,
@@ -2067,72 +2080,18 @@ def bind_generated_solution_authority(
                 regime=regime_name,
                 key=SIMULATION_POLICY,
             )
-            descriptor = replay[ref]
-            if (
-                descriptor.payload_type is None
-                or descriptor.consumer_route != "nnbegm_nested"
-                or not descriptor.applicable
-            ):
+            if not _is_applicable_nested_policy(bound.replay.get(ref)):
                 msg = (
                     "Generated adaptive replay authority has no applicable nested "
                     f"model route at ({period}, {regime_name!r})."
                 )
                 raise TypeError(msg)
-            replay[ref] = replace(
-                descriptor,
+            bound.bind_adaptive_policy(
+                ref=ref,
                 adaptive_outer_nodes=generated.adaptive_outer_nodes,
+                regime=regimes[regime_name],
+                flat_params=flat_params,
             )
-            policy_read = descriptor.route
-            if not isinstance(policy_read, NNBEGMPolicyRead):
-                raise TypeError(
-                    "Generated adaptive replay authority has no NNBEGM route."
-                )
-            old_authority = artifacts[ref]
-            template = _adaptive_policy_template(
-                policy_read=policy_read,
-                policy_shape=descriptor.shape,
-                expected_replay_capability=descriptor.expected_replay_capability,
-                adaptive_outer_nodes=generated.adaptive_outer_nodes,
-            )
-            template_snapshot, template_containers = _snapshot_artifact_template_once(
-                template=template,
-                payload_runtime_type=old_authority.payload_runtime_type,
-            )
-            policy_layout = _nested_policy_artifact_layout(
-                policy_read=policy_read,
-                template_snapshot=template_snapshot,
-                period=period,
-                adaptive_outer_nodes=generated.adaptive_outer_nodes,
-            )
-            generated_authority = _authority_from_observed_template(
-                key=old_authority.descriptor.key,
-                channel=old_authority.descriptor.channel,
-                persistence=old_authority.descriptor.persistence,
-                payload_runtime_type=old_authority.payload_runtime_type,
-                template_snapshot=template_snapshot,
-                container_runtime_types=template_containers,
-                leaf_axis_names=policy_layout.leaf_axis_names,
-                axes=policy_layout.axes,
-                state_roles=policy_layout.state_roles,
-                action_roles=policy_layout.action_roles,
-                consumer_route=old_authority.consumer_route,
-                applicable=old_authority.applicable,
-                required=old_authority.required,
-            )
-            regime = regimes[regime_name]
-            state_action_space = _state_action_space_for_period(
-                regime=regime,
-                base=regime.solution.state_action_space(
-                    regime_params=flat_params[regime_name]
-                ),
-                period=period,
-            )
-            artifacts[ref] = _bind_model_owned_artifact_facts(
-                authority=generated_authority,
-                regime=regime,
-                state_action_space=state_action_space,
-            )
-            bound_refs.add(ref)
     expected_refs = {
         ArtifactRef(period=period, regime=regime_name, key=SIMULATION_POLICY)
         for period, regime_to_policy in internal_result.simulation_policies.items()
@@ -2144,21 +2103,289 @@ def bind_generated_solution_authority(
                 key=SIMULATION_POLICY,
             )
         ].consumer_route
-        == "nnbegm_nested"
+        == _NNBEGM_NESTED_ROUTE
     }
-    if bound_refs != expected_refs:
-        missing = tuple(sorted(expected_refs - bound_refs))
-        unexpected = tuple(sorted(bound_refs - expected_refs))
+    if bound.bound_refs != expected_refs:
+        missing = tuple(sorted(expected_refs - bound.bound_refs))
+        unexpected = tuple(sorted(bound.bound_refs - expected_refs))
         msg = (
             "Generated adaptive replay authority coverage differs from published "
             f"nested policies: missing={missing}, unexpected={unexpected}."
         )
         raise TypeError(msg)
-    return replace(
-        authority,
-        replay=MappingProxyType(replay),
-        artifacts=MappingProxyType(artifacts),
+    for period, regime_to_diagnostics in internal_result.diagnostics.items():
+        for regime_name, diagnostics in regime_to_diagnostics.items():
+            bound.bind_diagnostics(
+                ref=ArtifactRef(
+                    period=period,
+                    regime=regime_name,
+                    key=SOLVER_DIAGNOSTICS,
+                ),
+                template=diagnostics,
+            )
+    return bound.authority_with_bindings()
+
+
+def bind_declared_solution_authority(
+    *,
+    authority: SolutionAuthority,
+    artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor],
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+) -> SolutionAuthority:
+    """Bind everything a result declares about its own solve into model authority.
+
+    A result the consuming model did not produce carries two kinds of
+    solution-owned facts no declaration can supply: the outer nodes its adaptive
+    solves settled on, see `bind_declared_adaptive_authority`, and the layout of
+    every diagnostics payload it retained, see
+    `diagnostics_template_from_descriptor`. Both are admitted after their own
+    checks; the consumer then compares every descriptor against the bound
+    authority.
+    """
+    bound = _AuthorityBinding(
+        authority=bind_declared_adaptive_authority(
+            authority=authority,
+            artifact_descriptors=artifact_descriptors,
+            regimes=regimes,
+            flat_params=flat_params,
+        )
     )
+    for ref, descriptor in artifact_descriptors.items():
+        if type(descriptor) is not ArtifactDescriptor or not (
+            _same_exact_artifact_contract(actual=ref.key, expected=SOLVER_DIAGNOSTICS)
+        ):
+            continue
+        bound.bind_diagnostics(
+            ref=ref,
+            template=diagnostics_template_from_descriptor(
+                descriptor=descriptor,
+                label=f"Solver diagnostics at ({ref.period}, {ref.regime!r})",
+            ),
+        )
+    return bound.authority_with_bindings()
+
+
+def bind_declared_adaptive_authority(
+    *,
+    authority: SolutionAuthority,
+    artifact_descriptors: Mapping[ArtifactRef, ArtifactDescriptor],
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+) -> SolutionAuthority:
+    """Bind the outer nodes a result declares for its own adaptive policies.
+
+    A result the consuming model did not produce carries the nodes its adaptive
+    solve settled on in the candidate axis of each nested policy descriptor. The
+    model does not hold them and cannot re-derive them without solving, so it
+    admits them as solution-owned data after checking what a well-formed mesh
+    must satisfy: exact finite floats, strictly increasing, at most the search's
+    node budget, and inside the outer state's declared domain for that period.
+    Every other fact about the descriptor is compared against model authority by
+    the consumer afterwards, and the payload itself is checked against the bound
+    nodes before it is replayed.
+
+    A nested policy whose descriptor carries no candidate axis is left declared
+    only; such a result never published the policy, or is malformed, and the
+    consumer's descriptor comparison decides which.
+    """
+    bound = _AuthorityBinding(authority=authority)
+    for ref, replay_descriptor in authority.replay.items():
+        if not _is_applicable_nested_policy(replay_descriptor):
+            continue
+        declared = artifact_descriptors.get(ref)
+        if type(declared) is not ArtifactDescriptor:
+            continue
+        candidate_axis = next(
+            (
+                axis
+                for axis in declared.named_axes
+                if type(axis) is AxisDescriptor and axis.name == _NNBEGM_CANDIDATE_AXIS
+            ),
+            None,
+        )
+        if candidate_axis is None:
+            continue
+        policy_read = replay_descriptor.route
+        if not isinstance(policy_read, NNBEGMPolicyRead):
+            raise TypeError("A nested replay route is not an NNBEGM route.")
+        regime = regimes[ref.regime]
+        adaptive_outer_nodes = _admit_adaptive_outer_nodes(
+            coordinates=candidate_axis.coordinates,
+            regime=regime,
+            policy_read=policy_read,
+            ref=ref,
+        )
+        bound.bind_adaptive_policy(
+            ref=ref,
+            adaptive_outer_nodes=adaptive_outer_nodes,
+            regime=regime,
+            flat_params=flat_params,
+        )
+    return bound.authority_with_bindings()
+
+
+def _is_applicable_nested_policy(descriptor: ReplayCellDescriptor | None) -> bool:
+    """Return whether one replay cell is an applicable nested NNBEGM policy."""
+    return (
+        descriptor is not None
+        and descriptor.payload_type is not None
+        and descriptor.consumer_route == _NNBEGM_NESTED_ROUTE
+        and descriptor.applicable
+    )
+
+
+def _admit_adaptive_outer_nodes(
+    *,
+    coordinates: tuple[bool | int | float | str, ...],
+    regime: Regime,
+    policy_read: NNBEGMPolicyRead,
+    ref: ArtifactRef,
+) -> tuple[float, ...]:
+    """Return declared outer nodes once they satisfy what a shared mesh must."""
+    outer_search = getattr(
+        regime.solution.period_kernels[ref.period], "outer_search", None
+    )
+    if not isinstance(outer_search, AdaptiveOuterMesh):
+        raise TypeError(
+            f"The nested replay route at ({ref.period}, {ref.regime!r}) is not "
+            "solved by an adaptive outer mesh."
+        )
+    label = f"Adaptive outer nodes at ({ref.period}, {ref.regime!r})"
+    if type(coordinates) is not tuple or any(
+        type(node) is not float or not math.isfinite(node) for node in coordinates
+    ):
+        raise TypeError(f"{label} must be exact finite floats.")
+    nodes = cast("tuple[float, ...]", coordinates)
+    if not 1 <= len(nodes) <= outer_search.max_nodes:
+        raise ValueError(
+            f"{label} count {len(nodes)} is outside the search's node budget "
+            f"[1, {outer_search.max_nodes}]."
+        )
+    if any(later <= earlier for earlier, later in itertools.pairwise(nodes)):
+        raise ValueError(f"{label} must be strictly increasing.")
+    domain = policy_read.outer_state_domain_by_period.get(ref.period)
+    if domain is None:
+        raise TypeError(f"{label} have no declared outer-state domain.")
+    lower, upper = domain
+    if nodes[0] < lower or nodes[-1] > upper:
+        raise ValueError(
+            f"{label} lie outside the outer state's domain [{lower}, {upper}]."
+        )
+    return nodes
+
+
+class _AuthorityBinding:
+    """Mutable working copy of one authority while solve-generated facts bind."""
+
+    def __init__(self, *, authority: SolutionAuthority) -> None:
+        self._authority = authority
+        self.replay = dict(authority.replay)
+        self.artifacts = dict(authority.artifacts)
+        self.artifact_descriptors = dict(authority.artifact_descriptors)
+        self.bound_refs: set[ArtifactRef] = set()
+
+    def bind_adaptive_policy(
+        self,
+        *,
+        ref: ArtifactRef,
+        adaptive_outer_nodes: tuple[float, ...],
+        regime: Regime,
+        flat_params: FlatParams,
+    ) -> None:
+        """Bind one nested policy's candidate axis and numerical leaf schema."""
+        descriptor = self.replay[ref]
+        policy_read = descriptor.route
+        if not isinstance(policy_read, NNBEGMPolicyRead):
+            raise TypeError("Generated adaptive replay authority has no NNBEGM route.")
+        self.replay[ref] = replace(
+            descriptor,
+            adaptive_outer_nodes=adaptive_outer_nodes,
+        )
+        old_authority = self.artifacts[ref]
+        template = _adaptive_policy_template(
+            policy_read=policy_read,
+            policy_shape=descriptor.shape,
+            expected_replay_capability=descriptor.expected_replay_capability,
+            adaptive_outer_nodes=adaptive_outer_nodes,
+        )
+        template_snapshot, template_containers = _snapshot_artifact_template_once(
+            template=template,
+            payload_runtime_type=old_authority.payload_runtime_type,
+        )
+        policy_layout = _nested_policy_artifact_layout(
+            policy_read=policy_read,
+            template_snapshot=template_snapshot,
+            period=ref.period,
+            adaptive_outer_nodes=adaptive_outer_nodes,
+        )
+        generated_authority = _authority_from_observed_template(
+            key=old_authority.descriptor.key,
+            channel=old_authority.descriptor.channel,
+            persistence=old_authority.descriptor.persistence,
+            payload_runtime_type=old_authority.payload_runtime_type,
+            template_snapshot=template_snapshot,
+            container_runtime_types=template_containers,
+            leaf_axis_names=policy_layout.leaf_axis_names,
+            axes=policy_layout.axes,
+            state_roles=policy_layout.state_roles,
+            action_roles=policy_layout.action_roles,
+            consumer_route=old_authority.consumer_route,
+            applicable=old_authority.applicable,
+            required=old_authority.required,
+        )
+        state_action_space = _state_action_space_for_period(
+            regime=regime,
+            base=regime.solution.state_action_space(
+                regime_params=flat_params[ref.regime]
+            ),
+            period=ref.period,
+        )
+        bound_authority = _bind_model_owned_artifact_facts(
+            authority=generated_authority,
+            regime=regime,
+            state_action_space=state_action_space,
+        )
+        self.artifacts[ref] = bound_authority
+        self.artifact_descriptors[ref] = bound_authority.descriptor
+        self.bound_refs.add(ref)
+
+    def bind_diagnostics(
+        self, *, ref: ArtifactRef, template: SolverDiagnostics
+    ) -> None:
+        """Describe one retained diagnostics payload from the payload itself.
+
+        Diagnostics are the solve's own measurements: their shapes follow the
+        solver's diagnostic level and their fields follow its configuration, so
+        no declaration exists before the solve. The authority is generated from
+        the payload and travels with the result as a model-verifiable
+        descriptor.
+        """
+        if ref in self.artifacts:
+            raise TypeError(f"Diagnostics at {ref!r} would shadow a declared artifact.")
+        authority = _authority_from_template(
+            key=SOLVER_DIAGNOSTICS,
+            channel=ArtifactChannel.DIAGNOSTIC,
+            persistence=PersistencePolicy.MODEL_VERIFIABLE,
+            payload_runtime_type=SolverDiagnostics,
+            template=template,
+            applicable=True,
+            required=False,
+        )
+        self.artifacts[ref] = authority
+        self.artifact_descriptors[ref] = authority.descriptor
+        self.bound_refs.add(ref)
+
+    def authority_with_bindings(self) -> SolutionAuthority:
+        """Return the immutable authority with every binding applied."""
+        if not self.bound_refs:
+            return self._authority
+        return replace(
+            self._authority,
+            replay=MappingProxyType(self.replay),
+            artifacts=MappingProxyType(self.artifacts),
+            artifact_descriptors=MappingProxyType(self.artifact_descriptors),
+        )
 
 
 def _policy_shape_and_node_count(
@@ -2216,9 +2443,11 @@ def _policy_persistence_and_template(
 
     if isinstance(policy_read, NNBEGMPolicyRead):
         if policy_read.replay_policy_is_nested:
-            # The final outer nodes are solve-generated private authority.  A
-            # serialized copy cannot authenticate itself after restoration.
-            return PersistencePolicy.NOT_PERSISTED, None
+            # The nested policy's numerical template exists only once the solve
+            # has settled the shared outer mesh; it is bound then, together with
+            # the candidate axis that carries the mesh nodes. Both persist with
+            # the result, so a consumer reads the nodes from the descriptor.
+            return PersistencePolicy.MODEL_VERIFIABLE, None
         if (
             policy_shape is None
             or policy_read.outer_grid_values is None
@@ -2361,6 +2590,8 @@ __all__ = [
     "ValueCellDescriptor",
     "_replay_model_context_from_state_action_space",
     "_state_action_space_for_period",
+    "bind_declared_adaptive_authority",
+    "bind_declared_solution_authority",
     "bind_generated_solution_authority",
     "build_solution_authority",
 ]
