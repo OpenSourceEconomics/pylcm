@@ -300,7 +300,9 @@ def wealth_requirements(
 An economic dependency points from a source regime to a target regime, while the stored
 value moves the other way during backward induction, so the two addresses carry
 different coordinates: the artifact's `period` is the target's solved period, and the
-consumer's `source_period` is the period of the core that reads it.
+consumer's `source_period` is the period of the core that reads it. The artifact's
+`kind` is `ValueArtifactKind.REGIME_VALUE` for a regime's solved value and
+`ValueArtifactKind.GATED_CONTINUATION` for a gated edge's folded continuation.
 
 The engine then names one operator per declared read, from the layout the value is
 stored in to the layout the consuming program requires:
