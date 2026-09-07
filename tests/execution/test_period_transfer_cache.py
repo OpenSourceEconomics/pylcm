@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.execution.scheduler import PeriodTransferCache
+from _lcm.execution.scheduler import BufferRegistry, PeriodTransferCache
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
@@ -30,8 +30,16 @@ def _shardings() -> tuple[jax.sharding.Sharding, jax.sharding.Sharding]:
     return stored_sharding, source_sharding
 
 
-def _copy_transfer(*, reused: bool) -> ResolvedValueTransfer:
-    stored_sharding, source_sharding = _shardings()
+def _stored_value(*, sharding: jax.sharding.Sharding) -> jax.Array:
+    return jax.device_put(jnp.arange(3.0), sharding)
+
+
+def _copy_transfer(
+    *,
+    reused: bool,
+    stored: jax.Array,
+    source_sharding: jax.sharding.Sharding,
+) -> ResolvedValueTransfer:
     return ResolvedValueTransfer(
         target=ValueArtifactAddress(
             kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="target"
@@ -44,27 +52,36 @@ def _copy_transfer(*, reused: bool) -> ResolvedValueTransfer:
             path=("target",),
         ),
         kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
-        stored_sharding=stored_sharding,
+        stored_sharding=stored.sharding,
         source_sharding=source_sharding,
-        expected_shape=(3,),
-        expected_dtype=jnp.float64,
+        expected_shape=stored.shape,
+        expected_dtype=stored.dtype,
         reused_by_several_consumers=reused,
     )
 
 
-def _arguments() -> MappingProxyType[str, object]:
-    stored_sharding, _source_sharding = _shardings()
-    stored_value = jax.device_put(jnp.arange(3.0), stored_sharding)
+def _arguments(*, stored: jax.Array) -> MappingProxyType[str, object]:
     return MappingProxyType(
-        {"next_regime_to_V_arr": MappingProxyType({"target": stored_value})}
+        {"next_regime_to_V_arr": MappingProxyType({"target": stored})}
     )
+
+
+def _key(*, transfer: ResolvedValueTransfer) -> tuple[object, object]:
+    return (transfer.target, transfer.source_sharding)
 
 
 def test_a_shared_transfer_is_served_from_the_cache_on_its_second_use() -> None:
     """Two consumers of one period receive the identical copied array."""
-    cache = PeriodTransferCache()
-    transfer = _copy_transfer(reused=True)
-    arguments = _arguments()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    cache = PeriodTransferCache(
+        registry=BufferRegistry(),
+        consumer_counts=MappingProxyType({_key(transfer=transfer): 2}),
+    )
+    arguments = _arguments(stored=stored)
 
     first = apply_value_transfer_plan(
         arguments=arguments, plan=(transfer,), cache=cache
@@ -82,19 +99,51 @@ def test_a_shared_transfer_is_served_from_the_cache_on_its_second_use() -> None:
 
 def test_an_unshared_transfer_is_not_cached() -> None:
     """A transfer one consumer reads is copied per dispatch and holds no cache row."""
-    cache = PeriodTransferCache()
-    transfer = _copy_transfer(reused=False)
-    arguments = _arguments()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=False, stored=stored, source_sharding=source_sharding
+    )
+    cache = PeriodTransferCache(
+        registry=BufferRegistry(), consumer_counts=MappingProxyType({})
+    )
 
-    apply_value_transfer_plan(arguments=arguments, plan=(transfer,), cache=cache)
+    apply_value_transfer_plan(
+        arguments=_arguments(stored=stored), plan=(transfer,), cache=cache
+    )
 
     assert len(cache) == 0
 
 
+def test_an_unshared_transfer_is_not_registered_with_the_buffer_registry() -> None:
+    """A transfer one consumer reads never enters the buffer registry."""
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=False, stored=stored, source_sharding=source_sharding
+    )
+    registry = BufferRegistry()
+    cache = PeriodTransferCache(registry=registry, consumer_counts=MappingProxyType({}))
+
+    result = apply_value_transfer_plan(
+        arguments=_arguments(stored=stored), plan=(transfer,), cache=cache
+    )
+
+    target_values = result["next_regime_to_V_arr"]
+    assert isinstance(target_values, Mapping)
+    produced = target_values["target"]
+    assert isinstance(produced, jax.Array)
+    assert not registry.artifacts_sharing(array=produced)
+
+
 def test_a_plan_without_a_cache_copies_as_before() -> None:
     """The cache is optional; a plan applied without one copies every time."""
-    transfer = _copy_transfer(reused=True)
-    arguments = _arguments()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    arguments = _arguments(stored=stored)
 
     first = apply_value_transfer_plan(arguments=arguments, plan=(transfer,))
     second = apply_value_transfer_plan(arguments=arguments, plan=(transfer,))
@@ -107,9 +156,162 @@ def test_a_plan_without_a_cache_copies_as_before() -> None:
 
 
 def test_the_cache_keys_a_copy_by_artifact_and_required_layout() -> None:
-    """One artifact copied onto one layout is one cache row."""
-    cache = PeriodTransferCache()
-    transfer = _copy_transfer(reused=True)
-    cache.put(transfer=transfer, array=jnp.arange(3.0))
+    """One artifact copied onto one layout is served from a stored cache row."""
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    cache = PeriodTransferCache(
+        registry=BufferRegistry(), consumer_counts=MappingProxyType({})
+    )
+    copy = jax.device_put(stored, source_sharding)
+    cache.put(transfer=transfer, array=copy, stored=copy)
 
-    assert cache.get(transfer=transfer) is not None and len(cache) == 1  # noqa: PT018
+    assert cache.get(transfer=transfer) is not None
+
+
+def test_the_cache_holds_one_row_per_artifact_and_layout() -> None:
+    """One artifact copied onto one layout is exactly one cache row."""
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    cache = PeriodTransferCache(
+        registry=BufferRegistry(), consumer_counts=MappingProxyType({})
+    )
+    copy = jax.device_put(stored, source_sharding)
+    cache.put(transfer=transfer, array=copy, stored=copy)
+
+    assert len(cache) == 1
+
+
+def test_a_period_cache_does_not_serve_a_copy_made_in_another_periods_cache() -> None:
+    """A fresh `PeriodTransferCache` is built each period; none carries state across."""
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    period_t_cache = PeriodTransferCache(
+        registry=BufferRegistry(), consumer_counts=MappingProxyType({key: 1})
+    )
+    apply_value_transfer_plan(
+        arguments=_arguments(stored=stored), plan=(transfer,), cache=period_t_cache
+    )
+
+    period_t_minus_1_cache = PeriodTransferCache(
+        registry=BufferRegistry(), consumer_counts=MappingProxyType({key: 1})
+    )
+
+    assert period_t_minus_1_cache.get(transfer=transfer) is None
+
+
+def test_a_genuinely_new_copy_is_registered_with_the_buffer_registry() -> None:
+    """A copy whose buffer differs from the stored artifact's enters the registry."""
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 2})
+    )
+    copy = jax.device_put(np.arange(3.0), source_sharding)
+
+    cache.put(transfer=transfer, array=copy, stored=stored)
+
+    assert registry.artifacts_sharing(array=copy)
+
+
+def test_a_genuinely_new_copy_is_alive_after_one_of_two_sources_commits() -> None:
+    """A copy two sources share stays alive once only one of them has committed."""
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 2})
+    )
+    copy = jax.device_put(np.arange(3.0), source_sharding)
+    cache.put(transfer=transfer, array=copy, stored=stored)
+
+    cache.commit_consumer(key=key)
+
+    assert not copy.is_deleted()
+
+
+def test_a_genuinely_new_copy_is_deleted_after_both_sources_commit() -> None:
+    """A copy two sources share is released once every sharing source has committed."""
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 2})
+    )
+    copy = jax.device_put(np.arange(3.0), source_sharding)
+    cache.put(transfer=transfer, array=copy, stored=stored)
+    cache.commit_consumer(key=key)
+
+    cache.commit_consumer(key=key)
+
+    assert copy.is_deleted()
+
+
+def test_a_same_buffer_device_put_is_not_registered_with_the_buffer_registry() -> None:
+    """A `device_put` returning the stored buffer unchanged registers no new copy.
+
+    `transfer` is a genuine `COPY_TO_SOURCE_LAYOUT` (its two layouts classify as
+    a copy, not as `ALIGNED_LOCAL`); what is exercised here is the physical
+    degeneracy where the copy JAX actually returns is the stored buffer itself,
+    named directly rather than reproduced via a device-topology-specific
+    `device_put` call.
+    """
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 1})
+    )
+
+    cache.put(transfer=transfer, array=stored, stored=stored)
+
+    assert not registry.artifacts_sharing(array=stored)
+
+
+def test_a_same_buffer_device_put_survives_the_caches_commit() -> None:
+    """A `device_put` returning the stored buffer unchanged is not deleted by the cache.
+
+    That buffer is the stored artifact itself, released under its own artifact's
+    lifetime rather than the transfer cache's.
+    """
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 1})
+    )
+    cache.put(transfer=transfer, array=stored, stored=stored)
+
+    cache.commit_consumer(key=key)
+
+    assert not stored.is_deleted()

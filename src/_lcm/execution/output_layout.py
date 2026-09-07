@@ -459,6 +459,12 @@ class PlannedCore:
             self, "internal_input_templates", MappingProxyType(templates)
         )
 
+        if self.transfer_cache is not None and not isinstance(
+            self.transfer_cache, TransferCache
+        ):
+            msg = "PlannedCore transfer_cache must be a TransferCache or None."
+            raise TypeError(msg)
+
     def __call__(self, *args: object, **kwargs: object) -> object:
         """Execute and enforce the layout contract at the compiled-core seam."""
         if self.internal_input_templates:

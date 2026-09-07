@@ -1300,25 +1300,16 @@ def _make_two_source_partially_distributed_model() -> Model:
         transition=to_retirement,
         active=lambda age: age < 5,
     )
-    working_b = UserRegime(
-        functions={"utility": working_utility},
-        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-        state_transitions={"wealth": next_wealth},
-        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=to_retirement_b,
-        active=lambda age: age < 5,
-    )
-    retirement = UserRegime(
-        transition=None,
-        functions={"utility": retirement_utility},
-        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-        active=lambda age: age >= 5,
-    )
     return Model(
         regimes={
             "working_life": working,
-            "working_life_b": working_b,
-            "retirement": retirement,
+            "working_life_b": working.replace(transition=to_retirement_b),
+            "retirement": UserRegime(
+                transition=None,
+                functions={"utility": retirement_utility},
+                states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+                active=lambda age: age >= 5,
+            ),
         },
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
@@ -1327,11 +1318,10 @@ def _make_two_source_partially_distributed_model() -> Model:
     )
 
 
-@_skip_pytest_parallel
-def test_a_transfer_two_sources_share_is_copied_once_per_period(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The shared copy of `retirement`'s value is made once, not once per source."""
+def _shared_transfer_executions(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[int, object]]:
+    """Solve the partially distributed model, recording each shared-transfer copy."""
     from _lcm.execution import value_transfer  # noqa: PLC0415
 
     executed: list[tuple[int, object]] = []
@@ -1348,5 +1338,24 @@ def test_a_transfer_two_sources_share_is_copied_once_per_period(
     _make_two_source_partially_distributed_model().solve(
         log_level="off", params={"discount_factor": 0.95}
     )
+    return executed
 
-    assert executed and len(executed) == len(set(executed))  # noqa: PT018
+
+@_skip_pytest_parallel
+def test_a_shared_transfer_is_copied_for_at_least_one_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `retirement` value two sources share is copied at least once."""
+    executed = _shared_transfer_executions(monkeypatch=monkeypatch)
+
+    assert executed
+
+
+@_skip_pytest_parallel
+def test_a_transfer_two_sources_share_is_copied_once_per_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared copy of `retirement`'s value is made once, not once per source."""
+    executed = _shared_transfer_executions(monkeypatch=monkeypatch)
+
+    assert len(executed) == len(set(executed))

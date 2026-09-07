@@ -44,6 +44,19 @@ def buffer_identity(*, array: jax.Array) -> BufferIdentity:
     )
 
 
+def shares_a_buffer(*, first: jax.Array, second: jax.Array) -> bool:
+    """Report whether any device buffer of `first` is also occupied by `second`.
+
+    A `device_put` broadcasting a value onto a wider, replicated sharding can
+    reuse the source's own buffer for one shard while allocating fresh buffers
+    for the rest: the two arrays' identities then differ as whole tuples even
+    though releasing one would still release a buffer the other still occupies.
+    """
+    return not set(buffer_identity(array=first)).isdisjoint(
+        buffer_identity(array=second)
+    )
+
+
 class BufferRegistry:
     """Record which artifact keys name which device buffer.
 
@@ -76,7 +89,8 @@ class BufferRegistry:
     The guards overlap deliberately: each is sound alone for the cases it sees,
     and none is trusted to see every case.
 
-    This is the one mutable engine-internal object: every other execution-side
+    The registry and the per-period transfer cache (`PeriodTransferCache`) are
+    the two mutable engine-internal objects: every other execution-side
     structure the solve loop threads is immutable and replaced, never written
     into in place.
     """
@@ -344,35 +358,87 @@ def replace_leaf_by_identity(*, tree: object, old: object, new: object) -> objec
 class PeriodTransferCache:
     """Copies of shared value transfers, held for one period and then dropped.
 
-    Keyed by the artifact and the required layout, which is what
-    `_consumer_key` counts, so two source cores asking for one artifact on one
-    layout receive one buffer. The loop creates one cache per period; dropping
-    it releases every copy.
-
-    A cached copy is a buffer the engine produced, not one the model owns, so
-    it may be registered with `BufferRegistry` and released like any other
-    engine-produced buffer — the registry's refusal to free a model-owned
-    buffer does not apply to it. A copy shared by several sources must not be
-    released before the last of them has dispatched; registering it once and
-    releasing it only once every consuming dispatch has committed would
-    enforce that directly, but holding the whole cache for the period and
-    dropping it only after every wave has dispatched enforces the same rule
-    without a separate per-consumer count.
+    Keyed by the artifact and the required layout, so several sources reading
+    one stored value onto one layout share the one copy made for it. A copy
+    that occupies no buffer of the stored artifact's is one the engine
+    produced, not one the model owns, so it is registered with the buffer
+    registry under one declared count per sharing source and released once
+    every sharing source's dispatch has committed (`commit_consumer`). A copy
+    that shares at least one buffer with the stored artifact — a `device_put`
+    the required layout already matched, or one that reused the stored buffer
+    for a shard of a wider replicated layout — is served from the cache but
+    never registered or released here: releasing it would release a buffer
+    the stored artifact still occupies.
     """
 
-    __slots__ = ("_arrays",)
+    __slots__ = ("_arrays", "_registered_keys", "_registry", "_remaining_consumers")
 
-    def __init__(self) -> None:
-        """Start with no cached copy."""
+    def __init__(
+        self,
+        *,
+        registry: BufferRegistry,
+        consumer_counts: Mapping[tuple[Hashable, Hashable], int],
+    ) -> None:
+        """Start with no cached copy and the period's declared consumer counts."""
         self._arrays: dict[tuple[Hashable, Hashable], jax.Array] = {}
+        self._registry = registry
+        self._remaining_consumers: dict[tuple[Hashable, Hashable], int] = dict(
+            consumer_counts
+        )
+        self._registered_keys: set[tuple[Hashable, Hashable]] = set()
 
     def get(self, *, transfer: ResolvedValueTransfer) -> jax.Array | None:
         """Return the copy made for the transfer's artifact and layout, if any."""
         return self._arrays.get((transfer.target, transfer.source_sharding))
 
-    def put(self, *, transfer: ResolvedValueTransfer, array: jax.Array) -> None:
-        """Record the copy made for the transfer's artifact and layout."""
-        self._arrays[(transfer.target, transfer.source_sharding)] = array
+    def put(
+        self, *, transfer: ResolvedValueTransfer, array: jax.Array, stored: jax.Array
+    ) -> None:
+        """Record the copy made for the transfer's artifact and layout.
+
+        Registers `array` with the buffer registry only when it occupies no
+        buffer of `stored`'s: a `device_put` that reused a stored buffer,
+        wholly or for one shard of a wider replicated layout, names no new
+        buffer for this cache to release.
+        """
+        key = (transfer.target, transfer.source_sharding)
+        self._arrays[key] = array
+        if shares_a_buffer(first=array, second=stored):
+            return
+        if key not in self._remaining_consumers:
+            msg = (
+                "A shared transfer copy was made for a key the period's "
+                f"declared consumer count never named: {key!r}."
+            )
+            raise ExecutionPlanningError(msg)
+        self._registry.register(array=array, artifact=("period-transfer-cache", key))
+        self._registered_keys.add(key)
+
+    def commit_consumer(self, *, key: tuple[Hashable, Hashable]) -> None:
+        """Record that one of `key`'s declared consuming dispatches has committed.
+
+        Deletes and forgets the registered buffer once every declared
+        consumer has committed. A key this period declared no consumers for,
+        or whose copy was never registered, is a no-op.
+        """
+        if key not in self._remaining_consumers:
+            return
+        remaining = self._remaining_consumers[key] - 1
+        if remaining < 0:
+            msg = (
+                f"Transfer cache key {key!r} committed by more consumers than "
+                "the period declared."
+            )
+            raise ExecutionPlanningError(msg)
+        self._remaining_consumers[key] = remaining
+        if remaining > 0 or key not in self._registered_keys:
+            return
+        array = self._arrays[key]
+        if array.is_deleted():
+            return
+        jax.block_until_ready(array)
+        self._registry.forget(array=array)
+        array.delete()
 
     def __len__(self) -> int:
         """Return the number of cached copies."""

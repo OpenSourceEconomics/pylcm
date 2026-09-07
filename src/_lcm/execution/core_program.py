@@ -850,7 +850,9 @@ def resolve_core_program(
     arguments. The engine supplies them as JAX static keyword arguments while retaining
     the raw core's identity, so equivalent solves reuse JAX's trace cache. A streamable
     axis requires an explicit planner choice; silently using its full extent would turn
-    a streaming declaration into full materialization.
+    a streaming declaration into full materialization. This runs once per program build,
+    before any period dispatch, so the input transfer plan it applies here takes no
+    `cache`: there is no per-period consumer to share a copy with yet.
     """
     _validate_core_program(program=program)
     requested_widths = {} if tile_widths is None else dict(tile_widths)

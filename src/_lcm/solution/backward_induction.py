@@ -430,7 +430,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         )
         period_pending_outputs: list[FloatND] = []
         period_release_candidates: dict[ValueArtifactAddress, _InputDispatch] = {}
-        period_transfer_cache = PeriodTransferCache()
 
         active_regimes = {
             regime_name: regime
@@ -442,6 +441,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             logger=logger,
             age=ages.values[period],
             n_active_regimes=len(active_regimes),
+        )
+
+        shared_transfer_counts, regime_shared_transfer_keys = (
+            _period_shared_transfer_plan(
+                compiled_cores_by_regime=MappingProxyType(
+                    {
+                        regime_name: compiled_functions[(regime_name, period)]
+                        for regime_name in active_regimes
+                    }
+                )
+            )
+        )
+        period_transfer_cache = PeriodTransferCache(
+            registry=buffer_registry, consumer_counts=shared_transfer_counts
         )
 
         # Regimes declaring `same_period_refs` read other regimes' V of
@@ -659,6 +672,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     )
                 )
             for unit in wave:
+                for key in regime_shared_transfer_keys.get(unit.regime, frozenset()):
+                    period_transfer_cache.commit_consumer(key=key)
                 for closed in input_liveness.commit_successful_dispatch(
                     dispatch=(period, unit.regime)
                 ):
@@ -1079,6 +1094,52 @@ def _cores_with_transfer_cache(
             core_key: dataclasses.replace(core, transfer_cache=cache)
             for core_key, core in cores.items()
         }
+    )
+
+
+def _period_shared_transfer_plan(
+    *, compiled_cores_by_regime: Mapping[RegimeName, MappingProxyType[str, PlannedCore]]
+) -> tuple[
+    MappingProxyType[tuple[Hashable, Hashable], int],
+    MappingProxyType[RegimeName, frozenset[tuple[Hashable, Hashable]]],
+]:
+    """Count, per shared transfer, how many of this period's regimes read it.
+
+    A regime dispatch commits once for every core it runs, so the count that
+    matters for release is per regime, not per core: two cores of one regime
+    reading a shared transfer still leave it needing only that regime's own
+    commit. An `ALIGNED_LOCAL` transfer names no copy for the cache to hold and
+    is excluded, whatever its `reused_by_several_consumers` mark.
+
+    Returns:
+        Tuple of the declared consumer count per shared-transfer key, and the
+        set of shared-transfer keys each regime's dispatch commits.
+
+    """
+    keys_by_regime: dict[RegimeName, set[tuple[Hashable, Hashable]]] = {}
+    for regime_name, cores in compiled_cores_by_regime.items():
+        regime_keys: set[tuple[Hashable, Hashable]] = set()
+        for core in cores.values():
+            for transfer in core.input_transfer_plan:
+                if (
+                    transfer.reused_by_several_consumers
+                    and transfer.kind is not ValueTransferKind.ALIGNED_LOCAL
+                ):
+                    regime_keys.add((transfer.target, transfer.source_sharding))
+        if regime_keys:
+            keys_by_regime[regime_name] = regime_keys
+    consumer_counts: dict[tuple[Hashable, Hashable], int] = {}
+    for regime_keys in keys_by_regime.values():
+        for key in regime_keys:
+            consumer_counts[key] = consumer_counts.get(key, 0) + 1
+    return (
+        MappingProxyType(consumer_counts),
+        MappingProxyType(
+            {
+                regime_name: frozenset(keys)
+                for regime_name, keys in keys_by_regime.items()
+            }
+        ),
     )
 
 

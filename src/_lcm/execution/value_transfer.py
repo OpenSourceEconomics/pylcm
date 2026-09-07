@@ -107,8 +107,14 @@ class TransferCache(Protocol):
         """Return the copy made for this transfer's artifact and layout, if any."""
         ...
 
-    def put(self, *, transfer: ResolvedValueTransfer, array: jax.Array) -> None:
-        """Record the copy made for this transfer's artifact and layout."""
+    def put(
+        self, *, transfer: ResolvedValueTransfer, array: jax.Array, stored: jax.Array
+    ) -> None:
+        """Record the copy made for this transfer's artifact and layout.
+
+        `stored` is the pre-transfer value, so an implementation can tell a
+        genuinely new buffer from one a `device_put` returned unchanged.
+        """
         ...
 
 
@@ -403,6 +409,9 @@ def apply_value_transfer_plan(
 
     With a `cache`, a transfer marked as reused by several consumers is
     executed once per cache lifetime and served from the cache afterwards.
+    An `ALIGNED_LOCAL` transfer's result is the stored value's own buffer, so
+    the cache serves it like any other but its `put` never registers it: the
+    buffer it names already belongs to the stored artifact.
 
     A source locator is the read's named argument, or ``channel.value`` when it
     names none, followed by ``path``. Each locator may occur once in a plan.
@@ -556,7 +565,10 @@ def _replace_transfer_leaf(
         if cached is not None and not cached.is_deleted():
             return cached
         copied = apply_value_transfer(value=node, transfer=transfer)
-        cache.put(transfer=transfer, array=copied)
+        if not isinstance(node, jax.Array):
+            msg = "A cached transfer's pre-transfer value must be a concrete JAX array."
+            raise TypeError(msg)
+        cache.put(transfer=transfer, array=copied, stored=node)
         return copied
     segment, *remaining = path
     rest = tuple(remaining)
