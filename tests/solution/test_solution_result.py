@@ -6,7 +6,7 @@ import inspect
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import cast
 
 import cloudpickle
@@ -92,21 +92,37 @@ class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
         raise self._error
 
 
-def test_solver_api_has_no_private_lcm_imports() -> None:
-    """An installed solver can import the result spine without importing `_lcm`."""
-    solver_api_module = inspect.getmodule(ArtifactKey)
-    assert solver_api_module is not None
-    module = ast.parse(inspect.getsource(solver_api_module))
-    imported = {
+def _imported_module_names(module: ModuleType) -> set[str]:
+    """Return every module name the given module's source imports."""
+    tree = ast.parse(inspect.getsource(module))
+    return {
         alias.name
-        for node in ast.walk(module)
+        for node in ast.walk(tree)
         if isinstance(node, ast.Import)
         for alias in node.names
     } | {
-        node.module or ""
-        for node in ast.walk(module)
-        if isinstance(node, ast.ImportFrom)
+        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
     }
+
+
+def _solver_api_modules() -> list[ModuleType]:
+    """Return the public facade and every module it re-exports from."""
+    facade = inspect.getmodule(solver_api_module.SolutionResult)
+    assert facade is not None
+    modules = {facade}
+    for name in dir(facade):
+        defining = inspect.getmodule(getattr(facade, name))
+        if defining is not None and defining.__name__.startswith("lcm._solver_api."):
+            modules.add(defining)
+    return sorted(modules, key=lambda module: module.__name__)
+
+
+@pytest.mark.parametrize(
+    "module", _solver_api_modules(), ids=lambda module: module.__name__
+)
+def test_solver_api_has_no_private_lcm_imports(*, module: ModuleType) -> None:
+    """An installed solver can import the result spine without importing `_lcm`."""
+    imported = _imported_module_names(module)
 
     assert not any(name == "_lcm" or name.startswith("_lcm.") for name in imported)
 
