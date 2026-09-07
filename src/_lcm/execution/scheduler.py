@@ -26,6 +26,7 @@ from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
 
 type BufferIdentity = tuple[tuple[int, int], ...]
+type ShardIdentity = tuple[int, int]
 
 
 def buffer_identity(*, array: jax.Array) -> BufferIdentity:
@@ -44,17 +45,21 @@ def buffer_identity(*, array: jax.Array) -> BufferIdentity:
     )
 
 
-def shares_a_buffer(*, first: jax.Array, second: jax.Array) -> bool:
-    """Report whether any device buffer of `first` is also occupied by `second`.
+def shard_identities(*, array: jax.Array) -> frozenset[ShardIdentity]:
+    """Return the array's device buffers as a set, one entry per addressable shard.
 
-    A `device_put` broadcasting a value onto a wider, replicated sharding can
+    The membership form of `buffer_identity`. Sharing is a per-shard question:
+    a `device_put` broadcasting a value onto a wider, replicated sharding can
     reuse the source's own buffer for one shard while allocating fresh buffers
-    for the rest: the two arrays' identities then differ as whole tuples even
+    for the rest, so the two arrays' identities differ as whole tuples even
     though releasing one would still release a buffer the other still occupies.
     """
-    return not set(buffer_identity(array=first)).isdisjoint(
-        buffer_identity(array=second)
-    )
+    return frozenset(buffer_identity(array=array))
+
+
+def shares_a_buffer(*, first: jax.Array, second: jax.Array) -> bool:
+    """Report whether any device buffer of `first` is also occupied by `second`."""
+    return not shard_identities(array=first).isdisjoint(shard_identities(array=second))
 
 
 class BufferRegistry:
@@ -89,51 +94,59 @@ class BufferRegistry:
     The guards overlap deliberately: each is sound alone for the cases it sees,
     and none is trusted to see every case.
 
+    All three answer per shard, never per whole array: an array is a buffer no
+    dispatch produced as soon as ANY of its shards is one, because deleting it
+    would free that shard along with the rest. A `device_put` onto a wider
+    replicated sharding is the case that makes the difference — it keeps the
+    source's own buffer for the shard the source already held and allocates the
+    others, so the two arrays' whole-array identities differ while one buffer
+    is common to both.
+
     The registry and the per-period transfer cache (`PeriodTransferCache`) are
     the two mutable engine-internal objects: every other execution-side
     structure the solve loop threads is immutable and replaced, never written
     into in place.
     """
 
-    __slots__ = ("_keys_by_buffer", "_unproduced_buffers")
+    __slots__ = ("_keys_by_buffer", "_unproduced_shards")
 
     def __init__(self) -> None:
         """Start with no registered buffer and no declared foreign buffer."""
         self._keys_by_buffer: dict[BufferIdentity, set[Hashable]] = {}
-        self._unproduced_buffers: set[BufferIdentity] = set()
+        self._unproduced_shards: set[ShardIdentity] = set()
 
     def declare_not_produced(self, *, tree: PyTree) -> None:
         """Mark every array leaf of `tree` as a buffer no dispatch produced.
 
         Takes the arrays the model holds for its whole life — its materialized
         grids, its per-period state axes and its parameter vector — and the
-        payloads the solve result retains.
+        payloads the solve result retains. Every shard of every leaf is marked,
+        so an array holding any one of them is covered too.
         """
         for leaf in jax.tree.leaves(tree):
             if isinstance(leaf, jax.Array) and not leaf.is_deleted():
-                self._unproduced_buffers.add(buffer_identity(array=leaf))
+                self._unproduced_shards |= shard_identities(array=leaf)
 
     def declare_passed_through(self, *, inputs: PyTree, outputs: PyTree) -> None:
         """Mark every output leaf whose buffer an input leaf already occupied.
 
-        One dispatch's inputs and its outputs. An output on an input's buffer
-        was passed through rather than computed, so this dispatch did not
-        produce it and no release may free it.
+        One dispatch's inputs and its outputs. An output holding any shard an
+        input already held was passed through rather than computed there, so
+        this dispatch did not produce it and no release may free it. The shards
+        it shares are the ones marked; a shard the dispatch really did allocate
+        stays its own.
         """
-        occupied = {
-            buffer_identity(array=leaf)
-            for leaf in jax.tree.leaves(inputs)
-            if isinstance(leaf, jax.Array) and not leaf.is_deleted()
-        }
+        occupied: set[ShardIdentity] = set()
+        for leaf in jax.tree.leaves(inputs):
+            if isinstance(leaf, jax.Array) and not leaf.is_deleted():
+                occupied |= shard_identities(array=leaf)
         for leaf in jax.tree.leaves(outputs):
             if isinstance(leaf, jax.Array) and not leaf.is_deleted():
-                identity = buffer_identity(array=leaf)
-                if identity in occupied:
-                    self._unproduced_buffers.add(identity)
+                self._unproduced_shards |= shard_identities(array=leaf) & occupied
 
     def is_not_produced(self, *, array: jax.Array) -> bool:
-        """Report whether no dispatch produced this array's buffer."""
-        return buffer_identity(array=array) in self._unproduced_buffers
+        """Report whether any shard of this array is a buffer no dispatch produced."""
+        return not shard_identities(array=array).isdisjoint(self._unproduced_shards)
 
     def register(self, *, array: jax.Array, artifact: Hashable) -> None:
         """Record that `artifact` names the buffer `array` occupies."""

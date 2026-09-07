@@ -17,6 +17,7 @@ from _lcm.execution.core_program import (
     core_program_graph,
     materialize_core_program,
 )
+from _lcm.execution.scheduler import BufferRegistry, shares_a_buffer
 from _lcm.execution.value_transfer import (
     ValueArtifactKind,
     ValueInputChannel,
@@ -1359,3 +1360,45 @@ def test_a_transfer_two_sources_share_is_copied_once_per_period(
     executed = _shared_transfer_executions(monkeypatch=monkeypatch)
 
     assert len(executed) == len(set(executed))
+
+
+def _single_device_value_and_wider_replicated_copy() -> tuple[jax.Array, jax.Array]:
+    """Return a one-device value and a replicated copy that reuses its buffer.
+
+    `device_put` onto a wider replicated sharding keeps the source's own device
+    buffer for the shard it already owns and allocates the rest, so the two
+    arrays share one buffer while their whole-array identities differ.
+    """
+    stored = jax.device_put(jnp.arange(8.0), jax.devices()[0])
+    wider = jax.device_put(
+        stored, NamedSharding(jax.make_mesh((4,), ("device",)), PartitionSpec())
+    )
+    return stored, wider
+
+
+@_skip_pytest_parallel
+def test_a_wider_replicated_copy_shares_a_buffer_with_its_source() -> None:
+    """A replicated copy still occupies the device buffer its source occupies."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+
+    assert shares_a_buffer(first=wider, second=stored)
+
+
+@_skip_pytest_parallel
+def test_a_wider_replicated_copy_of_a_declared_array_is_not_produced() -> None:
+    """Declaring an array also covers a wider copy that reused one of its shards."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    registry = BufferRegistry()
+    registry.declare_not_produced(tree=stored)
+
+    assert registry.is_not_produced(array=wider)
+
+
+@_skip_pytest_parallel
+def test_a_wider_replicated_output_of_a_declared_input_is_not_produced() -> None:
+    """An output reusing one shard of an input is not a buffer a dispatch produced."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    registry = BufferRegistry()
+    registry.declare_passed_through(inputs=stored, outputs=wider)
+
+    assert registry.is_not_produced(array=wider)
