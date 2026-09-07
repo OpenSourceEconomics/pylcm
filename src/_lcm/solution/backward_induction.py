@@ -40,6 +40,7 @@ from _lcm.execution.donation import (
     ResolvedDonation,
     resolve_donations,
     unit_input_readers,
+    withhold_shared_donations,
 )
 from _lcm.execution.footprint import (
     ArtifactFootprint,
@@ -3478,23 +3479,11 @@ def _resolve_output_layouts_and_lowering_keys(
         persistable_artifact_refs=persistable_artifact_refs,
     )
     n_periods = _model_n_periods(regimes=regimes)
-    # Donation consumes one executable input, so the decision needs the unit's
-    # read census next to the ledger's per-dispatch count. The representatives
-    # carry it: every core of the unit appears once, which is also how width
-    # alternatives of one core come to count as the one locator they declare.
-    unit_programs: dict[tuple[int, RegimeName], list[ResolvedCoreProgram]] = {}
-    for (regime_name, period, _core_key), resolved in representatives.items():
-        unit_programs.setdefault((period, regime_name), []).append(resolved)
-    readers_by_dispatch = {
-        dispatch: unit_input_readers(programs=programs)
-        for dispatch, programs in unit_programs.items()
-    }
-    donations = {
+    nominations = {
         candidate: (
             resolve_donations(
                 program=resolved,
                 dispatch=(candidate[0][1], candidate[0][0]),
-                unit_readers=readers_by_dispatch[(candidate[0][1], candidate[0][0])],
                 ledger=input_liveness,
                 n_periods=n_periods,
             )
@@ -3503,7 +3492,29 @@ def _resolve_output_layouts_and_lowering_keys(
         )
         for candidate, resolved in resolved_programs.items()
     }
-    _fail_if_a_unit_donates_one_artifact_twice(donations=donations)
+    # Two cores nominating one artifact is a declaration defect, so it is
+    # refused here, over the nominations: withholding one of them afterwards
+    # would resolve the competition instead of reporting it.
+    _fail_if_a_unit_donates_one_artifact_twice(donations=nominations)
+    # Donation consumes one executable input, so the surviving nominations need
+    # the unit's read census next to the ledger's per-dispatch count. The
+    # representatives carry it: every core of the unit appears once, and the
+    # declared reads a census counts do not vary with the width.
+    unit_programs: dict[tuple[int, RegimeName], list[ResolvedCoreProgram]] = {}
+    for (regime_name, period, _core_key), resolved in representatives.items():
+        unit_programs.setdefault((period, regime_name), []).append(resolved)
+    readers_by_dispatch = {
+        dispatch: unit_input_readers(programs=programs)
+        for dispatch, programs in unit_programs.items()
+    }
+    donations = {
+        candidate: withhold_shared_donations(
+            program=resolved_programs[candidate],
+            donations=decisions,
+            unit_readers=readers_by_dispatch[(candidate[0][1], candidate[0][0])],
+        )
+        for candidate, decisions in nominations.items()
+    }
     lowering_keys = _lowering_keys(
         resolved_programs=resolved_programs,
         internal_templates=internal_templates,

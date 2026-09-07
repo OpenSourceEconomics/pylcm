@@ -5,7 +5,14 @@ leaf — two arguments of one core, or a donor core beside a non-donating
 sibling. The unit is one consumer of that leaf, but the executable receives it
 as more than one argument, so an argument is donated only when it is the one
 declared locator of the whole unit for every artifact it carries. Width
-alternatives of one core repeat that core's locators and count once.
+alternatives of one core repeat that core's locators and count once. Two cores
+that each nominate the same artifact are a different matter: nobody can say
+which of them should keep it, so the plan is refused instead.
+
+The tests come in two layers, and only the first covers everything. The solves
+run the production route end to end, planner wiring included. The synthetic
+units below call the planner's stages directly on programs they construct, so
+they pin the decision but not the wiring that assembles the census for it.
 """
 
 import dataclasses
@@ -34,6 +41,7 @@ from _lcm.execution.donation import (
     ResolvedDonation,
     resolve_donations,
     unit_input_readers,
+    withhold_shared_donations,
 )
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.value_transfer import (
@@ -47,6 +55,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.kernel_output import ConsumedKernelOutput, KernelOutput
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey, ContinuationCapabilities
 from lcm.solvers import (
     ContinuationSpec,
@@ -203,6 +212,7 @@ class _LeafReadingSolver(Solver):
     arguments: tuple[str, ...] = ("count",)
     donation_candidates: tuple[str, ...] = ()
     sibling: bool = False
+    sibling_donates: bool = False
 
     @property
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
@@ -263,7 +273,7 @@ class _LeafReadingSolver(Solver):
         )
 
     def _sibling_program(self, *, period: int, template: _Counter) -> CoreProgram:
-        """Build the non-donating core reading the same leaf as the donor."""
+        """Build the second core of the unit, reading the same leaf as the first."""
         return CoreProgram(
             name="sibling",
             function=_sibling_sum,
@@ -282,6 +292,7 @@ class _LeafReadingSolver(Solver):
             output_roles=OutputRole.VALUE,
             disposition=PublicDisposition.DENSE,
             disposition_reason="one_row_per_state_node",
+            donation_candidates=("other",) if self.sibling_donates else (),
         )
 
 
@@ -314,6 +325,14 @@ class _SiblingSolver(_LeafReadingSolver):
     """The same two cores, with neither of them donating."""
 
     sibling = True
+
+
+class _TwoDonorSolver(_LeafReadingSolver):
+    """Two cores of one unit, each nominating its own read of the same leaf."""
+
+    donation_candidates = ("count",)
+    sibling = True
+    sibling_donates = True
 
 
 def _solve(*, solver: Solver) -> object:
@@ -382,6 +401,12 @@ def test_a_donor_core_beside_a_sibling_reading_one_leaf_publishes_the_plain_valu
     donating, plain = sibling_values
 
     np.testing.assert_array_equal(donating[period], plain[period])
+
+
+def test_two_cores_of_one_unit_nominating_one_leaf_are_refused() -> None:
+    """A plan handing one buffer to two cores is named and stopped before lowering."""
+    with pytest.raises(ExecutionPlanningError, match=r"leaf_path=\('count',\)"):
+        _solve(solver=_TwoDonorSolver())
 
 
 def _reads_deleted_at_dispatch(
@@ -564,16 +589,31 @@ def _decide(
         for other in cores
         for width in widths
     ]
-    return resolve_donations(
-        program=next(
-            program
-            for program in programs
-            if program.name == core and program.donation_candidates
+    nominated = next(
+        program
+        for program in programs
+        if program.name == core and program.donation_candidates
+    )
+    # The census is assembled the way the planner assembles it: the unit's
+    # programs are grouped under their dispatch and censused as a group.
+    by_dispatch: dict[tuple[int, str], list[ResolvedCoreProgram]] = {}
+    for program in programs:
+        by_dispatch.setdefault((_PERIOD, _REGIME), []).append(program)
+    readers_by_dispatch = {
+        dispatch: unit_input_readers(programs=group)
+        for dispatch, group in by_dispatch.items()
+    }
+    return withhold_shared_donations(
+        program=nominated,
+        donations=resolve_donations(
+            program=nominated,
+            dispatch=(_PERIOD, _REGIME),
+            ledger=_synthetic_ledger(
+                labels=frozenset(entry[2] for entry in occurrences)
+            ),
+            n_periods=_N_SOLVE_PERIODS,
         ),
-        dispatch=(_PERIOD, _REGIME),
-        unit_readers=unit_input_readers(programs=programs),
-        ledger=_synthetic_ledger(labels=frozenset(entry[2] for entry in occurrences)),
-        n_periods=_N_SOLVE_PERIODS,
+        unit_readers=readers_by_dispatch[(_PERIOD, _REGIME)],
     )
 
 

@@ -11,9 +11,23 @@ layout rather than as a transferred copy.
 The ledger counts a dispatch once however many of its programs and arguments
 read one artifact, so it answers which dispatch is the last consumer but not
 how many executable inputs that dispatch feeds the buffer to. Donation is an
-argument-level act, so the resolver asks the second question of the unit's
-read census instead: an argument is donated only when it is the one declared
-input locator of the whole unit aimed at every artifact it carries.
+argument-level act, so the unit's read census answers the second question: an
+argument is handed over only when it is the one declared input locator of the
+whole unit aimed at every artifact it carries.
+
+The two questions are asked in a fixed order, because they judge different
+things and the planner owes a different answer to each:
+
+- `resolve_donations` **nominates**: every candidate the ledger says this
+  dispatch may hand over.
+- The planner then **refuses** a unit whose programs nominate one artifact
+  twice. Two cores competing for one buffer is a declaration defect, and the
+  solve stops on it rather than quietly resolving it.
+- `withhold_shared_donations` then **withholds** every surviving nomination a
+  second locator of the unit still reads. This is not a defect — a program may
+  legitimately read one artifact through two arguments — so the donation is
+  simply not made.
+- What remains is **donated**.
 """
 
 import dataclasses
@@ -75,7 +89,9 @@ def unit_input_readers(
     contribute one.
 
     Args:
-        programs: The resolved programs of one dispatch unit, one per core.
+        programs: The resolved programs of one dispatch unit. Passing several
+            width candidates of one core changes nothing: a locator repeated
+            across them lands in the same set once.
 
     Returns:
         Immutable mapping of artifact address to the distinct locators of that
@@ -95,24 +111,25 @@ def resolve_donations(
     *,
     program: ResolvedCoreProgram,
     dispatch: Hashable,
-    unit_readers: Mapping[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
     ledger: PlannedInputLiveness,
     n_periods: int,
 ) -> tuple[ResolvedDonation, ...]:
-    """Decide, per candidate argument, whether this dispatch donates it.
+    """Nominate, per candidate argument, what the ledger lets this dispatch donate.
+
+    This is the first of the module's four stages: what it returns is what the
+    dispatch may hand over as far as the ledger can tell, which the planner
+    then screens for a doubly nominated artifact and passes through
+    `withhold_shared_donations` before anything is lowered.
 
     A candidate no declared read addresses by name is left alone: the engine
     cannot say what buffer it carries. A read whose artifact lies beyond the
     last period names the solve-lifetime template, which is never donated, and
     one the ledger never registered is outside the plan, where only membership
-    and sole-consumer questions have an answer at all. An artifact a second
-    locator of the unit also reads is recorded with that locator and left
-    undonated, because the executable still reads the buffer through it.
+    and sole-consumer questions have an answer at all.
 
     Args:
-        program: The resolved program whose candidates are decided.
+        program: The resolved program whose candidates are nominated.
         dispatch: The `(period, regime)` unit this program belongs to.
-        unit_readers: `unit_input_readers` over every program of that unit.
         ledger: The planned remaining-consumer accounting of the solve.
         n_periods: Number of periods the solve runs.
 
@@ -161,11 +178,6 @@ def resolve_donations(
                     argument=argument,
                     artifacts=artifacts,
                     buffer=DonatedBuffer.STORED_ARTIFACT,
-                    withheld_by=_second_locator(
-                        artifacts=artifacts,
-                        declared=frozenset(read.source for read in reads),
-                        unit_readers=unit_readers,
-                    ),
                 )
             )
     return tuple(donations)
@@ -194,6 +206,51 @@ def _is_donatable(
     )
 
 
+def withhold_shared_donations(
+    *,
+    program: ResolvedCoreProgram,
+    donations: tuple[ResolvedDonation, ...],
+    unit_readers: Mapping[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
+) -> tuple[ResolvedDonation, ...]:
+    """Withhold every nomination a second locator of the unit still reads.
+
+    A nomination the ledger approved says only that this dispatch is the
+    artifact's last consumer. The executable receives the buffer once per
+    declared input locator, so a nomination whose artifact another locator of
+    the unit also names records that locator and is not handed over. The
+    decision keeps its buffer: withholding is not a transfer, and the argument
+    still reaches the artifact's own array.
+
+    Args:
+        program: The resolved program whose nominations are screened.
+        donations: That program's nominations, as `resolve_donations` returned
+            them.
+        unit_readers: `unit_input_readers` over every program of that unit.
+
+    Returns:
+        Tuple of one decision per nomination, in the order given.
+
+    """
+    return tuple(
+        dataclasses.replace(
+            donation,
+            withheld_by=_second_locator(
+                artifacts=donation.artifacts,
+                declared=frozenset(
+                    read.source
+                    for read in program.requirements.value_reads
+                    if read.source.argument == donation.argument
+                    and read.source.path == ()
+                ),
+                unit_readers=unit_readers,
+            ),
+        )
+        if donation.donated
+        else donation
+        for donation in donations
+    )
+
+
 def _second_locator(
     *,
     artifacts: tuple[ValueArtifactAddress, ...],
@@ -204,16 +261,13 @@ def _second_locator(
 
     `None` says the argument is the unit's one declared input locator for every
     artifact it carries, which is what makes handing the buffer over safe. The
-    locators are ordered by their representation so a plan names the same one
+    smallest locator by representation is named, so a plan reports the same one
     whichever order the programs of the unit were resolved in.
     """
-    others = sorted(
-        {
-            locator
-            for artifact in artifacts
-            for locator in unit_readers.get(artifact, frozenset())
-            if locator not in declared
-        },
-        key=repr,
-    )
-    return others[0] if others else None
+    others = {
+        locator
+        for artifact in artifacts
+        for locator in unit_readers.get(artifact, frozenset())
+        if locator not in declared
+    }
+    return min(others, key=repr) if others else None
