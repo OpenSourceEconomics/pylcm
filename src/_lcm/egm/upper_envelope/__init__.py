@@ -188,7 +188,11 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
         return functools.partial(_ltm_bracket_finder, n_refined=n_refined)
 
     if isinstance(solver.envelope, MSSEnvelope):
-        return functools.partial(_mss_bracket_finder, n_refined=n_refined)
+        return functools.partial(
+            _mss_bracket_finder,
+            n_refined=n_refined,
+            arithmetic=solver.envelope.arithmetic,
+        )
 
     if isinstance(solver.envelope, ExactEnvelope):
         return functools.partial(
@@ -452,6 +456,7 @@ def _mss_bracket_finder(
     savings: Float1D,
     x_query: ScalarFloat,
     n_refined: int,
+    arithmetic: ComparisonArithmetic,
 ) -> QueryBracket:
     """Locate the query bracket from MSS's full refined envelope.
 
@@ -469,6 +474,7 @@ def _mss_bracket_finder(
         policy=policy,
         value=value,
         n_refined=n_refined,
+        arithmetic=arithmetic,
     )
     return _bracket_from_refined_row(
         refined_grid=refined_grid,

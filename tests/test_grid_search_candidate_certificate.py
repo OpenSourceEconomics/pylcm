@@ -493,7 +493,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/simulation/transitions.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/compile.py"), ast.Module)
     assert isinstance(_parse("src/lcm/model.py"), ast.Module)
-    assert isinstance(_parse("src/lcm/solver_api.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/_solver_api/replay.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/backward_induction.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/initial_conditions.py"), ast.Module)
     assert isinstance(_parse("src/lcm/result.py"), ast.Module)

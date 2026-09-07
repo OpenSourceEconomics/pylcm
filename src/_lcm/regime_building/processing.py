@@ -170,7 +170,10 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
 )
-from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
+from _lcm.solution.shipped_solvers import (
+    fail_if_replay_is_undeclared,
+    fail_if_solver_is_not_shipped,
+)
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_plans import (
     InterpolationBasisInfo,
@@ -230,6 +233,7 @@ from lcm.solver_api import (
     ArtifactKey,
     ContinuationCapabilities,
     ContinuationReader,
+    DeclaredReplay,
     ExecutableReplayRoute,
     KernelOutput,
 )
@@ -1015,6 +1019,7 @@ class _CanonicalRegimeBuilder:
                     solution.has_compiled_constraint_boundaries
                 ),
                 external_replay_route=solution.external_replay_route,
+                replay_unsupported=solution.replay_unsupported,
                 has_taste_shocks=user_regime.taste_shocks is not None,
                 solver=user_regime.solver,
                 certainty_equivalent=user_regime.certainty_equivalent,
@@ -3308,6 +3313,17 @@ def _build_solution_phase(
     )
     solver.validate_build(context=context)
     solver_kernels = solver.build_period_kernels(context=context)
+    fail_if_replay_is_undeclared(
+        solver=solver,
+        replay_route=solver_kernels.replay_route,
+        regime_name=regime_name,
+    )
+    # A declared recomputation or refusal is an engine route, not a plugin one.
+    external_replay_route = (
+        None
+        if isinstance(solver_kernels.replay_route, DeclaredReplay)
+        else solver_kernels.replay_route
+    )
 
     # The terminal continuation publisher is a cross-solver concern, not the
     # grid search's: a terminal regime a DC-EGM regime transitions into must
@@ -3399,7 +3415,8 @@ def _build_solution_phase(
         validation_regime_transition_probs=validation_regime_transition_probs,
         compute_intermediates=compute_intermediates,
         continuation_spec=continuation_spec,
-        external_replay_route=solver_kernels.replay_route,
+        external_replay_route=external_replay_route,
+        replay_unsupported=solver_kernels.replay_route is DeclaredReplay.UNSUPPORTED,
         artifact_authorities=MappingProxyType(
             dict(solver_kernels.artifact_authorities)
         ),
@@ -3959,6 +3976,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     solve_has_compiled_constraint_boundaries: bool,
     external_replay_route: ExecutableReplayRoute | None,
+    replay_unsupported: bool,
     has_taste_shocks: bool,
     solver: Solver,
     certainty_equivalent: CertaintyEquivalent | None,
@@ -4558,6 +4576,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         next_state=next_state,
         egm_policy_read=egm_policy_read,
         external_replay_route=external_replay_route,
+        replay_unsupported=replay_unsupported,
     )
 
 

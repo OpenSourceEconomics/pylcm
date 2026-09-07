@@ -56,6 +56,7 @@ class SimulationResult:
         self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._subject_batch_size = subject_batch_size
+        self._solution: object | None = None
         self._metadata = _compute_metadata(
             regimes=regimes,
             raw_results=raw_results,
@@ -90,6 +91,17 @@ class SimulationResult:
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Value function arrays from the solution."""
         return self._period_to_regime_to_V_arr
+
+    @property
+    def solution(self) -> object | None:
+        """The complete `SolutionResult` this simulation replayed.
+
+        The result `Model.simulate` consumed, whether the caller passed it or
+        the automatic solve produced it, so the values, replay artifacts, and
+        metadata behind a simulation stay reachable from it. `None` once the
+        result has been saved, and for a result read back with `load`.
+        """
+        return self._solution
 
     @property
     def regime_names(self) -> list[RegimeName]:
@@ -259,6 +271,7 @@ class SimulationResult:
             output_dir=target / "V_arr",
         )
         self._period_to_regime_to_V_arr = MappingProxyType({})
+        self._solution = None
         gc.collect()
 
         # Snapshot metadata while `self._regimes` is still populated;
@@ -375,6 +388,7 @@ class SimulationResult:
         instance._metadata = metadata.result_metadata  # noqa: SLF001
         instance._available_targets = metadata.available_targets  # noqa: SLF001
         instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
+        instance._solution = None  # noqa: SLF001
         return instance
 
     def __repr__(self) -> str:

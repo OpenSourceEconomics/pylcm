@@ -1,7 +1,8 @@
 """Nested solver builds see only the periods in their resolved group."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cache
+from typing import ClassVar
 
 import pytest
 
@@ -27,9 +28,14 @@ def _resources(liquid: ContinuousState) -> FloatND:
 
 @dataclass(frozen=True, kw_only=True)
 class _ContextRecordingGridSearch(GridSearch):
-    """Record a real finalized solver context before delegating its build."""
+    """Record a real finalized solver context before delegating its build.
 
-    contexts: list[SolverBuildContext] = field(default_factory=list)
+    The recorder is class state rather than a declared field: a solver's declared
+    fields enter the model's durable identity, and a build context is not a
+    declaration.
+    """
+
+    contexts: ClassVar[list[SolverBuildContext]] = []
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Capture the build context and retain ordinary GridSearch construction."""

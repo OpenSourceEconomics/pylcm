@@ -9,6 +9,7 @@ from tests.conformance_solver.solver import (
     Policy,
     ReferenceReplayRoute,
     ReferenceSolver,
+    TargetValueSolver,
     TerminalCounterSolver,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "Policy",
     "ReferenceReplayRoute",
     "ReferenceSolver",
+    "TargetValueSolver",
     "TerminalCounterSolver",
 ]

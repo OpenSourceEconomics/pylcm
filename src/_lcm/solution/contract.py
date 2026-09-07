@@ -86,6 +86,7 @@ from lcm.solver_api import (
     ArtifactKey,
     ArtifactStore,
     ContinuationCapabilities,
+    DeclaredReplay,
     ExecutableReplayRoute,
     KernelOutput,
     SolverIdentity,
@@ -656,8 +657,20 @@ class SolutionKernels:
     whose scope is decided by structure alone.
     """
 
-    replay_route: ExecutableReplayRoute | None = None
-    """External executable replay route, or ``None`` for an engine adapter."""
+    replay_route: ExecutableReplayRoute | DeclaredReplay | None = None
+    """How simulation obtains this solver's decision from a stored solution.
+
+    A shipped solver leaves this `None`: the engine reads its decision through
+    its own replay adapters. An external solver must declare one of:
+
+    - an `ExecutableReplayRoute` that reads the payload it retained;
+    - `DeclaredReplay.GRID_RECOMPUTATION`, when its decision is exactly the
+      argmax over the declared action grids that simulation recomputes;
+    - `DeclaredReplay.UNSUPPORTED`, when its decision cannot be reproduced and
+      simulating the regime must be refused.
+
+    An external solver that declares nothing is refused when the model is built.
+    """
 
     artifact_authorities: Mapping[ArtifactKey, ArtifactAuthority] = MappingProxyType({})
     """Model-derived contracts for custom retained artifacts."""

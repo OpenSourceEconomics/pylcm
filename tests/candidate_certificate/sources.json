@@ -190,7 +190,7 @@
           },
           {
             "path": "src/_lcm/utils/dispatchers.py",
-            "sha256": "fe33c1a75cac74ffdad799c5efacf0f2f8cb151be89dc57903a26d6b6e31ffa6"
+            "sha256": "9f01e203b712662b4e4f83e928ad8853988c978b594de15d2685b187851eefb6"
           },
           {
             "path": "src/_lcm/utils/functools.py",
@@ -207,6 +207,10 @@
           {
             "path": "src/_lcm/zero_safe.py",
             "sha256": "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33"
+          },
+          {
+            "path": "src/lcm/_solver_api/replay.py",
+            "sha256": "9510e42ecd609cce785539934ea214e0fec952794c5c6d904924f1a8936ea901"
           },
           {
             "path": "src/lcm/model.py",
@@ -412,7 +416,7 @@
           },
           {
             "path": "src/_lcm/utils/dispatchers.py",
-            "sha256": "fe33c1a75cac74ffdad799c5efacf0f2f8cb151be89dc57903a26d6b6e31ffa6"
+            "sha256": "9f01e203b712662b4e4f83e928ad8853988c978b594de15d2685b187851eefb6"
           },
           {
             "path": "src/_lcm/utils/functools.py",
@@ -429,6 +433,10 @@
           {
             "path": "src/_lcm/zero_safe.py",
             "sha256": "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33"
+          },
+          {
+            "path": "src/lcm/_solver_api/replay.py",
+            "sha256": "9510e42ecd609cce785539934ea214e0fec952794c5c6d904924f1a8936ea901"
           },
           {
             "path": "src/lcm/model.py",
@@ -638,7 +646,7 @@
     },
     {
       "path": "src/_lcm/utils/dispatchers.py",
-      "sha256": "fe33c1a75cac74ffdad799c5efacf0f2f8cb151be89dc57903a26d6b6e31ffa6"
+      "sha256": "9f01e203b712662b4e4f83e928ad8853988c978b594de15d2685b187851eefb6"
     },
     {
       "path": "src/_lcm/utils/functools.py",
@@ -655,6 +663,10 @@
     {
       "path": "src/_lcm/zero_safe.py",
       "sha256": "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33"
+    },
+    {
+      "path": "src/lcm/_solver_api/replay.py",
+      "sha256": "9510e42ecd609cce785539934ea214e0fec952794c5c6d904924f1a8936ea901"
     },
     {
       "path": "src/lcm/model.py",

@@ -22,7 +22,11 @@ import numpy as np
 import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, Regime, categorical
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import (
+    ModelInitializationError,
+    RegimeInitializationError,
+    UnsupportedOperationError,
+)
 from lcm.solver_api import (
     EGM_CONTINUATION,
     EGM_ENDOGENOUS_COORDINATE,
@@ -43,6 +47,7 @@ from lcm.solvers import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    DeclaredReplay,
     FiniteOuterGrid,
     OutputRole,
     SolutionKernels,
@@ -51,6 +56,7 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import (
+    ContinuousAction,
     ContinuousState,
     Float1D,
     FloatND,
@@ -159,7 +165,10 @@ class WealthSolver(Solver):
             period: _GraphKernel(programs=MappingProxyType({"main": program}))
             for period in context.regimes_to_active_periods[context.regime_name]
         }
-        return SolutionKernels(period_kernels=MappingProxyType(kernels))
+        return SolutionKernels(
+            period_kernels=MappingProxyType(kernels),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
+        )
 
 
 def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
@@ -297,6 +306,7 @@ class _CountingSolver(Solver):
             continuation_spec=ContinuationSpec(
                 template=_Counter(count=jnp.zeros(())), artifact_key=_COUNTER
             ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
         )
 
 
@@ -505,6 +515,7 @@ class _MislabellingSolver(Solver):
             continuation_spec=ContinuationSpec(
                 template=_Counter(count=jnp.zeros(())), artifact_key=_COUNTER
             ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
         )
 
 
@@ -641,3 +652,114 @@ def test_a_payload_that_is_not_a_reader_is_refused_at_model_build() -> None:
     """A continuation the engine cannot query is named at build, not at solve."""
     with pytest.raises(RegimeInitializationError, match="continuation reader"):
         _continuation_target_model(target_solver=_OpaqueSolver())
+
+
+class _UndeclaredReplaySolver(WealthSolver):
+    """Publishes values but says nothing about how simulation reads its decision."""
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        kernels = super().build_period_kernels(context=context)
+        return SolutionKernels(period_kernels=kernels.period_kernels)
+
+
+def test_an_external_solver_declaring_no_replay_route_is_refused_at_build():
+    """Silence about replay is a build error naming the regime and the solver."""
+    with pytest.raises(ModelInitializationError) as excinfo:
+        _two_regime_model(solver=_UndeclaredReplaySolver())
+    message = str(excinfo.value)
+    assert "'alive'" in message
+    assert "_UndeclaredReplaySolver" in message
+    assert "replay_route" in message
+
+
+def _die_at_the_end(age: ScalarFloat) -> ScalarInt:
+    """Stay alive until the last period, then die into the terminal regime."""
+    return jnp.where(age < _N_PERIODS - 2, RegimeId.alive, RegimeId.dead)
+
+
+def _choice_utility(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
+    """Strictly decreasing in consumption, so the grid argmax is its lowest node."""
+    return wealth - consumption
+
+
+_CONSUMPTION = LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
+
+
+def _choice_model(*, solver: Solver) -> Model:
+    return Model(
+        regimes={
+            "alive": Regime(
+                transition=_die_at_the_end,
+                active=lambda age: age < _N_PERIODS - 1,
+                states={"wealth": _WEALTH},
+                actions={"consumption": _CONSUMPTION},
+                state_transitions={"wealth": next_wealth},
+                functions={"utility": _choice_utility},
+                solver=solver,
+            ),
+            "dead": Regime(
+                transition=None,
+                states={"wealth": _WEALTH},
+                functions={"utility": lambda wealth: 0.0 * wealth},
+            ),
+        },
+        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def test_grid_recomputation_replay_takes_the_argmax_over_the_declared_action_grid():
+    """A `GRID_RECOMPUTATION` solver's simulated action is the grid argmax."""
+    result = _choice_model(solver=WealthSolver()).simulate(
+        params={"discount_factor": 1.0},
+        initial_conditions={
+            "wealth": jnp.asarray([1.0, 3.0]),
+            "age": jnp.zeros(2),
+            "regime_id": jnp.asarray([RegimeId.alive, RegimeId.alive]),
+        },
+        log_level="off",
+    )
+    alive_rows = result.to_dataframe().query("regime_name == 'alive'")
+    assert len(alive_rows) == 2 * (_N_PERIODS - 1)
+    np.testing.assert_array_equal(
+        alive_rows["consumption"].to_numpy(), np.zeros(2 * (_N_PERIODS - 1))
+    )
+
+
+class _UnsupportedReplaySolver(WealthSolver):
+    """Declares that its solved decision cannot be reproduced in simulation."""
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        kernels = super().build_period_kernels(context=context)
+        return SolutionKernels(
+            period_kernels=kernels.period_kernels,
+            replay_route=DeclaredReplay.UNSUPPORTED,
+        )
+
+
+def test_a_solver_declaring_unsupported_replay_solves_but_refuses_to_simulate():
+    """`UNSUPPORTED` keeps the solve and refuses simulation before any forward step."""
+    model = _choice_model(solver=_UnsupportedReplaySolver())
+    assert model._regimes["alive"].simulation.replay_route.replay_mode is (
+        ReplayMode.UNSUPPORTED
+    )
+    solution = model.solve(params={"discount_factor": 1.0}, log_level="off")
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[0]["alive"]), np.asarray(_WEALTH.to_jax())
+    )
+    with pytest.raises(UnsupportedOperationError) as excinfo:
+        model.simulate(
+            params={"discount_factor": 1.0},
+            initial_conditions={
+                "wealth": jnp.asarray([1.0, 3.0]),
+                "age": jnp.zeros(2),
+                "regime_id": jnp.asarray([RegimeId.alive, RegimeId.alive]),
+            },
+            solution=solution,
+            log_level="off",
+        )
+    message = str(excinfo.value)
+    assert "'alive'" in message
+    assert "_UnsupportedReplaySolver" in message

@@ -314,6 +314,17 @@ class _ProductMapBatched:
     batch_sizes: MappingProxyType[str, int]
     """The `jax.lax.map` batch size per product axis, `0` for one vectorized pass."""
 
+    def __post_init__(self) -> None:
+        # Instrumentation such as `jax.named_call` reads a callable's name, so the
+        # product map publishes the name of the function it evaluates, the way
+        # `functools.wraps` would; the adapter wrapped around it copies it on.
+        for attribute in ("__name__", "__qualname__"):
+            object.__setattr__(
+                self,
+                attribute,
+                getattr(self.func, attribute, type(self).__qualname__),
+            )
+
     def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
         non_array_kwargs = {
             key: val for key, val in kwargs.items() if key not in self.product_axes

@@ -46,6 +46,16 @@ class InvalidSimulationInputError(PyLCMError):
     """
 
 
+class ModelSealError(PyLCMError):
+    """Raised when a name one of the model's callables reads was rebound after build.
+
+    A model captures its callables and the globals and closure cells they read
+    when it is built; its durable identity describes that captured code. A solve
+    or simulation refuses to run against a rebinding rather than produce a
+    result the identity would accept for the wrong model.
+    """
+
+
 class SolutionIntegrityError(PyLCMError):
     """Raised when a persisted solution archive fails an integrity check."""
 

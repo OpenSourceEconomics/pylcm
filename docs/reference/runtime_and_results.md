@@ -222,11 +222,15 @@ rebuilds immutable authority from the canonical model, canonical parameters, and
 installed consuming route, then checks values, repeated metadata, and materialized
 artifacts independently.
 
-Solver diagnostics follow `log_level`, independently of retention. A continuation is
-always available to the backward graph that requires it, regardless of result retention.
-It remains in the returned result only under `ALL_PERSISTABLE_ARTIFACTS` and only when
-its model-built authority declares `MODEL_VERIFIABLE`; otherwise the result records
-`NOT_REQUESTED` or `NOT_PERSISTED`.
+Solver diagnostics follow `log_level`, independently of retention. Each retained
+diagnostics payload is described by a model-verifiable descriptor the solve generates
+from the payload itself, so it is saved with the result and reads back from an archive
+without a model; a consuming model admits the descriptor after checking that it names
+only the published fields with the dtypes they carry. A continuation is always available
+to the backward graph that requires it, regardless of result retention. It remains in
+the returned result only under `ALL_PERSISTABLE_ARTIFACTS` and only when its model-built
+authority declares `MODEL_VERIFIABLE`; otherwise the result records `NOT_REQUESTED` or
+`NOT_PERSISTED`.
 
 A retention also selects what a solve computes. Every built-in kernel publishes its
 programs with a scope and, for replay or additive artifact programs, exact
@@ -270,21 +274,25 @@ can be simulated.
 
 `ALL_PERSISTABLE_ARTIFACTS` keeps only artifacts whose model-built authority declares
 `PersistencePolicy.MODEL_VERIFIABLE`. The `NNBEGM` replay policy of an
-`AdaptiveOuterMesh` search is replayed against the exact mesh the solve generated, a
-fact the solving model instance holds privately beside the result rather than inside it;
-that policy is retained under `VALUES_AND_REPLAY` and omitted as `NOT_PERSISTED` under
-`ALL_PERSISTABLE_ARTIFACTS`. Simulating from such a result is refused before forward
-execution with the omission reason named. The finite candidate bank of a
-`FiniteOuterGrid` search is self-contained and retained under both modes; it can
-therefore be written to the complete archive. A built-in `EGMCarry` continuation is also
-model-verifiable and is retained only by `ALL_PERSISTABLE_ARTIFACTS`, making that mode
-strictly broader than replay-only retention for an EGM regime.
+`AdaptiveOuterMesh` search is replayed against the exact mesh the solve generated. Those
+nodes are solution-owned data: the result carries them as the candidate axis of the
+policy's descriptor, and a consuming model admits them after checking what a shared mesh
+must satisfy (exact finite floats, strictly increasing, within the search's node budget
+and the outer state's domain for that period) before it compares the rest of the
+descriptor against its own authority. The adaptive policy and the finite candidate bank
+of a `FiniteOuterGrid` search are therefore both retained under both modes and written
+to the complete archive. A built-in `EGMCarry` continuation is also model-verifiable and
+is retained only by `ALL_PERSISTABLE_ARTIFACTS`, making that mode strictly broader than
+replay-only retention for an EGM regime.
 
 `save_solution(solution=..., path=...)` atomically writes the complete labelled result
 to a versioned archive; `solution.save(path=...)` is the equivalent convenience method.
 The archive contains JSON metadata and independently addressed numerical datasets with
 SHA-256 checksums. It contains no model, Python class, callable, pickle, or executable
-code. See [Standalone persistence](#api-standalone-persistence) for loading and version
+code. A result restored by `load_solution` can be saved again: its payloads are re-read
+from the archive it came from, verified against their checksums and descriptors, and
+written to the new archive without a model. See
+[Standalone persistence](#api-standalone-persistence) for loading and version
 compatibility.
 
 ## Simulation
@@ -294,13 +302,32 @@ compatibility.
 solves first. Bare value mappings and separate policy or dissolution-flag inputs are not
 accepted.
 
-Before consuming a `SolutionResult`, simulation checks its durable model and
+How a `SolutionResult` is consumed follows its provenance. A result the same model
+instance solved in this process, for the same canonical parameters, is consumed by
+reference: the engine reads the arrays the solve allocated without copying or
+re-validating them, and only checks the replay payloads and dissolution flags it is
+about to read. Every other result — restored from an archive, unpickled, or produced by
+another model instance — is validated in full and materialized into private buffers once
+per consuming model and parameter vector; a second simulation from the same result
+reuses that validated view. The consumed result stays reachable as
+`SimulationResult.solution` until the simulation result is saved.
+
+Before consuming such a result, simulation checks its durable model and
 solution-parameter fingerprints, exact solver/plugin and replay-route identities, schema
 versions, period count, regime order, solver types, and exact active period/regime value
 coverage. An in-memory result additionally has to come from that model instance. It
 unconditionally checks every required value and its descriptive schema independently
 against the model-owned shape, canonical dtype, and named axes, including at
 `log_level="off"`.
+
+The model's side of that identity is fixed when the model is built. `Model(...)` digests
+the structure once — topology, names, identities, and every declared callable's
+semantics — and records each global and closure binding those callables read. Rebinding
+one of them afterwards, for instance by reassigning a module-level parameter a utility
+function closes over, would make the model run code its identity no longer describes, so
+`solve()` and `simulate()` refuse with `ModelSealError` naming the binding. Build a new
+model instead. A pickled model is resealed against its stored identity when it is
+loaded.
 
 All artifact stores and omission records must address active result cells with the exact
 key version and channel; one reference cannot appear in multiple stores or be both

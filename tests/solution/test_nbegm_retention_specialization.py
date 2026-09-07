@@ -125,15 +125,13 @@ def test_a_nested_replay_solve_runs_replay_alone(
     assert set(recorded) == {("replay",)}
 
 
-@pytest.mark.parametrize(
-    ("route", "expected_program"), [("finite", "replay"), ("adaptive", "main")]
-)
-def test_all_persistable_dispatches_only_model_verifiable_replay(
+@pytest.mark.parametrize("route", ["finite", "adaptive"])
+def test_all_persistable_dispatches_the_replay_program(
     *,
     route: str,
-    expected_program: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Both nested routes publish a model-verifiable policy, so both run replay."""
     recorded = _record_dispatched_programs(monkeypatch)
     model, params = _nested(route)
 
@@ -144,7 +142,7 @@ def test_all_persistable_dispatches_only_model_verifiable_replay(
     )
 
     assert recorded
-    assert set(recorded) == {(expected_program,)}
+    assert set(recorded) == {("replay",)}
 
 
 @pytest.mark.parametrize("route", list(_MODELS))

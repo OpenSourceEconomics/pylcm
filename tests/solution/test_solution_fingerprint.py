@@ -903,17 +903,65 @@ def test_execution_field_exclusion_ignores_module_rebinding(*, monkeypatch) -> N
     assert left != right
 
 
-def test_phased_fingerprint_binds_solve_but_not_simulate_truth() -> None:
+def test_phased_fingerprint_binds_both_phases() -> None:
+    """A bare `Phased` value is identified by both of its members."""
     baseline = Phased(solve=_solve_law, simulate=_truth_law_a)
     new_truth = Phased(solve=_solve_law, simulate=_truth_law_b)
     new_belief = Phased(solve=_other_solve_law, simulate=_truth_law_a)
 
     assert fingerprints._semantic_fingerprint(
         baseline
-    ) == fingerprints._semantic_fingerprint(new_truth)
+    ) != fingerprints._semantic_fingerprint(new_truth)
     assert fingerprints._semantic_fingerprint(
         baseline
     ) != fingerprints._semantic_fingerprint(new_belief)
+
+
+def _phased_regime_declaration(
+    *,
+    slot: str,
+    simulate: Callable[[int], int],
+) -> MappingProxyType[str, object]:
+    """Project a regime whose `slot` varies by phase only in its simulate member."""
+    phased = Phased(solve=_solve_law, simulate=simulate)
+    slots: dict[str, object] = {
+        "transition": _solve_law,
+        "states": {"wealth": LinSpacedGrid(start=0, stop=1, n_points=3)},
+        "state_transitions": {"wealth": _solve_law},
+        "functions": {"utility": _terminal_utility},
+    }
+    if slot == "transition":
+        slots["transition"] = phased
+    elif slot == "state_transitions":
+        slots["state_transitions"] = {"wealth": phased}
+    elif slot == "functions":
+        slots["functions"] = {"utility": _terminal_utility, "helper": phased}
+    else:
+        raise AssertionError(slot)
+    return fingerprints._project_user_regime_declaration(
+        UserRegime(**slots)  # ty: ignore[invalid-argument-type]
+    )
+
+
+@pytest.mark.parametrize("slot", ["transition", "state_transitions"])
+def test_simulate_truth_of_a_transition_slot_is_not_model_identity(slot: str) -> None:
+    """Realized transitions govern the path after the action is chosen; a stored
+    solution is priced against the solve-phase laws alone."""
+    assert fingerprints._semantic_fingerprint(
+        _phased_regime_declaration(slot=slot, simulate=_truth_law_a)
+    ) == fingerprints._semantic_fingerprint(
+        _phased_regime_declaration(slot=slot, simulate=_truth_law_b)
+    )
+
+
+def test_simulate_side_decision_primitives_are_model_identity() -> None:
+    """A simulate-phase function changes what a solution is replayed with, so
+    two models that differ there do not share an identity."""
+    assert fingerprints._semantic_fingerprint(
+        _phased_regime_declaration(slot="functions", simulate=_truth_law_a)
+    ) != fingerprints._semantic_fingerprint(
+        _phased_regime_declaration(slot="functions", simulate=_truth_law_b)
+    )
 
 
 def test_phased_protocol_subclass_fails_closed() -> None:
@@ -1801,8 +1849,7 @@ def test_project_solution_params_removes_only_proven_transition_truth() -> None:
 def test_the_model_structure_is_digested_once_across_many_parameter_vectors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Solving one model repeatedly hashes its parameter-free facts a single time."""
-    model = get_toy_model()
+    """A model hashes its parameter-free facts once, when it is built."""
     calls = []
     original = fingerprints.fingerprint_model_structure
 
@@ -1810,8 +1857,9 @@ def test_the_model_structure_is_digested_once_across_many_parameter_vectors(
         calls.append(1)
         return original(**kwargs)
 
-    # `lcm.model` binds the name at import, so the solve path resolves it there.
+    # `lcm.model` binds the name at import, so the build path resolves it there.
     monkeypatch.setattr(lcm_model, "fingerprint_model_structure", counting)
+    model = get_toy_model()
     for scale in (1.0, 2.0, 3.0):
         model.solve(params=get_toy_params(scale=scale), log_level="off")
 
@@ -1918,3 +1966,70 @@ def test_a_size_property_on_a_type_that_is_not_an_array_fails_closed() -> None:
     """Only array metadata is exempt; the attribute name alone earns nothing."""
     with pytest.raises(TypeError, match="dynamic descriptor"):
         fingerprints._semantic_fingerprint(_reads_a_lookalike_size)
+
+
+def _utility_through_a_class_claiming_a_shipped_module(
+    multiplier: int,
+) -> Callable[[int], int]:
+    class Scale:
+        def __new__(cls, value: int) -> int:
+            return multiplier * value
+
+    Scale.__module__ = "_lcm.spoofed"
+    Scale.__qualname__ = "Scale"
+
+    def utility(value: int) -> int:
+        return Scale(value)
+
+    return utility
+
+
+def _utility_through_a_class_claiming_a_shipped_name(
+    multiplier: int,
+) -> Callable[[int], int]:
+    class SealedBinding:
+        def __new__(cls, value: int) -> int:
+            return multiplier * value
+
+    SealedBinding.__module__ = fingerprints.SealedBinding.__module__
+    SealedBinding.__qualname__ = fingerprints.SealedBinding.__qualname__
+
+    def utility(value: int) -> int:
+        return SealedBinding(value)
+
+    return utility
+
+
+def _utility_through_a_shipped_class(value: int) -> str:
+    return fingerprints.SealedBinding(
+        owner="owner", name="name", namespace=None, cell=None, value=value
+    ).name
+
+
+@pytest.mark.parametrize(
+    "make_utility",
+    [
+        _utility_through_a_class_claiming_a_shipped_module,
+        _utility_through_a_class_claiming_a_shipped_name,
+    ],
+)
+def test_a_class_claiming_a_shipped_module_is_not_fingerprinted_by_name(
+    *, make_utility: Callable[[int], Callable[[int], int]]
+) -> None:
+    """A user class enters the digest by its behaviour, never by a claimed module."""
+    one = make_utility(1)
+    two = make_utility(2)
+    assert one(3) == 3
+    assert two(3) == 6
+
+    with pytest.raises(TypeError, match="direct class dependency"):
+        fingerprints._semantic_fingerprint(one)
+
+
+def test_a_shipped_class_used_directly_is_fingerprinted_by_identity() -> None:
+    """A class a shipped module defines is closed by the pylcm version alone."""
+    digest = fingerprints._semantic_fingerprint(_utility_through_a_shipped_class)
+
+    assert digest == fingerprints._semantic_fingerprint(
+        _utility_through_a_shipped_class
+    )
