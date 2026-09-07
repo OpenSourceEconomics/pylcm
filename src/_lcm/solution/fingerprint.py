@@ -8,6 +8,8 @@ import functools
 import hashlib
 import inspect
 import json
+import os
+import pathlib
 import sys
 import types
 import typing
@@ -76,6 +78,14 @@ _DATACLASSES_MISSING = dataclasses.MISSING
 _DATACLASSES_FIELD_MARKERS: tuple[tuple[str, object], ...] = tuple(
     (name, vars(dataclasses)[name])
     for name in ("_FIELD", "_FIELD_CLASSVAR", "_FIELD_INITVAR")
+)
+# The directories pylcm's own modules load from, captured while the packages are
+# imported. A module merely named like one of them, or a class whose writable
+# `__module__` claims one, resolves against these rather than against its claim.
+_SHIPPED_PYLCM_PACKAGE_ROOTS = tuple(
+    str(pathlib.Path(root).resolve()) + os.sep
+    for package in (sys.modules["_lcm"], sys.modules["lcm"])
+    for root in package.__path__
 )
 _PYTHON_IMPLEMENTATION_SEAL = (
     sys.implementation.name,
@@ -2220,7 +2230,7 @@ def _is_closed_direct_type(value: type) -> bool:
     """Whether a class consumed directly enters the digest by identity alone.
 
     Builtin and versioned numeric-library classes are sealed by their library
-    versions, and so is every class defined in a shipped pylcm module: its
+    versions, and so is every class a shipped pylcm module defines: its
     implementation is fixed by the separately checked pylcm version, so its name
     is its identity. Any other class binds behaviour the digest cannot see.
     """
@@ -2228,8 +2238,38 @@ def _is_closed_direct_type(value: type) -> bool:
         _contains_identity(value=value, candidates=_BUILTIN_TYPE_OBJECTS)
         or _contains_identity(value=value, candidates=_TRUSTED_DIRECT_TYPE_OBJECTS)
         or _is_versioned_numeric_library_type(value)
-        or _is_shipped_pylcm_module_name(value.__module__)
+        or _is_shipped_pylcm_type(value)
     )
+
+
+def _is_shipped_pylcm_type(value: type) -> bool:
+    """Whether a class is the object a shipped pylcm module binds at its name.
+
+    A class's `__module__` and `__qualname__` are writable, so the claim alone
+    proves nothing: the module named must be one pylcm ships, and walking the
+    qualified name through that module must arrive at this very class object.
+    """
+    module = sys.modules.get(value.__module__)
+    if not isinstance(module, types.ModuleType) or not _is_shipped_pylcm_module(module):
+        return False
+    resolved: object = module
+    for part in value.__qualname__.split("."):
+        try:
+            resolved = inspect.getattr_static(resolved, part)
+        except AttributeError:
+            return False
+    return resolved is value
+
+
+def _is_shipped_pylcm_module(module: types.ModuleType) -> bool:
+    """Whether a module object is one of the pylcm packages' own source modules."""
+    if not _is_shipped_pylcm_module_name(module.__name__):
+        return False
+    origin = getattr(getattr(module, "__spec__", None), "origin", None)
+    if not isinstance(origin, str):
+        return False
+    resolved_origin = str(pathlib.Path(origin).resolve())
+    return resolved_origin.startswith(_SHIPPED_PYLCM_PACKAGE_ROOTS)
 
 
 def _dataclasses_field_marker_name(value: object) -> str | None:

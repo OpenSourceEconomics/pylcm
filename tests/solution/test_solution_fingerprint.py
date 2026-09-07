@@ -1966,3 +1966,70 @@ def test_a_size_property_on_a_type_that_is_not_an_array_fails_closed() -> None:
     """Only array metadata is exempt; the attribute name alone earns nothing."""
     with pytest.raises(TypeError, match="dynamic descriptor"):
         fingerprints._semantic_fingerprint(_reads_a_lookalike_size)
+
+
+def _utility_through_a_class_claiming_a_shipped_module(
+    multiplier: int,
+) -> Callable[[int], int]:
+    class Scale:
+        def __new__(cls, value: int) -> int:
+            return multiplier * value
+
+    Scale.__module__ = "_lcm.spoofed"
+    Scale.__qualname__ = "Scale"
+
+    def utility(value: int) -> int:
+        return Scale(value)
+
+    return utility
+
+
+def _utility_through_a_class_claiming_a_shipped_name(
+    multiplier: int,
+) -> Callable[[int], int]:
+    class SealedBinding:
+        def __new__(cls, value: int) -> int:
+            return multiplier * value
+
+    SealedBinding.__module__ = fingerprints.SealedBinding.__module__
+    SealedBinding.__qualname__ = fingerprints.SealedBinding.__qualname__
+
+    def utility(value: int) -> int:
+        return SealedBinding(value)
+
+    return utility
+
+
+def _utility_through_a_shipped_class(value: int) -> str:
+    return fingerprints.SealedBinding(
+        owner="owner", name="name", namespace=None, cell=None, value=value
+    ).name
+
+
+@pytest.mark.parametrize(
+    "make_utility",
+    [
+        _utility_through_a_class_claiming_a_shipped_module,
+        _utility_through_a_class_claiming_a_shipped_name,
+    ],
+)
+def test_a_class_claiming_a_shipped_module_is_not_fingerprinted_by_name(
+    *, make_utility: Callable[[int], Callable[[int], int]]
+) -> None:
+    """A user class enters the digest by its behaviour, never by a claimed module."""
+    one = make_utility(1)
+    two = make_utility(2)
+    assert one(3) == 3
+    assert two(3) == 6
+
+    with pytest.raises(TypeError, match="direct class dependency"):
+        fingerprints._semantic_fingerprint(one)
+
+
+def test_a_shipped_class_used_directly_is_fingerprinted_by_identity() -> None:
+    """A class a shipped module defines is closed by the pylcm version alone."""
+    digest = fingerprints._semantic_fingerprint(_utility_through_a_shipped_class)
+
+    assert digest == fingerprints._semantic_fingerprint(
+        _utility_through_a_shipped_class
+    )
