@@ -7,15 +7,27 @@ when every artifact it carries has this dispatch as its sole remaining
 consumer, is neither retained by the result nor pinned by an undeclared reader,
 shares its buffer with no other key, and reaches the program on its stored
 layout rather than as a transferred copy.
+
+The ledger counts a dispatch once however many of its programs and arguments
+read one artifact, so it answers which dispatch is the last consumer but not
+how many executable inputs that dispatch feeds the buffer to. Donation is an
+argument-level act, so the resolver asks the second question of the unit's
+read census instead: an argument is donated only when it is the one declared
+input locator of the whole unit aimed at every artifact it carries.
 """
 
 import dataclasses
-from collections.abc import Hashable
+from collections.abc import Hashable, Iterable, Mapping
 from enum import StrEnum
+from types import MappingProxyType
 
 from _lcm.execution.core_program import ResolvedCoreProgram
 from _lcm.execution.liveness import PlannedInputLiveness
-from _lcm.execution.value_transfer import ValueArtifactAddress, ValueTransferKind
+from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
+    ValueConsumerAddress,
+    ValueTransferKind,
+)
 
 
 class DonatedBuffer(StrEnum):
@@ -41,16 +53,49 @@ class ResolvedDonation:
     buffer: DonatedBuffer
     """Which buffer the argument would hand over."""
 
+    withheld_by: ValueConsumerAddress | None = None
+    """A second declared locator of the unit reading one of `artifacts`."""
+
     @property
     def donated(self) -> bool:
         """Whether the executable is lowered with this argument donated."""
-        return self.buffer is DonatedBuffer.STORED_ARTIFACT
+        return self.buffer is DonatedBuffer.STORED_ARTIFACT and self.withheld_by is None
+
+
+def unit_input_readers(
+    *, programs: Iterable[ResolvedCoreProgram]
+) -> MappingProxyType[ValueArtifactAddress, frozenset[ValueConsumerAddress]]:
+    """Census the distinct declared input locators one unit aims at each artifact.
+
+    The census answers the question the ledger's per-dispatch count cannot: how
+    many executable inputs of this unit the buffer reaches. A locator names the
+    core, the input channel, the argument and the path together, so two
+    arguments of one core and two cores reading one artifact each contribute an
+    entry, while the same core's width alternatives repeat one locator and
+    contribute one.
+
+    Args:
+        programs: The resolved programs of one dispatch unit, one per core.
+
+    Returns:
+        Immutable mapping of artifact address to the distinct locators of that
+        unit reading it.
+
+    """
+    readers: dict[ValueArtifactAddress, set[ValueConsumerAddress]] = {}
+    for program in programs:
+        for read in program.requirements.value_reads:
+            readers.setdefault(read.target, set()).add(read.source)
+    return MappingProxyType(
+        {artifact: frozenset(sources) for artifact, sources in readers.items()}
+    )
 
 
 def resolve_donations(
     *,
     program: ResolvedCoreProgram,
     dispatch: Hashable,
+    unit_readers: Mapping[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
     ledger: PlannedInputLiveness,
     n_periods: int,
 ) -> tuple[ResolvedDonation, ...]:
@@ -60,7 +105,20 @@ def resolve_donations(
     cannot say what buffer it carries. A read whose artifact lies beyond the
     last period names the solve-lifetime template, which is never donated, and
     one the ledger never registered is outside the plan, where only membership
-    and sole-consumer questions have an answer at all.
+    and sole-consumer questions have an answer at all. An artifact a second
+    locator of the unit also reads is recorded with that locator and left
+    undonated, because the executable still reads the buffer through it.
+
+    Args:
+        program: The resolved program whose candidates are decided.
+        dispatch: The `(period, regime)` unit this program belongs to.
+        unit_readers: `unit_input_readers` over every program of that unit.
+        ledger: The planned remaining-consumer accounting of the solve.
+        n_periods: Number of periods the solve runs.
+
+    Returns:
+        Tuple of one decision per candidate argument a declared read addresses.
+
     """
     donations: list[ResolvedDonation] = []
     for argument in program.donation_candidates:
@@ -103,6 +161,11 @@ def resolve_donations(
                     argument=argument,
                     artifacts=artifacts,
                     buffer=DonatedBuffer.STORED_ARTIFACT,
+                    withheld_by=_second_locator(
+                        artifacts=artifacts,
+                        declared=frozenset(read.source for read in reads),
+                        unit_readers=unit_readers,
+                    ),
                 )
             )
     return tuple(donations)
@@ -129,3 +192,28 @@ def _is_donatable(
         and not ledger.is_pinned(artifact=artifact)
         and ledger.alias_group(artifact=artifact) == frozenset({artifact})
     )
+
+
+def _second_locator(
+    *,
+    artifacts: tuple[ValueArtifactAddress, ...],
+    declared: frozenset[ValueConsumerAddress],
+    unit_readers: Mapping[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
+) -> ValueConsumerAddress | None:
+    """Return a locator other than this argument's own reading one artifact.
+
+    `None` says the argument is the unit's one declared input locator for every
+    artifact it carries, which is what makes handing the buffer over safe. The
+    locators are ordered by their representation so a plan names the same one
+    whichever order the programs of the unit were resolved in.
+    """
+    others = sorted(
+        {
+            locator
+            for artifact in artifacts
+            for locator in unit_readers.get(artifact, frozenset())
+            if locator not in declared
+        },
+        key=repr,
+    )
+    return others[0] if others else None

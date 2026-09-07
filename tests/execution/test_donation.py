@@ -18,6 +18,7 @@ from _lcm.execution.donation import (
     DonatedBuffer,
     ResolvedDonation,
     resolve_donations,
+    unit_input_readers,
 )
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.value_transfer import (
@@ -130,9 +131,11 @@ def _ledger(
 
 def test_a_sole_consumer_of_an_aligned_unretained_leaf_donates_it() -> None:
     """The one reader of a fresh, unretained continuation leaf donates it."""
+    program = _program(period=2)
     donations = resolve_donations(
-        program=_program(period=2),
+        program=program,
         dispatch=(2, "alive"),
+        unit_readers=unit_input_readers(programs=(program,)),
         ledger=_ledger(),
         n_periods=_N_PERIODS,
     )
@@ -160,9 +163,11 @@ def test_a_shared_retained_aliased_or_pinned_artifact_is_not_donated(
     ledger: PlannedInputLiveness,
 ) -> None:
     """Every other reader, the result, an alias partner and a pin keep the buffer."""
+    program = _program(period=2)
     donations = resolve_donations(
-        program=_program(period=2),
+        program=program,
         dispatch=(2, "alive"),
+        unit_readers=unit_input_readers(programs=(program,)),
         ledger=ledger,
         n_periods=_N_PERIODS,
     )
@@ -172,9 +177,11 @@ def test_a_shared_retained_aliased_or_pinned_artifact_is_not_donated(
 
 def test_a_transferred_copy_is_recorded_but_not_donated() -> None:
     """Donating a copy frees nothing the ledger tracks, so the plan says so."""
+    program = _program(period=2, kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT)
     donations = resolve_donations(
-        program=_program(period=2, kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT),
+        program=program,
         dispatch=(2, "alive"),
+        unit_readers=unit_input_readers(programs=(program,)),
         ledger=_ledger(),
         n_periods=_N_PERIODS,
     )
@@ -190,9 +197,11 @@ def test_a_read_of_the_template_beyond_the_last_period_is_not_donated() -> None:
         dispatch_accesses={(_N_PERIODS - 1, "alive"): (_leaf(period=_N_PERIODS),)}
     )
 
+    program = _program(period=_N_PERIODS - 1)
     donations = resolve_donations(
-        program=_program(period=_N_PERIODS - 1),
+        program=program,
         dispatch=(_N_PERIODS - 1, "alive"),
+        unit_readers=unit_input_readers(programs=(program,)),
         ledger=ledger,
         n_periods=_N_PERIODS,
     )
@@ -212,6 +221,7 @@ def test_a_candidate_no_read_addresses_is_not_donated() -> None:
         resolve_donations(
             program=program,
             dispatch=(2, "alive"),
+            unit_readers=unit_input_readers(programs=(program,)),
             ledger=_ledger(),
             n_periods=_N_PERIODS,
         )
@@ -223,9 +233,11 @@ def test_an_artifact_outside_the_plan_is_not_donated() -> None:
     """A read the ledger never registered is never handed to the executable."""
     ledger = PlannedInputLiveness(dispatch_accesses={(2, "alive"): ()})
 
+    program = _program(period=2)
     donations = resolve_donations(
-        program=_program(period=2),
+        program=program,
         dispatch=(2, "alive"),
+        unit_readers=unit_input_readers(programs=(program,)),
         ledger=ledger,
         n_periods=_N_PERIODS,
     )

@@ -36,7 +36,11 @@ from _lcm.execution.core_program import (
     resolve_core_program,
     select_programs,
 )
-from _lcm.execution.donation import ResolvedDonation, resolve_donations
+from _lcm.execution.donation import (
+    ResolvedDonation,
+    resolve_donations,
+    unit_input_readers,
+)
 from _lcm.execution.footprint import (
     ArtifactFootprint,
     ScheduledUnit,
@@ -3474,11 +3478,23 @@ def _resolve_output_layouts_and_lowering_keys(
         persistable_artifact_refs=persistable_artifact_refs,
     )
     n_periods = _model_n_periods(regimes=regimes)
+    # Donation consumes one executable input, so the decision needs the unit's
+    # read census next to the ledger's per-dispatch count. The representatives
+    # carry it: every core of the unit appears once, which is also how width
+    # alternatives of one core come to count as the one locator they declare.
+    unit_programs: dict[tuple[int, RegimeName], list[ResolvedCoreProgram]] = {}
+    for (regime_name, period, _core_key), resolved in representatives.items():
+        unit_programs.setdefault((period, regime_name), []).append(resolved)
+    readers_by_dispatch = {
+        dispatch: unit_input_readers(programs=programs)
+        for dispatch, programs in unit_programs.items()
+    }
     donations = {
         candidate: (
             resolve_donations(
                 program=resolved,
                 dispatch=(candidate[0][1], candidate[0][0]),
+                unit_readers=readers_by_dispatch[(candidate[0][1], candidate[0][0])],
                 ledger=input_liveness,
                 n_periods=n_periods,
             )
