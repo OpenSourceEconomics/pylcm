@@ -12,7 +12,7 @@ admitted.
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -34,7 +34,7 @@ from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.solver_api import KernelOutput, ResultRetention, SolverIdentity
-from lcm.solvers import GridSearch, StreamableProductAxis
+from lcm.solvers import GridSearch, ReducedAxis
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -120,6 +120,11 @@ class _MaxReduction:
         """Return the durable identity of this reduction."""
         return ("tests.public_weak_type_contract.max", 1)
 
+    @property
+    def exactness(self) -> Literal["exact"]:
+        """Return `"exact"`: the fold is order independent."""
+        return "exact"
+
 
 @dataclass(frozen=True, kw_only=True)
 class _StateAndCandidates:
@@ -147,8 +152,8 @@ def _programs(*, convention: str) -> Mapping[str, CoreProgram]:
         function=_PRODUCER_BODIES[convention],
         argument_builder=_StateAndCandidates(),
         requirements=CoreExecutionRequirements(
-            streamable_axes=(
-                StreamableProductAxis(
+            reduced_axes=(
+                ReducedAxis(
                     name="candidate",
                     coordinate_names=("candidate",),
                     coordinate_extents=(_CANDIDATES,),

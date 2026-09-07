@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -13,8 +13,8 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     MaterializedCoreProgram,
+    ReducedAxis,
     ReductionSemantics,
-    StreamableProductAxis,
     ValueRead,
     resolve_core_program,
 )
@@ -42,6 +42,11 @@ class _FakeReductionSemantics:
     """Test adapter proving execution depends on semantics, not a solver class."""
 
     semantic_key: Hashable
+
+    @property
+    def exactness(self) -> Literal["exact"]:
+        """Return `"exact"`: the fold is order independent."""
+        return "exact"
 
 
 def _core(*, choice: jax.Array, _test_action_tile_width: int) -> jax.Array:
@@ -112,9 +117,9 @@ def _program(
         function=function,
         arguments=arguments,
         requirements=CoreExecutionRequirements(
-            streamable_axes=(
-                StreamableProductAxis(
-                    name="action",
+            reduced_axes=(
+                ReducedAxis(
+                    name="action_product",
                     coordinate_names=("choice",),
                     coordinate_extents=(coordinate_extent,),
                     canonical_order="c",
@@ -153,9 +158,9 @@ def _value_program(
         function=_core_with_values,
         arguments=arguments,
         requirements=CoreExecutionRequirements(
-            streamable_axes=(
-                StreamableProductAxis(
-                    name="action",
+            reduced_axes=(
+                ReducedAxis(
+                    name="action_product",
                     coordinate_names=("choice",),
                     coordinate_extents=(2,),
                     canonical_order="c",
@@ -230,7 +235,7 @@ def test_exact_value_reads_belong_to_program_and_allow_artifact_fan_out() -> Non
 
     resolved = resolve_core_program(
         program=program,
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
         input_transfer_plan=(edge_transfer, next_transfer),
     )
 
@@ -257,7 +262,7 @@ def test_duplicate_target_value_argument_path_is_rejected() -> None:
     )
 
     with pytest.raises(ValueError, match="duplicate value-read locator"):
-        resolve_core_program(program=program, tile_widths={"action": 1})
+        resolve_core_program(program=program, tile_widths={"action_product": 1})
 
 
 @pytest.mark.parametrize(
@@ -282,7 +287,7 @@ def test_value_read_path_must_exist_in_dynamic_arguments(
     )
 
     with pytest.raises(ValueError, match=message):
-        resolve_core_program(program=program, tile_widths={"action": 1})
+        resolve_core_program(program=program, tile_widths={"action_product": 1})
 
 
 def test_each_value_read_requires_its_exact_resolved_transfer() -> None:
@@ -297,7 +302,7 @@ def test_each_value_read_requires_its_exact_resolved_transfer() -> None:
     )
 
     with pytest.raises(ValueError, match=r"one-to-one.*missing"):
-        resolve_core_program(program=program, tile_widths={"action": 1})
+        resolve_core_program(program=program, tile_widths={"action_product": 1})
 
     _other_access, other_transfer = _access_and_transfer(
         value=value,
@@ -307,7 +312,7 @@ def test_each_value_read_requires_its_exact_resolved_transfer() -> None:
     with pytest.raises(ValueError, match=r"one-to-one.*unexpected"):
         resolve_core_program(
             program=program,
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
             input_transfer_plan=(other_transfer,),
         )
 
@@ -330,12 +335,12 @@ def test_transfer_specialization_reuses_periods_but_distinguishes_representation
     }
     first = resolve_core_program(
         program=_value_program(arguments=arguments, accesses=(first_access,)),
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
         input_transfer_plan=(first_transfer,),
     )
     later = resolve_core_program(
         program=_value_program(arguments=arguments, accesses=(later_access,)),
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
         input_transfer_plan=(later_transfer,),
     )
 
@@ -348,7 +353,7 @@ def test_transfer_specialization_reuses_periods_but_distinguishes_representation
     )
     copied = resolve_core_program(
         program=_value_program(arguments=arguments, accesses=(first_access,)),
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
         input_transfer_plan=(copy_transfer,),
     )
 
@@ -375,7 +380,7 @@ def test_resolver_rejects_stale_transfer_metadata() -> None:
     with pytest.raises(ValueError, match="shape mismatch"):
         resolve_core_program(
             program=program,
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
             input_transfer_plan=(shape_transfer,),
         )
 
@@ -385,7 +390,7 @@ def test_resolver_rejects_stale_transfer_metadata() -> None:
     with pytest.raises(TypeError, match="dtype mismatch"):
         resolve_core_program(
             program=program,
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
             input_transfer_plan=(dtype_transfer,),
         )
 
@@ -396,7 +401,7 @@ def test_resolver_rejects_stale_transfer_metadata() -> None:
     with pytest.raises(ValueError, match="stored-sharding mismatch"):
         resolve_core_program(
             program=program,
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
             input_transfer_plan=(sharding_transfer,),
         )
 
@@ -445,19 +450,19 @@ def test_reduction_semantics_supply_stable_specialization_identity() -> None:
         program=_program(
             reduction=_FakeReductionSemantics(semantic_key=("fake-reduction", 1))
         ),
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
     )
     equivalent = resolve_core_program(
         program=_program(
             reduction=_FakeReductionSemantics(semantic_key=("fake-reduction", 1))
         ),
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
     )
     changed = resolve_core_program(
         program=_program(
             reduction=_FakeReductionSemantics(semantic_key=("fake-reduction", 2))
         ),
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
     )
 
     assert first.specialization_key == equivalent.specialization_key
@@ -468,19 +473,19 @@ def test_equivalent_static_resolution_reuses_callable_identity() -> None:
     """Equivalent programs retain JAX's trace-cache key across solve calls."""
     first = resolve_core_program(
         program=_program(),
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
     )
     equivalent = resolve_core_program(
         program=_program(arguments={"choice": jnp.asarray([3.0, 4.0])}),
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
     )
     changed_width = resolve_core_program(
         program=_program(),
-        tile_widths={"action": 2},
+        tile_widths={"action_product": 2},
     )
     changed_route = resolve_core_program(
         program=_program(function=_alternate_core),
-        tile_widths={"action": 1},
+        tile_widths={"action_product": 1},
     )
 
     assert first.function is equivalent.function
@@ -503,7 +508,7 @@ def test_core_program_requires_identity_based_callable_semantics() -> None:
         with pytest.raises(TypeError, match="identity-based equality and hashing"):
             resolve_core_program(
                 program=_program(function=function),
-                tile_widths={"action": 1},
+                tile_widths={"action_product": 1},
             )
 
 
@@ -512,7 +517,7 @@ def test_core_program_rejects_unhashable_raw_callable() -> None:
     with pytest.raises(TypeError, match="identity-based equality and hashing"):
         resolve_core_program(
             program=_program(function=_UnhashableCore()),
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
         )
 
 
@@ -521,7 +526,7 @@ def test_core_program_requires_a_weakrefable_raw_callable() -> None:
     with pytest.raises(TypeError, match="weak-referenceable"):
         resolve_core_program(
             program=_program(function=_NonWeakrefableCore()),
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
         )
 
 
@@ -547,11 +552,11 @@ def test_coordinate_arguments_match_the_declared_product(
                 arguments=arguments,
                 coordinate_extent=coordinate_extent,
             ),
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
         )
 
 
-def test_streamable_axis_requires_an_explicit_planner_width() -> None:
+def test_reduced_axis_requires_an_explicit_planner_width() -> None:
     with pytest.raises(ValueError, match=r"[Tt]ile width.*required"):
         resolve_core_program(program=_program())
 
@@ -563,5 +568,5 @@ def test_width_keyword_must_be_accepted_by_the_core_function() -> None:
     with pytest.raises(TypeError, match=r"width keyword.*function"):
         resolve_core_program(
             program=_program(function=core_without_width),
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
         )

@@ -9,6 +9,7 @@ are observed through a period capture, which records exactly what the solve disp
 import math
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 import cloudpickle
 import numpy as np
@@ -40,7 +41,7 @@ _CAPTURE_TARGET = "working_life@0"
 _BYTES_PER_ACTION = 1000
 
 
-def _model(*, action_block_width: int | None = None) -> Model:
+def _model() -> Model:
     """Build the two-period grid-search toy with a small streamed action product."""
     final_age_alive = START_AGE + _N_PERIODS - 2
     return Model(
@@ -54,7 +55,7 @@ def _model(*, action_block_width: int | None = None) -> Model:
                         start=1, stop=3, n_points=_N_CONSUMPTION
                     ),
                 },
-                solver=GridSearch(action_block_width=action_block_width),
+                solver=GridSearch(),
             ),
             "dead": dead,
         },
@@ -83,6 +84,7 @@ def _solve_capturing(
     tmp_path: Path,
     model: Model,
     device_memory_bytes: int | None,
+    axis_widths: Mapping[str, int] = MappingProxyType({}),
 ):
     """Solve while capturing the first working-life period."""
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", _CAPTURE_TARGET)
@@ -90,7 +92,10 @@ def _solve_capturing(
     return model.solve(
         params=get_params(n_periods=_N_PERIODS),
         log_level="off",
-        execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
+        execution_config=ExecutionConfig(
+            device_memory_bytes=device_memory_bytes,
+            axis_widths=axis_widths,
+        ),
     )
 
 
@@ -109,7 +114,7 @@ def test_no_budget_uses_the_bootstrap_width(*, monkeypatch, tmp_path) -> None:
         device_memory_bytes=None,
     )
 
-    assert _captured_widths(tmp_path) == {"main": {"action": 4}}
+    assert _captured_widths(tmp_path) == {"main": {"action_product": 4}}
 
 
 @pytest.mark.usefixtures("synthetic_peaks")
@@ -124,7 +129,7 @@ def test_budget_selects_the_widest_feasible_action_block(
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
 
-    assert _captured_widths(tmp_path) == {"main": {"action": 2}}
+    assert _captured_widths(tmp_path) == {"main": {"action_product": 2}}
 
 
 @pytest.mark.usefixtures("synthetic_peaks")
@@ -138,7 +143,7 @@ def test_budget_above_every_candidate_keeps_the_full_action_product(
         device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
     )
 
-    assert _captured_widths(tmp_path) == {"main": {"action": _ACTION_EXTENT}}
+    assert _captured_widths(tmp_path) == {"main": {"action_product": _ACTION_EXTENT}}
 
 
 def test_budget_above_every_candidate_lowers_only_the_full_action_product(
@@ -152,7 +157,7 @@ def test_budget_above_every_candidate_lowers_only_the_full_action_product(
         device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
     )
 
-    assert [widths["action"] for widths in synthetic_peaks if widths] == [
+    assert [widths["action_product"] for widths in synthetic_peaks if widths] == [
         _ACTION_EXTENT
     ]
 
@@ -168,7 +173,11 @@ def test_budget_lowers_widths_descending_until_one_fits(
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
 
-    assert [widths["action"] for widths in synthetic_peaks if widths] == [6, 4, 2]
+    assert [widths["action_product"] for widths in synthetic_peaks if widths] == [
+        6,
+        4,
+        2,
+    ]
 
 
 def test_budgeted_values_agree_with_the_unbudgeted_solve(
@@ -185,7 +194,7 @@ def test_budgeted_values_agree_with_the_unbudgeted_solve(
         model=_model(),
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
-    assert _captured_widths(tmp_path) == {"main": {"action": 2}}
+    assert _captured_widths(tmp_path) == {"main": {"action_product": 2}}
 
     for period in range(_N_PERIODS - 1):
         assert_agrees_to_ulp(
@@ -208,30 +217,34 @@ def test_budget_below_every_candidate_fails_closed(*, monkeypatch, tmp_path) -> 
     assert not (tmp_path / _CAPTURE_TARGET).exists()
 
 
-def test_fixed_action_block_width_is_the_only_candidate(
+def test_fixed_action_product_width_is_the_only_candidate(
     *, synthetic_peaks, monkeypatch, tmp_path
 ) -> None:
+    """A fixed axis width leaves the planner exactly one candidate to compile."""
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        model=_model(action_block_width=4),
+        model=_model(),
         device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
+        axis_widths={"action_product": 4},
     )
 
-    assert {widths["action"] for widths in synthetic_peaks if widths} == {4}
-    assert _captured_widths(tmp_path) == {"main": {"action": 4}}
+    assert {widths["action_product"] for widths in synthetic_peaks if widths} == {4}
+    assert _captured_widths(tmp_path) == {"main": {"action_product": 4}}
 
 
 @pytest.mark.usefixtures("synthetic_peaks")
-def test_fixed_action_block_width_over_budget_names_the_request(
+def test_fixed_action_product_width_over_budget_names_the_request(
     *, monkeypatch, tmp_path
 ) -> None:
+    """A fixed width that no budget can serve is refused, naming the request."""
     with pytest.raises(ExecutionPlanningError, match="explicitly requested"):
         _solve_capturing(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
-            model=_model(action_block_width=4),
+            model=_model(),
             device_memory_bytes=4 * _BYTES_PER_ACTION - 1,
+            axis_widths={"action_product": 4},
         )
 
 

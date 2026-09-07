@@ -39,35 +39,39 @@ solution = model.solve(
 )
 ```
 
-Without a budget (the default), every streamed action product is lowered at its
-bootstrap width — the largest power of two below the product's extent, capped at 64 — or
-at the width a solver requests, such as `GridSearch(action_block_width=...)`, and
-compiler memory reports are not consulted. The whole product is lowered only when a
-budget shows it fits or a solver requests it. With a budget, the planner enumerates a
-deterministic width frontier for each streamed axis (one, the powers of two below the
-extent, and the full extent; a requested width is the only candidate) and walks it
-widest-first — descending width product, ties broken toward the lexicographically
-largest width tuple in axis declaration order. A position whose resident bytes alone
-already reach the budget is refused before any candidate compiles, since no width could
-serve it. Otherwise each candidate is lowered and compiled, its compiler-reported peak
-is read, and the first candidate whose peak plus the resident bytes fits is dispatched.
-The resident bytes are predicted from the solve's own schedule — every retained value of
-a later period, every continuation and gated-edge input another dispatch still has to
-read, and the outputs of every regime dispatched concurrently on the same device —
-excluding what reaches this core on its stored layout: that is assumed already counted
-in the compiler-reported peak, as it is on the XLA CPU backend, where the peak equals
-argument plus output plus temporary bytes; a backend whose report excludes argument
-bytes makes this ceiling under-count. A core declaring no reads names nothing to
-exclude, so what the ledger pins on its behalf is counted in both the resident bytes and
-the peak — an over-count, the safe direction. This ceiling bounds the device's
-footprint, not one program's workspace. A narrower candidate is compiled only after
-every wider one exceeded the budget. That selects the same candidate an exhaustive
-search would, at the cost of one extra lowering per rejected width: a core whose full
-extent fits compiles exactly one candidate, and a core that fits at no width compiles
-its whole frontier before the error. Compilation is scheduled in waves across
-regime-period cells — every cell's widest candidate first, then the next candidate of
-only those cells still over budget — so parallel compilation and the deduplication of
-identical lowerings are unchanged. A dense program has exactly one candidate.
+`ExecutionConfig(axis_widths=...)` instead fixes the compiled width of one named planner
+axis, leaving the rest to the planner; see
+[Fix a planner axis width](../user_guide/tuning.md).
+
+Without a budget (the default), every streamed axis is lowered at its bootstrap width —
+the largest power of two below the axis extent, capped at 64 — or at the width
+`ExecutionConfig(axis_widths={...})` fixes for that axis name, and compiler memory
+reports are not consulted. The whole axis is lowered only when a budget shows it fits or
+a fixed width asks for it. With a budget, the planner enumerates a deterministic width
+frontier for each streamed axis (one, the powers of two below the extent, and the full
+extent; a fixed width is the only candidate) and walks it widest-first — descending
+width product, ties broken toward the lexicographically largest width tuple in axis
+declaration order. A position whose resident bytes alone already reach the budget is
+refused before any candidate compiles, since no width could serve it. Otherwise each
+candidate is lowered and compiled, its compiler-reported peak is read, and the first
+candidate whose peak plus the resident bytes fits is dispatched. The resident bytes are
+predicted from the solve's own schedule — every retained value of a later period, every
+continuation and gated-edge input another dispatch still has to read, and the outputs of
+every regime dispatched concurrently on the same device — excluding what reaches this
+core on its stored layout: that is assumed already counted in the compiler-reported
+peak, as it is on the XLA CPU backend, where the peak equals argument plus output plus
+temporary bytes; a backend whose report excludes argument bytes makes this ceiling
+under-count. A core declaring no reads names nothing to exclude, so what the ledger pins
+on its behalf is counted in both the resident bytes and the peak — an over-count, the
+safe direction. This ceiling bounds the device's footprint, not one program's workspace.
+A narrower candidate is compiled only after every wider one exceeded the budget. That
+selects the same candidate an exhaustive search would, at the cost of one extra lowering
+per rejected width: a core whose full extent fits compiles exactly one candidate, and a
+core that fits at no width compiles its whole frontier before the error. Compilation is
+scheduled in waves across regime-period cells — every cell's widest candidate first,
+then the next candidate of only those cells still over budget — so parallel compilation
+and the deduplication of identical lowerings are unchanged. A dense program has exactly
+one candidate.
 
 The budget is compile-only and fail-closed:
 

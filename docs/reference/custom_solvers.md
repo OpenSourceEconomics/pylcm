@@ -160,10 +160,14 @@ why. `HOST_DRIVEN` means the same, and adds that a host loop dispatches the comp
 program a data-dependent number of times — the driver that owns the loop also owns the
 results it caches between dispatches — so it too must carry a reason. `PLANNED` hands
 the width choice to the engine and must *not* carry a reason; declaring one is refused.
-A planned program declares whichever action axes the engine may stream, together with
-the reduction each performs, and a solver whose body streams nothing declares an empty
-set — the shipped NB-EGM graph does exactly that. Only a planned program may declare a
-streamable axis.
+A planned program declares whichever axes the engine may stream — `reduced_axes` for an
+axis folded by a `ReductionSemantics`, `tiled_axes` for one whose tiles are concatenated
+— and a solver whose body streams nothing declares an empty set; the shipped NB-EGM
+graph does exactly that. Only a planned program may declare an execution axis. Every
+reduction states its `exactness`: `"exact"` when block order cannot move the published
+value, `"tolerance_equivalent"` when results agree to the working format's rounding.
+`ExecutionConfig(axis_widths=...)` fixes the compiled width of any declared axis by its
+name.
 
 `donation_candidates` names arguments the engine may donate to the compiled program. An
 argument is donated when every artifact it carries by a declared `ValueRead` addressed
@@ -580,10 +584,10 @@ contract:
    recomputation, or an explicit refusal — and read stored next-period values only
    through declared target-value accesses;
 1. publish retention-specialized `PLANNED` programs with a named `candidate`
-   `StreamableProductAxis`, a custom reduction semantic key, exact
-   `retained_artifact_keys`, an exact `retained_artifact_payload_types` entry for every
-   retained key, an explicit `replaces_program` link from replay to values, and
-   `StateAxesLeading` output roles, plus an additive artifact-only scratch program;
+   `ReducedAxis`, a custom reduction semantic key, exact `retained_artifact_keys`, an
+   exact `retained_artifact_payload_types` entry for every retained key, an explicit
+   `replaces_program` link from replay to values, and `StateAxesLeading` output roles,
+   plus an additive artifact-only scratch program;
 1. return `KernelOutput` with a non-EGM `Counter` continuation declared `NOT_PERSISTED`
    and a scratch auxiliary declared `MODEL_VERIFIABLE`;
 1. publish a registered plugin-defined PyTree as a `MODEL_VERIFIABLE` replay artifact

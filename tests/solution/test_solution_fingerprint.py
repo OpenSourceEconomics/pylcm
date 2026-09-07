@@ -18,7 +18,7 @@ import jax.scipy as jsp
 import numpy as np
 import pytest
 
-import _lcm.solution.grid_search as grid_search_declarations
+import _lcm.solution.dcegm as dcegm_declarations
 import lcm.model as lcm_model
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
@@ -780,12 +780,12 @@ _SolverModuleNeighbor.__module__ = "_lcm.solution.nbegm"
 
 
 @dataclass(frozen=True)
-class _GridSearchNominalTwin:
-    action_block_width: int
+class _ExactEnvelopeNominalTwin:
+    cell_batch_size: int
 
 
-_GridSearchNominalTwin.__module__ = "_lcm.solution.grid_search"
-_GridSearchNominalTwin.__qualname__ = "GridSearch"
+_ExactEnvelopeNominalTwin.__module__ = "_lcm.solution.dcegm"
+_ExactEnvelopeNominalTwin.__qualname__ = "ExactEnvelope"
 
 
 class _SlotCallable:
@@ -878,28 +878,28 @@ def test_builtin_execution_fields_are_excluded_only_on_their_owner_types() -> No
 
 
 def test_execution_field_exclusion_requires_exact_owner_type_identity() -> None:
-    left = fingerprints._semantic_fingerprint(_GridSearchNominalTwin(1))
-    right = fingerprints._semantic_fingerprint(_GridSearchNominalTwin(2))
+    left = fingerprints._semantic_fingerprint(_ExactEnvelopeNominalTwin(1))
+    right = fingerprints._semantic_fingerprint(_ExactEnvelopeNominalTwin(2))
 
     assert left != right
 
 
 def test_execution_field_exclusion_ignores_module_rebinding(*, monkeypatch) -> None:
-    original_grid_search_type = grid_search_declarations.GridSearch
+    original_envelope_type = dcegm_declarations.ExactEnvelope
 
     monkeypatch.setattr(
-        grid_search_declarations,
-        "GridSearch",
-        _GridSearchNominalTwin,
+        dcegm_declarations,
+        "ExactEnvelope",
+        _ExactEnvelopeNominalTwin,
     )
 
     assert fingerprints._exclude_field(
-        owner=original_grid_search_type(),
-        field_name="action_block_width",
+        owner=original_envelope_type(),
+        field_name="cell_batch_size",
     )
 
-    left = fingerprints._semantic_fingerprint(_GridSearchNominalTwin(1))
-    right = fingerprints._semantic_fingerprint(_GridSearchNominalTwin(2))
+    left = fingerprints._semantic_fingerprint(_ExactEnvelopeNominalTwin(1))
+    right = fingerprints._semantic_fingerprint(_ExactEnvelopeNominalTwin(2))
     assert left != right
 
 

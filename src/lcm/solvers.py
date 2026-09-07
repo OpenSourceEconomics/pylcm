@@ -46,7 +46,8 @@ paper rather than here.
 A solver may also be written outside pylcm. `lcm.solvers` re-exports everything
 such a solver constructs — the execution-contract types (`CoreProgram`,
 `CoreBuildContext`, `CoreExecutionRequirements`, `CoreExecutionDisposition`,
-`ProgramScope`, `StreamableProductAxis`, `ReductionSemantics`, `OutputRole`,
+`ProgramScope`, `ReducedAxis`, `TiledOutputAxis`, `ReductionSemantics`,
+`ACTION_PRODUCT_AXIS`, `EXACTNESS_VALUES`, `OutputRole`,
 `StateAxesLeading`, `PeriodKernel`, `StateActionSpace`), the continuation types
 and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
 `period_to_continuation_target`, `target_period_grid`, `union_free_params`,
@@ -82,11 +83,18 @@ from _lcm.execution.core_program import (
     InternalInputRef,
     InternalOutputSpec,
     ProgramScope,
+    ReducedAxis,
     ReductionSemantics,
-    StreamableProductAxis,
+    TiledOutputAxis,
     ValueRead,
 )
 from _lcm.execution.output_layout import OutputRole, StateAxesLeading
+from _lcm.execution.reductions import (
+    EXACTNESS_VALUES,
+    HardMaxWithCarryReduction,
+    IntervalEnvelopeReduction,
+    WeightedExpectationReduction,
+)
 from _lcm.execution.value_transfer import (
     TransferCost,
     TransferOperationClass,
@@ -120,7 +128,7 @@ from _lcm.solution.dcegm import (
     RFCEnvelope,
 )
 from _lcm.solution.egm import EGM
-from _lcm.solution.grid_search import GridSearch
+from _lcm.solution.grid_search import ACTION_PRODUCT_AXIS, GridSearch
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
 from _lcm.solution.nnbegm import NNBEGM
@@ -186,11 +194,13 @@ from lcm.solver_api import (
 )
 
 __all__ = [
+    "ACTION_PRODUCT_AXIS",
     "DCEGM",
     "DISSOLUTION_FLAG",
     "EGM",
     "EGM_CONTINUATION",
     "EGM_ENDOGENOUS_COORDINATE",
+    "EXACTNESS_VALUES",
     "NBEGM",
     "NEGM",
     "NNBEGM",
@@ -231,8 +241,10 @@ __all__ = [
     "FUESEnvelope",
     "FiniteOuterGrid",
     "GridSearch",
+    "HardMaxWithCarryReduction",
     "InternalInputRef",
     "InternalOutputSpec",
+    "IntervalEnvelopeReduction",
     "KernelOutput",
     "LTMEnvelope",
     "LeafAuthority",
@@ -248,6 +260,7 @@ __all__ = [
     "PersistencePolicy",
     "ProgramScope",
     "RFCEnvelope",
+    "ReducedAxis",
     "ReductionSemantics",
     "ReplayMode",
     "ReplayModelContext",
@@ -267,7 +280,7 @@ __all__ = [
     "SolverIdentity",
     "StateActionSpace",
     "StateAxesLeading",
-    "StreamableProductAxis",
+    "TiledOutputAxis",
     "TransferCost",
     "TransferOperationClass",
     "TreePath",
@@ -281,6 +294,7 @@ __all__ = [
     "ValueRead",
     "ValueStore",
     "ValueTransferKind",
+    "WeightedExpectationReduction",
     "period_to_continuation_target",
     "target_period_grid",
     "union_fixed_params",

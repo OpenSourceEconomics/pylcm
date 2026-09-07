@@ -569,7 +569,7 @@ class _BoundDCEGM(DCEGM):
 
 
 # Why the DC-EGM program executes dense: the kernel owns its stochastic-node
-# and refined-grid batching, and no product axis of it is planner-streamable.
+# and refined-grid batching, and no product axis of it is planner-reduced.
 _DCEGM_DENSE_REASON = "deliberately_dense:dcegm_solver_owned_node_and_grid_batching"
 
 

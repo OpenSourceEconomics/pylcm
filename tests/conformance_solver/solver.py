@@ -4,7 +4,7 @@ import dataclasses
 import functools
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Self, cast
+from typing import Literal, Self, cast
 
 import jax
 import jax.numpy as jnp
@@ -42,12 +42,12 @@ from lcm.solvers import (
     DeclaredReplay,
     OutputRole,
     ProgramScope,
+    ReducedAxis,
     SolutionKernels,
     Solver,
     SolverBuildContext,
     StateActionSpace,
     StateAxesLeading,
-    StreamableProductAxis,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
@@ -154,6 +154,11 @@ class _MiddleTieReduction:
     def semantic_key(self) -> tuple[str, int]:
         """Return the stable numerical identity of this reduction."""
         return ("middle-tie-maximum", 1)
+
+    @property
+    def exactness(self) -> Literal["exact"]:
+        """Return `"exact"`: the fold is order independent."""
+        return "exact"
 
 
 MIDDLE_TIE_REDUCTION = _MiddleTieReduction()
@@ -662,8 +667,8 @@ class ReferenceSolver(Solver):
 
         argument_builder = _ArgumentBuilder(regime_name=context.regime_name)
         requirements = CoreExecutionRequirements(
-            streamable_axes=(
-                StreamableProductAxis(
+            reduced_axes=(
+                ReducedAxis(
                     name="candidate",
                     coordinate_names=("consumption",),
                     coordinate_extents=(int(action_nodes.shape[0]),),

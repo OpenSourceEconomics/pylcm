@@ -15,7 +15,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     MaterializedCoreProgram,
-    StreamableProductAxis,
+    ReducedAxis,
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
@@ -188,7 +188,7 @@ def test_value_dependent_model_declares_its_required_program_disposition(
     ) == expected_channels
     assert program.disposition is expected_disposition
     assert program.disposition_reason == expected_reason
-    assert bool(program.requirements.streamable_axes) is (
+    assert bool(program.requirements.axes) is (
         expected_disposition is CoreExecutionDisposition.PLANNED
     )
     transfer_plan = (
@@ -198,9 +198,7 @@ def test_value_dependent_model_declares_its_required_program_disposition(
     )
     resolved = resolve_core_program(
         program=program,
-        tile_widths={
-            axis.name: axis.extent for axis in program.requirements.streamable_axes
-        },
+        tile_widths={axis.name: axis.extent for axis in program.requirements.axes},
         input_transfer_plan=transfer_plan,
     )
     actual = resolved.function(**resolved.arguments, **resolved.static_kwargs)
@@ -265,9 +263,9 @@ def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]
         function=streamed,
         argument_builder=lambda _context: arguments,
         requirements=CoreExecutionRequirements(
-            streamable_axes=(
-                StreamableProductAxis(
-                    name="action",
+            reduced_axes=(
+                ReducedAxis(
+                    name="action_product",
                     coordinate_names=("choice",),
                     coordinate_extents=(3,),
                     canonical_order="c",
@@ -308,7 +306,7 @@ def test_value_dependent_reference_matches_dense_eager_jit_and_aot(width: int) -
     dense = dense_function(**program.arguments)
     resolved = resolve_core_program(
         program=program,
-        tile_widths={"action": width},
+        tile_widths={"action_product": width},
         input_transfer_plan=_aligned_transfer_plan(program=program),
     )
     eager = resolved.function(**resolved.arguments, **resolved.static_kwargs)

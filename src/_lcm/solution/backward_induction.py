@@ -2831,6 +2831,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
         budget_bytes=execution_config.device_memory_bytes,
+        fixed_widths=execution_config.axis_widths,
         enable_jit=enable_jit,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
@@ -3029,7 +3030,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         representative = resolved_programs[candidates[0]]
         try:
             plan = plan_workspace(
-                axes=representative.requirements.streamable_axes,
+                axes=representative.requirements.axes,
+                fixed_widths=execution_config.axis_widths,
                 compile_candidate=_CompiledCandidateLookup(
                     compiled_by_width=compiled_by_width
                 ),
@@ -3310,6 +3312,7 @@ def _resolve_output_layouts_and_lowering_keys(
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     budget_bytes: int | None,
+    fixed_widths: Mapping[str, int],
     enable_jit: bool,
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
@@ -3389,7 +3392,8 @@ def _resolve_output_layouts_and_lowering_keys(
         materialized = materialize_core_program(program=declaration, context=context)
         templates = internal_input_templates(program=materialized, producers=producers)
         width_candidates = workspace_width_candidates(
-            axes=materialized.requirements.streamable_axes,
+            axes=materialized.requirements.axes,
+            fixed_widths=fixed_widths,
             budget_bytes=budget_bytes,
         )
         state_order = tuple(

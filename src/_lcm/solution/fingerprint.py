@@ -48,7 +48,6 @@ from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.solution.dcegm import DCEGM, ExactEnvelope, FUESEnvelope
-from _lcm.solution.grid_search import GridSearch
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
@@ -102,7 +101,6 @@ _BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ..
     (DCEGM, frozenset({"stochastic_node_batch_size"})),
     (ExactEnvelope, frozenset({"cell_batch_size"})),
     (FUESEnvelope, frozenset({"scan_unroll"})),
-    (GridSearch, frozenset({"action_block_width"})),
     (
         NBEGM,
         frozenset(

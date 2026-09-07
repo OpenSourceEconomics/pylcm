@@ -1010,7 +1010,7 @@ def test_metric_summary_preserves_raw_samples_and_uses_per_core_maxima() -> None
             },
         ],
         "routes": {"streamed_kernel_count": 2},
-        "tile_plans": [{"tile_widths": {"action": 64}}],
+        "tile_plans": [{"tile_widths": {"action_product": 64}}],
     }
 
     result = _metric_summary(metrics)

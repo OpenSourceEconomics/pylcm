@@ -2,12 +2,16 @@
 
 from collections.abc import Callable, Hashable, Mapping
 from types import SimpleNamespace
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
-from _lcm.execution.core_program import ReductionSemantics, StreamableProductAxis
+from _lcm.execution.core_program import (
+    ReducedAxis,
+    ReductionSemantics,
+    TiledOutputAxis,
+)
 from _lcm.execution.workspace_planning import (
     WorkspacePlan,
     plan_workspace,
@@ -20,6 +24,11 @@ class _Reduction:
     @property
     def semantic_key(self) -> Hashable:
         return "test-reduction"
+
+    @property
+    def exactness(self) -> Literal["exact"]:
+        """Return `"exact"`: the fold is order independent."""
+        return "exact"
 
 
 class _IntSubclass(int):
@@ -60,27 +69,29 @@ class _Compiler:
 
 def _axis(
     *,
-    name: str = "action",
+    name: str = "action_product",
     extent: int = 8,
-    requested_width: int | None = None,
     coordinate_names: tuple[str, ...] | None = None,
     coordinate_extents: tuple[int, ...] | None = None,
-) -> StreamableProductAxis:
+) -> ReducedAxis:
     extents = (extent,) if coordinate_extents is None else coordinate_extents
     names = (
         tuple(f"{name}_{index}" for index in range(len(extents)))
         if coordinate_names is None
         else coordinate_names
     )
-    return StreamableProductAxis(
+    return ReducedAxis(
         name=name,
         coordinate_names=names,
         coordinate_extents=extents,
         canonical_order="c",
         reduction=cast("ReductionSemantics", _Reduction()),
         width_keyword=f"_lcm_{name}_width",
-        requested_width=requested_width,
     )
+
+
+def _tiled(*, name: str = "cell", extent: int = 8) -> TiledOutputAxis:
+    return TiledOutputAxis(name=name, extent=extent, width_keyword=f"_lcm_{name}_width")
 
 
 def _stats(peak: object) -> SimpleNamespace:
@@ -133,7 +144,7 @@ def test_bootstrap_width_is_the_largest_power_of_two_below_the_extent_capped_at_
     assert candidates == ({"a": expected},)
 
 
-def test_no_budget_compiles_bootstrap_or_requested_widths_exactly_once() -> None:
+def test_no_budget_compiles_bootstrap_or_fixed_widths_exactly_once() -> None:
     executable = _Executable(
         analysis_error=AssertionError("memory analysis must not be called"),
         analysis=None,
@@ -147,8 +158,9 @@ def test_no_budget_compiles_bootstrap_or_requested_widths_exactly_once() -> None
     plan = plan_workspace(
         axes=(
             _axis(name="outer", extent=5),
-            _axis(name="inner", extent=7, requested_width=3),
+            _axis(name="inner", extent=7),
         ),
+        fixed_widths={"inner": 3},
         compile_candidate=compile_candidate,
     )
 
@@ -187,26 +199,61 @@ def test_budget_frontier_is_cartesian_and_ranked_widest_first() -> None:
 def test_power_of_two_extent_appears_only_once_in_the_frontier() -> None:
     candidates = workspace_width_candidates(axes=(_axis(extent=8),), budget_bytes=1)
 
-    assert [widths["action"] for widths in candidates] == [8, 4, 2, 1]
+    assert [widths["action_product"] for widths in candidates] == [8, 4, 2, 1]
 
 
-def test_requested_axis_is_singleton_while_other_axes_keep_their_frontier() -> None:
+def test_fixed_axis_is_singleton_while_other_axes_keep_their_frontier() -> None:
     candidates = workspace_width_candidates(
         axes=(
-            _axis(name="requested", extent=8, requested_width=3),
+            _axis(name="fixed", extent=8),
             _axis(name="searched", extent=5),
         ),
+        fixed_widths={"fixed": 3},
         budget_bytes=1,
     )
 
     assert list(map(dict, candidates)) == [
-        {"requested": 3, "searched": width} for width in (5, 4, 2, 1)
+        {"fixed": 3, "searched": width} for width in (5, 4, 2, 1)
     ]
+
+
+def test_a_fixed_width_above_the_extent_is_clamped_to_the_extent() -> None:
+    """A width larger than the axis extent selects the whole axis."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=8),),
+        fixed_widths={"action_product": 99},
+    )
+
+    assert candidates == ({"action_product": 8},)
+
+
+def test_a_fixed_width_for_an_undeclared_axis_is_ignored() -> None:
+    """Widths naming no declared axis leave the frontier untouched."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=8),),
+        fixed_widths={"interval": 2},
+    )
+
+    assert candidates == ({"action_product": 4},)
+
+
+def test_a_tiled_axis_is_planned_from_its_declared_extent() -> None:
+    """A tiled output axis streams at the bootstrap width of its own extent."""
+    candidates = workspace_width_candidates(axes=(_tiled(extent=8),))
+
+    assert candidates == ({"cell": 4},)
+
+
+def test_a_tiled_axis_frontier_covers_its_extent() -> None:
+    """Under a budget a tiled axis offers the same ranked frontier as a reduced one."""
+    candidates = workspace_width_candidates(axes=(_tiled(extent=8),), budget_bytes=1)
+
+    assert [widths["cell"] for widths in candidates] == [8, 4, 2, 1]
 
 
 def test_budgeted_planning_stops_at_the_first_feasible_candidate() -> None:
     """The full extent fits, so no narrower candidate is ever compiled."""
-    compiler = _Compiler(lambda widths: _stats(widths["action"]))
+    compiler = _Compiler(lambda widths: _stats(widths["action_product"]))
 
     plan = plan_workspace(
         axes=(_axis(extent=9),),
@@ -214,14 +261,14 @@ def test_budgeted_planning_stops_at_the_first_feasible_candidate() -> None:
         budget_bytes=100,
     )
 
-    assert [widths["action"] for widths, _ in compiler.calls] == [9]
+    assert [widths["action_product"] for widths, _ in compiler.calls] == [9]
     assert compiler.calls[0][1].memory_analysis_calls == 1
-    assert plan.widths == {"action": 9}
+    assert plan.widths == {"action_product": 9}
 
 
 def test_budgeted_planning_descends_the_frontier_until_one_candidate_fits() -> None:
     """Wider candidates are compiled and rejected before the widest feasible one."""
-    compiler = _Compiler(lambda widths: _stats(widths["action"]))
+    compiler = _Compiler(lambda widths: _stats(widths["action_product"]))
 
     plan = plan_workspace(
         axes=(_axis(extent=9),),
@@ -229,15 +276,15 @@ def test_budgeted_planning_descends_the_frontier_until_one_candidate_fits() -> N
         budget_bytes=4,
     )
 
-    assert [widths["action"] for widths, _ in compiler.calls] == [9, 8, 4]
+    assert [widths["action_product"] for widths, _ in compiler.calls] == [9, 8, 4]
     assert all(
         executable.memory_analysis_calls == 1 for _, executable in compiler.calls
     )
-    assert plan.widths == {"action": 4}
+    assert plan.widths == {"action_product": 4}
 
 
 def test_peak_equal_to_budget_is_feasible() -> None:
-    compiler = _Compiler(lambda widths: _stats(widths["action"]))
+    compiler = _Compiler(lambda widths: _stats(widths["action_product"]))
 
     plan = plan_workspace(
         axes=(_axis(extent=8),),
@@ -245,7 +292,7 @@ def test_peak_equal_to_budget_is_feasible() -> None:
         budget_bytes=4,
     )
 
-    assert plan.widths == {"action": 4}
+    assert plan.widths == {"action_product": 4}
     assert plan.peak_bytes == 4
 
 
@@ -272,12 +319,13 @@ def test_per_device_peaks_are_maximized_not_summed() -> None:
     compiler = _Compiler(lambda _widths: [_stats(60), _stats(70)])
 
     plan = plan_workspace(
-        axes=(_axis(extent=8, requested_width=3),),
+        axes=(_axis(extent=8),),
+        fixed_widths={"action_product": 3},
         compile_candidate=compiler,
         budget_bytes=70,
     )
 
-    assert plan.widths == {"action": 3}
+    assert plan.widths == {"action_product": 3}
     assert plan.peak_bytes == 70
 
 
@@ -312,7 +360,8 @@ def test_strict_peak_normalization_accepts_jax_style_records(
     compiler = _Compiler(lambda _widths: analysis)
 
     plan = plan_workspace(
-        axes=(_axis(requested_width=2),),
+        axes=(_axis(),),
+        fixed_widths={"action_product": 2},
         compile_candidate=compiler,
         budget_bytes=expected,
     )
@@ -363,7 +412,8 @@ def test_malformed_memory_analysis_fails_closed(analysis: object) -> None:
 
     with pytest.raises(ExecutionPlanningError, match="no valid per-device peak"):
         plan_workspace(
-            axes=(_axis(requested_width=2),),
+            axes=(_axis(),),
+            fixed_widths={"action_product": 2},
             compile_candidate=compiler,
             budget_bytes=10,
         )
@@ -377,7 +427,8 @@ def test_malformed_memory_analysis_fails_closed(analysis: object) -> None:
 def test_missing_memory_analysis_fails_closed(compiled: object) -> None:
     with pytest.raises(ExecutionPlanningError, match="analysis is unavailable"):
         plan_workspace(
-            axes=(_axis(requested_width=2),),
+            axes=(_axis(),),
+            fixed_widths={"action_product": 2},
             compile_candidate=lambda _widths: compiled,
             budget_bytes=10,
         )
@@ -389,7 +440,8 @@ def test_failing_memory_analysis_is_wrapped_with_its_cause() -> None:
 
     with pytest.raises(ExecutionPlanningError, match="analysis failed") as caught:
         plan_workspace(
-            axes=(_axis(requested_width=2),),
+            axes=(_axis(),),
+            fixed_widths={"action_product": 2},
             compile_candidate=lambda _widths: executable,
             budget_bytes=10,
         )
@@ -414,7 +466,7 @@ def test_compile_exceptions_propagate_unchanged(budget_bytes: int | None) -> Non
     assert caught.value is failure
 
 
-def test_all_requested_axes_compile_only_one_candidate_and_report_overbudget() -> None:
+def test_all_fixed_axes_compile_only_one_candidate_and_report_overbudget() -> None:
     compiler = _Compiler(lambda _widths: _stats(11))
 
     with pytest.raises(
@@ -423,9 +475,10 @@ def test_all_requested_axes_compile_only_one_candidate_and_report_overbudget() -
     ):
         plan_workspace(
             axes=(
-                _axis(name="outer", extent=8, requested_width=3),
-                _axis(name="inner", extent=7, requested_width=5),
+                _axis(name="outer", extent=8),
+                _axis(name="inner", extent=7),
             ),
+            fixed_widths={"outer": 3, "inner": 5},
             compile_candidate=compiler,
             budget_bytes=10,
         )
@@ -435,7 +488,7 @@ def test_all_requested_axes_compile_only_one_candidate_and_report_overbudget() -
 
 
 def test_no_feasible_candidate_is_reported_after_the_entire_frontier() -> None:
-    compiler = _Compiler(lambda widths: _stats(20 - widths["action"]))
+    compiler = _Compiler(lambda widths: _stats(20 - widths["action_product"]))
 
     with pytest.raises(
         ExecutionPlanningError,
@@ -447,14 +500,14 @@ def test_no_feasible_candidate_is_reported_after_the_entire_frontier() -> None:
             budget_bytes=10,
         )
 
-    assert [widths["action"] for widths, _ in compiler.calls] == [8, 4, 2, 1]
+    assert [widths["action_product"] for widths, _ in compiler.calls] == [8, 4, 2, 1]
     assert all(
         executable.memory_analysis_calls == 1 for _, executable in compiler.calls
     )
 
 
 def test_selected_executable_is_never_executed_or_recompiled() -> None:
-    compiler = _Compiler(lambda widths: _stats(widths["action"]))
+    compiler = _Compiler(lambda widths: _stats(widths["action_product"]))
 
     plan = plan_workspace(
         axes=(_axis(extent=8),),
@@ -463,7 +516,9 @@ def test_selected_executable_is_never_executed_or_recompiled() -> None:
     )
 
     selected = next(
-        executable for widths, executable in compiler.calls if widths == {"action": 4}
+        executable
+        for widths, executable in compiler.calls
+        if widths == {"action_product": 4}
     )
     assert plan.compiled is selected
     assert len({id(executable) for _, executable in compiler.calls}) == 2
@@ -474,14 +529,14 @@ def test_selected_executable_is_never_executed_or_recompiled() -> None:
 
 
 def test_workspace_plan_owns_an_immutable_width_snapshot() -> None:
-    source = {"action": 2}
+    source = {"action_product": 2}
     plan = WorkspacePlan(widths=source, peak_bytes=4, compiled=object())
 
-    source["action"] = 8
+    source["action_product"] = 8
 
-    assert plan.widths == {"action": 2}
+    assert plan.widths == {"action_product": 2}
     with pytest.raises(TypeError):
-        cast("dict[str, int]", plan.widths)["action"] = 4
+        cast("dict[str, int]", plan.widths)["action_product"] = 4
 
 
 def test_duplicate_axis_names_are_rejected_before_compilation() -> None:
@@ -504,7 +559,7 @@ def test_duplicate_axis_names_are_rejected_before_compilation() -> None:
 def test_non_axis_declaration_is_rejected_before_compilation() -> None:
     with pytest.raises(BeartypeCallHintViolation):
         plan_workspace(
-            axes=cast("tuple[StreamableProductAxis, ...]", (object(),)),
+            axes=cast("tuple[ReducedAxis, ...]", (object(),)),
             compile_candidate=lambda _widths: object(),
         )
 
@@ -512,7 +567,6 @@ def test_non_axis_declaration_is_rejected_before_compilation() -> None:
 @pytest.mark.parametrize(
     ("axis", "error", "match"),
     [
-        (_axis(name=""), TypeError, "non-empty string"),
         (
             _axis(
                 coordinate_names=("only",),
@@ -544,7 +598,6 @@ def test_non_axis_declaration_is_rejected_before_compilation() -> None:
         (_axis(extent=1), ValueError, "extent greater than one"),
     ],
     ids=(
-        "empty-name",
         "mismatched-coordinate-declaration",
         "empty-coordinate-product",
         "bool-extent",
@@ -554,7 +607,7 @@ def test_non_axis_declaration_is_rejected_before_compilation() -> None:
     ),
 )
 def test_invalid_axis_extent_assumptions_are_rejected_at_the_planner_seam(
-    *, axis: StreamableProductAxis, error: type[Exception], match: str
+    *, axis: ReducedAxis, error: type[Exception], match: str
 ) -> None:
     with pytest.raises(error, match=match):
         plan_workspace(
@@ -564,25 +617,44 @@ def test_invalid_axis_extent_assumptions_are_rejected_at_the_planner_seam(
 
 
 @pytest.mark.parametrize(
-    ("requested_width", "error", "match"),
+    ("fixed_width", "error", "match"),
     [
         (True, TypeError, "must be an integer"),
-        (cast("int", 2.0), BeartypeCallHintViolation, "requested_width"),
+        (cast("int", 2.0), BeartypeCallHintViolation, "fixed_widths"),
         (_IntSubclass(2), TypeError, "must be an integer"),
         (0, ValueError, "must be positive"),
         (-1, ValueError, "must be positive"),
-        (9, ValueError, "exceeds its product extent 8"),
     ],
-    ids=("bool", "float", "int-subclass", "zero", "negative", "above-extent"),
+    ids=("bool", "float", "int-subclass", "zero", "negative"),
 )
-def test_invalid_requested_width_is_rejected_before_compilation(
-    *, requested_width: object, error: type[Exception], match: str
+def test_invalid_fixed_width_is_rejected_before_compilation(
+    *, fixed_width: object, error: type[Exception], match: str
 ) -> None:
     with pytest.raises(error, match=match):
         plan_workspace(
-            axes=(_axis(requested_width=cast("int", requested_width)),),
+            axes=(_axis(),),
+            fixed_widths={"action_product": cast("int", fixed_width)},
             compile_candidate=lambda _widths: object(),
         )
+
+
+def test_an_empty_fixed_width_axis_name_is_rejected_before_compilation() -> None:
+    """A fixed width must name an axis."""
+    with pytest.raises(TypeError, match="non-empty axis name"):
+        plan_workspace(
+            axes=(_axis(),),
+            fixed_widths={"": 2},
+            compile_candidate=lambda _widths: object(),
+        )
+
+
+def test_an_axis_whose_name_was_emptied_is_rejected_at_the_planner_seam() -> None:
+    """The planner refuses an axis that reaches it without a usable name."""
+    axis = _axis()
+    object.__setattr__(axis, "name", "")
+
+    with pytest.raises(TypeError, match="non-empty string"):
+        plan_workspace(axes=(axis,), compile_candidate=lambda _widths: object())
 
 
 @pytest.mark.parametrize(

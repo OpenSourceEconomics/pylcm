@@ -911,7 +911,7 @@ def test_reference_solver_scopes_planned_cores_to_requested_retention() -> None:
     programs = cast("Any", kernel).core_programs()
     values_program = programs["values"]
     replay_program = programs["replay"]
-    axis = values_program.requirements.streamable_axes[0]
+    axis = values_program.requirements.axes[0]
 
     scratch_program = programs["scratch"]
     assert tuple(programs) == ("values", "replay", "scratch")

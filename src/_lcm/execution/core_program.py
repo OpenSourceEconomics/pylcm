@@ -13,7 +13,7 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 import jax
 
@@ -75,28 +75,59 @@ class _TransferArgumentLeaf(Protocol):
 
 @runtime_checkable
 class ReductionSemantics(Protocol):
-    """Solver-owned reduction semantics used in static program identity."""
+    """Solver-owned reduction over the blocks of one reduced axis.
+
+    - `semantic_key` names the numerical contract and enters static program
+      identity.
+    - `exactness` says whether block order can change the published value:
+      `"exact"` results are bit-identical across widths, `"tolerance_equivalent"`
+      results agree to the working format's rounding.
+
+    A specification also carries the fold the planner drives when it streams the
+    axis — an accumulator created once, one contribution per block, a merge of two
+    partial accumulators, and a finalization that publishes the reduced value.
+    Every block sees only its own cells. The accumulator type and the exact
+    argument names of that fold belong to the solver family that owns the axis, so
+    the two members above are what every specification has in common and what this
+    protocol checks.
+    """
 
     @property
     def semantic_key(self) -> Hashable:
         """Return a stable key for the reduction's numerical contract."""
         ...
 
+    @property
+    def exactness(self) -> Literal["exact", "tolerance_equivalent"]:
+        """Return whether block order can move the published value."""
+        ...
+
 
 @dataclass(frozen=True, kw_only=True)
-class StreamableProductAxis:
-    """One canonical Cartesian-product axis that the planner may tile."""
+class ReducedAxis:
+    """One Cartesian-product axis the planner may stream and fold with `reduction`."""
 
     name: str
+    """Planner-visible axis name; `ExecutionConfig.axis_widths` keys match it."""
+
     coordinate_names: tuple[ActionName, ...]
+    """Names of the grids whose product the axis enumerates."""
+
     coordinate_extents: tuple[int, ...]
-    canonical_order: str
+    """Extent of each coordinate grid, in the same order."""
+
+    canonical_order: Literal["c"]
+    """Order the flat product identity counts the coordinates in."""
+
     reduction: ReductionSemantics
+    """Fold that makes any block schedule equivalent to one canonical pass."""
+
     width_keyword: str
-    requested_width: int | None = None
+    """Keyword the core function accepts for the compiled block width."""
 
     def __post_init__(self) -> None:
-        """Snapshot caller-owned sequences while leaving validation late."""
+        """Snapshot caller-owned sequences and require a non-empty name."""
+        _fail_if_axis_name_invalid(name=self.name)
         object.__setattr__(self, "coordinate_names", tuple(self.coordinate_names))
         object.__setattr__(self, "coordinate_extents", tuple(self.coordinate_extents))
 
@@ -104,6 +135,27 @@ class StreamableProductAxis:
     def extent(self) -> int:
         """Return the total number of cells in the canonical product."""
         return math.prod(self.coordinate_extents)
+
+
+@dataclass(frozen=True, kw_only=True)
+class TiledOutputAxis:
+    """One output axis the planner may tile; tiles are concatenated, never folded."""
+
+    name: str
+    """Planner-visible axis name; `ExecutionConfig.axis_widths` keys match it."""
+
+    extent: int
+    """Number of cells along the axis."""
+
+    width_keyword: str
+    """Keyword the core function accepts for the compiled tile width."""
+
+    def __post_init__(self) -> None:
+        """Require a non-empty name and a positive extent."""
+        _fail_if_axis_name_invalid(name=self.name)
+        if type(self.extent) is not int or self.extent <= 0:
+            msg = f"TiledOutputAxis {self.name!r} extent must be a positive int."
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -155,7 +207,12 @@ class InternalInputRef:
 class CoreExecutionRequirements:
     """Static requirements that the execution planner must resolve for a core."""
 
-    streamable_axes: tuple[StreamableProductAxis, ...] = ()
+    reduced_axes: tuple[ReducedAxis, ...] = ()
+    """Axes folded by a reduction when streamed."""
+
+    tiled_axes: tuple[TiledOutputAxis, ...] = ()
+    """Axes whose tiles are concatenated when streamed."""
+
     value_reads: tuple[ValueRead, ...] = ()
     """Stored values this core reads across a regime-period boundary."""
 
@@ -164,8 +221,14 @@ class CoreExecutionRequirements:
 
     def __post_init__(self) -> None:
         """Snapshot the declared axes, value reads, and internal inputs."""
-        object.__setattr__(self, "streamable_axes", tuple(self.streamable_axes))
+        object.__setattr__(self, "reduced_axes", tuple(self.reduced_axes))
+        object.__setattr__(self, "tiled_axes", tuple(self.tiled_axes))
         object.__setattr__(self, "value_reads", tuple(self.value_reads))
+        names = [axis.name for axis in self.axes]
+        for name in names:
+            if names.count(name) > 1:
+                msg = f"Core program declares a duplicate axis name {name!r}."
+                raise ValueError(msg)
         internal_inputs = dict(self.internal_inputs)
         for name, ref in internal_inputs.items():
             if type(name) is not str or not name:
@@ -175,6 +238,16 @@ class CoreExecutionRequirements:
                 msg = f"Internal input {name!r} must be an InternalInputRef."
                 raise TypeError(msg)
         object.__setattr__(self, "internal_inputs", MappingProxyType(internal_inputs))
+
+    @property
+    def axes(self) -> tuple[ReducedAxis | TiledOutputAxis, ...]:
+        """Return every planner-visible axis, reduced first, in declaration order."""
+        return (*self.reduced_axes, *self.tiled_axes)
+
+    @property
+    def axis_names(self) -> tuple[str, ...]:
+        """Return the axis names in `axes` order."""
+        return tuple(axis.name for axis in self.axes)
 
 
 class CoreExecutionDisposition(StrEnum):
@@ -848,7 +921,7 @@ def resolve_core_program(
 
     Widths are static compilation choices kept separate from the dynamic lowering
     arguments. The engine supplies them as JAX static keyword arguments while retaining
-    the raw core's identity, so equivalent solves reuse JAX's trace cache. A streamable
+    the raw core's identity, so equivalent solves reuse JAX's trace cache. A declared
     axis requires an explicit planner choice; silently using its full extent would turn
     a streaming declaration into full materialization. This runs once per program build,
     before any period dispatch, so the input transfer plan it applies here takes no
@@ -870,16 +943,16 @@ def resolve_core_program(
             raise ValueError(msg)
         resolved_input_transfer_plan = ()
         input_transfer_specialization_key = ()
-    axes = program.requirements.streamable_axes
+    axes = program.requirements.axes
     axis_names = [axis.name for axis in axes]
 
     unknown_axes = requested_widths.keys() - set(axis_names)
     if unknown_axes:
-        msg = f"Tile widths name an unknown streamable axis: {sorted(unknown_axes)!r}."
+        msg = f"Tile widths name an unknown execution axis: {sorted(unknown_axes)!r}."
         raise ValueError(msg)
     missing_axes = set(axis_names) - requested_widths.keys()
     if missing_axes:
-        msg = f"Tile width is required for streamable axes: {sorted(missing_axes)!r}."
+        msg = f"Tile width is required for execution axes: {sorted(missing_axes)!r}."
         raise ValueError(msg)
 
     resolved_widths: dict[str, int] = {}
@@ -890,12 +963,6 @@ def resolve_core_program(
             axis=axis,
             width=requested_widths[axis.name],
         )
-        if axis.requested_width is not None and width != axis.requested_width:
-            msg = (
-                f"Tile width {width} for axis {axis.name!r} does not match its "
-                f"requested width {axis.requested_width}."
-            )
-            raise ValueError(msg)
         resolved_widths[axis.name] = width
         width_bindings[axis.width_keyword] = width
         compilation_axes.append(
@@ -908,6 +975,8 @@ def resolve_core_program(
                 axis.width_keyword,
                 width,
             )
+            if isinstance(axis, ReducedAxis)
+            else (axis.name, axis.extent, axis.width_keyword, width)
         )
 
     return ResolvedCoreProgram(
@@ -978,17 +1047,17 @@ def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
         raise TypeError(msg)
     _validate_value_reads(program=program)
 
-    axes = program.requirements.streamable_axes
+    axes = program.requirements.axes
     if program.disposition is not CoreExecutionDisposition.PLANNED and axes:
         msg = (
-            "Streamable axes are for planned programs only; CoreProgram "
+            "Execution axes are for planned programs only; CoreProgram "
             f"{program.name!r} has disposition {program.disposition.value!r} but "
-            "declares streamable axes."
+            "declares execution axes."
         )
         raise ValueError(msg)
     axis_names = [axis.name for axis in axes]
     if len(axis_names) != len(set(axis_names)):
-        msg = f"Core program has duplicate streamable axis names: {axis_names!r}."
+        msg = f"Core program has duplicate execution axis names: {axis_names!r}."
         raise ValueError(msg)
 
     width_keywords = [axis.width_keyword for axis in axes]
@@ -997,7 +1066,9 @@ def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
         raise ValueError(msg)
 
     for axis in axes:
-        _validate_streamable_axis(axis=axis, arguments=program.arguments)
+        _validate_axis_width_keyword(axis=axis, arguments=program.arguments)
+        if isinstance(axis, ReducedAxis):
+            _validate_reduced_axis(axis=axis, arguments=program.arguments)
         _validate_width_keyword(function=program.function, axis=axis)
 
 
@@ -1195,19 +1266,24 @@ def _validate_transfer_argument_metadata(
         raise ValueError(msg)
 
 
-def _validate_streamable_axis(
+def _fail_if_axis_name_invalid(*, name: object) -> None:
+    """Require an exact, non-empty spelling for a planner-visible axis name."""
+    if type(name) is not str or not name:
+        msg = "An execution axis name must be a non-empty string."
+        raise TypeError(msg)
+
+
+def _validate_reduced_axis(
     *,
-    axis: StreamableProductAxis,
+    axis: ReducedAxis,
     arguments: Mapping[str, object],
 ) -> None:
     """Fail closed for product declarations outside the supported contract."""
     _validate_coordinate_declaration(axis=axis)
-    _validate_requested_width(axis=axis)
     if axis.canonical_order != "c":
-        msg = f"Streamable axis {axis.name!r} canonical order must be 'c'."
+        msg = f"Reduced axis {axis.name!r} canonical order must be 'c'."
         raise ValueError(msg)
     _validate_reduction_semantics(axis=axis)
-    _validate_axis_width_keyword(axis=axis, arguments=arguments)
     for coordinate_name, coordinate_extent in zip(
         axis.coordinate_names, axis.coordinate_extents, strict=True
     ):
@@ -1219,17 +1295,17 @@ def _validate_streamable_axis(
         )
 
 
-def _validate_coordinate_declaration(*, axis: StreamableProductAxis) -> None:
+def _validate_coordinate_declaration(*, axis: ReducedAxis) -> None:
     """Validate the names, extents, and global identities of one product."""
     if len(axis.coordinate_names) != len(axis.coordinate_extents):
         msg = (
-            f"Streamable axis {axis.name!r} coordinate names and extents must "
+            f"Reduced axis {axis.name!r} coordinate names and extents must "
             "have the same length."
         )
         raise ValueError(msg)
     if len(axis.coordinate_names) != len(set(axis.coordinate_names)):
         msg = (
-            f"Streamable axis {axis.name!r} has duplicate coordinate names: "
+            f"Reduced axis {axis.name!r} has duplicate coordinate names: "
             f"{axis.coordinate_names!r}."
         )
         raise ValueError(msg)
@@ -1237,70 +1313,47 @@ def _validate_coordinate_declaration(*, axis: StreamableProductAxis) -> None:
         isinstance(extent, bool) or not isinstance(extent, int)
         for extent in axis.coordinate_extents
     ):
-        msg = f"Streamable axis {axis.name!r} coordinate extents must be integers."
+        msg = f"Reduced axis {axis.name!r} coordinate extents must be integers."
         raise TypeError(msg)
     if any(extent <= 0 for extent in axis.coordinate_extents):
-        msg = f"Streamable axis {axis.name!r} coordinate extents must be positive."
+        msg = f"Reduced axis {axis.name!r} coordinate extents must be positive."
         raise ValueError(msg)
     if axis.extent > _INT32_MAX:
         msg = (
-            f"Streamable axis {axis.name!r} exceeds the int32 global action "
+            f"Reduced axis {axis.name!r} exceeds the int32 global action "
             f"identity range: {axis.extent}."
         )
         raise ValueError(msg)
 
 
-def _validate_reduction_semantics(*, axis: StreamableProductAxis) -> None:
+def _validate_reduction_semantics(*, axis: ReducedAxis) -> None:
     """Require stable, hashable semantics for the axis reduction."""
     if not isinstance(axis.reduction, ReductionSemantics):
-        msg = (
-            f"Streamable axis {axis.name!r} reduction must expose a stable "
-            "semantic_key."
-        )
+        msg = f"Reduced axis {axis.name!r} reduction must expose a stable semantic_key."
         raise TypeError(msg)
     try:
         hash(axis.reduction.semantic_key)
     except TypeError as exc:
-        msg = f"Streamable axis {axis.name!r} reduction semantic_key must be hashable."
+        msg = f"Reduced axis {axis.name!r} reduction semantic_key must be hashable."
         raise TypeError(msg) from exc
 
 
 def _validate_axis_width_keyword(
-    *, axis: StreamableProductAxis, arguments: Mapping[str, object]
+    *, axis: ReducedAxis | TiledOutputAxis, arguments: Mapping[str, object]
 ) -> None:
     """Keep the planner-owned width distinct from dynamic arguments."""
     if not axis.width_keyword:
-        msg = f"Streamable axis {axis.name!r} must declare a width keyword."
+        msg = f"Execution axis {axis.name!r} must declare a width keyword."
         raise ValueError(msg)
     if axis.width_keyword in arguments:
         msg = (
-            f"Streamable axis {axis.name!r} width keyword "
+            f"Execution axis {axis.name!r} width keyword "
             f"{axis.width_keyword!r} is already present in dynamic arguments."
         )
         raise ValueError(msg)
 
 
-def _validate_requested_width(*, axis: StreamableProductAxis) -> int | None:
-    """Validate a solver-requested width against its declared product."""
-    width = axis.requested_width
-    if width is None:
-        return None
-    if type(width) is not int:
-        msg = f"Streamable axis {axis.name!r} requested width must be an integer."
-        raise TypeError(msg)
-    if width <= 0:
-        msg = f"Streamable axis {axis.name!r} requested width must be positive."
-        raise ValueError(msg)
-    if width > axis.extent:
-        msg = (
-            f"Streamable axis {axis.name!r} requested width {width} exceeds its "
-            f"product extent {axis.extent}."
-        )
-        raise ValueError(msg)
-    return width
-
-
-def _validate_tile_width(*, axis: StreamableProductAxis, width: object) -> int:
+def _validate_tile_width(*, axis: ReducedAxis | TiledOutputAxis, width: object) -> int:
     """Validate one planner-selected width against its declared product."""
     if isinstance(width, bool) or not isinstance(width, int):
         msg = f"Tile width for axis {axis.name!r} must be an integer."
@@ -1327,7 +1380,7 @@ def _validate_coordinate_argument(
     """Tie one declared coordinate to the exact dynamic lowering grid."""
     if coordinate_name not in arguments:
         msg = (
-            f"Streamable axis {axis_name!r} coordinate {coordinate_name!r} is "
+            f"Reduced axis {axis_name!r} coordinate {coordinate_name!r} is "
             "missing from the program arguments."
         )
         raise ValueError(msg)
@@ -1335,26 +1388,26 @@ def _validate_coordinate_argument(
     shape = getattr(coordinate, "shape", None)
     if shape is None or len(shape) != 1:
         msg = (
-            f"Streamable axis {axis_name!r} coordinate {coordinate_name!r} must "
+            f"Reduced axis {axis_name!r} coordinate {coordinate_name!r} must "
             "be one-dimensional."
         )
         raise ValueError(msg)
     if shape[0] == 0:
         msg = (
-            f"Streamable axis {axis_name!r} coordinate {coordinate_name!r} must "
+            f"Reduced axis {axis_name!r} coordinate {coordinate_name!r} must "
             "be non-empty."
         )
         raise ValueError(msg)
     if shape[0] != coordinate_extent:
         msg = (
-            f"Streamable axis {axis_name!r} coordinate {coordinate_name!r} has "
+            f"Reduced axis {axis_name!r} coordinate {coordinate_name!r} has "
             f"extent {shape[0]}, but the declaration says {coordinate_extent}."
         )
         raise ValueError(msg)
 
 
 def _validate_width_keyword(
-    *, function: Callable[..., object], axis: StreamableProductAxis
+    *, function: Callable[..., object], axis: ReducedAxis | TiledOutputAxis
 ) -> None:
     """Require the raw core to accept the planner's static width binding."""
     signature = inspect.signature(function)
@@ -1365,13 +1418,13 @@ def _validate_width_keyword(
     )
     if parameter is None and not accepts_kwargs:
         msg = (
-            f"Streamable axis {axis.name!r} width keyword "
+            f"Execution axis {axis.name!r} width keyword "
             f"{axis.width_keyword!r} is not accepted by the core function."
         )
         raise TypeError(msg)
     if parameter is not None and parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
         msg = (
-            f"Streamable axis {axis.name!r} width keyword "
+            f"Execution axis {axis.name!r} width keyword "
             f"{axis.width_keyword!r} must be accepted as a keyword by the core "
             "function."
         )

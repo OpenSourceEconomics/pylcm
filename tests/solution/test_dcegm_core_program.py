@@ -114,7 +114,7 @@ def test_the_graph_publishes_dense_values_and_replay_variants():
     for program in graph.values():
         assert program.disposition is CoreExecutionDisposition.DENSE
         assert program.disposition_reason == _DENSE_REASON
-        assert program.requirements.streamable_axes == ()
+        assert program.requirements.axes == ()
         assert {read.source.path for read in program.requirements.value_reads} == {
             (target, leaf)
             for target in targets

@@ -13,13 +13,20 @@ from _lcm.execution.core_program import (
     InternalInputRef,
     InternalOutputSpec,
     MaterializedCoreProgram,
+    ReducedAxis,
     ReductionSemantics,
     ResolvedCoreProgram,
-    StreamableProductAxis,
+    TiledOutputAxis,
     ValueRead,
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
+)
+from _lcm.execution.reductions import (
+    EXACTNESS_VALUES,
+    HardMaxWithCarryReduction,
+    IntervalEnvelopeReduction,
+    WeightedExpectationReduction,
 )
 from _lcm.execution.value_transfer import (
     TransferCost,
@@ -32,17 +39,21 @@ from _lcm.execution.value_transfer import (
 )
 
 __all__ = [
+    "EXACTNESS_VALUES",
     "CoreBuildContext",
     "CoreExecutionDisposition",
     "CoreExecutionRequirements",
     "CoreProgram",
     "CoreProgramGraphAware",
+    "HardMaxWithCarryReduction",
     "InternalInputRef",
     "InternalOutputSpec",
+    "IntervalEnvelopeReduction",
     "MaterializedCoreProgram",
+    "ReducedAxis",
     "ReductionSemantics",
     "ResolvedCoreProgram",
-    "StreamableProductAxis",
+    "TiledOutputAxis",
     "TransferCost",
     "TransferOperationClass",
     "ValueArtifactAddress",
@@ -51,6 +62,7 @@ __all__ = [
     "ValueInputChannel",
     "ValueRead",
     "ValueTransferKind",
+    "WeightedExpectationReduction",
     "core_program_graph",
     "materialize_core_program",
     "resolve_core_program",

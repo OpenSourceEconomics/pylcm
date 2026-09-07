@@ -44,28 +44,35 @@ curvature, boundaries, or regions visited frequently in simulation.
 locations. They do not declare a budget kink or cliff to NBEGM; use the structured
 [budget declarations](../methods/nonconvex_budgets.md) for that.
 
-## Stream work with explicit batch widths
+## Fix a planner axis width
 
-Some controls reduce live intermediates. Grid `batch_size`,
-`stochastic_node_batch_size`, `envelope_segment_block_size`, `subject_batch_size`, and
-any solver field whose Reference contract explicitly says it streams an evaluation axis
-can lower temporary workspace. The exact effect still depends on retained banks and
-downstream folds; for example, `NEGM.outer_batch_size` can lower temporary evaluation
-memory without capping the retained candidate bank.
+A solve core declares the axes the execution planner may stream, each under a name.
+`ExecutionConfig(axis_widths=...)` maps such a name to the compiled batch widths every
+program declaring it is lowered at:
 
-NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
-batch widths for the corresponding `lax.map` axes. A positive value smaller than the
-axis bounds how many entries are evaluated together; `0`, or a value covering the axis,
-uses one vectorized pass. Lower values can reduce live intermediates inside that mapped
-core at the cost of more sequential execution. They do not cap surrounding arrays,
-retained candidate banks, compilation memory, or total device memory.
+```python
+from lcm import ExecutionConfig
 
-Choose the largest batch that meets the measured memory target, then verify values and
-runtime against the whole-axis setting on the model and backend you will use.
+execution_config = ExecutionConfig(axis_widths={"action_product": 8})
+```
 
-Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
-[Upper envelopes](../reference/envelopes.md), and
-[Outer search](../reference/outer_search.md).
+A width smaller than the axis bounds how many entries are evaluated together; a width at
+or above the axis extent selects the whole axis in one vectorized pass. Lower values can
+reduce live intermediates inside that core at the cost of more sequential execution.
+They do not cap surrounding arrays, retained candidate banks, compilation memory, or
+total device memory.
+
+Which axis names exist depends on which solver a regime uses; each solver's section in
+[Solvers and capabilities](../reference/solvers.md) names the axes it declares.
+
+| axis             | declared by                                                            |
+| ---------------- | ---------------------------------------------------------------------- |
+| `action_product` | the flattened Cartesian action product of a streamed `GridSearch` core |
+
+Choose the largest width that meets the measured memory target, then verify values and
+runtime against the whole-axis setting on the model and backend you will use. Leaving an
+axis out of the mapping lets the planner choose, which is what a device-memory budget
+asks it to do.
 
 ## Distribute independent discrete state work
 

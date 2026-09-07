@@ -268,7 +268,7 @@ def test_a_capture_records_the_tile_widths_the_solve_dispatched(
     )
     extent = math.prod(space.actions_grid_shapes)
     assert payload["core_tile_widths"] == {
-        "main": {"action": bootstrap_width(extent=extent)}
+        "main": {"action_product": bootstrap_width(extent=extent)}
     }
 
 
@@ -289,9 +289,9 @@ def test_a_capture_without_tile_widths_is_refused(*, monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("widths", "error"),
     [
-        ({"main": {"action": 0}}, ValueError),
-        ({"main": {"action": 2.0}}, TypeError),
-        ({"other": {"action": 2}}, ValueError),
+        ({"main": {"action_product": 0}}, ValueError),
+        ({"main": {"action_product": 2.0}}, TypeError),
+        ({"other": {"action_product": 2}}, ValueError),
     ],
     ids=["nonpositive-width", "noninteger-width", "wrong-core-names"],
 )

@@ -23,7 +23,7 @@ import pathlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -51,7 +51,7 @@ from lcm.solver_api import (
     ResultRetention,
     SolverIdentity,
 )
-from lcm.solvers import GridSearch, StreamableProductAxis
+from lcm.solvers import GridSearch, ReducedAxis
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -128,6 +128,11 @@ class _MaxReduction:
     def semantic_key(self) -> tuple[str, int]:
         """Return the durable identity of this reduction."""
         return ("tests.internal_edges.max", 1)
+
+    @property
+    def exactness(self) -> Literal["exact"]:
+        """Return `"exact"`: the fold is order independent."""
+        return "exact"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -297,7 +302,7 @@ def _program(
     """Declare one program of a test graph, dense unless it streams candidates."""
     axes = (
         (
-            StreamableProductAxis(
+            ReducedAxis(
                 name="candidate",
                 coordinate_names=("candidate",),
                 coordinate_extents=(_CANDIDATES,),
@@ -314,7 +319,7 @@ def _program(
         function=function,
         argument_builder=builder,
         requirements=CoreExecutionRequirements(
-            streamable_axes=axes, internal_inputs=internal_inputs
+            reduced_axes=axes, internal_inputs=internal_inputs
         ),
         output_roles=output_roles,
         disposition=(

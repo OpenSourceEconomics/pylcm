@@ -202,7 +202,7 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
     assert sweep.disposition_reason == _SWEEP_REASON
     assert keeper.scope is ProgramScope.VALUES_ONLY
     assert sweep.scope is ProgramScope.ANY
-    assert sweep.requirements.streamable_axes == ()
+    assert sweep.requirements.axes == ()
     assert {read.source.core_key for read in sweep.requirements.value_reads} == {
         "outer_sweep"
     }

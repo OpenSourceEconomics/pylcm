@@ -5,7 +5,7 @@ discrete EV1 branch. Choice probabilities remain a separate simulation concern.
 """
 
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import jax.numpy as jnp
 
@@ -132,6 +132,11 @@ class LogSumExpReduction:
     def semantic_key(self) -> tuple[str, int]:
         """Stable identity of the value-only log-sum-exp contract."""
         return ("logsumexp", 1)
+
+    @property
+    def exactness(self) -> Literal["tolerance_equivalent"]:
+        """Return `"tolerance_equivalent"`: the mass is a floating-point sum."""
+        return "tolerance_equivalent"
 
     def bind(self, *, scale: FloatND) -> BoundLogSumExpReduction:
         """Bind ``scale`` once so partial operations cannot disagree about it."""

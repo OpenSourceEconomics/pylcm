@@ -7,7 +7,7 @@ at dispatch that the arrays handed over match that declaration.
 import dataclasses
 from collections.abc import Hashable, Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -42,7 +42,7 @@ from _lcm.execution.output_layout import (
 from _lcm.typing import FloatND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
-from lcm.solvers import StreamableProductAxis
+from lcm.solvers import ReducedAxis
 
 
 def _producer_function(*, x):
@@ -133,6 +133,11 @@ class _MaxReduction:
     def semantic_key(self) -> tuple[str, int]:
         """Return the durable identity of this reduction."""
         return ("tests.internal_outputs.max", 1)
+
+    @property
+    def exactness(self) -> Literal["exact"]:
+        """Return `"exact"`: the fold is order independent."""
+        return "exact"
 
 
 def _records(
@@ -232,8 +237,8 @@ def _streaming_program(*, label: str, path: tuple[int, ...]) -> CoreProgram:
         function=_blocking_function,
         argument_builder=_build_candidates,
         requirements=CoreExecutionRequirements(
-            streamable_axes=(
-                StreamableProductAxis(
+            reduced_axes=(
+                ReducedAxis(
                     name="candidate",
                     coordinate_names=("candidate",),
                     coordinate_extents=(5,),

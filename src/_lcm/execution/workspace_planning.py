@@ -1,6 +1,6 @@
 """Compile-only selection of memory-feasible workspace widths.
 
-The planner owns one narrow seam: callers describe streamable product axes and
+The planner owns one narrow seam: callers describe reduced and tiled axes and
 provide a compiler for a concrete width mapping.  This module enumerates the static
 frontier in rank order, inspects compiler memory reports without executing a
 candidate, and returns the first feasible candidate — the already-compiled winner —
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, SupportsIndex, cast
 
-from _lcm.execution.core_program import StreamableProductAxis
+from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from lcm.exceptions import ExecutionPlanningError
 
 _MISSING = object()
@@ -47,28 +47,34 @@ class WorkspacePlan[Compiled]:
 
 def workspace_width_candidates(
     *,
-    axes: tuple[StreamableProductAxis, ...],
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int] = MappingProxyType({}),
     budget_bytes: int | None = None,
 ) -> tuple[Mapping[str, int], ...]:
     """Return the candidate sequence in planner rank order without compiling it.
 
-    Without a budget the sequence holds one candidate: each axis at its bootstrap
-    width (see `bootstrap_width`) or its requested width.  With a budget it holds
-    the Cartesian product of the
+    Without a budget the sequence holds one candidate: each axis at its fixed width
+    when `fixed_widths` names it, else at its bootstrap width (see
+    `bootstrap_width`).  With a budget it holds the Cartesian product of the
     per-axis frontiers, widest first: descending width product, ties broken toward
-    the lexicographically greatest width tuple in axis declaration order.
+    the lexicographically greatest width tuple in axis declaration order.  A fixed
+    axis contributes one width, clamped to its extent; names no axis declares are
+    ignored here.
     """
     declared_axes = _validate_axes(axes=axes)
+    widths = _validate_fixed_widths(fixed_widths=fixed_widths)
     budget = _validate_budget(budget_bytes=budget_bytes)
     return _workspace_width_candidates(
         axes=declared_axes,
+        fixed_widths=widths,
         budget_bytes=budget,
     )
 
 
 def plan_workspace[Compiled](
     *,
-    axes: tuple[StreamableProductAxis, ...],
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int] = MappingProxyType({}),
     compile_candidate: Callable[[Mapping[str, int]], Compiled],
     budget_bytes: int | None = None,
     peak_bytes_for: Callable[[Compiled], int] | None = None,
@@ -76,7 +82,7 @@ def plan_workspace[Compiled](
 ) -> WorkspacePlan[Compiled]:
     """Compile the width frontier widest-first and return the first candidate that fits.
 
-    Without a budget, the bootstrap width (or an axis's requested width) is compiled
+    Without a budget, the bootstrap width (or a fixed axis width) is compiled
     exactly once and compiler memory analysis is deliberately not consulted, so
     `resident_bytes` is not consulted either.  With a budget, candidates are
     compiled and analyzed in rank order — descending width product, ties broken
@@ -94,6 +100,7 @@ def plan_workspace[Compiled](
     the planner neither executes it nor recompiles the winner.
     """
     declared_axes = _validate_axes(axes=axes)
+    widths_by_axis = _validate_fixed_widths(fixed_widths=fixed_widths)
     budget = _validate_budget(budget_bytes=budget_bytes)
     resident = _validate_resident_bytes(resident_bytes=resident_bytes)
     if not callable(compile_candidate):
@@ -105,6 +112,7 @@ def plan_workspace[Compiled](
 
     candidates = _workspace_width_candidates(
         axes=declared_axes,
+        fixed_widths=widths_by_axis,
         budget_bytes=budget,
     )
 
@@ -132,9 +140,7 @@ def plan_workspace[Compiled](
                 widths=widths, peak_bytes=peak_bytes, compiled=compiled
             )
 
-    if declared_axes and all(
-        axis.requested_width is not None for axis in declared_axes
-    ):
+    if declared_axes and all(axis.name in widths_by_axis for axis in declared_axes):
         msg = (
             "The explicitly requested workspace widths require "
             f"{least_peak} peak bytes, exceeding the {budget}-byte budget "
@@ -150,13 +156,13 @@ def plan_workspace[Compiled](
 
 
 def _validate_axes(
-    *, axes: tuple[StreamableProductAxis, ...]
-) -> tuple[StreamableProductAxis, ...]:
+    *, axes: tuple[ReducedAxis | TiledOutputAxis, ...]
+) -> tuple[ReducedAxis | TiledOutputAxis, ...]:
     """Validate planner-local width assumptions and preserve declaration order."""
     declared_axes = tuple(axes)
     for axis in declared_axes:
-        if not isinstance(axis, StreamableProductAxis):
-            msg = "Workspace axes must be StreamableProductAxis instances."
+        if not isinstance(axis, (ReducedAxis, TiledOutputAxis)):
+            msg = "Workspace axes must be reduced or tiled axis instances."
             raise TypeError(msg)
         _validate_axis(axis=axis)
 
@@ -167,11 +173,20 @@ def _validate_axes(
     return declared_axes
 
 
-def _validate_axis(*, axis: StreamableProductAxis) -> None:
-    """Validate planner-local assumptions about one product axis."""
+def _validate_axis(*, axis: ReducedAxis | TiledOutputAxis) -> None:
+    """Validate planner-local assumptions about one axis."""
     if not isinstance(axis.name, str) or not axis.name:
         msg = "A workspace axis name must be a non-empty string."
         raise TypeError(msg)
+    if isinstance(axis, ReducedAxis):
+        _validate_coordinates(axis=axis)
+    if axis.extent <= 1:
+        msg = f"Workspace axis {axis.name!r} must have product extent greater than one."
+        raise ValueError(msg)
+
+
+def _validate_coordinates(*, axis: ReducedAxis) -> None:
+    """Validate the coordinate product one reduced axis enumerates."""
     if len(axis.coordinate_names) != len(axis.coordinate_extents):
         msg = (
             f"Workspace axis {axis.name!r} coordinate names and extents must "
@@ -190,15 +205,22 @@ def _validate_axis(*, axis: StreamableProductAxis) -> None:
     if any(extent <= 0 for extent in axis.coordinate_extents):
         msg = f"Workspace axis {axis.name!r} extents must be positive."
         raise ValueError(msg)
-    if axis.extent <= 1:
-        msg = f"Workspace axis {axis.name!r} must have product extent greater than one."
-        raise ValueError(msg)
-    if axis.requested_width is not None:
-        _validate_width(
-            axis_name=axis.name,
-            extent=axis.extent,
-            width=axis.requested_width,
-        )
+
+
+def _validate_fixed_widths(*, fixed_widths: Mapping[str, int]) -> Mapping[str, int]:
+    """Require exact positive widths keyed by non-empty axis names."""
+    widths = dict(fixed_widths)
+    for name, width in widths.items():
+        if type(name) is not str or not name:
+            msg = "A fixed workspace width must be keyed by a non-empty axis name."
+            raise TypeError(msg)
+        if type(width) is not int:
+            msg = f"Fixed width for workspace axis {name!r} must be an integer."
+            raise TypeError(msg)
+        if width <= 0:
+            msg = f"Fixed width for workspace axis {name!r} must be positive."
+            raise ValueError(msg)
+    return MappingProxyType(widths)
 
 
 def _validate_budget(*, budget_bytes: int | None) -> int | None:
@@ -225,33 +247,16 @@ def _validate_resident_bytes(*, resident_bytes: int) -> int:
     return resident_bytes
 
 
-def _validate_width(*, axis_name: str, extent: int, width: object) -> int:
-    """Validate an explicit width against one product extent."""
-    if type(width) is not int:
-        msg = f"Requested width for workspace axis {axis_name!r} must be an integer."
-        raise TypeError(msg)
-    if width <= 0:
-        msg = f"Requested width for workspace axis {axis_name!r} must be positive."
-        raise ValueError(msg)
-    if width > extent:
-        msg = (
-            f"Requested width {width} for workspace axis {axis_name!r} exceeds "
-            f"its product extent {extent}."
-        )
-        raise ValueError(msg)
-    return width
-
-
 def bootstrap_width(*, extent: int) -> int:
     """Return the width an axis streams at when no device-memory budget is declared.
 
     The width is the largest power of two strictly below the extent, capped at
     `BOOTSTRAP_WIDTH_CAP`, so an unbudgeted solve never lowers a whole action
     product and its working set stays bounded on every backend.  The full extent is
-    reached only through a budget that shows it fits or through a requested width.
+    reached only through a budget that shows it fits or through a fixed width.
     """
     if type(extent) is not int or extent <= 1:
-        msg = f"A streamable axis needs an exact int extent above one, got {extent!r}."
+        msg = f"An execution axis needs an exact int extent above one, got {extent!r}."
         raise ValueError(msg)
     upper_bound = min(BOOTSTRAP_WIDTH_CAP, extent - 1)
     return 1 << (upper_bound.bit_length() - 1)
@@ -259,20 +264,23 @@ def bootstrap_width(*, extent: int) -> int:
 
 def _workspace_width_candidates(
     *,
-    axes: tuple[StreamableProductAxis, ...],
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int],
     budget_bytes: int | None,
 ) -> tuple[MappingProxyType[str, int], ...]:
     """Enumerate one bootstrap width map or the budgeted frontier, widest first."""
     if budget_bytes is None:
         values = tuple(
-            bootstrap_width(extent=axis.extent)
-            if axis.requested_width is None
-            else axis.requested_width
+            _fixed_width(axis=axis, fixed_widths=fixed_widths)
+            if axis.name in fixed_widths
+            else bootstrap_width(extent=axis.extent)
             for axis in axes
         )
         return (_width_mapping(axes=axes, values=values),)
 
-    frontiers = tuple(_axis_frontier(axis=axis) for axis in axes)
+    frontiers = tuple(
+        _axis_frontier(axis=axis, fixed_widths=fixed_widths) for axis in axes
+    )
     candidates = (
         _width_mapping(axes=axes, values=values)
         for values in itertools.product(*frontiers)
@@ -286,10 +294,12 @@ def _candidate_rank(widths: Mapping[str, int]) -> tuple[int, tuple[int, ...]]:
     return (math.prod(values), values)
 
 
-def _axis_frontier(*, axis: StreamableProductAxis) -> tuple[int, ...]:
-    """Return one requested width, or 1/powers-of-two/full without duplicates."""
-    if axis.requested_width is not None:
-        return (axis.requested_width,)
+def _axis_frontier(
+    *, axis: ReducedAxis | TiledOutputAxis, fixed_widths: Mapping[str, int]
+) -> tuple[int, ...]:
+    """Return one fixed width, or 1/powers-of-two/full without duplicates."""
+    if axis.name in fixed_widths:
+        return (_fixed_width(axis=axis, fixed_widths=fixed_widths),)
 
     widths = [1]
     power = 2
@@ -301,8 +311,15 @@ def _axis_frontier(*, axis: StreamableProductAxis) -> tuple[int, ...]:
     return tuple(widths)
 
 
+def _fixed_width(
+    *, axis: ReducedAxis | TiledOutputAxis, fixed_widths: Mapping[str, int]
+) -> int:
+    """Return the fixed width of one axis, clamped to the extent it declares."""
+    return min(fixed_widths[axis.name], axis.extent)
+
+
 def _width_mapping(
-    *, axes: tuple[StreamableProductAxis, ...], values: tuple[int, ...]
+    *, axes: tuple[ReducedAxis | TiledOutputAxis, ...], values: tuple[int, ...]
 ) -> MappingProxyType[str, int]:
     """Bind a width tuple to axis names without losing declaration order."""
     return MappingProxyType(

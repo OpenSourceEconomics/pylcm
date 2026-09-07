@@ -73,7 +73,7 @@ def test_the_graph_publishes_one_dense_main_program():
         "deliberately_dense:egm_one_row_no_product_axis"
     )
     assert program.scope is ProgramScope.ANY
-    assert program.requirements.streamable_axes == ()
+    assert program.requirements.axes == ()
     assert {read.source.argument for read in program.requirements.value_reads} == {
         "next_liquid_grid",
         "next_value",

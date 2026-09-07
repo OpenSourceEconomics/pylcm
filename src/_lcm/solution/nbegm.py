@@ -5767,7 +5767,7 @@ def _ride_along_core_programs(
 ) -> MappingProxyType[str, CoreProgram]:
     """Declare the ride-along kernel's `main` and `replay` programs.
 
-    Both are the tile-local core with planned outputs and no streamable axis:
+    Both are the tile-local core with planned outputs and no execution axis:
     the cell block is the kernel's own memory window, and the continuation is
     read from the carries, so no target value access is declared. `main` is
     dispatched by a values-only solve and `replay` by a solve retaining replay

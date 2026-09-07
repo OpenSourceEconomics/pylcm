@@ -18,9 +18,9 @@ from _lcm.execution.core_program import (
     CoreProgram,
     CoreProgramGraphAware,
     MaterializedCoreProgram,
+    ReducedAxis,
     ReductionSemantics,
     ResolvedCoreProgram,
-    StreamableProductAxis,
     ValueRead,
     core_program_graph,
     materialize_core_program,
@@ -97,22 +97,20 @@ def _axis(
     coordinate_extents: tuple[int, ...] = (2, 3),
     canonical_order: Literal["c"] = "c",
     reduction: ReductionSemantics = HARD_MAX_REDUCTION,
-    requested_width: int | None = None,
-) -> StreamableProductAxis:
-    return StreamableProductAxis(
-        name="action",
+) -> ReducedAxis:
+    return ReducedAxis(
+        name="action_product",
         coordinate_names=coordinate_names,
         coordinate_extents=coordinate_extents,
         canonical_order=canonical_order,
         reduction=reduction,
         width_keyword=_WIDTH_KEYWORD,
-        requested_width=requested_width,
     )
 
 
 def _program(
     *,
-    axis: StreamableProductAxis | None = None,
+    axis: ReducedAxis | None = None,
     arguments: Mapping[str, object] | None = None,
     disposition: CoreExecutionDisposition = CoreExecutionDisposition.PLANNED,
     disposition_reason: str | None = None,
@@ -127,7 +125,7 @@ def _program(
         function=_hard_max_core,
         arguments=arguments,
         requirements=CoreExecutionRequirements(
-            streamable_axes=(_axis() if axis is None else axis,)
+            reduced_axes=(_axis() if axis is None else axis,)
         ),
         output_roles=VALUE,
         disposition=disposition,
@@ -365,7 +363,7 @@ def test_core_program_graph_is_the_native_structural_seam() -> None:
             "first": jnp.asarray([0, 1]),
             "second": jnp.asarray([10, 20, 30]),
         },
-        requirements=CoreExecutionRequirements(streamable_axes=(_axis(),)),
+        requirements=CoreExecutionRequirements(reduced_axes=(_axis(),)),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
     )
@@ -451,7 +449,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         n_consumption=4,
         alive_functions={"utility": utility, "resources": resources},
         liquid_law=next_liquid,
-        alive_solver=GridSearch(action_block_width=3),
+        alive_solver=GridSearch(),
         constraints={"feasible": feasible},
     )
     flat_params = model._process_params(
@@ -504,15 +502,14 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         "age",
     )
     assert program.output_roles is VALUE
-    assert program.requirements.streamable_axes == (
-        StreamableProductAxis(
-            name="action",
+    assert program.requirements.axes == (
+        ReducedAxis(
+            name="action_product",
             coordinate_names=("consumption",),
             coordinate_extents=(4,),
             canonical_order="c",
             reduction=HARD_MAX_REDUCTION,
             width_keyword=_WIDTH_KEYWORD,
-            requested_width=3,
         ),
     )
     with pytest.raises(TypeError):
@@ -520,7 +517,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
 
     resolved = resolve_core_program(
         program=materialized,
-        tile_widths={"action": 3},
+        tile_widths={"action_product": 3},
         input_transfer_plan=_resolve_value_input_transfer_plan(
             program=materialized,
             source_value_template=next_V["alive"],
@@ -565,7 +562,7 @@ def test_collective_grid_search_declares_explicit_dense_core_program() -> None:
         == "deliberately_dense:collective_resource_regression"
     )
     assert program.output_roles == (VALUE, DISSOLUTION_FLAG)
-    assert program.requirements.streamable_axes == ()
+    assert program.requirements.axes == ()
 
     resolved = resolve_core_program(
         program=materialized,
@@ -614,7 +611,7 @@ def test_ev1_grid_search_declares_explicit_dense_core_program() -> None:
         program.disposition_reason == "deliberately_dense:ev1_canonical_reduction_order"
     )
     assert program.output_roles is VALUE
-    assert program.requirements.streamable_axes == ()
+    assert program.requirements.axes == ()
 
     resolved = resolve_core_program(
         program=materialized,
@@ -633,8 +630,12 @@ def test_resolver_binds_width_without_adding_a_dynamic_argument() -> None:
     with pytest.raises(TypeError, match=_WIDTH_KEYWORD):
         program.function(**program.arguments)
 
-    resolved_three = resolve_core_program(program=program, tile_widths={"action": 3})
-    resolved_four = resolve_core_program(program=program, tile_widths={"action": 4})
+    resolved_three = resolve_core_program(
+        program=program, tile_widths={"action_product": 3}
+    )
+    resolved_four = resolve_core_program(
+        program=program, tile_widths={"action_product": 4}
+    )
 
     assert isinstance(resolved_three, ResolvedCoreProgram)
     assert _WIDTH_KEYWORD not in program.arguments
@@ -643,8 +644,8 @@ def test_resolver_binds_width_without_adding_a_dynamic_argument() -> None:
     assert resolved_three.function is resolved_four.function
     assert resolved_three.static_kwargs == {_WIDTH_KEYWORD: 3}
     assert resolved_four.static_kwargs == {_WIDTH_KEYWORD: 4}
-    assert resolved_three.tile_widths == {"action": 3}
-    assert resolved_four.tile_widths == {"action": 4}
+    assert resolved_three.tile_widths == {"action_product": 3}
+    assert resolved_four.tile_widths == {"action_product": 4}
 
     for resolved in (resolved_three, resolved_four):
         result = resolved.function(**resolved.arguments, **resolved.static_kwargs)
@@ -660,20 +661,20 @@ def test_resolver_binds_width_without_adding_a_dynamic_argument() -> None:
     assert_array_equal(compiled(**resolved_three.arguments), 9.0)
 
 
-def test_resolver_requires_a_planner_width_for_each_streamable_axis() -> None:
+def test_resolver_requires_a_planner_width_for_each_execution_axis() -> None:
     with pytest.raises(ValueError, match=r"[Tt]ile width.*required"):
         resolve_core_program(program=_program())
 
 
-def test_a_host_driven_program_declares_no_streamable_axis() -> None:
-    """Only a planned program may declare a streamable axis."""
+def test_a_host_driven_program_declares_no_execution_axis() -> None:
+    """Only a planned program may declare an execution axis."""
     program = _program(
         disposition=CoreExecutionDisposition.HOST_DRIVEN,
         disposition_reason="host_driven:test",
     )
 
-    with pytest.raises(ValueError, match=r"Streamable axes are for planned"):
-        resolve_core_program(program=program, tile_widths={"action": 2})
+    with pytest.raises(ValueError, match=r"Execution axes are for planned"):
+        resolve_core_program(program=program, tile_widths={"action_product": 2})
 
 
 @pytest.mark.parametrize(
@@ -717,11 +718,11 @@ def test_the_specialization_key_separates_the_two_x64_arithmetic_profiles() -> N
     try:
         jax.config.update("jax_enable_x64", False)  # noqa: FBT003
         without_x64 = resolve_core_program(
-            program=_program(), tile_widths={"action": 3}
+            program=_program(), tile_widths={"action_product": 3}
         ).specialization_key
         jax.config.update("jax_enable_x64", True)  # noqa: FBT003
         with_x64 = resolve_core_program(
-            program=_program(), tile_widths={"action": 3}
+            program=_program(), tile_widths={"action_product": 3}
         ).specialization_key
     finally:
         jax.config.update("jax_enable_x64", original)
@@ -754,60 +755,48 @@ def test_width_candidates_reject_invalid_coordinate_extents_fail_closed(
     )
 
     with pytest.raises(error, match=message):
-        workspace_width_candidates(axes=program.requirements.streamable_axes)
+        workspace_width_candidates(axes=program.requirements.axes)
 
 
 def test_unbudgeted_width_candidate_is_the_bootstrap_width_without_an_override() -> (
     None
 ):
     """Extent six streams in blocks of four, the largest power of two below it."""
+    candidates = workspace_width_candidates(axes=_program().requirements.axes)
+
+    assert candidates == ({"action_product": 4},)
+
+
+def test_unbudgeted_width_candidate_is_the_fixed_width() -> None:
+    """A fixed axis width is the sole unbudgeted candidate."""
     candidates = workspace_width_candidates(
-        axes=_program().requirements.streamable_axes
+        axes=_program().requirements.axes,
+        fixed_widths={"action_product": 3},
     )
 
-    assert candidates == ({"action": 4},)
-
-
-def test_unbudgeted_width_candidate_is_the_declared_override() -> None:
-    candidates = workspace_width_candidates(
-        axes=_program(axis=_axis(requested_width=3)).requirements.streamable_axes
-    )
-
-    assert candidates == ({"action": 3},)
+    assert candidates == ({"action_product": 3},)
 
 
 @pytest.mark.parametrize(
-    ("requested_width", "error", "message"),
+    ("tile_width", "error", "message"),
     [
-        (True, TypeError, "requested width.*integer"),
-        (1.5, TypeError, "requested width.*integer"),
-        (0, ValueError, "requested width.*positive"),
-        (-1, ValueError, "requested width.*positive"),
-        (7, ValueError, "requested width.*extent"),
+        (True, TypeError, "Tile width.*must be an integer"),
+        (1.5, TypeError, "Tile width.*must be an integer"),
+        (0, ValueError, "Tile width.*must be positive"),
+        (-1, ValueError, "Tile width.*must be positive"),
+        (7, ValueError, "exceeds its product extent"),
     ],
     ids=["bool", "float", "zero", "negative", "beyond-extent"],
 )
-def test_resolver_rejects_invalid_declared_requested_widths(
-    *, requested_width: object, error: type[Exception], message: str
+def test_resolver_rejects_invalid_planner_widths(
+    *, tile_width: object, error: type[Exception], message: str
 ) -> None:
-    axis = _axis()
-    object.__setattr__(axis, "requested_width", requested_width)
-
+    """A planner width outside the declared product is refused before lowering."""
     with pytest.raises(error, match=message):
         resolve_core_program(
-            program=_program(axis=axis),
-            tile_widths={"action": 1},
+            program=_program(),
+            tile_widths={"action_product": tile_width},
         )
-
-
-def test_requested_width_does_not_duplicate_the_resolved_specialization() -> None:
-    inferred = resolve_core_program(program=_program(), tile_widths={"action": 3})
-    requested = resolve_core_program(
-        program=_program(axis=_axis(requested_width=3)),
-        tile_widths={"action": 3},
-    )
-
-    assert requested.specialization_key == inferred.specialization_key
 
 
 def test_program_and_resolution_snapshot_their_input_mappings() -> None:
@@ -818,17 +807,17 @@ def test_program_and_resolution_snapshot_their_input_mappings() -> None:
     program = _program(arguments=raw_arguments)
     raw_arguments["injected"] = jnp.asarray(-1)
 
-    requested_widths = {"action": 3}
+    requested_widths = {"action_product": 3}
     resolved = resolve_core_program(
         program=program,
         tile_widths=requested_widths,
     )
-    requested_widths["action"] = 4
+    requested_widths["action_product"] = 4
 
     assert "injected" not in program.arguments
     assert "injected" not in resolved.arguments
     assert resolved.static_kwargs == {_WIDTH_KEYWORD: 3}
-    assert resolved.tile_widths == {"action": 3}
+    assert resolved.tile_widths == {"action_product": 3}
     with pytest.raises(TypeError):
         cast("dict[str, object]", program.arguments)["new"] = jnp.asarray(0)
     with pytest.raises(TypeError):
@@ -836,7 +825,7 @@ def test_program_and_resolution_snapshot_their_input_mappings() -> None:
     with pytest.raises(TypeError):
         cast("dict[str, int]", resolved.static_kwargs)[_WIDTH_KEYWORD] = 4
     with pytest.raises(TypeError):
-        cast("dict[str, int]", resolved.tile_widths)["action"] = 4
+        cast("dict[str, int]", resolved.tile_widths)["action_product"] = 4
 
 
 @pytest.mark.parametrize(
@@ -863,17 +852,19 @@ def test_resolver_rejects_invalid_canonical_product_declarations(
                     coordinate_extents=coordinate_extents,
                 )
             ),
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
         )
 
 
 def test_resolver_rejects_a_non_canonical_product_order() -> None:
+    """The resolver refuses an axis whose declared flattening order is not C order."""
+    axis = _axis()
+    object.__setattr__(axis, "canonical_order", "fortran")
+
     with pytest.raises(ValueError, match=r"canonical.*c"):
         resolve_core_program(
-            program=_program(
-                axis=_axis(canonical_order=cast("Literal['c']", "fortran"))
-            ),
-            tile_widths={"action": 1},
+            program=_program(axis=axis),
+            tile_widths={"action_product": 1},
         )
 
 
@@ -897,7 +888,7 @@ def test_resolver_rejects_invalid_widths(
     with pytest.raises(error, match=message):
         resolve_core_program(
             program=_program(),
-            tile_widths={"action": cast("int", width)},
+            tile_widths={"action_product": cast("int", width)},
         )
 
 
@@ -919,7 +910,7 @@ def test_resolver_rejects_a_dynamic_argument_colliding_with_the_width() -> None:
     with pytest.raises(ValueError, match=r"width keyword.*arguments"):
         resolve_core_program(
             program=_program(arguments=arguments),
-            tile_widths={"action": 3},
+            tile_widths={"action_product": 3},
         )
 
 
@@ -929,14 +920,29 @@ class _UnhashableReductionSemantics:
     def semantic_key(self) -> Hashable:
         return cast("Hashable", [])
 
+    @property
+    def exactness(self) -> Literal["exact"]:
+        return "exact"
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ExactnessFreeReductionSemantics:
+    @property
+    def semantic_key(self) -> Hashable:
+        return ("no-exactness", 1)
+
 
 @pytest.mark.parametrize(
     ("reduction", "message"),
     [
         (cast("ReductionSemantics", object()), "stable semantic_key"),
+        (
+            cast("ReductionSemantics", _ExactnessFreeReductionSemantics()),
+            "stable semantic_key",
+        ),
         (_UnhashableReductionSemantics(), "semantic_key.*hashable"),
     ],
-    ids=["missing-semantic-key", "unhashable-semantic-key"],
+    ids=["missing-semantic-key", "missing-exactness", "unhashable-semantic-key"],
 )
 def test_resolver_rejects_reduction_without_a_stable_semantic_key(
     *, reduction: ReductionSemantics, message: str
@@ -946,5 +952,5 @@ def test_resolver_rejects_reduction_without_a_stable_semantic_key(
     with pytest.raises(TypeError, match=message):
         resolve_core_program(
             program=_program(axis=axis),
-            tile_widths={"action": 1},
+            tile_widths={"action_product": 1},
         )

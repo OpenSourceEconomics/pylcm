@@ -422,7 +422,7 @@ class PlannedCore:
     compiled: Callable
     layout: ResolvedOutputLayout
     tile_widths: Mapping[str, int]
-    """Width this core was lowered at, per streamable axis of its program."""
+    """Width this core was lowered at, per execution axis of its program."""
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
     internal_input_templates: Mapping[str, object] = MappingProxyType({})
     """Abstract template per internal input this core was lowered against."""
