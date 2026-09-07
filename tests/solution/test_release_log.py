@@ -18,10 +18,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.scheduler import BufferRegistry
 from _lcm.execution.value_transfer import ValueArtifactKind
 from _lcm.grids.base import Grid
 from _lcm.solution import backward_induction
 from _lcm.solution.kernel_output import ConsumedKernelOutput
+from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm import AgeGrid, AgeSpecializedGrid, LinSpacedGrid, Model, categorical
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
@@ -328,3 +330,110 @@ def test_a_replay_payload_sharing_a_continuation_leaf_survives_the_solve(
     )
 
     assert [leaf.is_deleted() for leaf in published] == [False, False]
+
+
+def _diagnostics_carrying(*, leaf: FloatND) -> SolverDiagnostics:
+    """A diagnostic payload whose float fields all hold `leaf`."""
+    flag = jnp.zeros((), dtype=jnp.bool_)
+    count = jnp.asarray(0, dtype=jnp.int32)
+    return SolverDiagnostics(
+        max_outer_interpolation_error=leaf,
+        max_outer_bracket_width=leaf,
+        outer_nodes_used=count,
+        outer_at_lower_bound=flag,
+        outer_at_upper_bound=flag,
+        keeper_adjuster_margin=leaf,
+        best_second_best_margin=leaf,
+        policy_fallback_mask=flag,
+        unresolved_mask=flag,
+        n_outer_all_invalid_cells=count,
+    )
+
+
+def test_a_retained_dissolution_flag_is_declared_on_its_own_buffer() -> None:
+    """The per-regime flag mapping the result publishes protects its arrays."""
+    registry = BufferRegistry()
+    flag = jnp.zeros((3,), dtype=jnp.bool_)
+
+    registry.declare_not_produced(tree=({"couple": flag},))
+
+    assert registry.is_not_produced(array=flag)
+
+
+def test_a_retained_diagnostic_payload_is_declared_on_its_own_buffers() -> None:
+    """A diagnostic payload's arrays are reached even though it is no pytree."""
+    registry = BufferRegistry()
+    leaf = jnp.arange(3.0)
+    payload = {"working": _diagnostics_carrying(leaf=leaf)}
+
+    registry.declare_not_produced(
+        tree=backward_induction._diagnostic_arrays(diagnostics=tuple(payload.values()))
+    )
+
+    assert registry.is_not_produced(array=leaf)
+
+
+def test_a_diagnostic_payload_walked_as_a_tree_reaches_no_array() -> None:
+    """Walking the payload directly is the mistake the flattening exists for."""
+    registry = BufferRegistry()
+    leaf = jnp.arange(3.0)
+
+    registry.declare_not_produced(tree=({"working": _diagnostics_carrying(leaf=leaf)},))
+
+    assert not registry.is_not_produced(array=leaf)
+
+
+def test_a_diagnostic_payload_sharing_a_continuation_leaf_survives_the_solve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retained diagnostic's array outlives the release of the leaf it shares."""
+    published: list[FloatND] = []
+    consume = backward_induction.consume_kernel_output
+
+    def _also_publish_as_diagnostics(**kwargs: object) -> ConsumedKernelOutput:
+        result = consume(**kwargs)  # ty: ignore[invalid-argument-type]
+        if result.continuation is None:
+            return result
+        leaf = jax.tree.leaves(result.continuation)[0]
+        published.append(leaf)
+        return dataclasses.replace(result, diagnostics=_diagnostics_carrying(leaf=leaf))
+
+    monkeypatch.setattr(
+        backward_induction, "consume_kernel_output", _also_publish_as_diagnostics
+    )
+    _pass_through_model(enable_jit=True).solve(
+        params=_pass_through_params(), log_level="debug"
+    )
+
+    assert [leaf.is_deleted() for leaf in published] == [False, False]
+
+
+def test_a_replay_payload_sharing_a_continuation_leaf_keeps_its_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The array a second channel published still reads what it published."""
+    published: list[tuple[FloatND, np.ndarray]] = []
+    consume = backward_induction.consume_kernel_output
+
+    def _also_publish_on_replay(**kwargs: object) -> ConsumedKernelOutput:
+        result = consume(**kwargs)  # ty: ignore[invalid-argument-type]
+        if result.continuation is None:
+            return result
+        leaf = jax.tree.leaves(result.continuation)[0]
+        published.append((leaf, np.asarray(leaf).copy()))
+        return dataclasses.replace(
+            result,
+            replay_artifacts=MappingProxyType({_ALIASED_REPLAY_KEY: leaf}),
+        )
+
+    monkeypatch.setattr(
+        backward_induction, "consume_kernel_output", _also_publish_on_replay
+    )
+    _pass_through_model(enable_jit=True).solve(
+        params=_pass_through_params(), log_level="debug"
+    )
+
+    np.testing.assert_array_equal(
+        np.stack([np.asarray(leaf) for leaf, _ in published]),
+        np.stack([snapshot for _, snapshot in published]),
+    )

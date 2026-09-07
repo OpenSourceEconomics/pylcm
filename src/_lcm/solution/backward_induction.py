@@ -605,19 +605,30 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     result.replay_artifacts,
                     result.auxiliary_artifacts,
                     result.simulation_policy,
+                    result.dissolution,
+                    _diagnostic_arrays(
+                        diagnostics=()
+                        if result.diagnostics is None
+                        else (result.diagnostics,)
+                    ),
                 ),
             )
-            # The result keeps these payloads, and the copy that would make
-            # them independent runs only once the period is finished — after
-            # the releases below. Two artifact channels carrying one array is
-            # enough for a release addressed at one of them to reach the other,
-            # so they are declared before any release of this period can run.
+            # The result keeps these payloads, and what would make them
+            # independent runs only once the period is finished — after the
+            # releases below, and for the dissolution flags not at all. Two
+            # channels carrying one array is enough for a release addressed at
+            # one of them to reach the other, so every retained channel is
+            # declared before this period's first release.
             buffer_registry.declare_not_produced(
                 tree=(
                     period_retained_continuations,
                     period_replay_artifacts,
                     period_auxiliary_artifacts,
                     period_simulation_policies,
+                    period_dissolution_flags,
+                    _diagnostic_arrays(
+                        diagnostics=tuple(period_solver_diagnostics.values())
+                    ),
                 )
             )
             next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
@@ -825,6 +836,23 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         retained_continuations=ArtifactStore(retained_continuations),
         replay_artifacts=ArtifactStore(replay_artifacts),
         auxiliary_artifacts=ArtifactStore(auxiliary_artifacts),
+    )
+
+
+def _diagnostic_arrays(
+    *, diagnostics: Sequence[SolverDiagnostics]
+) -> tuple[object, ...]:
+    """Return the field values of each diagnostic payload, flattened.
+
+    `SolverDiagnostics` is a plain frozen dataclass rather than a registered
+    pytree, so walking one as a tree yields a single opaque leaf and reaches
+    none of the arrays inside it. Callers that need those arrays — declaring
+    the buffers a retained diagnostic payload occupies — take them from here.
+    """
+    return tuple(
+        getattr(payload, field.name)
+        for payload in diagnostics
+        for field in dataclasses.fields(payload)
     )
 
 
