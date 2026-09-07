@@ -306,7 +306,7 @@ def _r4_exact_chord(
     return c + (d - c) * (q - a) / (b - a)
 
 
-def test_r4_scaled_publication_preserves_owner() -> None:
+def test_scaled_publication_preserves_owner() -> None:
     """Independent x/value scales and source order cannot remove a finite owner."""
     dtype = _r4_dtype()
     exponents = (
@@ -345,7 +345,7 @@ def test_r4_scaled_publication_preserves_owner() -> None:
                 )
 
 
-def test_r4_crossing_publication_is_directed_and_node_consistent() -> None:
+def test_crossing_publication_is_directed_and_node_consistent() -> None:
     """Both records bound the exact chords, also when one reuses a query node."""
     dtype = _r4_dtype()
     for origin in (0, 50, 64):
@@ -416,7 +416,7 @@ def _r4_read_channels(
     return reading, status, upper
 
 
-def test_r4_reader_boundaries_and_generated() -> None:
+def test_reader_boundaries_and_generated() -> None:
     """Fraction certificates cover cancellation, binades, subnormals and one ULP."""
     dtype = _r4_dtype()
     maximum = np.finfo(dtype).max
@@ -485,7 +485,7 @@ def test_r4_reader_boundaries_and_generated() -> None:
             assert reading.tobytes() == v0.tobytes()
 
 
-def test_r4_invalid_read_status_is_explicit() -> None:
+def test_invalid_read_status_is_explicit() -> None:
     """Invalid geometry, nonfinite operands and overflowing answers stay NaN."""
     dtype = _r4_dtype()
     maximum = np.finfo(dtype).max
@@ -517,7 +517,7 @@ def test_r4_invalid_read_status_is_explicit() -> None:
     assert np.isnan(uppers).all()
 
 
-def test_r4_failed_read_does_not_remove_owner() -> None:
+def test_failed_read_does_not_remove_owner() -> None:
     """Fault-inject a nonzero reader status, not the exact owner/comparator."""
     links = mss._comparable_links(
         left_grid=jnp.asarray([0.0, 0.0]),
@@ -613,7 +613,7 @@ def _r2_assert_event(
         assert np.isnan(np.asarray(array)[kept:]).all()
 
 
-def test_r2_rounded_away_gap_family() -> None:
+def test_rounded_away_gap_family() -> None:
     """Translations, independent scales, subnormal values, labels and orientation."""
     dtype = np.asarray(jnp.asarray(0.0)).dtype.type
     x_exponents = (
@@ -648,7 +648,7 @@ def test_r2_rounded_away_gap_family() -> None:
                     _r2_assert_event(out=out, root=root, dtype=dtype)
 
 
-def test_r2_generated_exact_handover_and_policy_sides() -> None:
+def test_generated_exact_handover_and_policy_sides() -> None:
     """Rational roots of either sign, not a rounded secant or a tolerance check."""
     dtype = np.asarray(jnp.asarray(0.0)).dtype.type
     for seed in (731, 48271, 99217):
@@ -670,7 +670,7 @@ def test_r2_generated_exact_handover_and_policy_sides() -> None:
             _r2_assert_event(out=out, root=root, dtype=dtype)
 
 
-def test_r2_representable_handover_coalesces_with_query_nodes() -> None:
+def test_representable_handover_coalesces_with_query_nodes() -> None:
     """Ceiling a nonrepresentable root to an existing node must not add a third row."""
     dtype = np.asarray(jnp.asarray(0.0)).dtype.type
     for root in (Fraction(1, 3), Fraction(-1, 3), Fraction(1, 2)):
@@ -747,7 +747,7 @@ def _r2_intersection(*, x0, x1, v0, v1, lower, upper, left, right):
 _r2_compiled_intersection = jax.jit(_r2_intersection)
 
 
-def test_r2_oriented_endpoint_coverage_and_collinear_cases() -> None:
+def test_oriented_endpoint_coverage_and_collinear_cases() -> None:
     """A touching, parallel or unsupported pair is not an interior branch switch."""
     cases = [
         # v0, v1, lower support, upper support, resolved, left node, right node
@@ -790,7 +790,7 @@ def test_r2_oriented_endpoint_coverage_and_collinear_cases() -> None:
             assert float(out[0]) == expected
 
 
-def test_r2_refused_location_poison_is_not_a_missing_event() -> None:
+def test_refused_location_poison_is_not_a_missing_event() -> None:
     """Even finite native payloads cannot override a refused localization status."""
     native = mss.exact_affine_handover
 
@@ -1275,7 +1275,7 @@ def _assert_interval_knot(
     assert [Fraction(float(z)) for z in np.asarray(value_read)] == expected_value
 
 
-def test_r2_interval_piece_canonical_transforms_and_topology() -> None:
+def test_interval_piece_canonical_transforms_and_topology() -> None:
     """The incoming node owner is NOT the incoming interval chord at its knot."""
     dtype = _r4_dtype()
     arrays = tuple(
@@ -1308,7 +1308,7 @@ def test_r2_interval_piece_canonical_transforms_and_topology() -> None:
             )
 
 
-def test_r2_interval_piece_future_piece_invariance_family() -> None:
+def test_interval_piece_future_piece_invariance_family() -> None:
     """648 knot mutations and 108 linear controls share the same earlier root.
 
     Expected values are direct Fraction evaluations of the two fixed LEFT
@@ -1350,7 +1350,7 @@ def test_r2_interval_piece_future_piece_invariance_family() -> None:
     assert (checked, controls) == (756, 108)
 
 
-def test_r2_interval_piece_policy_channels_follow_the_left_trace() -> None:
+def test_interval_piece_policy_channels_follow_the_left_trace() -> None:
     """Future policy slopes cannot leak into an earlier event or policy read."""
     dtype = _r4_dtype()
     for future_policy in (6, 9, 30):
@@ -1370,7 +1370,7 @@ def test_r2_interval_piece_policy_channels_follow_the_left_trace() -> None:
         assert Fraction(float(vr[0])) == Fraction(95, 8)
 
 
-def test_r2_interval_piece_boundary_only_handover() -> None:
+def test_interval_piece_boundary_only_handover() -> None:
     """A supported touching endpoint needs no backward extrapolation at all."""
     dtype = _r4_dtype()
     out, pr, vr = _interval_knot_compiled(
@@ -1391,7 +1391,7 @@ def test_r2_interval_piece_boundary_only_handover() -> None:
     assert float(vr[0]) == 1.5
 
 
-def test_r2_interval_piece_disconnected_same_label_is_unresolved() -> None:
+def test_interval_piece_disconnected_same_label_is_unresolved() -> None:
     """A label match cannot connect unequal knot values into one affine trace."""
     dtype = _r4_dtype()
     out, _, _ = _interval_knot_compiled(
@@ -1412,7 +1412,7 @@ def test_r2_interval_piece_disconnected_same_label_is_unresolved() -> None:
     assert np.isnan(np.asarray(out[2])[at_knot]).all()
 
 
-def test_r2_interval_piece_refused_location_stays_explicit() -> None:
+def test_interval_piece_refused_location_stays_explicit() -> None:
     """A refused trace cannot quietly remove a kink from an otherwise finite row."""
     original = mss._interval_piece
 
@@ -1437,7 +1437,7 @@ def test_r2_interval_piece_refused_location_stays_explicit() -> None:
     assert np.isnan(np.asarray(out[2])[:count]).any()
 
 
-def test_r2_interval_piece_missing_common_support_emits_no_event() -> None:
+def test_interval_piece_missing_common_support_emits_no_event() -> None:
     """Owners separated by a gap hand over without a kink, keeping their own values.
 
     Branches supported on `[0, 1]` and `[2, 3]` never meet, so the envelope jumps
@@ -1461,7 +1461,7 @@ def test_r2_interval_piece_missing_common_support_emits_no_event() -> None:
     np.testing.assert_array_equal(np.asarray(out[2])[:count], [0, 1, 2, 3])
 
 
-def test_r2_interval_piece_overlapping_traces_use_one_sided_exact_ties() -> None:
+def test_interval_piece_overlapping_traces_use_one_sided_exact_ties() -> None:
     """Left traces choose the smaller slope at a right-node value tie.
 
     The first pair has identical affine values (stable link 0 wins). In the
