@@ -407,8 +407,12 @@ def test_r4_crossing_publication_is_directed_and_node_consistent() -> None:
 def _r4_read_channels(
     *, x0: jax.Array, x1: jax.Array, v0: jax.Array, v1: jax.Array, query: jax.Array
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    reading, status = mss._chord_reading(x=query, x0=x0, x1=x1, v0=v0, v1=v1)
-    upper = mss._chord_upper_value(x=query, x0=x0, x1=x1, v0=v0, v1=v1)
+    reading, status = mss._chord_reading(
+        x=query, x0=x0, x1=x1, v0=v0, v1=v1, arithmetic="certified"
+    )
+    upper = mss._chord_upper_value(
+        x=query, x0=x0, x1=x1, v0=v0, v1=v1, arithmetic="certified"
+    )
     return reading, status, upper
 
 
@@ -537,6 +541,7 @@ def test_r4_failed_read_does_not_remove_owner() -> None:
             query_grid=jnp.asarray([0.0, 1.0, 3.0]),
             links=links,
             segment_id=jnp.asarray([10, 20], dtype=jnp.int32),
+            arithmetic="certified",
         )
     np.testing.assert_array_equal(np.asarray(owner)[:2], [0, 0])
     np.testing.assert_array_equal(np.asarray(segment), [10, 10, -1])
@@ -734,6 +739,7 @@ def _r2_intersection(*, x0, x1, v0, v1, lower, upper, left, right):
         prev_grid=left,
         this_grid=right,
         links=links,
+        arithmetic="certified",
     )
     return row.grid, row.resolved, row.at_left, row.at_right, row.unresolved, row.value
 
@@ -833,6 +839,7 @@ def _geometry_node(
         query_grid=query,
         links=links,
         segment_id=labels[:-1].astype(jnp.int32),
+        arithmetic="certified",
     )
 
 
@@ -1159,6 +1166,7 @@ def test_original_geometry_selector_receives_original_operands() -> None:
             query_grid=jnp.asarray([2.0]),
             links=links,
             segment_id=jnp.asarray([10, 20], dtype=jnp.int32),
+            arithmetic="certified",
         )
     assert float(out[1][0]) == 2.0
     assert len(calls) == 1
@@ -1191,6 +1199,7 @@ def test_original_geometry_batched_selector_refusal_stays_explicit() -> None:
             query_grid=query,
             links=links,
             segment_id=jnp.asarray([10, 20], dtype=jnp.int32),
+            arithmetic="certified",
         )
 
     query = jnp.asarray([0.0, 1.0, 3.0])
@@ -1479,6 +1488,7 @@ def test_r2_interval_piece_overlapping_traces_use_one_sided_exact_ties() -> None
             incoming=True,
             links=links,
             link_segment=jnp.asarray([1, 1], dtype=jnp.int32),
+            arithmetic="certified",
         )
         assert bool(resolved)
         assert int(piece) == expected

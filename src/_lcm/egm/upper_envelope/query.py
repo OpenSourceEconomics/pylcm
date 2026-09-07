@@ -37,6 +37,7 @@ from _lcm.axis_boundaries import (
     axis_interval_indices,
     feasibility_region_indices,
 )
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     exact_affine_read,
     exact_query_winner,
@@ -61,11 +62,6 @@ from _lcm.egm.upper_envelope.double_double import (
     scale_by_power_of_two,
 )
 from lcm.typing import BoolND, Float1D, FloatND, IntND
-
-# Which arithmetic compares two candidates; see `envelope_at_query`. It names what
-# varies between the two backends — the comparison — rather than the arithmetic
-# itself, which `double_double` already is.
-type ComparisonArithmetic = Literal["certified", "ordinary"]
 
 # How many times a query's reference line may be replaced by a candidate certified
 # above it before the comparison that publishes. Each promotion strictly raises the

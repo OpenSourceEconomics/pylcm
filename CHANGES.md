@@ -7,6 +7,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### The MSS upper envelope decides its orderings from the stored operands
 
+- The envelope's comparison arithmetic is selectable: `MSSEnvelope(arithmetic=...)` takes
+  `"certified"`, the default, or `"ordinary"`. The geometry is the same either way —
+  which stored piece covers an interval, which node owns a query, and where two branches
+  hand over — so both settle a knot at the root of the pieces covering it, and only the
+  comparison changes. The certified arithmetic decides on the stored operands, so an
+  ordering the working format cannot separate is still settled and a comparison it cannot
+  decide publishes `NaN`; it needs the installed exact-affine payload for the active
+  backend, and a regime selecting it is refused at model construction when that payload
+  is absent. The ordinary one compares two rounded readings, so candidates falling in one
+  rounding bin read level and are separated by the declared tie order rather than by
+  value. It reaches no native kernel, so it is the route available where that payload is
+  absent, and it trades the exactness of a decision the working format cannot represent
+  for warm cost.
 - Which link owns a query is certified rather than read off a rounded comparison:
   every link bracketing that query enters one exact reduction through the integer
   comparator the other envelope paths already use. Links certified level with one

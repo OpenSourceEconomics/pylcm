@@ -19,7 +19,7 @@ solver = DCEGM(savings_grid=..., envelope=LTMEnvelope())
 | `FUESEnvelope`  | Fast upper-envelope scan approximation                                                 | `jump_thresh`, `n_points_to_scan`, `scan_unroll` |
 | `RFCEnvelope`   | Roof-cutting approximation                                                             | `jump_thresh`, `search_radius`                   |
 | `LTMEnvelope`   | Query-side line/segment evaluation                                                     | none                                             |
-| `MSSEnvelope`   | Multi-segment scan approximation                                                       | none                                             |
+| `MSSEnvelope`   | Multi-segment scan with a selectable comparison arithmetic                             | `arithmetic`                                     |
 
 These five typed objects are the supported strategies. `EnvelopeConfig` is their union;
 string selectors are invalid.
@@ -63,6 +63,20 @@ FUES, RFC, LTM, and MSS make different topology and execution trade-offs. FUES a
 are scan-shaped; LTM evaluates candidate segments at query points and is usually more
 accelerator-friendly. Thresholds such as `jump_thresh` are algorithmic approximation
 parameters, not generic tolerances.
+
+`MSSEnvelope(arithmetic=...)` selects how a comparison between two candidate chords is
+settled. The geometry is the same either way — which stored piece covers an interval,
+which node owns a query, and where two branches hand over:
+
+- `"certified"`, the default, decides on the stored operands, so an ordering the working
+  format cannot separate is still settled and a comparison the arithmetic cannot decide
+  publishes `NaN`. Like `ExactEnvelope`, it needs the installed exact-affine payload for
+  the active backend, and a regime selecting it is refused during `Model(...)` when that
+  payload is absent rather than falling back.
+- `"ordinary"` compares two rounded readings, so candidates falling in one rounding bin
+  read level and are separated by the declared tie order instead — greatest value, then
+  reaching strictly right of the query, then steeper, then the earliest stored link. It
+  reaches no native kernel, so it is the route available where that payload is absent.
 
 Switch backends only with model-specific validation:
 

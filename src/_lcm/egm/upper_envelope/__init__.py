@@ -38,6 +38,7 @@ from typing import Protocol, runtime_checkable
 
 import jax.numpy as jnp
 
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.interp import prepare_padded_grid
 from _lcm.egm.upper_envelope.fues import (
     QueryBracket,
@@ -126,7 +127,11 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
         return functools.partial(_ltm_backend, n_refined=n_refined)
 
     if isinstance(solver.envelope, MSSEnvelope):
-        return functools.partial(_mss_backend, n_refined=n_refined)
+        return functools.partial(
+            _mss_backend,
+            n_refined=n_refined,
+            arithmetic=solver.envelope.arithmetic,
+        )
 
     msg = f"Unknown upper-envelope backend: {solver.envelope!r}."
     raise ValueError(msg)
@@ -311,6 +316,7 @@ def _mss_backend(
     marginal_utility: Float1D,
     savings: Float1D,
     n_refined: int,
+    arithmetic: ComparisonArithmetic,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Run HARK's EGM upper-envelope sweep with crossing insertion.
 
@@ -323,6 +329,7 @@ def _mss_backend(
         policy=policy,
         value=value,
         n_refined=n_refined,
+        arithmetic=arithmetic,
     )
 
 
