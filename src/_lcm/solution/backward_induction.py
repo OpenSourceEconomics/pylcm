@@ -281,15 +281,24 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         persistable_artifact_refs=persistable_artifact_refs,
     )
     buffer_registry = BufferRegistry()
-    buffer_registry.declare_model_owned(
+    buffer_registry.declare_not_produced(
         tree=(
             flat_params,
             tuple(
                 (space.states, space.discrete_actions, space.continuous_actions)
                 for space in base_state_action_spaces.values()
             ),
+            tuple(
+                regime.solution.period_state_axes
+                for regime in regimes.values()
+                if regime.solution.period_state_axes is not None
+            ),
         )
     )
+    # An eager solve's dispatches are ordinary Python calls, so any object an
+    # input contained can come back out as an output; nothing is released.
+    if not enable_jit:
+        logger.debug("release skipped: eager dispatch")
     input_templates = SolveInputMappings(
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_continuation=next_regime_to_continuation,
@@ -569,6 +578,30 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             period_pending_outputs.append(V_arr)
             if result.continuation is not None:
                 period_pending_outputs.extend(jax.tree.leaves(result.continuation))
+            # Whatever this dispatch handed straight back out, it did not
+            # produce. The inputs are read the way the dispatch reads them —
+            # through the same period-axis overlay — so an age-specialized
+            # axis is compared as the dispatch actually saw it.
+            buffer_registry.declare_passed_through(
+                inputs=(
+                    _states_for_period(
+                        regime=regime,
+                        state_action_space=base_state_action_spaces[regime_name],
+                        period=period,
+                    ),
+                    next_regime_to_V_arr,
+                    next_regime_to_continuation,
+                    next_edge_to_V_arr,
+                ),
+                outputs=(
+                    V_arr,
+                    result.continuation,
+                    result.continuation_artifacts,
+                    result.replay_artifacts,
+                    result.auxiliary_artifacts,
+                    result.simulation_policy,
+                ),
+            )
             next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
                 _release_closed_period_inputs(
                     ledger=input_liveness,
@@ -582,6 +615,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     templates=input_templates,
                     pending_outputs=period_pending_outputs,
                     logger=logger,
+                    release_enabled=enable_jit,
                 )
             )
 
@@ -642,6 +676,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 templates=input_templates,
                 pending_outputs=period_pending_outputs,
                 logger=logger,
+                release_enabled=enable_jit,
             )
         )
         next_regime_to_V_arr, next_regime_to_continuation = _roll_continuation_inputs(
@@ -1611,8 +1646,8 @@ def _build_planned_input_liveness(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
-    retain_all_artifacts: bool = False,
-    persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
+    retain_all_artifacts: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
     """Build one exact-dispatch ledger without authorizing physical release.
 
@@ -1677,6 +1712,7 @@ def _release_closed_period_inputs(
     templates: SolveInputMappings,
     pending_outputs: Sequence[FloatND],
     logger: logging.Logger,
+    release_enabled: bool,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, ContinuationPayload],
@@ -1688,7 +1724,20 @@ def _release_closed_period_inputs(
     that closed it; they are consumed here, so a key is released once. A key the
     mappings do not address (its buffer left them at an earlier roll) needs no
     physical action and is dropped.
+
+    With `release_enabled` false nothing is freed and the mappings come back
+    unchanged: an eager dispatch is an ordinary Python call whose outputs may be
+    any object its inputs contained, so no buffer it touched is known to be one
+    the engine produced. The ledger is unaffected either way — it counts
+    consumers, and releasing is a separate decision.
     """
+    if not release_enabled:
+        candidates.clear()
+        return (
+            inputs.next_regime_to_V_arr,
+            inputs.next_regime_to_continuation,
+            inputs.next_edge_to_V_arr,
+        )
     located: dict[Hashable, jax.Array] = {}
     for artifact in tuple(candidates):
         array = locate_artifact(inputs=inputs, artifact=artifact)
@@ -1814,6 +1863,13 @@ def _retained_solution_artifacts(
     kept only where persistence-oriented retention selected its exact address,
     and then every leaf of it is retained: the result hands the whole payload
     back, so freeing one leaf leaves an unreadable artifact behind.
+
+    The ledger speaks only in releasable input addresses, and the continuation
+    payload is the one retained channel that has them — a replay or auxiliary
+    key names a payload that appears in no rolling input mapping, so there is no
+    address for the ledger to retain on its behalf. That those payloads can
+    still *share a buffer* with a releasable leaf is a physical question, and
+    `BufferRegistry.declare_passed_through` answers it at each dispatch.
     """
     values = tuple(
         ValueArtifactAddress(

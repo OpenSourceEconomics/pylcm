@@ -90,7 +90,10 @@ def test_every_regime_value_is_retained() -> None:
     """The solve result keeps every regime's value of every active period."""
     model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
     ledger = _build_planned_input_liveness(
-        regimes=model._regimes, program_metadata=_metadata(model=model)
+        regimes=model._regimes,
+        program_metadata=_metadata(model=model),
+        retain_all_artifacts=False,
+        persistable_artifact_refs=frozenset(),
     )
 
     assert ledger.retained_artifacts == frozenset(
@@ -136,7 +139,10 @@ def test_a_payload_no_retention_selected_is_not_retained() -> None:
     """Value-only retention keeps no continuation leaf on device."""
     model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
     ledger = _build_planned_input_liveness(
-        regimes=model._regimes, program_metadata=_metadata(model=model)
+        regimes=model._regimes,
+        program_metadata=_metadata(model=model),
+        retain_all_artifacts=False,
+        persistable_artifact_refs=frozenset(),
     )
 
     assert not any(
@@ -150,7 +156,10 @@ def test_a_dense_program_s_declared_leaf_read_is_a_counted_consumer() -> None:
     model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
     metadata = _metadata(model=model)
     ledger = _build_planned_input_liveness(
-        regimes=model._regimes, program_metadata=metadata
+        regimes=model._regimes,
+        program_metadata=metadata,
+        retain_all_artifacts=False,
+        persistable_artifact_refs=frozenset(),
     )
     dense_reads = [
         read.target
@@ -181,7 +190,10 @@ def test_the_breakpoints_host_read_is_pinned_wherever_a_target_publishes_one() -
         n_consumption=6,
     )
     ledger = _build_planned_input_liveness(
-        regimes=model._regimes, program_metadata=_metadata(model=model)
+        regimes=model._regimes,
+        program_metadata=_metadata(model=model),
+        retain_all_artifacts=False,
+        persistable_artifact_refs=frozenset(),
     )
     pinned = [
         artifact
@@ -276,7 +288,10 @@ def test_a_rolled_gated_continuation_aliases_the_same_edge_one_period_later() ->
     """An edge that does not fold at a period keeps the later period's buffer."""
     model = _gated_model()
     ledger = _build_planned_input_liveness(
-        regimes=model._regimes, program_metadata=_program_metadata(model=model)
+        regimes=model._regimes,
+        program_metadata=_program_metadata(model=model),
+        retain_all_artifacts=False,
+        persistable_artifact_refs=frozenset(),
     )
 
     assert all(

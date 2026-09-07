@@ -1,4 +1,9 @@
-"""Physical release of solve-time buffers: registry, eligibility, substitution."""
+"""Physical release of solve-time buffers: registry, eligibility, substitution.
+
+A release only ever frees a buffer a dispatch produced. A buffer declared
+foreign — one the model holds, or one an output took straight from an input —
+is kept, and says so on its own log-record attribute.
+"""
 
 import logging
 from collections.abc import Mapping
@@ -234,3 +239,134 @@ def test_replace_leaf_by_identity_refuses_a_leaf_that_is_not_in_the_tree() -> No
             old=jnp.zeros(2),
             new=jnp.ones(2),
         )
+
+
+def test_a_declared_foreign_buffer_is_reported_as_unproduced() -> None:
+    """An array declared through a tree is recognised on its buffer."""
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+
+    registry.declare_not_produced(tree={"grids": {"wealth": array}})
+
+    assert registry.is_not_produced(array=array)
+
+
+def test_an_undeclared_buffer_is_reported_as_produced() -> None:
+    """A buffer no declaration named belongs to the dispatch that made it."""
+    registry = BufferRegistry()
+    registry.declare_not_produced(tree={"grids": {"wealth": jnp.arange(4.0)}})
+
+    assert not registry.is_not_produced(array=jnp.arange(4.0) + 1.0)
+
+
+def test_a_declared_foreign_buffer_survives_a_closed_key() -> None:
+    """A release leaves a buffer no dispatch produced in place."""
+    ledger = PlannedInputLiveness(dispatch_accesses={"node": ("x",)})
+    ledger.commit_successful_dispatch(dispatch="node")
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+    registry.register(array=array, artifact="x")
+    registry.declare_not_produced(tree=(array,))
+
+    release_closed_artifacts(
+        ledger=ledger,
+        registry=registry,
+        artifacts=("x",),
+        arrays_by_artifact=MappingProxyType({"x": array}),
+        pending_outputs=(),
+        closing_dispatch="node",
+        logger=_logger(),
+    )
+
+    assert not array.is_deleted()
+
+
+def test_a_kept_buffer_yields_no_release_record() -> None:
+    """Keeping a buffer is not a release, so it reports none."""
+    ledger = PlannedInputLiveness(dispatch_accesses={"node": ("x",)})
+    ledger.commit_successful_dispatch(dispatch="node")
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+    registry.register(array=array, artifact="x")
+    registry.declare_not_produced(tree=(array,))
+
+    records = release_closed_artifacts(
+        ledger=ledger,
+        registry=registry,
+        artifacts=("x",),
+        arrays_by_artifact=MappingProxyType({"x": array}),
+        pending_outputs=(),
+        closing_dispatch="node",
+        logger=_logger(),
+    )
+
+    assert records == ()
+
+
+def test_a_kept_buffer_is_logged_under_its_own_record_attribute() -> None:
+    """The debug record of a kept key is distinct from a released one."""
+    ledger = PlannedInputLiveness(dispatch_accesses={"node": ("x",)})
+    ledger.commit_successful_dispatch(dispatch="node")
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+    registry.register(array=array, artifact="x")
+    registry.declare_not_produced(tree=(array,))
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # ty: ignore[invalid-assignment]
+    logger = _logger()
+    logger.addHandler(handler)
+    try:
+        release_closed_artifacts(
+            ledger=ledger,
+            registry=registry,
+            artifacts=("x",),
+            arrays_by_artifact=MappingProxyType({"x": array}),
+            pending_outputs=(),
+            closing_dispatch="node",
+            logger=logger,
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    logged = [
+        (r.kept_artifact_key, r.closing_dispatch)  # ty: ignore[unresolved-attribute]
+        for r in records
+        if hasattr(r, "kept_artifact_key")
+    ]
+
+    assert logged == [("x", "node")]
+
+
+def test_an_output_on_an_input_buffer_is_marked_unproduced() -> None:
+    """An output the dispatch handed straight through is not its own product."""
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+
+    registry.declare_passed_through(inputs=(array,), outputs=(jnp.asarray(array),))
+
+    assert registry.is_not_produced(array=array)
+
+
+def test_a_freshly_computed_output_stays_produced() -> None:
+    """An output on its own buffer remains one the dispatch produced."""
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+    computed = array + 1.0
+
+    registry.declare_passed_through(inputs=(array,), outputs=(computed,))
+
+    assert not registry.is_not_produced(array=computed)
+
+
+def test_an_input_no_output_reused_stays_releasable() -> None:
+    """Declaring a pass-through leaves the dispatch's other inputs alone."""
+    registry = BufferRegistry()
+    consumed = jnp.arange(4.0)
+    passed = jnp.arange(3.0)
+
+    registry.declare_passed_through(
+        inputs=(consumed, passed), outputs=(jnp.asarray(passed),)
+    )
+
+    assert not registry.is_not_produced(array=consumed)

@@ -2,8 +2,10 @@
 
 `log_level="debug"` logs every release with the artifact key and the closing
 dispatch; a solve at any other level publishes the same values. A release only
-ever frees a buffer the engine produced, so an array the model declares stays
-readable even when a solver hands it through as a continuation leaf.
+ever frees a buffer a compiled executable produced: an eager solve releases
+nothing, and an array the model declares — a plain grid or an age-specialized
+per-period axis — stays readable even when a solver hands it through as a
+continuation leaf.
 """
 
 import logging
@@ -12,7 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.execution.value_transfer import ValueArtifactKind
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from _lcm.grids.base import Grid
+from lcm import AgeGrid, AgeSpecializedGrid, LinSpacedGrid, Model, categorical
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
@@ -156,17 +159,24 @@ def _pass_through_margin() -> LiquidMargin:
     )
 
 
-def _pass_through_model() -> Model:
+def _pass_through_model(
+    *,
+    enable_jit: bool = False,
+    wealth_grid: Grid | AgeSpecializedGrid = _PASS_THROUGH_WEALTH_GRID,
+) -> Model:
     """A two-period EGM model whose terminal carry reuses the declared grid.
 
     The terminal regime carries no other state, so its endogenous grid is the
-    wealth grid the model declares, unbroadcast. Solving without compilation
-    hands that very array to the working regime as a continuation leaf.
+    wealth state's own axis, unbroadcast. Solving without compilation hands that
+    very array to the working regime as a continuation leaf. `wealth_grid`
+    varies the one declaration that decides which array the axis comes from —
+    the model's materialized grid, or an `AgeSpecializedGrid`'s per-period node
+    table.
     """
     margin = _pass_through_margin()
     working = ConsumptionSavingsRegime(
         transition=_pass_through_next_regime,
-        states={"wealth": _PASS_THROUGH_WEALTH_GRID},
+        states={"wealth": wealth_grid},
         actions={"consumption": _PASS_THROUGH_CONSUMPTION_GRID},
         state_transitions={"wealth": _pass_through_next_wealth},
         functions={
@@ -182,7 +192,7 @@ def _pass_through_model() -> Model:
     )
     dead = Regime(
         transition=None,
-        states={"wealth": _PASS_THROUGH_WEALTH_GRID},
+        states={"wealth": wealth_grid},
         functions={"utility": _pass_through_terminal_utility},
         active=lambda age: age == 1,
     )
@@ -190,7 +200,15 @@ def _pass_through_model() -> Model:
         regimes={"working": working, "dead": dead},
         regime_id_class=_PassThroughRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
-        enable_jit=False,
+        enable_jit=enable_jit,
+    )
+
+
+def _age_specialized_wealth_grid() -> AgeSpecializedGrid:
+    """A wealth axis whose floor rises with age, at a fixed number of points."""
+    return AgeSpecializedGrid(
+        build=lambda age: LinSpacedGrid(start=1.0 + 0.5 * age, stop=5.0, n_points=6),
+        signature=lambda age: age,
     )
 
 
@@ -213,9 +231,9 @@ def test_a_model_whose_grid_is_a_continuation_leaf_solves_twice_alike() -> None:
     )
 
 
-def test_a_model_whose_grid_is_a_continuation_leaf_still_releases_a_leaf() -> None:
+def test_a_compiled_model_handing_its_grid_through_still_releases_a_leaf() -> None:
     """Handing a declared grid through leaves the engine's own leaves releasable."""
-    model = _pass_through_model()
+    model = _pass_through_model(enable_jit=True)
     handler = _Records()
     logger = logging.getLogger("lcm")
     logger.addHandler(handler)
@@ -228,4 +246,32 @@ def test_a_model_whose_grid_is_a_continuation_leaf_still_releases_a_leaf() -> No
         record.artifact_key.kind  # ty: ignore[unresolved-attribute]
         is ValueArtifactKind.CONTINUATION_LEAF
         for record in handler.records
+    )
+
+
+def test_an_eager_solve_releases_nothing() -> None:
+    """An eager dispatch's outputs may be its inputs, so none of them is freed."""
+    model = _pass_through_model(enable_jit=False)
+    handler = _Records()
+    logger = logging.getLogger("lcm")
+    logger.addHandler(handler)
+    try:
+        model.solve(params=_pass_through_params(), log_level="debug")
+    finally:
+        logger.removeHandler(handler)
+
+    assert handler.records == []
+
+
+def test_an_age_specialized_axis_survives_an_eager_solve() -> None:
+    """A per-period state axis stays readable, and the solve repeats its values."""
+    model = _pass_through_model(wealth_grid=_age_specialized_wealth_grid())
+    params = _pass_through_params()
+
+    first = model.solve(params=params, log_level="debug")
+    second = model.solve(params=params, log_level="debug")
+
+    np.testing.assert_array_equal(
+        np.asarray(second.values[0]["working"]),
+        np.asarray(first.values[0]["working"]),
     )

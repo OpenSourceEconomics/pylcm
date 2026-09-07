@@ -12,6 +12,7 @@ import logging
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 
 import jax
+from jaxtyping import PyTree
 
 from _lcm.execution.liveness import PlannedInputLiveness
 from lcm.exceptions import ExecutionPlanningError
@@ -42,33 +43,62 @@ class BufferRegistry:
     the registry so a buffer two keys share is deleted only when both keys may
     go. Forgetting a buffer drops every key on it.
 
-    A release may only ever free a buffer the engine itself produced. A solver
-    is free to hand one of the model's own arrays through as an artifact leaf —
-    an eager `jnp.broadcast_to` onto the shape the array already has returns
-    that array — and the model keeps reading its declaration for the rest of its
-    life. Declaring the model's buffers marks them so no release can reach them.
+    Physical release is only ever of a buffer a compiled executable produced.
+    A solver may hand an array it was given straight back out — an eager
+    `jnp.broadcast_to` onto the shape an array already has returns that array —
+    and freeing such a buffer destroys something the solve does not own. Three
+    guards enforce the rule, and the caller installs all three:
+
+    - an eager solve releases nothing at all, because an eager dispatch's
+      outputs can be any object its inputs contained;
+    - a compiled dispatch declares, through `declare_passed_through`, every
+      output leaf whose buffer one of its inputs already occupied;
+    - the arrays the model holds for its whole life are declared once through
+      `declare_not_produced`, before the first dispatch.
+
+    The guards overlap deliberately: each is sound alone for the cases it sees,
+    and none is trusted to see every case.
     """
 
-    __slots__ = ("_keys_by_buffer", "_model_owned_buffers")
+    __slots__ = ("_keys_by_buffer", "_unproduced_buffers")
 
     def __init__(self) -> None:
-        """Start with no registered buffer and no declared model buffer."""
+        """Start with no registered buffer and no declared foreign buffer."""
         self._keys_by_buffer: dict[BufferIdentity, set[Hashable]] = {}
-        self._model_owned_buffers: set[BufferIdentity] = set()
+        self._unproduced_buffers: set[BufferIdentity] = set()
 
-    def declare_model_owned(self, *, tree: object) -> None:
-        """Mark every array leaf of `tree` as a buffer the engine did not produce.
+    def declare_not_produced(self, *, tree: PyTree) -> None:
+        """Mark every array leaf of `tree` as a buffer no dispatch produced.
 
-        Called once, before the first dispatch, with the arrays the model holds
-        for its whole life — its materialized grids and its parameter vector.
+        Takes the arrays the model holds for its whole life — its materialized
+        grids, its per-period state axes and its parameter vector — and the
+        payloads the solve result retains.
         """
         for leaf in jax.tree.leaves(tree):
             if isinstance(leaf, jax.Array) and not leaf.is_deleted():
-                self._model_owned_buffers.add(buffer_identity(array=leaf))
+                self._unproduced_buffers.add(buffer_identity(array=leaf))
 
-    def is_model_owned(self, *, array: jax.Array) -> bool:
-        """Report whether the model, not a dispatch, owns this array's buffer."""
-        return buffer_identity(array=array) in self._model_owned_buffers
+    def declare_passed_through(self, *, inputs: PyTree, outputs: PyTree) -> None:
+        """Mark every output leaf whose buffer an input leaf already occupied.
+
+        One dispatch's inputs and its outputs. An output on an input's buffer
+        was passed through rather than computed, so this dispatch did not
+        produce it and no release may free it.
+        """
+        occupied = {
+            buffer_identity(array=leaf)
+            for leaf in jax.tree.leaves(inputs)
+            if isinstance(leaf, jax.Array) and not leaf.is_deleted()
+        }
+        for leaf in jax.tree.leaves(outputs):
+            if isinstance(leaf, jax.Array) and not leaf.is_deleted():
+                identity = buffer_identity(array=leaf)
+                if identity in occupied:
+                    self._unproduced_buffers.add(identity)
+
+    def is_not_produced(self, *, array: jax.Array) -> bool:
+        """Report whether no dispatch produced this array's buffer."""
+        return buffer_identity(array=array) in self._unproduced_buffers
 
     def register(self, *, array: jax.Array, artifact: Hashable) -> None:
         """Record that `artifact` names the buffer `array` occupies."""
@@ -119,13 +149,13 @@ def release_closed_artifacts(
     Each artifact must be release eligible in the ledger — a remaining consumer
     is an `ExecutionPlanningError`, never a warning. A buffer is deleted only when
     every key the registry holds on it is eligible too, so a leaf that is also a
-    retained value survives. A buffer the model owns is never deleted, whatever
-    the ledger says about the key that reached it: the engine did not produce it,
-    so the engine may not free it. Nothing is deleted before one
-    `block_until_ready` over `pending_outputs`, the outputs of every dispatch of
-    the period so far, so an asynchronous computation never reads a freed buffer.
-    Every deleted key is logged at debug level with the artifact key and the
-    closing dispatch, and so is every key kept because the model owns its buffer.
+    retained value survives. A buffer no dispatch produced is never deleted,
+    whatever the ledger says about the key that reached it. Nothing is deleted
+    before one `block_until_ready` over `pending_outputs`, the outputs of every
+    dispatch of the period so far, so an asynchronous computation never reads a
+    freed buffer. Every deleted key is logged at debug level with the artifact
+    key and the closing dispatch, and so is every key kept because no dispatch
+    produced its buffer.
     """
     to_delete: dict[BufferIdentity, tuple[jax.Array, tuple[Hashable, ...]]] = {}
     for artifact in artifacts:
@@ -138,9 +168,9 @@ def release_closed_artifacts(
         array = arrays_by_artifact[artifact]
         if array.is_deleted():
             continue
-        if registry.is_model_owned(array=array):
+        if registry.is_not_produced(array=array):
             logger.debug(
-                "kept %r after dispatch %r: the model owns its buffer",
+                "kept %r after dispatch %r: no dispatch produced its buffer",
                 artifact,
                 closing_dispatch,
                 extra={
