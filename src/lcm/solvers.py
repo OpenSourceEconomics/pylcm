@@ -47,7 +47,8 @@ A solver may also be written outside pylcm. `lcm.solvers` re-exports everything
 such a solver constructs — the execution-contract types (`CoreProgram`,
 `CoreBuildContext`, `CoreExecutionRequirements`, `CoreExecutionDisposition`,
 `ProgramScope`, `ReducedAxis`, `TiledOutputAxis`, `ReductionDeclaration`,
-`ReductionSemantics`, `ACTION_PRODUCT_AXIS`, `EXACTNESS_VALUES`, `OutputRole`,
+`ReductionSemantics`, `ACTION_PRODUCT_AXIS`, `STOCHASTIC_NODE_AXIS`,
+`EXACTNESS_VALUES`, `OutputRole`,
 `StateAxesLeading`, `PeriodKernel`, `StateActionSpace`), the continuation types
 and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
 `period_to_continuation_target`, `target_period_grid`, `union_free_params`,
@@ -121,6 +122,7 @@ from _lcm.solution.contract import (
 )
 from _lcm.solution.dcegm import (
     DCEGM,
+    STOCHASTIC_NODE_AXIS,
     EnvelopeConfig,
     ExactEnvelope,
     FUESEnvelope,
@@ -211,6 +213,7 @@ __all__ = [
     "SOLUTION_SCHEMA_VERSION",
     "SOLVER_API_VERSION",
     "SOLVER_DIAGNOSTICS",
+    "STOCHASTIC_NODE_AXIS",
     "ActionOutput",
     "AdaptiveOuterMesh",
     "ArtifactAuthority",

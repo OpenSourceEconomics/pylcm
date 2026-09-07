@@ -54,7 +54,6 @@ _N_PERIODS = 4
 _REGIME = "working_life"
 _PERIOD = 1
 _LOGGER = logging.getLogger(__name__)
-_DENSE_REASON = "deliberately_dense:dcegm_solver_owned_node_and_grid_batching"
 
 
 def _full_kernel() -> tuple[Any, dict[str, Any]]:
@@ -112,8 +111,8 @@ def test_the_graph_publishes_dense_values_and_replay_variants():
         "_DCEGMArgumentBuilder", graph["main"].argument_builder
     ).stateful_targets
     for program in graph.values():
-        assert program.disposition is CoreExecutionDisposition.DENSE
-        assert program.disposition_reason == _DENSE_REASON
+        assert program.disposition is CoreExecutionDisposition.PLANNED
+        assert program.disposition_reason is None
         assert program.requirements.axes == ()
         assert {read.source.path for read in program.requirements.value_reads} == {
             (target, leaf)

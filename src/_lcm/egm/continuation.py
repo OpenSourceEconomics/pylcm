@@ -53,6 +53,11 @@ from _lcm.egm.regime_introspection import (
     _get_discrete_state_names,
     _get_passive_state_names,
 )
+from _lcm.execution.reductions import (
+    WEIGHTED_EXPECTATION_REDUCTION,
+    BoundWeightedExpectationReduction,
+    WeightedExpectationAccumulator,
+)
 from _lcm.grids import Grid
 from _lcm.logsum import logsum_and_softmax
 from _lcm.probability import scaled_by_power_of_two
@@ -72,6 +77,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
+from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -283,9 +289,6 @@ class ContinuationPlan:
     post_decision_name: FunctionName
     """Name of the post-decision function (the savings node's input slot)."""
 
-    stochastic_node_batch_size: int
-    """Block size for splaying the child stochastic-node expectation (0 = fused)."""
-
     risk_aversion_param_name: str | None = None
     """Flat-param name of the certainty equivalent's risk-aversion coefficient.
 
@@ -302,6 +305,7 @@ def bind_continuation(
     combo_pool: dict[str, Any],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
+    stochastic_node_width: int | None = None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     co_map_state_names: tuple[StateName, ...] = (),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]:
@@ -324,6 +328,10 @@ def bind_continuation(
     child read whose stochastic dimension is such a process substitutes that
     grid for the build-time NaN placeholder, so a resources function reading
     the process node integrates over the resolved nodes.
+
+    `stochastic_node_width` is the block width the child stochastic-node
+    expectation is folded at, as the execution plan chose it; `None` folds the
+    whole mesh in one block, which is what the fused read does.
 
     `co_map_state_names` names the fixed distributed child states whose carry
     axes the caller has already sliced off each `next_regime_to_continuation` leaf
@@ -364,7 +372,7 @@ def bind_continuation(
             carry=next_regime_to_continuation[target],
             combo_pool=combo_pool,
             post_decision_name=plan.post_decision_name,
-            stochastic_node_batch_size=plan.stochastic_node_batch_size,
+            stochastic_node_width=stochastic_node_width,
             resolved_process_grids=resolved_process_grids,
             risk_aversion=risk_aversion,
         )
@@ -514,7 +522,6 @@ def build_continuation_plan(
     scalar_targets: tuple[RegimeName, ...],
     compute_regime_transition_probs: RegimeTransitionFunction,
     post_decision_name: FunctionName,
-    stochastic_node_batch_size: int,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     risk_aversion_param_name: str | None = None,
 ) -> ContinuationPlan:
@@ -523,10 +530,9 @@ def build_continuation_plan(
     The plan binds (via `bind_continuation`) to one combo pool and the next
     period's carries to yield the expected continuation as a function of
     end-of-period savings. The post-decision function names the savings slot the
-    child next-state reads consume; `stochastic_node_batch_size` splays the child
-    stochastic-node expectation. Both the DC-EGM kernel and the NBEGM case-piece
-    solver build their plan through this seam, so the continuation construction
-    lives in one place.
+    child next-state reads consume. Both the DC-EGM kernel and the NBEGM
+    case-piece solver build their plan through this seam, so the continuation
+    construction lives in one place.
 
     Returns:
         The assembled continuation plan.
@@ -547,9 +553,36 @@ def build_continuation_plan(
         child_reads=child_reads,
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
-        stochastic_node_batch_size=stochastic_node_batch_size,
         risk_aversion_param_name=risk_aversion_param_name,
     )
+
+
+def stochastic_node_axes(
+    *, plan: ContinuationPlan
+) -> tuple[tuple[StateName, int], ...]:
+    """Return the child stochastic-node axes the plan's expectation runs over.
+
+    One entry per distinct child stochastic state — an AR(1) process node axis
+    or a Markov-discrete one — carrying that state's node count, in the order
+    the node mesh enumerates them. Two targets naming one state must give it
+    the same count: the streamed expectation folds a single axis, and a state
+    cannot be two lengths on it.
+    """
+    counts: dict[StateName, int] = {}
+    for target in plan.stateful_targets:
+        read = plan.child_reads[target]
+        for name, values in zip(
+            read.stochastic_state_names, read.stochastic_node_values, strict=True
+        ):
+            count = int(jnp.asarray(values).shape[0])
+            if counts.setdefault(name, count) != count:
+                msg = (
+                    f"Child stochastic state {name!r} carries {counts[name]} nodes "
+                    f"under one target and {count} under {target!r}; the streamed "
+                    "stochastic-node axis admits one node count per state."
+                )
+                raise ExecutionPlanningError(msg)
+    return tuple(counts.items())
 
 
 def _with_co_map_states(
@@ -575,7 +608,7 @@ def _get_child_carry_reader(
     carry: EGMCarry,
     combo_pool: dict[str, Any],
     post_decision_name: FunctionName,
-    stochastic_node_batch_size: int,
+    stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
     risk_aversion: FloatND | None = None,
 ) -> Callable[
@@ -642,7 +675,7 @@ def _get_child_carry_reader(
         carry=carry,
         combo_pool=combo_pool,
         post_decision_name=post_decision_name,
-        stochastic_node_batch_size=stochastic_node_batch_size,
+        stochastic_node_width=stochastic_node_width,
         risk_aversion=risk_aversion,
         stochastic_node_values=stochastic_node_values,
         weight_vecs=weight_vecs,
@@ -672,8 +705,8 @@ class _ChildCarryReader:
     post_decision_name: FunctionName
     """Name of the savings node as the next-state DAG's input."""
 
-    stochastic_node_batch_size: int
-    """Block size of the streamed stochastic-node expectation (0 fuses)."""
+    stochastic_node_width: int | None
+    """Block width of the streamed node expectation; `None` folds one block."""
 
     risk_aversion: FloatND | None
     """The Epstein-Zin risk-aversion coefficient; `None` for the linear read."""
@@ -800,7 +833,7 @@ class _ChildCarryReader:
             child_passive_values=child_passive_values,
             queries_and_gradients=queries_and_gradients,
             resources_reads_stochastic=self.resources_reads_stochastic,
-            stochastic_node_batch_size=self.stochastic_node_batch_size,
+            stochastic_node_width=self.stochastic_node_width,
             risk_aversion=risk_aversion,
         )
 
@@ -977,7 +1010,7 @@ def _expect_over_stochastic_nodes(
         [tuple[ScalarFloat | ScalarInt, ...]], tuple[FloatND, FloatND]
     ],
     resources_reads_stochastic: bool,
-    stochastic_node_batch_size: int,
+    stochastic_node_width: int | None,
     risk_aversion: FloatND | None = None,
 ) -> (
     tuple[ScalarFloat, ScalarFloat]
@@ -1039,81 +1072,72 @@ def _expect_over_stochastic_nodes(
     )
 
     # The expectation mesh (the product of the child's stochastic-node counts)
-    # is the dominant `egm_step` working buffer's child-node axis. A positive
-    # `stochastic_node_batch_size` below the mesh length accumulates the
-    # weighted expectation in `lax.scan` blocks: each block reads only its
-    # `batch_size` nodes (shedding the per-node gather working-set) AND folds
-    # the weighted sum into the scan carry, so the full node-stacked
-    # `(..., n_nodes)` result is never materialised — the savings the single
-    # fused vmap below cannot reach, because there the reduction is downstream
-    # of the materialised stack. `0` (or a size covering the whole mesh) keeps
-    # that fused vmap + reduction. The weighted sum is associative, so the
-    # value function matches the fused solve to numerical tolerance (the block
-    # reduction reorders the floating-point adds).
+    # is the dominant `egm_step` working buffer's child-node axis, and the
+    # `stochastic_node` axis is what the execution plan streams it under. Each
+    # block reads only its own `width` nodes — shedding the per-node gather
+    # working set — AND folds their weighted contribution into the scan carry,
+    # so the full node-stacked `(..., n_nodes)` result is never materialised.
+    # One block covering the whole mesh is the fused read: `jax.lax.scan` over
+    # a single step lowers to the block body inline, so the widest plan reads
+    # exactly what one vmap over the mesh reads. A narrower width reorders the
+    # floating-point adds, so the value function it publishes agrees with the
+    # widest plan's to the format's rounding rather than bit for bit.
     n_nodes = flat_node_indices[0].shape[0]
-    if 0 < stochastic_node_batch_size < n_nodes:
-        n_blocks = -(-n_nodes // stochastic_node_batch_size)
-        pad = n_blocks * stochastic_node_batch_size - n_nodes
-        blocked_indices = tuple(
-            jnp.concatenate([indices, jnp.zeros(pad, dtype=indices.dtype)]).reshape(
-                n_blocks, stochastic_node_batch_size
-            )
-            for indices in flat_node_indices
+    width = (
+        n_nodes
+        if stochastic_node_width is None
+        else min(stochastic_node_width, n_nodes)
+    )
+    n_blocks = -(-n_nodes // width)
+    pad = n_blocks * width - n_nodes
+    blocked_indices = tuple(
+        jnp.concatenate([indices, jnp.zeros(pad, dtype=indices.dtype)]).reshape(
+            n_blocks, width
         )
-        # Pad weights with 0.0, not the pad slots' real weights: the pad slots
-        # reuse node index 0, so their values are read but zero-weighted, and
-        # contribute exactly 0.0 to every block sum.
-        blocked_weights = jnp.concatenate(
-            [joint_weights, jnp.zeros(pad, dtype=joint_weights.dtype)]
-        ).reshape(n_blocks, stochastic_node_batch_size)
-        zero = jnp.zeros((), dtype=joint_weights.dtype)
+        for indices in flat_node_indices
+    )
+    # Pad weights with 0.0, not the pad slots' real weights: the pad slots
+    # reuse node index 0, so their values are read but zero-weighted, and
+    # contribute exactly 0.0 to every block sum.
+    blocked_weights = jnp.concatenate(
+        [joint_weights, jnp.zeros(pad, dtype=joint_weights.dtype)]
+    ).reshape(n_blocks, width)
 
-        if risk_aversion is not None:
-            return _partials_on_node_scale(
-                partials=_accumulate_ez_partials_over_blocks(
-                    read_at_nodes=read_at_nodes,
-                    blocked_indices=blocked_indices,
-                    blocked_weights=blocked_weights,
-                    risk_aversion=risk_aversion,
-                ),
-                shift=node_shift,
-            )
-
-        (smoothed_value, smoothed_marginal), _ = jax.lax.scan(
-            functools.partial(
-                _accumulate_weighted_node_block, read_at_nodes=read_at_nodes
-            ),
-            (zero, zero),
-            (blocked_indices, blocked_weights),
-        )
-        return (
-            _on_node_scale(values=smoothed_value, shift=node_shift),
-            _on_node_scale(values=smoothed_marginal, shift=node_shift),
-        )
-
-    node_values, node_marginals = jax.vmap(read_at_nodes)(flat_node_indices)
     if risk_aversion is not None:
-        # Epstein-Zin: reduce this target's shock lottery into the certainty
-        # equivalent's transform space — the transformed value and marginal
-        # partials `(S, T)`, NOT the inverted `(nu, dnu/ds)`. The regime blend sums
-        # these per-target partials with the regime probabilities and inverts once
-        # (`ez_invert_partials`), so the joint certainty equivalent spans the full
-        # (regime x shock) lottery. A single reachable target recovers M1's
-        # per-regime power mean.
         return _partials_on_node_scale(
-            partials=ez_transform_partials(
-                child_values=node_values,
-                child_marginals=node_marginals,
-                weights=joint_weights,
+            partials=_accumulate_ez_partials_over_blocks(
+                read_at_nodes=read_at_nodes,
+                blocked_indices=blocked_indices,
+                blocked_weights=blocked_weights,
                 risk_aversion=risk_aversion,
             ),
             shift=node_shift,
         )
-    smoothed_value = _weighted_node_sum(values=node_values, weights=joint_weights)
-    smoothed_marginal = _weighted_node_sum(values=node_marginals, weights=joint_weights)
+
+    # The nodes of one target arrive on a common base-two scale, so a weight
+    # below the normal range there is one that scale's own cap has declared
+    # understated: its exponent is not moved onto the value.
+    reduction = WEIGHTED_EXPECTATION_REDUCTION.bind(subnormal_is_accounted_for=True)
+    empty = reduction.initialize(
+        value_template=jnp.zeros((), dtype=joint_weights.dtype)
+    )
+    (value_state, marginal_state), _ = jax.lax.scan(
+        _WeightedNodeBlockFold(read_at_nodes=read_at_nodes, reduction=reduction),
+        (empty, empty),
+        (blocked_indices, blocked_weights),
+    )
+    # The mesh normalizes by the exact power of two its weights were lifted by,
+    # not by the mass the fold accumulated, so the published quantity is the
+    # weighted sum rather than the fold's mass-normalized mean.
     return (
-        _on_node_scale(values=smoothed_value, shift=node_shift),
-        _on_node_scale(values=smoothed_marginal, shift=node_shift),
+        _on_node_scale(
+            values=reduction.finalize(accumulator=value_state).weighted_sum,
+            shift=node_shift,
+        ),
+        _on_node_scale(
+            values=reduction.finalize(accumulator=marginal_state).weighted_sum,
+            shift=node_shift,
+        ),
     )
 
 
@@ -1191,39 +1215,49 @@ class _ReadAtNodes:
         )
 
 
-def _weighted_node_sum(*, values: FloatND, weights: FloatND) -> ScalarFloat:
-    """Sum node values by their weights on the nodes' common base-two scale.
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _WeightedNodeBlockFold:
+    """Scan body folding one block of weighted node reads into the accumulators.
 
-    A zero-weight node contributes exactly 0.0 even when its smoothed value is
-    -inf, while a NaN weight still poisons the sum and a negative one stays
-    visible rather than collapsing to zero. The nodes arrive on one common
-    base-two scale, so every weight here is one the dtype can multiply and no
-    term has an exponent left to move; `_on_node_scale` takes the reduction
-    back down.
+    The value and the marginal ride the same node weights, so one bound
+    reduction folds both and the scan carries the two states side by side.
     """
-    return jnp.sum(
-        zero_safe_weighted_term(
-            weight=weights, value=values, subnormal_is_accounted_for=True
+
+    read_at_nodes: Callable[[tuple[IntND, ...]], tuple[FloatND, FloatND]]
+    """The full carry read of one target at one child stochastic-node combo."""
+
+    reduction: BoundWeightedExpectationReduction
+    """The weighted expectation the block contributions are folded through."""
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def __call__(
+        self,
+        accumulators: tuple[
+            WeightedExpectationAccumulator, WeightedExpectationAccumulator
+        ],
+        block: tuple[tuple[IntND, ...], FloatND],
+    ) -> tuple[
+        tuple[WeightedExpectationAccumulator, WeightedExpectationAccumulator], None
+    ]:
+        """Fold one node block's value and marginal contributions."""
+        block_indices, block_weights = block
+        block_values, block_marginals = jax.vmap(self.read_at_nodes)(block_indices)
+        value_state, marginal_state = accumulators
+        return (
+            (
+                self.reduction.add(
+                    accumulator=value_state,
+                    values=block_values,
+                    weights=block_weights,
+                ),
+                self.reduction.add(
+                    accumulator=marginal_state,
+                    values=block_marginals,
+                    weights=block_weights,
+                ),
+            ),
+            None,
         )
-    )
-
-
-# keyword-only-exempt: library-callback=jax.lax.scan
-def _accumulate_weighted_node_block(
-    carry: tuple[ScalarFloat, ScalarFloat],
-    block: tuple[tuple[IntND, ...], FloatND],
-    *,
-    read_at_nodes: Callable[[tuple[IntND, ...]], tuple[FloatND, FloatND]],
-) -> tuple[tuple[ScalarFloat, ScalarFloat], None]:
-    """Fold one block of nodes' weighted values and marginals into the scan carry."""
-    block_indices, block_weights = block
-    block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
-    acc_value, acc_marginal = carry
-    return (
-        acc_value + _weighted_node_sum(values=block_values, weights=block_weights),
-        acc_marginal
-        + _weighted_node_sum(values=block_marginals, weights=block_weights),
-    ), None
 
 
 def _joint_node_weights(

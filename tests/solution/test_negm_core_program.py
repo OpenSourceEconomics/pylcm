@@ -35,6 +35,7 @@ from _lcm.execution.core_program import (
     InternalInputRef,
     InternalOutputSpec,
     ProgramScope,
+    _value_read_argument_leaf,
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
@@ -47,6 +48,10 @@ from _lcm.execution.internal_outputs import (
     topological_program_order,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueTransferKind,
+)
 from _lcm.solution import backward_induction, period_replay
 from _lcm.solution.negm import (
     _COH_SHIFTS,
@@ -69,7 +74,6 @@ _PERIOD = 1
 _PARAMS: dict[str, Any] = {"discount_factor": 0.95, "alive": {}}
 _LOGGER = logging.getLogger(__name__)
 _SWEEP_REASON = "deliberately_dense:negm_outer_candidates_retained_not_reduced"
-_KEEPER_REASON = "deliberately_dense:dcegm_solver_owned_node_and_grid_batching"
 _N_OUTER = negm_kinked_toy.N_AZ
 # The sweep's block width only reschedules the `lax.map` over the outer nodes,
 # leaving every operation and its operand order untouched; the compiled sweep
@@ -100,6 +104,27 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
     )
 
 
+def _aligned_transfer_plan(*, program: Any) -> tuple[ResolvedValueTransfer, ...]:
+    """Resolve every declared read as the aligned transfer of a one-device solve."""
+    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    return tuple(
+        ResolvedValueTransfer(
+            target=read.target,
+            source=read.source,
+            kind=ValueTransferKind.ALIGNED_LOCAL,
+            stored_sharding=sharding,
+            source_sharding=sharding,
+            expected_shape=jnp.shape(
+                _value_read_argument_leaf(program=program, read=read)
+            ),
+            expected_dtype=jnp.asarray(
+                _value_read_argument_leaf(program=program, read=read)
+            ).dtype,
+        )
+        for read in program.requirements.value_reads
+    )
+
+
 def _compiled_cores(*, kernel: Any, context: Mapping[str, Any]) -> dict[str, Any]:
     """Compile every program of the graph the way the solve loop does.
 
@@ -118,7 +143,11 @@ def _compiled_cores(*, kernel: Any, context: Mapping[str, Any]) -> dict[str, Any
         )
         templates = internal_input_templates(program=materialized, producers=producers)
         if name in consumed:
-            resolved = resolve_core_program(program=materialized, tile_widths={})
+            resolved = resolve_core_program(
+                program=materialized,
+                tile_widths={},
+                input_transfer_plan=_aligned_transfer_plan(program=materialized),
+            )
             producers[name] = MappingProxyType(
                 {(): resolve_producer(program=resolved, templates=templates)}
             )
@@ -196,8 +225,8 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
 
     assert tuple(graph) == ("keeper", "outer_sweep")
     keeper, sweep = graph["keeper"], graph["outer_sweep"]
-    assert keeper.disposition is CoreExecutionDisposition.DENSE
-    assert keeper.disposition_reason == _KEEPER_REASON
+    assert keeper.disposition is CoreExecutionDisposition.PLANNED
+    assert keeper.disposition_reason is None
     assert sweep.disposition is CoreExecutionDisposition.DENSE
     assert sweep.disposition_reason == _SWEEP_REASON
     assert keeper.scope is ProgramScope.VALUES_ONLY
@@ -484,7 +513,10 @@ def test_a_replay_lowers_the_dense_programs_the_solve_ran(*, monkeypatch, tmp_pa
     monkeypatch.setattr(period_replay, "core_program_graph", record_graph)
     replay = replay_period(directory=tmp_path / f"{_REGIME}@{_PERIOD}")
 
-    assert dispositions == [CoreExecutionDisposition.DENSE] * 2
+    assert dispositions == [
+        CoreExecutionDisposition.PLANNED,
+        CoreExecutionDisposition.DENSE,
+    ]
     assert_agrees_to_ulp(
         got=np.asarray(replay.output.value),
         expected=np.asarray(solution.values[_PERIOD][_REGIME]),

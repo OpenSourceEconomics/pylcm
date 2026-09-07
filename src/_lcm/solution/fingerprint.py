@@ -47,7 +47,7 @@ from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
-from _lcm.solution.dcegm import DCEGM, ExactEnvelope, FUESEnvelope
+from _lcm.solution.dcegm import ExactEnvelope, FUESEnvelope
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
@@ -98,7 +98,6 @@ _GRID_EXECUTION_FIELDS = frozenset({"batch_size", "distributed"})
 _BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ...] = (
     (AdaptiveOuterMesh, frozenset({"batch_size"})),
     (FiniteOuterGrid, frozenset({"batch_size"})),
-    (DCEGM, frozenset({"stochastic_node_batch_size"})),
     (ExactEnvelope, frozenset({"cell_batch_size"})),
     (FUESEnvelope, frozenset({"scan_unroll"})),
     (

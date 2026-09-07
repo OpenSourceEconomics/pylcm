@@ -445,14 +445,26 @@ def test_dcegm_addresses_each_leaf_inside_the_rolling_mapping(
 
 
 def test_an_egm_node_declares_exactly_the_continuation_leaves_it_reads() -> None:
-    """A dense EGM node's declared reads name exactly its own continuation leaves."""
+    """An EGM node's declared reads name exactly its own continuation leaves."""
     program = _egm_program()
+    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     programs = {
         "main": _ProgramExecutionMetadata(
             requirements=program.requirements,
             disposition=program.disposition,
             scope=ProgramScope.ANY,
-            input_transfer_plan=(),
+            input_transfer_plan=tuple(
+                ResolvedValueTransfer(
+                    target=read.target,
+                    source=read.source,
+                    kind=ValueTransferKind.ALIGNED_LOCAL,
+                    stored_sharding=sharding,
+                    source_sharding=sharding,
+                    expected_shape=(1,),
+                    expected_dtype=jnp.float64,
+                )
+                for read in program.requirements.value_reads
+            ),
         )
     }
 

@@ -63,6 +63,7 @@ def _get_solve_one_combo_asset_rows(
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
     savings_batch_size: int,
+    stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
@@ -95,6 +96,7 @@ def _get_solve_one_combo_asset_rows(
         next_regime_to_continuation=next_regime_to_continuation,
         euler_batch_size=euler_batch_size,
         savings_batch_size=savings_batch_size,
+        stochastic_node_width=stochastic_node_width,
         resolved_process_grids=resolved_process_grids,
     )
 
@@ -124,6 +126,9 @@ class _SolveOneComboAssetRows:
 
     savings_batch_size: int
     """The savings grid's `batch_size`."""
+
+    stochastic_node_width: int | None
+    """Block width of the streamed node expectation; `None` folds one block."""
 
     resolved_process_grids: Mapping[StateName, FloatND]
     """Solve-time grids of runtime-resolved process states."""
@@ -163,6 +168,7 @@ class _SolveOneComboAssetRows:
             combo_pool=combo_pool,
             next_regime_to_continuation=self.next_regime_to_continuation,
             dtype=dtype,
+            stochastic_node_width=self.stochastic_node_width,
             resolved_process_grids=self.resolved_process_grids,
         )
         solve_one_node = _SolveOneNode(
@@ -171,6 +177,7 @@ class _SolveOneComboAssetRows:
             discount_factor=discount_factor,
             next_regime_to_continuation=self.next_regime_to_continuation,
             dtype=dtype,
+            stochastic_node_width=self.stochastic_node_width,
             resolved_process_grids=self.resolved_process_grids,
             savings_batch_size=self.savings_batch_size,
             own_resources_of_state=own_resources_of_state,
@@ -237,6 +244,9 @@ class _SolveOneNode:
     dtype: Any
     """The canonical float dtype of the state grid."""
 
+    stochastic_node_width: int | None
+    """Block width of the streamed node expectation; `None` folds one block."""
+
     resolved_process_grids: Mapping[StateName, FloatND]
     """Solve-time grids of runtime-resolved process states."""
 
@@ -268,6 +278,7 @@ class _SolveOneNode:
             utility_of_action=utility_of_action,
             next_regime_to_continuation=self.next_regime_to_continuation,
             dtype=self.dtype,
+            stochastic_node_width=self.stochastic_node_width,
             resolved_process_grids=self.resolved_process_grids,
         )
         actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
@@ -373,6 +384,7 @@ def _continuation_of_euler_state(
     combo_pool: dict[str, Any],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
+    stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND],
 ) -> ScalarFloat:
     """Expected continuation with the Euler slot as the grad argument.
@@ -387,6 +399,7 @@ def _continuation_of_euler_state(
         combo_pool=node_pool,
         next_regime_to_continuation=next_regime_to_continuation,
         dtype=dtype,
+        stochastic_node_width=stochastic_node_width,
         resolved_process_grids=resolved_process_grids,
     )
     return expected_continuation(savings_value)
@@ -429,6 +442,7 @@ def _get_expected_continuation_value(
     combo_pool: dict[str, Any],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
+    stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], ScalarFloat]:
     """Build the expected-continuation map $W(A)$ for one combo pool.
@@ -452,6 +466,7 @@ def _get_expected_continuation_value(
             combo_pool=combo_pool,
             next_regime_to_continuation=next_regime_to_continuation,
             dtype=dtype,
+            stochastic_node_width=stochastic_node_width,
             resolved_process_grids=resolved_process_grids,
         )
     )

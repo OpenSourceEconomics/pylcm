@@ -70,9 +70,10 @@ total device memory.
 Which axis names exist depends on which solver a regime uses; each solver's section in
 [Solvers and capabilities](../reference/solvers.md) names the axes it declares.
 
-| axis             | declared by                                                            |
-| ---------------- | ---------------------------------------------------------------------- |
-| `action_product` | the flattened Cartesian action product of a streamed `GridSearch` core |
+| axis              | declared by                                                             |
+| ----------------- | ----------------------------------------------------------------------- |
+| `action_product`  | the flattened Cartesian action product of a streamed `GridSearch` core  |
+| `stochastic_node` | the child stochastic-node mesh a `DCEGM` continuation expectation folds |
 
 Choose the largest width that meets the measured memory target, then verify values and
 runtime against the whole-axis setting on the model and backend you will use. Leaving an
@@ -82,11 +83,11 @@ asks it to do.
 ## Stream work with solver-owned batch widths
 
 Some controls a solver owns itself reduce live intermediates. Grid `batch_size`,
-`stochastic_node_batch_size`, `envelope_segment_block_size`, `subject_batch_size`, and
-any solver field whose Reference contract explicitly says it streams an evaluation axis
-can lower temporary workspace. The exact effect still depends on retained banks and
-downstream folds; for example, `NEGM.outer_batch_size` can lower temporary evaluation
-memory without capping the retained candidate bank.
+`envelope_segment_block_size`, `subject_batch_size`, and any solver field whose
+Reference contract explicitly says it streams an evaluation axis can lower temporary
+workspace. The exact effect still depends on retained banks and downstream folds; for
+example, `NEGM.outer_batch_size` can lower temporary evaluation memory without capping
+the retained candidate bank.
 
 NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
 batch widths for the corresponding `lax.map` axes. A positive value smaller than the

@@ -18,10 +18,10 @@ _SHIPPED_FOLDS = {
     "hard_max": HARD_MAX_REDUCTION,
     "logsumexp": LOGSUMEXP_REDUCTION,
     "collective_hard_max": COLLECTIVE_HARD_MAX_REDUCTION,
+    "weighted_expectation": WEIGHTED_EXPECTATION_REDUCTION,
 }
 
 _DECLARATIONS_ONLY = {
-    "weighted_expectation": WEIGHTED_EXPECTATION_REDUCTION,
     "hard_max_with_carry": HARD_MAX_WITH_CARRY_REDUCTION,
     "interval_envelope": INTERVAL_ENVELOPE_REDUCTION,
 }

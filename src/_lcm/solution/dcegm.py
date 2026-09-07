@@ -43,8 +43,10 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     ProgramScope,
+    ReducedAxis,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.reductions import WEIGHTED_EXPECTATION_REDUCTION
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_reads import (
@@ -310,24 +312,10 @@ class DCEGM(OneMarginSolver):
     supplied finite candidate set, not for the unsampled continuous branch.
     """
 
-    stochastic_node_batch_size: int = 0
-    """Block size for splaying the child stochastic-node expectation.
-
-    The continuation expectation runs over the product of the child regime's
-    stochastic process nodes — a single mesh, not a per-grid axis, so it gets
-    its own solve-level knob rather than a per-grid `batch_size`. A positive
-    value below the mesh length processes that expectation in `lax.map` blocks
-    instead of one fused vmap, shedding the dominant `egm_step` working buffer
-    (which carries this node axis); `0` keeps the fused vmap. Like the savings
-    grid's `batch_size`, this is a memory knob only — the solved value function
-    is identical to the unsplayed solve.
-    """
-
     def __post_init__(self) -> None:
         _fail_if_savings_grid_is_stochastic(self.savings_grid)
         _fail_if_refined_grid_factor_too_small(self.refined_grid_factor)
         _fail_if_n_constrained_points_too_few(self.n_constrained_points)
-        _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
 
     def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundDCEGM:
         """Bind regime-owned DAG names without exposing them on public `DCEGM`."""
@@ -497,20 +485,31 @@ class DCEGM(OneMarginSolver):
                 values_core = functools.partial(_dcegm_values_core, core=core)
                 replay_core = core
                 if context.enable_jit:
-                    values_core = jax.jit(values_core)
-                    replay_core = jax.jit(replay_core)
+                    # The plan's width is a compile-time choice, so the solver's
+                    # own compilation must hold it static too; the engine's outer
+                    # jit then hands this one a concrete width.
+                    values_core = jax.jit(
+                        values_core, static_argnames=(_STOCHASTIC_NODE_WIDTH_KEYWORD,)
+                    )
+                    replay_core = jax.jit(
+                        replay_core, static_argnames=(_STOCHASTIC_NODE_WIDTH_KEYWORD,)
+                    )
+                requirements = CoreExecutionRequirements(
+                    reduced_axes=_stochastic_node_axis(
+                        build=build, state_action_space=context.state_action_space
+                    )
+                )
                 programs_by_core[id(core)] = MappingProxyType(
                     {
                         "main": CoreProgram(
                             name="main",
                             function=values_core,
                             argument_builder=argument_builder,
-                            requirements=CoreExecutionRequirements(),
+                            requirements=requirements,
                             output_roles=_dcegm_output_roles(
                                 build=build, publish_replay=False
                             ),
-                            disposition=CoreExecutionDisposition.DENSE,
-                            disposition_reason=_DCEGM_DENSE_REASON,
+                            disposition=CoreExecutionDisposition.PLANNED,
                             donation_candidates=(),
                             scope=ProgramScope.VALUES_ONLY,
                         ),
@@ -518,12 +517,11 @@ class DCEGM(OneMarginSolver):
                             name="replay",
                             function=replay_core,
                             argument_builder=argument_builder,
-                            requirements=CoreExecutionRequirements(),
+                            requirements=requirements,
                             output_roles=_dcegm_output_roles(
                                 build=build, publish_replay=True
                             ),
-                            disposition=CoreExecutionDisposition.DENSE,
-                            disposition_reason=_DCEGM_DENSE_REASON,
+                            disposition=CoreExecutionDisposition.PLANNED,
                             donation_candidates=(),
                             scope=ProgramScope.REPLAY,
                             retained_artifact_keys=(SIMULATION_POLICY,),
@@ -568,9 +566,46 @@ class _BoundDCEGM(DCEGM):
     """Name of the function giving the savings the exogenous grid spans."""
 
 
-# Why the DC-EGM program executes dense: the kernel owns its stochastic-node
-# and refined-grid batching, and no product axis of it is planner-reduced.
-_DCEGM_DENSE_REASON = "deliberately_dense:dcegm_solver_owned_node_and_grid_batching"
+# Planner name of the child stochastic-node mesh the DC-EGM continuation folds.
+STOCHASTIC_NODE_AXIS = "stochastic_node"
+
+_STOCHASTIC_NODE_WIDTH_KEYWORD = "_lcm_stochastic_node_width"
+
+
+def _stochastic_node_axis(
+    *, build: EGMStepBuild, state_action_space: StateActionSpace
+) -> tuple[ReducedAxis, ...]:
+    """Declare the child stochastic-node mesh the continuation folds, where it is one.
+
+    An axis's coordinates are grids the program receives, so the mesh is
+    declarable exactly when the regime carries every child stochastic state on
+    a grid of the child's own node count. Three meshes carry no such
+    declaration and fold in one block instead:
+
+    - a regime whose reachable targets carry no stochastic state at all;
+    - a one-node mesh, which has nothing to partition;
+    - a cross-grid mesh, whose child integrates a state on a shorter grid than
+      the parent's own — the node axis then belongs to the child and no grid
+      the program receives has its length.
+    """
+    grids = state_action_space.states
+    declarable = all(
+        name in grids and int(jnp.asarray(grids[name]).shape[0]) == count
+        for name, count in build.stochastic_node_axes
+    )
+    extent = math.prod(count for _, count in build.stochastic_node_axes)
+    if not build.stochastic_node_axes or not declarable or extent <= 1:
+        return ()
+    return (
+        ReducedAxis(
+            name=STOCHASTIC_NODE_AXIS,
+            coordinate_names=tuple(name for name, _ in build.stochastic_node_axes),
+            coordinate_extents=tuple(count for _, count in build.stochastic_node_axes),
+            canonical_order="c",
+            reduction=WEIGHTED_EXPECTATION_REDUCTION,
+            width_keyword=_STOCHASTIC_NODE_WIDTH_KEYWORD,
+        ),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -597,6 +632,9 @@ class EGMStepBuild:
 
     row_discrete_state_names: tuple[StateName, ...]
     """Discrete states leading every carry and policy row, in row order."""
+
+    stochastic_node_axes: tuple[tuple[StateName, int], ...]
+    """Child stochastic-node axes of the streamed expectation: name and count."""
 
     row_passive_state_names: tuple[StateName, ...]
     """Passive continuous states following the discrete states on every row."""
@@ -782,9 +820,10 @@ class _DCEGMPeriodKernel:
     `main` inverts the Euler equation on the savings grid and publishes the
     value function plus the continuation a parent interpolates. `replay` is the
     output-specialized variant that also publishes the off-grid simulation
-    policy. Both are deliberately dense because the kernel owns its
-    stochastic-node and refined-grid batching. Calling the kernel builds the
-    selected program's arguments through its declared builder.
+    policy. Both declare the child stochastic-node mesh as a reduced axis, so
+    the execution plan owns the width their continuation expectation folds at.
+    Calling the kernel builds the selected program's arguments through its
+    declared builder.
     """
 
     _core_programs: Mapping[str, CoreProgram]
@@ -1017,19 +1056,6 @@ def _fail_if_envelope_cell_batch_size_non_positive(
             f"{envelope_cell_batch_size}. It is how many node cells the exact "
             "upper envelope resolves in parallel; use None to resolve them one "
             "at a time."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_stochastic_node_batch_size_negative(
-    stochastic_node_batch_size: int,
-) -> None:
-    if stochastic_node_batch_size < 0:
-        msg = (
-            f"DCEGM.stochastic_node_batch_size must be non-negative, got "
-            f"{stochastic_node_batch_size}. It is the block size for splaying the "
-            "child stochastic-node expectation into `lax.map` blocks; 0 keeps the "
-            "fused vmap."
         )
         raise RegimeInitializationError(msg)
 

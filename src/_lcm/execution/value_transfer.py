@@ -10,7 +10,7 @@ operator, and fails closed on the single pair no single collective can serve.
 
 import math
 from collections.abc import Hashable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
@@ -548,17 +548,7 @@ def _replace_transfer_leaf(
 ) -> object:
     """Rebuild one supported argument branch and replace its selected leaf."""
     if not path:
-        if cache is None or not transfer.reused_by_several_consumers:
-            return apply_value_transfer(value=node, transfer=transfer)
-        cached = cache.get(transfer=transfer)
-        if cached is not None and not cached.is_deleted():
-            return cached
-        copied = apply_value_transfer(value=node, transfer=transfer)
-        if not isinstance(node, jax.Array):
-            msg = "A cached transfer's pre-transfer value must be a concrete JAX array."
-            raise TypeError(msg)
-        cache.put(transfer=transfer, array=copied, stored=node)
-        return copied
+        return _transferred_leaf(node=node, transfer=transfer, cache=cache)
     segment, *remaining = path
     rest = tuple(remaining)
     if isinstance(node, Mapping):
@@ -596,11 +586,83 @@ def _replace_transfer_leaf(
             cache=cache,
         )
         return tuple(updated)
+    if is_dataclass(node) and not isinstance(node, type):
+        return _replace_dataclass_field(
+            node=node,
+            segment=segment,
+            path=rest,
+            transfer=transfer,
+            traversed=traversed,
+            cache=cache,
+        )
     msg = (
         f"Value-transfer path {traversed!r} would rebuild a "
-        f"{type(node).__name__}; only mapping and tuple containers are rebuilt."
+        f"{type(node).__name__}; only mapping, tuple, and dataclass containers "
+        "are rebuilt."
     )
     raise TypeError(msg)
+
+
+def _transferred_leaf(
+    *,
+    node: object,
+    transfer: ResolvedValueTransfer,
+    cache: TransferCache | None,
+) -> object:
+    """Apply one transfer to the selected leaf, sharing a copy where one is cached."""
+    if cache is None or not transfer.reused_by_several_consumers:
+        return apply_value_transfer(value=node, transfer=transfer)
+    cached = cache.get(transfer=transfer)
+    if cached is not None and not cached.is_deleted():
+        return cached
+    copied = apply_value_transfer(value=node, transfer=transfer)
+    if not isinstance(node, jax.Array):
+        msg = "A cached transfer's pre-transfer value must be a concrete JAX array."
+        raise TypeError(msg)
+    cache.put(transfer=transfer, array=copied, stored=node)
+    return copied
+
+
+def _replace_dataclass_field(
+    *,
+    node: object,
+    segment: str | int,
+    path: tuple[str | int, ...],
+    transfer: ResolvedValueTransfer,
+    traversed: tuple[str | int, ...],
+    cache: TransferCache | None,
+) -> object:
+    """Rebuild one dataclass branch field by field around the replaced leaf.
+
+    A solver's continuation payload is a frozen dataclass carrying arrays, so
+    rebuilding it through its own constructor keeps its type and every field the
+    transfer does not touch.
+    """
+    if type(segment) is not str:
+        msg = (
+            "A value-transfer dataclass path requires a field name at "
+            f"{traversed!r}, got {segment!r}."
+        )
+        raise TypeError(msg)
+    declared = {item.name for item in fields(node)}  # ty: ignore[invalid-argument-type]
+    if segment not in declared:
+        msg = (
+            f"Value-transfer dataclass path {(*traversed, segment)!r} names "
+            f"no field of {type(node).__name__}."
+        )
+        raise KeyError(msg)
+    return replace(
+        node,  # ty: ignore[invalid-argument-type]
+        **{
+            segment: _replace_transfer_leaf(
+                node=getattr(node, segment),
+                path=path,
+                transfer=transfer,
+                traversed=(*traversed, segment),
+                cache=cache,
+            )
+        },
+    )
 
 
 def _validate_edge_identity(

@@ -588,10 +588,6 @@ class _BoundEGM(EGM):
     """Name of the function giving the savings the exogenous grid spans."""
 
 
-# Why the one-row EGM program executes dense: it has no product axis to stream
-# over, and its continuation is read from the target's carry alone.
-_EGM_DENSE_REASON = "deliberately_dense:egm_one_row_no_product_axis"
-
 # The carry rows `_EGMArgumentBuilder.__call__` flattens into named program
 # arguments, keyed by the leaf path each row occupies in the target's payload.
 _EGM_ARGUMENT_BY_LEAF: MappingProxyType[tuple[str, ...], str] = MappingProxyType(
@@ -708,8 +704,7 @@ def _build_egm_period_kernel(
                 policy=None,
             ),
         ),
-        disposition=CoreExecutionDisposition.DENSE,
-        disposition_reason=_EGM_DENSE_REASON,
+        disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
     )
     return _EGMPeriodKernel(
@@ -876,14 +871,15 @@ class _EGMArgumentBuilder:
 
 @dataclass(frozen=True, kw_only=True)
 class _EGMPeriodKernel:
-    """The 1-D EGM period kernel: one native dense program around the shared core.
+    """The 1-D EGM period kernel: one native program around the shared core.
 
     `main` runs `egm_one_asset_step` for the period and publishes the value
     array and the marginal-value carry a parent EGM regime interpolates. The
-    one-row kernel has no product axis to stream over and reads its continuation
-    from the target's carry alone, so the program is deliberately dense and
-    declares no target value access. Calling the kernel builds the program's
-    arguments through its declared builder and returns a public `KernelOutput`.
+    one-row kernel reads its continuation from the target's carry alone and
+    declares no target value access; its regime carries no stochastic state, so
+    it declares no streamed axis either and the plan owns nothing to widen.
+    Calling the kernel builds the program's arguments through its declared
+    builder and returns a public `KernelOutput`.
     """
 
     _core_programs: Mapping[str, CoreProgram]

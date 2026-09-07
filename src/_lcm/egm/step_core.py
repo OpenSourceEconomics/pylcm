@@ -140,6 +140,7 @@ def _get_solve_one_combo(
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     euler_batch_size: int,
     savings_batch_size: int,
+    stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
@@ -162,6 +163,7 @@ def _get_solve_one_combo(
         state_grid=state_grid,
         next_regime_to_continuation=next_regime_to_continuation,
         savings_batch_size=savings_batch_size,
+        stochastic_node_width=stochastic_node_width,
         resolved_process_grids=resolved_process_grids,
     )
 
@@ -188,6 +190,9 @@ class _SolveOneCombo:
 
     savings_batch_size: int
     """The savings grid's `batch_size`."""
+
+    stochastic_node_width: int | None
+    """Block width of the streamed node expectation; `None` folds one block."""
 
     resolved_process_grids: Mapping[StateName, FloatND]
     """Solve-time grids of runtime-resolved process states."""
@@ -228,6 +233,7 @@ class _SolveOneCombo:
             utility_of_action=utility_of_action,
             next_regime_to_continuation=self.next_regime_to_continuation,
             dtype=dtype,
+            stochastic_node_width=self.stochastic_node_width,
             resolved_process_grids=self.resolved_process_grids,
         )
         actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
@@ -394,6 +400,7 @@ def _get_compute_node(
     utility_of_action: Callable[[ScalarFloat], ScalarFloat],
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
     dtype: Any,  # noqa: ANN401
+    stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]]:
     """Build the per-savings-node Euler inversion for one discrete combo."""
@@ -402,6 +409,7 @@ def _get_compute_node(
         combo_pool=combo_pool,
         next_regime_to_continuation=next_regime_to_continuation,
         dtype=dtype,
+        stochastic_node_width=stochastic_node_width,
         resolved_process_grids=resolved_process_grids,
     )
 

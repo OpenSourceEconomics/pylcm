@@ -30,7 +30,7 @@
           },
           {
             "path": "src/_lcm/execution/value_transfer.py",
-            "sha256": "b3f0a424ff6a483810e9f6a5337606d24a5794dae6e5d7cb3c13884324f27d37"
+            "sha256": "e5d2a689eb8414776ea1689958b20590ace29df0c83f7f403884b23c07865aa3"
           },
           {
             "path": "src/_lcm/grids/__init__.py",
@@ -222,7 +222,7 @@
           }
         ],
         "source_count": 54,
-        "source_inventory_sha256": "66817f1328ff09cbf443bb24b387db2ba0d5757942554144ace125111b9ee33f"
+        "source_inventory_sha256": "e9f83e26ef52291367d7b4525b51f7991638cb281c09f4f689fc04970535c0e2"
       },
       "fast": {
         "candidate_sources": [
@@ -252,7 +252,7 @@
           },
           {
             "path": "src/_lcm/execution/value_transfer.py",
-            "sha256": "b3f0a424ff6a483810e9f6a5337606d24a5794dae6e5d7cb3c13884324f27d37"
+            "sha256": "e5d2a689eb8414776ea1689958b20590ace29df0c83f7f403884b23c07865aa3"
           },
           {
             "path": "src/_lcm/grids/__init__.py",
@@ -444,13 +444,13 @@
           }
         ],
         "source_count": 54,
-        "source_inventory_sha256": "66817f1328ff09cbf443bb24b387db2ba0d5757942554144ace125111b9ee33f"
+        "source_inventory_sha256": "e9f83e26ef52291367d7b4525b51f7991638cb281c09f4f689fc04970535c0e2"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "66817f1328ff09cbf443bb24b387db2ba0d5757942554144ace125111b9ee33f",
+  "source_inventory_sha256": "e9f83e26ef52291367d7b4525b51f7991638cb281c09f4f689fc04970535c0e2",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -478,7 +478,7 @@
     },
     {
       "path": "src/_lcm/execution/value_transfer.py",
-      "sha256": "b3f0a424ff6a483810e9f6a5337606d24a5794dae6e5d7cb3c13884324f27d37"
+      "sha256": "e5d2a689eb8414776ea1689958b20590ace29df0c83f7f403884b23c07865aa3"
     },
     {
       "path": "src/_lcm/grids/__init__.py",

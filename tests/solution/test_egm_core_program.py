@@ -62,16 +62,14 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
     )
 
 
-def test_the_graph_publishes_one_dense_main_program():
+def test_the_graph_publishes_one_planned_main_program():
     kernel, _ = _kernel()
     graph = core_program_graph(kernel=kernel)
 
     assert tuple(graph) == ("main",)
     program = graph["main"]
-    assert program.disposition is CoreExecutionDisposition.DENSE
-    assert program.disposition_reason == (
-        "deliberately_dense:egm_one_row_no_product_axis"
-    )
+    assert program.disposition is CoreExecutionDisposition.PLANNED
+    assert program.disposition_reason is None
     assert program.scope is ProgramScope.ANY
     assert program.requirements.axes == ()
     assert {read.source.argument for read in program.requirements.value_reads} == {
@@ -173,7 +171,7 @@ def test_with_fixed_params_rebinds_the_program_and_its_builder():
     assert kernel.with_fixed_params(fixed_flat_params=MappingProxyType({})) is kernel
 
 
-def test_a_replay_lowers_the_dense_program_the_solve_ran(*, monkeypatch, tmp_path):
+def test_a_replay_lowers_the_program_the_solve_ran(*, monkeypatch, tmp_path):
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", f"{_REGIME}@{_PERIOD}")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     solution = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
@@ -190,7 +188,7 @@ def test_a_replay_lowers_the_dense_program_the_solve_ran(*, monkeypatch, tmp_pat
     monkeypatch.setattr(period_replay, "core_program_graph", record_graph)
     replay = replay_period(directory=tmp_path / f"{_REGIME}@{_PERIOD}")
 
-    assert dispositions == [CoreExecutionDisposition.DENSE]
+    assert dispositions == [CoreExecutionDisposition.PLANNED]
     assert_agrees_to_ulp(
         got=np.asarray(replay.output.value),
         expected=np.asarray(solution.values[_PERIOD][_REGIME]),
@@ -241,9 +239,7 @@ def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
     graph = _single_liquid_nbegm_graph()
 
     assert tuple(graph) == ("main",)
-    assert graph["main"].disposition_reason == (
-        "deliberately_dense:egm_one_row_no_product_axis"
-    )
+    assert graph["main"].disposition_reason is None
     _, carry_roles = cast("tuple[Any, Any]", graph["main"].output_roles)
     assert carry_roles.breakpoints == StateAxesLeading(state_names=())
     assert carry_roles.policy is None

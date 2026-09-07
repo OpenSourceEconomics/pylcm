@@ -157,7 +157,6 @@ solver = DCEGM(
     envelope=LTMEnvelope(),
     refined_grid_factor=2.0,
     n_constrained_points=20,
-    stochastic_node_batch_size=0,
 )
 ```
 
@@ -172,8 +171,12 @@ public API. See [Upper envelopes](envelopes.md) for their distinct contracts.
 `refined_grid_factor` provides NaN-padded storage headroom for ownership changes in each
 envelope row. A row that needs more slots is reported as overflow and NaN-poisoned; this
 field does not change the density of the policy read-out grid. `n_constrained_points`
-controls the borrowing-corner segment, and `stochastic_node_batch_size` the
-stochastic-node workspace.
+controls the borrowing-corner segment.
+
+The child stochastic-node expectation is streamed under the `stochastic_node` axis; fix
+its width with `ExecutionConfig(axis_widths=...)`. Every width reads the same nodes at
+the same joint weights and reorders only the floating-point adds, so the values two
+widths publish agree to the working format's rounding rather than bit for bit.
 
 :::{important} Solved and simulated continuous actions
 A solve can expose an off-grid

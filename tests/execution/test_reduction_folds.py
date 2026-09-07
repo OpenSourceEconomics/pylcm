@@ -10,6 +10,10 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.execution.reductions import (
+    WEIGHTED_EXPECTATION_REDUCTION,
+    WeightedExpectationResult,
+)
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
 from _lcm.solution.collective_action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
@@ -259,4 +263,122 @@ def test_collective_block_fold_reads_stakeholder_values_at_the_winner(
         np.asarray(_folded_collective(partition=partition).best_stakeholder_values),
         expected,
         decimal=DECIMAL_PRECISION,
+    )
+
+
+def _weights() -> FloatND:
+    """Return strictly positive node weights summing to one along the axis."""
+    rng = np.random.default_rng(seed=20260910)
+    drawn = rng.random(_N_ACTIONS) + 0.1
+    normalized = jnp.asarray(drawn / drawn.sum()).astype(jnp.zeros(()).dtype)
+    assert bool(jnp.all(normalized > 0))
+    assert bool(jnp.isfinite(normalized).all())
+    return normalized
+
+
+def _dense_weighted_expectation(*, values: FloatND, weights: FloatND) -> np.ndarray:
+    """Average the whole axis at once, weight by weight."""
+    observed = np.asarray(values)
+    mass = np.asarray(weights)
+    return (observed * mass).sum(axis=-1) / mass.sum(axis=-1)
+
+
+def _folded_weighted_expectation(
+    *, partition: tuple[int, ...], values: FloatND, weights: FloatND
+) -> WeightedExpectationResult:
+    """Fold the node axis in the blocks one partition cuts."""
+    reduction = WEIGHTED_EXPECTATION_REDUCTION.bind(subnormal_is_accounted_for=False)
+    accumulator = reduction.initialize(value_template=jnp.zeros(_N_STATES))
+    for start, stop in _blocks(partition=partition):
+        accumulator = reduction.add(
+            accumulator=accumulator,
+            values=values[:, start:stop],
+            weights=weights[start:stop],
+        )
+    return reduction.finalize(accumulator=accumulator)
+
+
+@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
+def test_weighted_expectation_block_fold_matches_the_dense_mean(
+    *, partition: tuple[int, ...]
+) -> None:
+    """Blockwise weighted expectation agrees with one dense pass to a few ULP."""
+    assert_agrees_to_ulp(
+        got=np.asarray(
+            _folded_weighted_expectation(
+                partition=partition, values=_values(), weights=_weights()
+            ).expectation
+        ),
+        expected=_dense_weighted_expectation(values=_values(), weights=_weights()),
+        n_ulp=16,
+    )
+
+
+@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
+def test_weighted_expectation_block_fold_accumulates_the_whole_weight_mass(
+    *, partition: tuple[int, ...]
+) -> None:
+    """The published mass is the sum of every block's weights, to a few ULP."""
+    assert_agrees_to_ulp(
+        got=np.asarray(
+            _folded_weighted_expectation(
+                partition=partition, values=_values(), weights=_weights()
+            ).weight_mass
+        ),
+        expected=np.asarray(_weights()).sum(),
+        n_ulp=16,
+    )
+
+
+@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
+def test_weighted_expectation_is_invariant_to_rescaling_every_weight(
+    *, partition: tuple[int, ...]
+) -> None:
+    """Scaling every weight by one factor leaves the expectation where it was."""
+    values = _values()
+    weights = _weights()
+
+    assert_agrees_to_ulp(
+        got=np.asarray(
+            _folded_weighted_expectation(
+                partition=partition, values=values, weights=weights * 4.0
+            ).expectation
+        ),
+        expected=np.asarray(
+            _folded_weighted_expectation(
+                partition=partition, values=values, weights=weights
+            ).expectation
+        ),
+        n_ulp=16,
+    )
+
+
+def test_weighted_expectation_publishes_nan_for_an_empty_weight_mass() -> None:
+    """A lottery of exactly zero mass has no expectation and says so."""
+    reduction = WEIGHTED_EXPECTATION_REDUCTION.bind(subnormal_is_accounted_for=False)
+    accumulator = reduction.add(
+        accumulator=reduction.initialize(value_template=jnp.zeros(_N_STATES)),
+        values=_values(),
+        weights=jnp.zeros(_N_ACTIONS, dtype=_values().dtype),
+    )
+
+    assert bool(
+        jnp.all(jnp.isnan(reduction.finalize(accumulator=accumulator).expectation))
+    )
+
+
+def test_weighted_expectation_gives_a_zero_weight_infinity_no_contribution() -> None:
+    """A node that cannot occur contributes exactly zero, even at `-inf`."""
+    reduction = WEIGHTED_EXPECTATION_REDUCTION.bind(subnormal_is_accounted_for=False)
+    values = jnp.asarray([[-jnp.inf, 1.0, 3.0]] * _N_STATES)
+    weights = jnp.asarray([0.0, 0.5, 0.5], dtype=values.dtype)
+    accumulator = reduction.add(
+        accumulator=reduction.initialize(value_template=jnp.zeros(_N_STATES)),
+        values=values,
+        weights=weights,
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(reduction.finalize(accumulator=accumulator).expectation),
+        np.full(_N_STATES, 2.0),
     )

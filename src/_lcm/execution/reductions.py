@@ -17,8 +17,11 @@ protocols and the specifications whose accumulator is not an action winner.
 
 from collections.abc import Hashable
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, NamedTuple, Protocol, runtime_checkable
 
+import jax.numpy as jnp
+
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND
 
 __all__ = [
@@ -26,11 +29,14 @@ __all__ = [
     "HARD_MAX_WITH_CARRY_REDUCTION",
     "INTERVAL_ENVELOPE_REDUCTION",
     "WEIGHTED_EXPECTATION_REDUCTION",
+    "BoundWeightedExpectationReduction",
     "HardMaxWithCarryReduction",
     "IntervalEnvelopeReduction",
     "ReductionDeclaration",
     "ReductionSemantics",
+    "WeightedExpectationAccumulator",
     "WeightedExpectationReduction",
+    "WeightedExpectationResult",
 ]
 
 EXACTNESS_VALUES: tuple[Literal["exact"], Literal["tolerance_equivalent"]] = (
@@ -72,42 +78,160 @@ class ReductionSemantics(ReductionDeclaration, Protocol):
     cells, so any partition of the axis — including a shorter last block — reaches
     the same state that one pass over the whole axis would.
 
-    `values` is the only block input every family shares; each names whatever else
-    its arithmetic needs alongside it. The hard maxes take the block's `feasible`
-    mask and its canonical global `action_ids`, and break a tie toward the smallest
-    global identity, which is what makes them exact under any partition. The
-    collective one adds the block's per-stakeholder values and reads them at the
-    one identity the household objective selects. The smoothed one takes the
-    `scale` its exponential mass is rescaled by; `bind(*, scale)` fixes that scale
-    once for a whole fold so partial steps cannot disagree about it. A family whose
-    state carries an extra trailing axis names its own template — the collective
-    reduction initializes from a `stakeholder_template`.
+    Only the four step names and the state each step threads are shared; the block
+    inputs are the family's own, so every step takes its family's keywords and
+    nothing is positional:
+
+    - the hard maxes take the block's `values`, its `feasible` mask and its
+      canonical global `action_ids`, and break a tie toward the smallest global
+      identity, which is what makes them exact under any partition;
+    - the collective one takes the block's `objectives` and `stakeholder_values`
+      alongside those, and reads every stakeholder at the one identity the
+      household objective selects;
+    - the smoothed one takes `values` and the `scale` its exponential mass is
+      rescaled by;
+    - the weighted expectation takes `values` and their `weights`.
+
+    A family whose statement must not vary between two steps of one fold fixes it
+    once with a `bind` of its own — `bind(*, scale)` for the smoothed maximum,
+    `bind(*, subnormal_is_accounted_for)` for the weighted expectation — and the
+    bound object then takes only the block. A family whose state carries an extra
+    trailing axis names its own template: the collective reduction initializes
+    from a `stakeholder_template` where the others take a `value_template`.
     """
 
-    def initialize(self, *, value_template: FloatND) -> object:
-        """Return the empty state, shaped and typed like `value_template`."""
+    def initialize(self, **template: FloatND) -> object:
+        """Return the empty state, shaped and typed like the family's template."""
         ...
 
-    def add(self, *, accumulator: object, values: FloatND) -> object:
-        """Fold one block of `values` into `accumulator` and return the new state."""
+    def add(self, *, accumulator: object, **block: object) -> object:
+        """Fold one block into `accumulator` and return the new state."""
         ...
 
-    def merge(self, *, left: object, right: object) -> object:
+    def merge(self, *, left: object, right: object, **binding: object) -> object:
         """Combine two partial states into the state covering both their blocks."""
         ...
 
-    def finalize(self, *, accumulator: object) -> object:
+    def finalize(self, *, accumulator: object, **binding: object) -> object:
         """Publish the reduced result of a complete state."""
         ...
 
 
+class WeightedExpectationAccumulator(NamedTuple):
+    """Mergeable state of a weighted expectation over streamed node blocks."""
+
+    weighted_sum: FloatND
+    """Sum of `weight * value` over every node folded so far."""
+
+    weight_mass: FloatND
+    """Sum of the weights of those same nodes."""
+
+
+class WeightedExpectationResult(NamedTuple):
+    """The published expectation and the two sums it is formed from."""
+
+    expectation: FloatND
+    """Mass-normalized weighted mean; NaN wherever the mass is exactly zero."""
+
+    weighted_sum: FloatND
+    """Sum of `weight * value` over the complete axis."""
+
+    weight_mass: FloatND
+    """Sum of the weights over the complete axis."""
+
+
+@dataclass(frozen=True)
+class BoundWeightedExpectationReduction:
+    """A weighted expectation whose subnormal-weight statement is fixed.
+
+    Blocks occupy the last axis of `values`; `weights` broadcasts to that shape.
+    A block contributes its own weighted sum and its own weight mass, and the
+    merge adds both, so any partition of the axis — including a shorter last
+    block, or a block padded with exactly-zero weights — reaches a state that
+    names the same real number as one pass over the whole axis. Floating-point
+    addition is not associative, so the states agree to the format's rounding
+    rather than bit for bit.
+
+    A node of represented-zero weight contributes exactly `0.0` even where its
+    value is an infinity: a lottery's impossible outcome is not priced. A NaN
+    weight stays poison, and a negative one stays visible.
+    """
+
+    subnormal_is_accounted_for: bool
+    """Whether the caller has established a subnormal weight cannot matter here."""
+
+    def initialize(self, *, value_template: FloatND) -> WeightedExpectationAccumulator:
+        """Create an empty accumulator with `value_template`'s shape and dtype."""
+        return WeightedExpectationAccumulator(
+            weighted_sum=jnp.zeros_like(value_template),
+            weight_mass=jnp.zeros_like(value_template),
+        )
+
+    def add(
+        self,
+        *,
+        accumulator: WeightedExpectationAccumulator,
+        values: FloatND,
+        weights: FloatND,
+    ) -> WeightedExpectationAccumulator:
+        """Reduce one block of weighted nodes and merge it into `accumulator`."""
+        block = WeightedExpectationAccumulator(
+            weighted_sum=jnp.sum(
+                zero_safe_weighted_term(
+                    weight=weights,
+                    value=values,
+                    subnormal_is_accounted_for=self.subnormal_is_accounted_for,
+                ),
+                axis=-1,
+            ),
+            weight_mass=jnp.sum(
+                jnp.broadcast_to(weights, jnp.asarray(values).shape), axis=-1
+            ),
+        )
+        return self.merge(left=accumulator, right=block)
+
+    def merge(
+        self,
+        *,
+        left: WeightedExpectationAccumulator,
+        right: WeightedExpectationAccumulator,
+    ) -> WeightedExpectationAccumulator:
+        """Add two partial states; addition is associative up to rounding alone."""
+        return WeightedExpectationAccumulator(
+            weighted_sum=left.weighted_sum + right.weighted_sum,
+            weight_mass=left.weight_mass + right.weight_mass,
+        )
+
+    def finalize(
+        self, *, accumulator: WeightedExpectationAccumulator
+    ) -> WeightedExpectationResult:
+        """Publish the expectation alongside the two sums it is formed from.
+
+        A lottery of exactly zero mass has no expectation, and the published
+        value says so with a NaN rather than a laundered zero. The two sums ride
+        along because a caller whose weights carry a common base-two scale
+        normalizes by that exact power of two instead of by the accumulated
+        mass, and takes `weighted_sum`.
+        """
+        return WeightedExpectationResult(
+            expectation=jnp.where(
+                accumulator.weight_mass == 0,
+                jnp.full_like(accumulator.weighted_sum, jnp.nan),
+                accumulator.weighted_sum / accumulator.weight_mass,
+            ),
+            weighted_sum=accumulator.weighted_sum,
+            weight_mass=accumulator.weight_mass,
+        )
+
+
 @dataclass(frozen=True)
 class WeightedExpectationReduction:
-    """Weighted sum over stochastic nodes; blocks contribute partial sums.
+    """Weighted expectation over stochastic nodes; blocks contribute partial sums.
 
-    Summation order is the canonical node order within and across blocks, and
-    zero-weight padding fills a partial tile, so results agree to rounding rather
-    than bit for bit.
+    Whether a weight below the format's normal range needs its exponent moved
+    onto the value cannot be read off the operands, so it is stated rather than
+    guessed: `bind(*, subnormal_is_accounted_for)` fixes the statement once for a
+    whole fold, and the unbound steps take it per call for a single-shot use.
     """
 
     @property
@@ -119,6 +243,52 @@ class WeightedExpectationReduction:
     def exactness(self) -> Literal["tolerance_equivalent"]:
         """Return `"tolerance_equivalent"`: floating-point sums are order dependent."""
         return "tolerance_equivalent"
+
+    def bind(
+        self, *, subnormal_is_accounted_for: bool
+    ) -> BoundWeightedExpectationReduction:
+        """Fix the subnormal-weight statement so partial steps cannot disagree."""
+        return BoundWeightedExpectationReduction(
+            subnormal_is_accounted_for=subnormal_is_accounted_for
+        )
+
+    def initialize(self, *, value_template: FloatND) -> WeightedExpectationAccumulator:
+        """Create an empty accumulator; the subnormal statement does not enter."""
+        return BoundWeightedExpectationReduction(
+            subnormal_is_accounted_for=False
+        ).initialize(value_template=value_template)
+
+    def add(
+        self,
+        *,
+        accumulator: WeightedExpectationAccumulator,
+        values: FloatND,
+        weights: FloatND,
+        subnormal_is_accounted_for: bool,
+    ) -> WeightedExpectationAccumulator:
+        """Reduce one block of weighted nodes under the stated subnormal rule."""
+        return self.bind(subnormal_is_accounted_for=subnormal_is_accounted_for).add(
+            accumulator=accumulator, values=values, weights=weights
+        )
+
+    def merge(
+        self,
+        *,
+        left: WeightedExpectationAccumulator,
+        right: WeightedExpectationAccumulator,
+    ) -> WeightedExpectationAccumulator:
+        """Add two partial states; the subnormal statement does not enter."""
+        return BoundWeightedExpectationReduction(
+            subnormal_is_accounted_for=False
+        ).merge(left=left, right=right)
+
+    def finalize(
+        self, *, accumulator: WeightedExpectationAccumulator
+    ) -> WeightedExpectationResult:
+        """Publish the expectation; the subnormal statement does not enter."""
+        return BoundWeightedExpectationReduction(
+            subnormal_is_accounted_for=False
+        ).finalize(accumulator=accumulator)
 
 
 @dataclass(frozen=True)
@@ -164,7 +334,7 @@ class IntervalEnvelopeReduction:
 
 
 WEIGHTED_EXPECTATION_REDUCTION = WeightedExpectationReduction()
-# Shared weighted-expectation declaration.
+# Shared weighted-expectation reduction specification.
 
 HARD_MAX_WITH_CARRY_REDUCTION = HardMaxWithCarryReduction()
 # Shared hard-max-with-carry declaration.

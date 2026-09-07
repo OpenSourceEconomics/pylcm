@@ -216,9 +216,8 @@ class NBEGM(OneMarginSolver):
     The continuation read integrates the child's stochastic next-states (health,
     health-cost shocks, the wage residual) over their joint node mesh. `0` reads the
     whole mesh in one vectorized pass; a positive block size loops the mesh in chunks
-    of that many nodes, trading compile/runtime for a smaller peak intermediate. Like
-    `DCEGM.stochastic_node_batch_size`; raise it when the joint node mesh dominates
-    the per-cell memory budget.
+    of that many nodes, trading compile/runtime for a smaller peak intermediate. Raise
+    it when the joint node mesh dominates the per-cell memory budget.
     """
     envelope_segment_block_size: int = 0
     """Block size for streaming the merged upper envelope over candidate segments.
@@ -810,7 +809,6 @@ class NBEGM(OneMarginSolver):
                 context=resolved,
                 period=period,
                 post_decision_name=bound.post_decision_function,
-                stochastic_node_batch_size=self.stochastic_node_batch_size,
             )
             # One compiled core carries one set of continuation nodes, so periods
             # whose targets sit on different age-specialized grids must not share
@@ -869,6 +867,7 @@ class NBEGM(OneMarginSolver):
                     cell_block_size=self.cell_block_size,
                     interval_batch_size=self.interval_batch_size,
                     branch_batch_size=self.branch_batch_size,
+                    stochastic_node_width=self.stochastic_node_batch_size or None,
                     publish_jump_topology=self.jump_read == "one_sided",
                     co_map_state_names=resolved.co_map_state_names,
                 )
@@ -4917,7 +4916,6 @@ def _build_nbegm_continuation_plan(
     context: SolverBuildContext,
     period: int,
     post_decision_name: FunctionName,
-    stochastic_node_batch_size: int = 0,
 ) -> Any:  # noqa: ANN401  # `ContinuationPlan`; not annotated precisely (importing
     # module scope closes an import cycle (`continuation` → … → `lcm.solvers`).
     """Assemble the period's continuation plan for the ride-along case-piece core."""
@@ -4971,7 +4969,6 @@ def _build_nbegm_continuation_plan(
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
-        stochastic_node_batch_size=stochastic_node_batch_size,
         regime_to_v_interpolation_info=v_interpolation_info,
         risk_aversion_param_name=risk_aversion_param_name,
     )
@@ -5182,6 +5179,9 @@ class _NBEGMRideAlongStatics:
     """Block size for the discrete-action branch axis: `0` runs the
     whole axis in one vectorized pass, a positive size scans it in blocks of that
     many branches."""
+    stochastic_node_width: int | None
+    """Block width of the streamed child stochastic-node expectation; `None`
+    folds the whole node mesh in one block."""
     consumption_action_name: ActionName
     """Name of the continuous consumption action the period utility reads."""
     utility_param_names: tuple[str, ...]
@@ -5263,6 +5263,7 @@ def _nbegm_ride_along_statics(
     cell_block_size: int = 0,
     interval_batch_size: int = 0,
     branch_batch_size: int = 0,
+    stochastic_node_width: int | None = None,
     publish_jump_topology: bool = True,
     co_map_state_names: tuple[str, ...] = (),
 ) -> _NBEGMRideAlongStatics:
@@ -5429,6 +5430,7 @@ def _nbegm_ride_along_statics(
         cell_block_size=cell_block_size,
         interval_batch_size=interval_batch_size,
         branch_batch_size=branch_batch_size,
+        stochastic_node_width=stochastic_node_width,
         n_action_branches=(
             0
             if not schedule_spec.discrete_actions
@@ -6466,6 +6468,7 @@ class _NBEGMCellContinuation:
             combo_pool=combo_pool,
             next_regime_to_continuation=self.carry,
             dtype=self.dtype,
+            stochastic_node_width=statics.stochastic_node_width,
             co_map_state_names=statics.co_map_state_names,
         )
         cliff_targets = (
@@ -6522,6 +6525,7 @@ class _NBEGMCellContinuation:
             continuation_plan=self.continuation_plan,
             carry=self.carry,
             dtype=self.dtype,
+            stochastic_node_width=self.statics.stochastic_node_width,
             co_map_names=self.statics.co_map_state_names,
             savings_grid=self.savings_grid,
         )
@@ -6536,6 +6540,7 @@ def _interval_rows(
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     carry: MappingProxyType[RegimeName, EGMCarry],
     dtype: type,
+    stochastic_node_width: int | None,
     co_map_names: tuple[str, ...],
     savings_grid: Float1D,
 ) -> tuple[Float1D, Float1D]:
@@ -6549,6 +6554,7 @@ def _interval_rows(
         combo_pool=interval_pool,
         next_regime_to_continuation=carry,
         dtype=dtype,
+        stochastic_node_width=stochastic_node_width,
         co_map_state_names=co_map_names,
     )
     query = (
