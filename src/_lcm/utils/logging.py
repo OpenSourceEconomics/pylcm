@@ -4,8 +4,15 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
-from _lcm.typing import RegimeIdsToNames
-from lcm.typing import FloatND, Int1D, ScalarBool, ScalarFloat, ScalarInt
+from _lcm.typing import RegimeIdsToNames, RegimeName
+from lcm.typing import (
+    BoolND,
+    FloatND,
+    Int1D,
+    ScalarBool,
+    ScalarFloat,
+    ScalarInt,
+)
 
 
 @jax.jit
@@ -31,6 +38,50 @@ def v_array_has_inf(V_arr: FloatND) -> ScalarBool:
     partitioned across the V-array's devices instead of falling through a gather.
     """
     return jnp.any(jnp.isinf(V_arr))
+
+
+@jax.jit
+def non_finite_by_regime(
+    *, values: tuple[FloatND, ...], in_regime: tuple[BoolND, ...]
+) -> BoolND:
+    """Return two flag rows over the regimes: NaN in row 0, NaN or Inf in row 1.
+
+    The shape is `(2, n_regimes)`. Row 0 selects the regimes whose values need
+    the enriched value-function report, which speaks only about NaN; row 1
+    selects the regimes to warn about, since an Inf is worth reporting too.
+
+    Out-of-regime rows carry placeholder values — possibly `-inf`, because the
+    subject's state is infeasible under another regime's problem — so each
+    array is masked by its own ownership flags before the reductions.
+
+    Masking and reducing inside one compiled function keeps a whole period's
+    check in a single program: every active regime is reduced on the device and
+    both flag rows cross to the host together, instead of once per regime. On a
+    sharded value array the reductions stay partitioned, for the same reason
+    `v_array_has_nan` is jit-wrapped.
+    """
+    owned = [
+        _owned_values(value=value, in_regime=mask)
+        for value, mask in zip(values, in_regime, strict=True)
+    ]
+    return jnp.stack(
+        [
+            jnp.stack([jnp.any(jnp.isnan(value)) for value in owned]),
+            jnp.stack([~jnp.all(jnp.isfinite(value)) for value in owned]),
+        ]
+    )
+
+
+def _owned_values(*, value: FloatND, in_regime: BoolND) -> FloatND:
+    """Replace the rows a regime does not own with zero.
+
+    A collective regime's value carries a trailing stakeholder axis, so the
+    per-subject ownership flags gain trailing singleton axes to broadcast
+    against it; a singleton regime's value is already per-subject and the
+    reshape is a no-op.
+    """
+    owned = in_regime.reshape(in_regime.shape + (1,) * (value.ndim - in_regime.ndim))
+    return jnp.where(owned, value, 0.0)
 
 
 type LogLevel = Literal["off", "warning", "progress", "debug"]
@@ -123,33 +174,28 @@ def format_duration(*, seconds: float) -> str:
     return f"{seconds / _seconds_per_hour:.1f}h"
 
 
-def log_nan_in_V(
+def log_non_finite_values(
     *,
     logger: logging.Logger,
-    regime_name: str,
     age: float | ScalarInt | ScalarFloat,
-    V_arr: FloatND,
+    regime_names: tuple[RegimeName, ...],
+    flags: tuple[bool, ...],
 ) -> None:
-    """Log a warning if V_arr contains NaN or Inf values.
-
-    Self-gates on `validation_enabled(logger)` so callers don't have to wrap
-    every call site — at `log_level="off"` the function returns immediately
-    without touching `V_arr`, avoiding the implicit host transfer that
-    `if jnp.any(...)` would otherwise trigger. The reductions go through
-    `v_array_has_nan` / `v_array_has_inf` so they stay sharded on distributed
-    V-arrays.
+    """Warn once for each regime holding a NaN or an Inf among the values it owns.
 
     Args:
         logger: Logger instance.
-        regime_name: Name of the regime.
         age: Age corresponding to the current period.
-        V_arr: Value function array to check.
+        regime_names: Names of the regimes the flags belong to, in flag order.
+        flags: Whether each regime owns a non-finite value, already on the host
+            so that reporting a whole period costs no further device transfer.
 
     """
-    if not validation_enabled(logger):
-        return
-    if bool(v_array_has_nan(V_arr)) or bool(v_array_has_inf(V_arr)):
-        logger.warning("NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age)
+    for regime_name, flag in zip(regime_names, flags, strict=True):
+        if flag:
+            logger.warning(
+                "NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age
+            )
 
 
 def log_period_header(

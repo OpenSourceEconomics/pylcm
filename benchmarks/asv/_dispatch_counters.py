@@ -1,9 +1,15 @@
-"""Count JAX traces, lowerings, and compiles inside a block.
+"""Count the JAX trace, lowering, and compile requests issued inside a block.
 
 The counts come from JAX's own instrumentation: `jax.monitoring` invokes every
 registered duration listener once per top-level jaxpr trace, per jaxpr-to-MLIR
-lowering, and per backend compilation. Registration is process-global, so a
-block must contain only the work being measured.
+lowering, and per backend compilation request. Registration is process-global,
+so a block must contain only the work being measured.
+
+A *request* is what is counted, not the work it causes. The compile event wraps
+`compile_or_get_cached`, so a hit in JAX's persistent compilation cache raises
+the count exactly as a cold compilation does. Zero compile requests therefore
+means the executable was already resident in this process; a non-zero count
+does not by itself mean XLA ran.
 """
 
 import contextlib
@@ -23,40 +29,45 @@ COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
 
 @dataclasses.dataclass
-class DispatchCounts:
-    """Counts observed inside one `count_dispatches` block."""
+class CompileRequestCounts:
+    """Requests observed inside one `count_compile_requests` block."""
 
-    traces: int = 0
-    """Top-level jaxpr traces JAX performed."""
+    trace_requests: int = 0
+    """Top-level jaxpr traces JAX was asked for."""
 
-    lowerings: int = 0
-    """Jaxpr-to-MLIR module conversions JAX performed."""
+    lowering_requests: int = 0
+    """Jaxpr-to-MLIR module conversions JAX was asked for."""
 
-    compiles: int = 0
-    """Backend compilation requests JAX issued."""
+    compile_requests: int = 0
+    """Backend compilations JAX was asked for, persistent-cache hits included."""
 
 
 @contextlib.contextmanager
-def count_dispatches() -> Iterator[DispatchCounts]:
-    """Count JAX traces, lowerings, and compiles performed inside the block.
+def count_compile_requests() -> Iterator[CompileRequestCounts]:
+    """Count the trace, lowering, and compile requests issued inside the block.
 
     Registers one `jax.monitoring` duration listener for the duration of the
     block and unregisters it afterwards. The counts are those of the running
     process, so the block must contain only the work being measured.
     """
-    counts = DispatchCounts()
+    counts = CompileRequestCounts()
     listener = _EventCounter(counts=counts)
     jax.monitoring.register_event_duration_secs_listener(listener)
     try:
         yield counts
     finally:
-        jax.monitoring.unregister_event_duration_listener(listener)
+        # Unregistering asserts membership, and `clear_event_listeners()`
+        # rebinds the listener list, so a listener dropped by anything else in
+        # the process would raise out of this `finally` and mask whatever the
+        # block itself raised.
+        with contextlib.suppress(AssertionError, ValueError):
+            jax.monitoring.unregister_event_duration_listener(listener)
 
 
 _FIELD_BY_EVENT = {
-    TRACE_EVENT: "traces",
-    LOWERING_EVENT: "lowerings",
-    COMPILE_EVENT: "compiles",
+    TRACE_EVENT: "trace_requests",
+    LOWERING_EVENT: "lowering_requests",
+    COMPILE_EVENT: "compile_requests",
 }
 
 
@@ -68,7 +79,7 @@ class _EventCounter:
     from removing a listener belonging to a different block.
     """
 
-    counts: DispatchCounts
+    counts: CompileRequestCounts
     """Counts this listener adds to."""
 
     # keyword-only-exempt: library-callback=jax.monitoring.record_event_duration_secs

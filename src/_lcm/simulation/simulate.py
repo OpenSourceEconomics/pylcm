@@ -79,10 +79,11 @@ from _lcm.typing import (
 from _lcm.utils.containers import invert_regime_ids
 from _lcm.utils.logging import (
     format_duration,
-    log_nan_in_V,
+    log_non_finite_values,
     log_period_header,
     log_period_timing,
     log_regime_transitions,
+    non_finite_by_regime,
     raise_or_warn,
     validation_enabled,
 )
@@ -508,25 +509,14 @@ def _simulate_subject_chunk(
             states = new_states
             simulation_results[regime_name][period] = result
 
-            # Out-of-regime subjects carry placeholder entries (possibly -inf,
-            # when their state is infeasible under this regime's problem);
-            # validate only the subjects simulated in this regime.
-            #
-            # A collective regime's `V_arr` carries a
-            # trailing stakeholder axis (`(n_subjects, n_stakeholders)`), so
-            # `in_regime` (always `(n_subjects,)`) needs trailing singleton
-            # axes to broadcast against it; a singleton regime's `V_arr` is
-            # already `(n_subjects,)` and this is a no-op reshape.
-            in_regime_broadcast = result.in_regime.reshape(
-                result.in_regime.shape
-                + (1,) * (result.V_arr.ndim - result.in_regime.ndim)
-            )
-            log_nan_in_V(
-                logger=logger,
-                regime_name=regime_name,
-                age=age,
-                V_arr=jnp.where(in_regime_broadcast, result.V_arr, 0.0),
-            )
+        _validate_period_values(
+            logger=logger,
+            age=age,
+            period_results=tuple(
+                (regime_name, simulation_results[regime_name][period])
+                for regime_name in active_regimes
+            ),
+        )
 
         subject_regime_ids = new_subject_regime_ids
         own_stakeholder = new_own_stakeholder
@@ -816,6 +806,52 @@ def _canonicalize_external_replay_actions(
         actions[name] = action
 
     return MappingProxyType(actions)
+
+
+def _validate_period_values(
+    *,
+    logger: logging.Logger,
+    age: ScalarInt | ScalarFloat,
+    period_results: tuple[tuple[RegimeName, PeriodRegimeSimulationData], ...],
+) -> None:
+    """Validate one period's simulated values for every regime active in it.
+
+    The per-regime NaN and Inf reductions run as one compiled program over
+    the period's value arrays, so a period costs a single device-to-host
+    transfer whatever the number of regimes. Only a regime the NaN row accuses
+    pays for the enriched value-function report, which reads the device again
+    to describe what it found. At `log_level="off"` no reduction is issued at
+    all.
+
+    Args:
+        logger: Logger carrying the runtime-validation policy.
+        age: Age corresponding to the current period.
+        period_results: Tuple of (regime name, that regime's simulated data for
+            this period) pairs, in the order the period simulated them.
+
+    """
+    if not validation_enabled(logger) or not period_results:
+        return
+    regime_names = tuple(regime_name for regime_name, _ in period_results)
+    has_nan, has_non_finite = non_finite_by_regime(
+        values=tuple(data.V_arr for _, data in period_results),
+        in_regime=tuple(data.in_regime for _, data in period_results),
+    ).tolist()
+    for (regime_name, data), flag in zip(period_results, has_nan, strict=True):
+        if flag:
+            _validate_simulated_value(
+                value=data.V_arr,
+                subject_ids_in_regime=data.in_regime,
+                age=age,
+                regime_name=regime_name,
+                logger=logger,
+            )
+    log_non_finite_values(
+        logger=logger,
+        age=age,
+        regime_names=regime_names,
+        flags=tuple(has_non_finite),
+    )
 
 
 def _validate_simulated_value(
@@ -1108,14 +1144,6 @@ def _simulate_regime_in_period(
                 logger=logger,
             )
         )
-
-    _validate_simulated_value(
-        value=V_arr,
-        subject_ids_in_regime=subject_ids_in_regime,
-        age=age,
-        regime_name=regime_name,
-        logger=logger,
-    )
 
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a

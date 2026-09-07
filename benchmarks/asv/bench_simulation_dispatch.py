@@ -74,11 +74,11 @@ class SimulationDispatch:
     def _measure(self, *, log_level: str) -> tuple[float, int]:
         import jax
 
-        from benchmarks.asv._dispatch_counters import count_dispatches
+        from benchmarks.asv._dispatch_counters import count_compile_requests
 
-        with count_dispatches() as counts:
+        with count_compile_requests() as counts:
             start = time.perf_counter()
             result = self._simulate(log_level=log_level)
             jax.block_until_ready(result.raw_results)
             elapsed = time.perf_counter() - start
-        return elapsed, counts.compiles
+        return elapsed, counts.compile_requests
