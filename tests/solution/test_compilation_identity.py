@@ -315,3 +315,60 @@ def test_lowering_key_separates_distinct_placements() -> None:
     )
 
     assert first != second
+
+
+def _n_executables(*, lowering_keys: tuple[Hashable, ...]) -> int:
+    """Count the executables a compilation wave lowers for these candidates.
+
+    A wave lowers one executable per distinct lowering key and hands every
+    further candidate carrying that key the same executable, so the number of
+    distinct keys among a wave's candidates is what it compiles.
+    """
+    new_lowerings: dict[Hashable, int] = {}
+    for position, lowering_key in enumerate(lowering_keys):
+        new_lowerings.setdefault(lowering_key, position)
+    return len(new_lowerings)
+
+
+def test_two_units_differing_only_in_their_donation_set_compile_two_executables() -> (
+    None
+):
+    """An executable that donates its argument is not the one that keeps it."""
+    keeping = _lowering_key(program_identity=_IDENTITY, layout_key=("layout",))
+    donating = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        donated_arguments=("next_value",),
+    )
+
+    assert _n_executables(lowering_keys=(keeping, donating)) == 2
+
+
+def test_two_units_differing_only_in_their_placement_compile_two_executables() -> None:
+    """An executable lowered for a three-device block is not one for four."""
+    on_three = _lowering_key(
+        program_identity=_IDENTITY, layout_key=("layout",), placement_key=(0, 1, 2)
+    )
+    on_four = _lowering_key(
+        program_identity=_IDENTITY, layout_key=("layout",), placement_key=(0, 1, 2, 3)
+    )
+
+    assert _n_executables(lowering_keys=(on_three, on_four)) == 2
+
+
+def test_two_units_donating_and_placed_alike_share_one_executable() -> None:
+    """Candidates agreeing on every key component are lowered once between them."""
+    first = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        donated_arguments=("next_value",),
+        placement_key=(0, 1, 2),
+    )
+    second = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        donated_arguments=("next_value",),
+        placement_key=(0, 1, 2),
+    )
+
+    assert _n_executables(lowering_keys=(first, second)) == 1

@@ -395,17 +395,21 @@ def shard_carry_template(
     - the terminal-wealth template (same leading-axes layout).
 
     Leading axes follow `leading_axis_names` order; trailing row axes stay
-    unsharded. Scalars replicate across the mesh. Without a distributed
-    leading state the template passes through untouched. `devices` are the
-    devices the placement assigned to the regime that publishes the carry, so
-    the template's mesh is the one its value array runs on.
+    unsharded. Scalars replicate across the mesh. `devices` are the devices the
+    placement assigned to the regime that publishes the carry, so the
+    template's mesh is the one its value array runs on.
+
+    A regime no state grid of which is distributed has no mesh, and its
+    template is committed to the one device the placement gave it — the same
+    rule its value array follows. Where that device is the one a single-device
+    solve would have used anyway, the template keeps the default placement.
     """
     from _lcm.engine import _build_regime_sharding  # noqa: PLC0415
 
     plan = _build_regime_sharding(grids=MappingProxyType(dict(grids)), devices=devices)
-    if plan is None or not any(
-        name in plan.distributed_state_names for name in leading_axis_names
-    ):
+    if plan is None:
+        return _place_carry_template_on_one_device(template=template, devices=devices)
+    if not any(name in plan.distributed_state_names for name in leading_axis_names):
         return template
     leading_spec = jax.NamedSharding(
         plan.mesh,
@@ -423,6 +427,21 @@ def shard_carry_template(
         ),
         template,
     )
+
+
+def _place_carry_template_on_one_device(
+    *, template: EGMCarry, devices: tuple[jax.Device, ...]
+) -> EGMCarry:
+    """Commit an unsharded template to the single device its regime runs on.
+
+    The default placement is kept where a single-device solve would have put
+    the template there anyway, which is what `placed_V_sharding` does for the
+    same regime's value array.
+    """
+    visible = tuple(jax.devices())
+    if devices == (visible[0],) or len(devices) == len(visible):
+        return template
+    return jax.device_put(template, jax.sharding.SingleDeviceSharding(devices[0]))
 
 
 # keyword-only-exempt: library-callback=jax.tree.map

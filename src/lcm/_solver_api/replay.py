@@ -332,7 +332,15 @@ class ContinuationReader(Protocol):
         ...
 
     def leaves(self) -> Mapping[tuple[str, ...], FloatND]:
-        """Return every published array by its pytree path."""
+        """Return every published array by its pytree path, by identity.
+
+        The engine addresses a payload's buffers through the objects this
+        returns: it registers them with the buffer registry, locates a released
+        one among them, and substitutes a template leaf for it. A payload that
+        answers with a fresh view of its storage rather than the stored object
+        registers a buffer that expires at once, and fails loudly at the first
+        release rather than freeing anything under a live reader.
+        """
         ...
 
 
