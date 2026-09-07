@@ -5,6 +5,7 @@ foreign â€” one the model holds, or one an output took straight from an input â€
 is kept, and says so on its own log-record attribute.
 """
 
+import gc
 import logging
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -24,6 +25,7 @@ from _lcm.execution.scheduler import (
     plan_period_waves,
     release_closed_artifacts,
     replace_leaf_by_identity,
+    shard_identities,
 )
 from lcm.exceptions import ExecutionPlanningError
 
@@ -410,6 +412,102 @@ def test_a_declaration_over_two_channels_marks_the_shared_buffer() -> None:
     )
 
     assert registry.is_not_produced(array=shared)
+
+
+def test_declared_shards_names_the_shards_of_a_live_declaration() -> None:
+    """The declared set is exactly the shards of the array that declared them."""
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+
+    registry.declare_not_produced(tree=(array,))
+
+    assert registry.declared_shards == shard_identities(array=array)
+
+
+def test_a_declaration_expires_when_its_array_is_deleted() -> None:
+    """A declaration ends with the buffer of the array that made it."""
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+    registry.declare_not_produced(tree=(array,))
+
+    array.delete()
+
+    assert registry.declared_shards == frozenset()
+
+
+def test_a_declaration_expires_when_its_array_is_collected() -> None:
+    """A declaration ends when the last reference to its array is gone."""
+    registry = BufferRegistry()
+    tree = {"grids": {"wealth": jnp.arange(4.0)}}
+    registry.declare_not_produced(tree=tree)
+
+    del tree
+    gc.collect()
+
+    assert registry.declared_shards == frozenset()
+
+
+def test_a_live_declaration_stays_live_after_a_collection() -> None:
+    """A declaration whose array is still held survives a collection."""
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+    registry.declare_not_produced(tree={"grids": {"wealth": array}})
+
+    gc.collect()
+
+    assert registry.is_not_produced(array=array)
+
+
+def test_a_passed_through_declaration_expires_with_its_arrays() -> None:
+    """A pass-through declaration ends once neither side's array is left."""
+    registry = BufferRegistry()
+    source = jnp.arange(4.0)
+    registry.declare_passed_through(
+        inputs=(source,), outputs=(jax.device_put(source, source.sharding),)
+    )
+
+    del source
+    gc.collect()
+
+    assert registry.declared_shards == frozenset()
+
+
+def test_a_passed_through_declaration_lives_while_its_input_lives() -> None:
+    """A buffer an output took from an input stays declared while the input does."""
+    registry = BufferRegistry()
+    source = jnp.arange(4.0)
+    registry.declare_passed_through(
+        inputs=(source,), outputs=(jax.device_put(source, source.sharding),)
+    )
+
+    gc.collect()
+
+    assert registry.declared_shards == shard_identities(array=source)
+
+
+def test_a_registration_expires_when_its_array_is_collected() -> None:
+    """A key names a buffer only while the array registered under it is alive."""
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+    alias = jax.device_put(array, array.sharding)
+    registry.register(array=array, artifact="x")
+
+    del array
+    gc.collect()
+
+    assert registry.artifacts_sharing(array=alias) == frozenset()
+
+
+def test_a_registration_stays_live_while_its_array_lives() -> None:
+    """A key stays on its buffer while the array registered under it is held."""
+    registry = BufferRegistry()
+    array = jnp.arange(4.0)
+    alias = jax.device_put(array, array.sharding)
+    registry.register(array=array, artifact="x")
+
+    gc.collect()
+
+    assert registry.artifacts_sharing(array=alias) == frozenset({"x"})
 
 
 def _node(*, regime: str, program: str = "main") -> ScheduledNode:

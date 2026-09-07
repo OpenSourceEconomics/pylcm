@@ -15,6 +15,7 @@ that lets independent nodes dispatch back to back instead of one at a time.
 
 import dataclasses
 import logging
+import weakref
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 from types import MappingProxyType
 
@@ -30,6 +31,9 @@ _logger = logging.getLogger(__name__)
 
 type BufferIdentity = tuple[tuple[int, int], ...]
 type ShardIdentity = tuple[int, int]
+# Weak references to the arrays that made one declaration, keeping none of them
+# alive: the declaration holds while one of them is alive and undeleted.
+type _DeclaringArrays = list[weakref.ref[jax.Array]]
 
 
 def buffer_identity(*, array: jax.Array) -> BufferIdentity:
@@ -105,6 +109,15 @@ class BufferRegistry:
     others, so the two arrays' whole-array identities differ while one buffer
     is common to both.
 
+    A declaration and a registration hold for exactly as long as an array that
+    made them is alive and undeleted. Both an identity and a key are recorded
+    against weak references to those arrays, and both expire when the last of
+    them goes; nothing here keeps an array, or the buffer behind it, alive.
+    The rule is what makes an identity trustworthy: identities are device
+    pointers, so one that outlived every array that declared it would name
+    whatever allocation lands on that pointer next. `declared_shards` is the
+    live declared set, pruned as it is read.
+
     The registry and the per-period transfer cache (`PeriodTransferCache`) are
     the two mutable engine-internal objects: every other execution-side
     structure the solve loop threads is immutable and replaced, never written
@@ -115,8 +128,10 @@ class BufferRegistry:
 
     def __init__(self) -> None:
         """Start with no registered buffer and no declared foreign buffer."""
-        self._keys_by_buffer: dict[BufferIdentity, set[Hashable]] = {}
-        self._unproduced_shards: set[ShardIdentity] = set()
+        self._keys_by_buffer: dict[
+            BufferIdentity, dict[Hashable, _DeclaringArrays]
+        ] = {}
+        self._unproduced_shards: dict[ShardIdentity, _DeclaringArrays] = {}
 
     def declare_not_produced(self, *, tree: PyTree) -> None:
         """Mark every array leaf of `tree` as a buffer no dispatch produced.
@@ -124,11 +139,16 @@ class BufferRegistry:
         Takes the arrays the model holds for its whole life — its materialized
         grids, its per-period state axes and its parameter vector — and the
         payloads the solve result retains. Every shard of every leaf is marked,
-        so an array holding any one of them is covered too.
+        so an array holding any one of them is covered too, and each leaf is
+        kept as the weak owner of the shards it declares.
         """
         for leaf in jax.tree.leaves(tree):
             if isinstance(leaf, jax.Array) and not leaf.is_deleted():
-                self._unproduced_shards |= shard_identities(array=leaf)
+                for shard in shard_identities(array=leaf):
+                    _add_declaring_array(
+                        declaring=self._unproduced_shards.setdefault(shard, []),
+                        array=leaf,
+                    )
 
     def declare_passed_through(self, *, inputs: PyTree, outputs: PyTree) -> None:
         """Mark every output leaf whose buffer an input leaf already occupied.
@@ -138,28 +158,67 @@ class BufferRegistry:
         this dispatch did not produce it and no release may free it. The shards
         it shares are the ones marked; a shard the dispatch really did allocate
         stays its own.
+
+        Both sides own the shards they share: the shard is a buffer no release
+        may free while either the input that already held it or the output that
+        handed it on is still alive.
         """
-        occupied: set[ShardIdentity] = set()
+        holders: dict[ShardIdentity, list[jax.Array]] = {}
         for leaf in jax.tree.leaves(inputs):
             if isinstance(leaf, jax.Array) and not leaf.is_deleted():
-                occupied |= shard_identities(array=leaf)
+                for shard in shard_identities(array=leaf):
+                    holders.setdefault(shard, []).append(leaf)
         for leaf in jax.tree.leaves(outputs):
             if isinstance(leaf, jax.Array) and not leaf.is_deleted():
-                self._unproduced_shards |= shard_identities(array=leaf) & occupied
+                for shard in shard_identities(array=leaf) & holders.keys():
+                    declaring = self._unproduced_shards.setdefault(shard, [])
+                    _add_declaring_array(declaring=declaring, array=leaf)
+                    for holder in holders[shard]:
+                        _add_declaring_array(declaring=declaring, array=holder)
+
+    @property
+    def declared_shards(self) -> frozenset[ShardIdentity]:
+        """Return every shard identity a live declaring array still declares."""
+        for shard in tuple(self._unproduced_shards):
+            if not _keep_live_declaring_arrays(
+                declaring=self._unproduced_shards[shard]
+            ):
+                del self._unproduced_shards[shard]
+        return frozenset(self._unproduced_shards)
 
     def is_not_produced(self, *, array: jax.Array) -> bool:
         """Report whether any shard of this array is a buffer no dispatch produced."""
-        return not shard_identities(array=array).isdisjoint(self._unproduced_shards)
+        answer = False
+        for shard in shard_identities(array=array):
+            declaring = self._unproduced_shards.get(shard)
+            if declaring is None:
+                continue
+            if _keep_live_declaring_arrays(declaring=declaring):
+                answer = True
+            else:
+                del self._unproduced_shards[shard]
+        return answer
 
     def register(self, *, array: jax.Array, artifact: Hashable) -> None:
-        """Record that `artifact` names the buffer `array` occupies."""
-        self._keys_by_buffer.setdefault(buffer_identity(array=array), set()).add(
-            artifact
-        )
+        """Record that `artifact` names the buffer `array` occupies.
+
+        `array` is kept weakly, as the array the key names the buffer of.
+        """
+        keys = self._keys_by_buffer.setdefault(buffer_identity(array=array), {})
+        _add_declaring_array(declaring=keys.setdefault(artifact, []), array=array)
 
     def artifacts_sharing(self, *, array: jax.Array) -> frozenset[Hashable]:
-        """Return every key registered on the buffer `array` occupies."""
-        return frozenset(self._keys_by_buffer.get(buffer_identity(array=array), ()))
+        """Return every key whose registered array is alive on `array`'s buffer."""
+        identity = buffer_identity(array=array)
+        keys = self._keys_by_buffer.get(identity)
+        if keys is None:
+            return frozenset()
+        for artifact in tuple(keys):
+            if not _keep_live_declaring_arrays(declaring=keys[artifact]):
+                del keys[artifact]
+        if not keys:
+            del self._keys_by_buffer[identity]
+        return frozenset(keys)
 
     def forget(self, *, array: jax.Array) -> None:
         """Drop every key on the buffer `array` occupies."""
@@ -506,3 +565,24 @@ class PeriodTransferCache:
     def __len__(self) -> int:
         """Return the number of cached copies."""
         return len(self._arrays)
+
+
+def _add_declaring_array(*, declaring: _DeclaringArrays, array: jax.Array) -> None:
+    """Add `array` to the arrays a declaration is held by, weakly and once."""
+    if not any(reference() is array for reference in declaring):
+        declaring.append(weakref.ref(array))
+
+
+def _keep_live_declaring_arrays(*, declaring: _DeclaringArrays) -> bool:
+    """Drop the arrays that are gone or deleted; report whether one is left.
+
+    A buffer identity is a device pointer, so an identity outliving every
+    array that declared it would name whatever allocation lands on that
+    pointer next. Dropping the reference here is what ends the declaration.
+    """
+    declaring[:] = [
+        reference
+        for reference in declaring
+        if (array := reference()) is not None and not array.is_deleted()
+    ]
+    return bool(declaring)
