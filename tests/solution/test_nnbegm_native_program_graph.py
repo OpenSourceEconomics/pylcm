@@ -15,6 +15,7 @@ base call sees both.
 
 import functools
 from collections.abc import Mapping
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -111,7 +112,9 @@ def test_the_graph_republishes_every_inner_program_under_role_prefixes():
             assert program.disposition is CoreExecutionDisposition.PLANNED
             assert program.disposition_reason is None
             assert program.function is inner.function
-            assert program.requirements == inner.requirements
+            assert replace(program.requirements, value_reads=()) == replace(
+                inner.requirements, value_reads=()
+            )
             assert program.output_roles == inner.output_roles
             assert program.donation_candidates == inner.donation_candidates
     assert graph["keeper:main"].scope is ProgramScope.VALUES_ONLY
@@ -155,6 +158,19 @@ def test_the_host_driven_adjuster_declares_its_continuation_reads():
     assert {read.target.regime for read in program.requirements.value_reads} == {"dead"}
 
 
+@pytest.mark.parametrize("route", ["finite", "adaptive"])
+def test_the_nested_keeper_declares_the_carry_leaves_it_reads(*, route: str) -> None:
+    """The keeper names its targets' published carry leaves on either outer route.
+
+    The keeper's argument builder hands it the whole rolling payload, so the
+    leaves it reads are those the captured period's reachable targets publish.
+    """
+    kernel, _ = _kernel(route)
+    program = core_program_graph(kernel=kernel)["keeper:main"]
+
+    assert {read.target.regime for read in program.requirements.value_reads} == {"dead"}
+
+
 def test_the_host_driven_adjuster_reads_are_keyed_by_the_program_that_runs_them():
     """Each republished adjuster program owns its reads under its own graph key."""
     kernel, _ = _kernel("adaptive")
@@ -170,12 +186,15 @@ def test_the_host_driven_adjuster_reads_are_keyed_by_the_program_that_runs_them(
     }
 
 
-def test_the_finite_adjuster_declares_no_continuation_reads():
-    """A planned adjuster declares nothing: its read has no resolvable transfer."""
+def test_every_republished_program_declares_the_leaves_its_role_reads():
+    """No program of a nested period is left without a declaration of its reads."""
     kernel, _ = _kernel("finite")
     graph = core_program_graph(kernel=kernel)
 
-    assert all(program.requirements.value_reads == () for program in graph.values())
+    assert all(
+        {read.target.regime for read in program.requirements.value_reads} == {"dead"}
+        for program in graph.values()
+    )
 
 
 @pytest.mark.parametrize(

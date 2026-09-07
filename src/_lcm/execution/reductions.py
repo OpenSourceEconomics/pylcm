@@ -32,6 +32,7 @@ __all__ = [
     "WEIGHTED_EXPECTATION_REDUCTION",
     "BoundWeightedExpectationReduction",
     "HardMaxWithCarryReduction",
+    "HardMaxWithCarryResult",
     "IntervalEnvelopeReduction",
     "OuterCandidateAccumulator",
     "ReductionDeclaration",
@@ -327,6 +328,14 @@ class OuterCandidateAccumulator:
     """Pytree carry of the current winner, same structure for every block."""
 
 
+class HardMaxWithCarryResult(NamedTuple):
+    """Winning value, canonical candidate identity, and the winner's carry."""
+
+    best_value: FloatND
+    best_candidate_id: IntND
+    carry: object
+
+
 @dataclass(frozen=True)
 class HardMaxWithCarryReduction:
     """Hard max over outer candidates that also carries the winner's payload.
@@ -410,9 +419,13 @@ class HardMaxWithCarryReduction:
 
     def finalize(
         self, *, accumulator: OuterCandidateAccumulator
-    ) -> OuterCandidateAccumulator:
+    ) -> HardMaxWithCarryResult:
         """Publish the winner; an all-infeasible row keeps id -1 and value -inf."""
-        return accumulator
+        return HardMaxWithCarryResult(
+            best_value=accumulator.best_value,
+            best_candidate_id=accumulator.best_candidate_id,
+            carry=accumulator.carry,
+        )
 
 
 @dataclass(frozen=True, eq=False)

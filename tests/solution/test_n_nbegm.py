@@ -254,6 +254,29 @@ def test_three_period_toy_tracks_nested_dcegm_through_published_carries() -> Non
         )
 
 
+@pytest.mark.parametrize(
+    ("width", "n_steps"),
+    [(None, 1), (1, 7), (2, 4), (3, 3), (7, 1), (100, 1)],
+)
+def test_the_outer_dispatch_width_cuts_the_host_loop_into_steps(
+    *, width: int | None, n_steps: int
+) -> None:
+    """The width is the number of outer nodes one host-loop step dispatches."""
+    assert len(nnbegm_module._dispatch_bounds(n_items=7, width=width)) == n_steps
+
+
+@pytest.mark.parametrize("width", [None, 1, 2, 3, 7, 100])
+def test_every_outer_node_is_dispatched_once_whatever_the_width(
+    *, width: int | None
+) -> None:
+    """The steps cover the nodes in order, none twice and none skipped."""
+    bounds = nnbegm_module._dispatch_bounds(n_items=7, width=width)
+
+    assert [index for start, stop in bounds for index in range(start, stop)] == list(
+        range(7)
+    )
+
+
 @pytest.mark.parametrize("width", [1, 4, 100])
 def test_outer_dispatch_width_is_value_invariant(*, width: int) -> None:
     """Chunking the outer sweep never changes the solved values."""

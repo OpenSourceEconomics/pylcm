@@ -311,8 +311,9 @@ republishes the inner NB-EGM programs as `keeper:main`, `keeper:replay`,
 scope. The keeper programs keep the inner planned disposition; under
 `AdaptiveOuterMesh` the adjuster programs are host-driven, because the mesh decides
 from the solves it has already seen how many more nodes to request, and they declare
-the continuation leaves that host loop reads. The keeper programs are built from the period's own
-inputs; the adjuster programs bind the outer post-decision at the first outer node, the
+the continuation leaves that host loop reads. The keeper programs are built from the
+period's own inputs; the adjuster programs bind the outer post-decision at the first
+outer node, the
 same shape every per-node call rebinds. A values-only solve dispatches the inner `main`
 programs and the nested collapse publishes the value and the carry alone; a
 replay-retaining solve dispatches the inner `replay` programs and assembles the nested

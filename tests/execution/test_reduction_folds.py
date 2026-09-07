@@ -15,6 +15,7 @@ from _lcm.execution.reductions import (
     WEIGHTED_EXPECTATION_REDUCTION,
     WeightedExpectationResult,
     HARD_MAX_WITH_CARRY_REDUCTION,
+    HardMaxWithCarryResult,
     OuterCandidateAccumulator,
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
@@ -366,7 +367,7 @@ def _dense_hard_max_with_carry(
 
 def _folded_hard_max_with_carry(
     *, partition: tuple[int, ...]
-) -> OuterCandidateAccumulator:
+) -> HardMaxWithCarryResult:
     """Fold the candidate axis in the blocks one partition cuts.
 
     Each block's value fold runs through `add`; the block's winning carry is

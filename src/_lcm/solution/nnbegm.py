@@ -259,20 +259,21 @@ class NNBEGM(TwoMarginSolver):
     def declare_continuation_reads(
         self, *, kernels: SolutionKernels, context: SolverBuildContext
     ) -> SolutionKernels:
-        """Declare the carry leaves the host-driven adjuster reads per node.
+        """Declare the carry leaves both nested roles read.
 
-        An adaptive mesh dispatches its adjuster from a host loop, so no
-        transfer plan is resolved against the declaration and the reads are
-        exactly the record of which stored leaves the loop touches. The
-        finite search's adjuster keeps the inner program's planned disposition,
-        whose declared read would have to be resolved into a transfer through a
-        replaced carry leaf, so it declares nothing.
+        The keeper and the adjuster each receive the whole rolling continuation
+        mapping, so each names one read per published leaf of the targets its
+        period reaches. Both roles declaring is what leaves the nested dispatch
+        node without an undeclared reader, so the liveness ledger pins the
+        declared leaves rather than every reachable one. A planned role's read
+        resolves into a transfer that replaces one leaf inside the target's
+        carry; a host-driven role's is the record of what its loop touches.
         """
         return replace(
             kernels,
             period_kernels=MappingProxyType(
                 {
-                    period: _with_declared_adjuster_reads(
+                    period: _with_declared_nested_reads(
                         kernel=kernel, context=context, period=period
                     )
                     for period, kernel in kernels.period_kernels.items()
@@ -1010,6 +1011,14 @@ class _NNBEGMPeriodKernel:
     """The fixed cost's scale function, arguments restricted to
     `period`/`age`/flat params (resolved per period at call time)."""
 
+    keeper_value_reads: tuple[ValueRead, ...] = ()
+    """Stored leaves every republished keeper program reads, or empty.
+
+    Filled once the model's continuation templates are known, so the reads name
+    leaves that exist. Each republished keeper program takes them under its own
+    graph key.
+    """
+
     adjuster_value_reads: tuple[ValueRead, ...] = ()
     """Stored leaves every republished adjuster program reads, or empty.
 
@@ -1066,14 +1075,19 @@ class _NNBEGMPeriodKernel:
                     else self._adjuster_disposition(program=program)
                 )
                 graph_key = f"{role}:{name}"
+                role_reads = (
+                    self.keeper_value_reads
+                    if role == "keeper"
+                    else self.adjuster_value_reads
+                )
                 requirements = (
                     replace(
                         program.requirements,
                         value_reads=rekeyed_value_reads(
-                            reads=self.adjuster_value_reads, core_key=graph_key
+                            reads=role_reads, core_key=graph_key
                         ),
                     )
-                    if role == "adjuster" and self.adjuster_value_reads
+                    if role_reads
                     else program.requirements
                 )
                 programs[graph_key] = replace(
@@ -1588,8 +1602,9 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         adjuster_carries: list[EGMCarry] = []
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         nodes = list(self.outer_grid_values)
-        chunk_size = self.outer_dispatch_width or len(nodes)
-        for chunk_start in range(0, len(nodes), chunk_size):
+        for chunk_start, chunk_stop in _dispatch_bounds(
+            n_items=len(nodes), width=self.outer_dispatch_width
+        ):
             chunk_results = [
                 self.adjuster_kernel(
                     compiled_cores=adjuster_cores,
@@ -1606,7 +1621,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                     ages=ages,
                     logger=logger,
                 )
-                for node in nodes[chunk_start : chunk_start + chunk_size]
+                for node in nodes[chunk_start:chunk_stop]
             ]
             for adjuster_result in chunk_results:
                 V_arr = jnp.fmax(V_arr, adjuster_result.value)
@@ -1929,43 +1944,90 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         )
 
 
-def _with_declared_adjuster_reads(
+def _dispatch_bounds(*, n_items: int, width: int | None) -> tuple[tuple[int, int], ...]:
+    """Return one `(start, stop)` pair per host-loop step of an outer dispatch.
+
+    The `outer_candidate` width is what cuts a host loop over outer nodes into
+    steps: `None`, or a width at or above the count, gives one step over every
+    item, and a smaller width gives consecutive steps of that many items with a
+    short last one when the width does not divide the count. No item is visited
+    twice and none is skipped, so the width reschedules the loop and nothing
+    else. An empty loop takes no step.
+    """
+    step = width or max(n_items, 1)
+    return tuple(
+        (start, min(start + step, n_items)) for start in range(0, n_items, step)
+    )
+
+
+def _with_declared_nested_reads(
     *, kernel: PeriodKernel, context: SolverBuildContext, period: int
 ) -> PeriodKernel:
-    """Return one adaptive period's kernel with its adjuster's reads declared.
+    """Return one nested period's kernel with both inner roles' reads declared.
 
-    The adjuster reads each reachable target's published carry through the
-    rolling continuation mapping, one read per published leaf, so the leaves are
-    named from the targets' own templates. A period reaching no target that
-    publishes a readable payload declares nothing.
+    Each role's argument builder hands its program the whole rolling
+    continuation mapping, so the leaves it reads are those the period's
+    reachable targets publish, one read per published leaf named from the
+    target's own template. Declaring both roles is what keeps the dispatch node
+    free of an undeclared reader, so its ledger pins the declared leaves rather
+    than every reachable one. A period reaching no target that publishes a
+    readable payload declares nothing for that role.
     """
-    if not isinstance(kernel, _AdaptiveNNBEGMPeriodKernel):
+    if not isinstance(kernel, _NNBEGMPeriodKernel):
         return kernel
-    reachable = (
+    reachable = frozenset(
         ()
         if period == context.solution_reachability.n_periods - 1
         else context.solution_reachability.targets(
             period=period, source=context.regime_name
         )
     )
-    reads = tuple(
+    return replace(
+        kernel,
+        keeper_value_reads=_role_carry_reads(
+            inner=kernel.keeper_kernel,
+            context=context,
+            period=period,
+            regime_name=kernel.regime_name,
+            core_key="keeper",
+            reachable=reachable,
+        ),
+        adjuster_value_reads=_role_carry_reads(
+            inner=kernel.adjuster_kernel,
+            context=context,
+            period=period,
+            regime_name=kernel.regime_name,
+            core_key="adjuster",
+            reachable=reachable,
+        ),
+    )
+
+
+def _role_carry_reads(
+    *,
+    inner: _RideAlongNBEGMPeriodKernel,
+    context: SolverBuildContext,
+    period: int,
+    regime_name: RegimeName,
+    core_key: str,
+    reachable: frozenset[RegimeName],
+) -> tuple[ValueRead, ...]:
+    """Return one inner role's read per published leaf of its reachable targets."""
+    return tuple(
         read
         for target, template in published_continuation_templates(
             continuation_specs=context.continuation_specs,
-            targets=kernel.adjuster_kernel.stateful_targets & frozenset(reachable),
+            targets=inner.stateful_targets & reachable,
         ).items()
         for read in continuation_leaf_reads(
             template=template,
             artifact_key=EGM_CONTINUATION,
             target=target,
-            source_regime=kernel.regime_name,
+            source_regime=regime_name,
             source_period=period,
-            core_key="adjuster",
+            core_key=core_key,
         )
     )
-    if not reads:
-        return kernel
-    return replace(kernel, adjuster_value_reads=reads)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -2021,9 +2083,10 @@ class _AdaptiveNodeSolver:
         """
         requested = [float(node) for node in np.asarray(nodes_arr)]
         pending = [node for node in requested if node not in self.cache]
-        chunk_size = self.dispatch_width or max(len(pending), 1)
-        for chunk_start in range(0, len(pending), chunk_size):
-            chunk = pending[chunk_start : chunk_start + chunk_size]
+        for chunk_start, chunk_stop in _dispatch_bounds(
+            n_items=len(pending), width=self.dispatch_width
+        ):
+            chunk = pending[chunk_start:chunk_stop]
             chunk_results = [
                 self.kernel._solve_adjuster_node(  # noqa: SLF001
                     node=jnp.asarray(node),

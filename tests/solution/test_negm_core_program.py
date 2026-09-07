@@ -3,16 +3,15 @@
 `keeper` is the inner passive DC-EGM's own program under a new name: it solves
 the regime once with the durable stock held at its no-adjustment level.
 `outer_sweep` is one program that sweeps the exogenous outer grid inside the
-compiled program in blocks of the planner's `outer_candidate` width, binding
-the outer post-decision per node,
-takes the exact maximum of the keeper value and every node value, and stacks the
-keeper carry with every node carry on the candidate axis after lifting each
-into common cash on hand. Its builder delegates to the inner adjuster's builder
-with the first outer node bound and adds the outer nodes and the credited-cost
-shifts; the keeper's value and carry reach it through the internal edge the
-graph declares, so calling the kernel runs the keeper and hands its outputs to
-the sweep under the declared argument names. The compiled sweep agrees with a
-keeper-then-per-node loop to the ULP for every outer batch size, the batch size
+compiled program in blocks of the planner's `outer_candidate` width, binding the
+outer post-decision per node, takes the exact maximum of the keeper value and
+every node value, and stacks the keeper carry with every node carry on the
+candidate axis after lifting each into common cash on hand. Its builder delegates
+to the inner adjuster's builder with the first outer node bound and adds the outer
+nodes and the credited-cost shifts; the keeper's value and carry reach it through
+the internal edge the graph declares, so calling the kernel runs the keeper and
+hands its outputs to the sweep under the declared argument names. The compiled
+sweep agrees with a keeper-then-per-node loop to the ULP at every width, the width
 being a vmap width and nothing else.
 """
 
@@ -514,7 +513,7 @@ def test_periods_sharing_one_inner_core_share_one_sweep_callable():
     )
 
 
-def test_a_replay_lowers_the_dense_programs_the_solve_ran(*, monkeypatch, tmp_path):
+def test_a_replay_lowers_the_same_programs_the_solve_ran(*, monkeypatch, tmp_path):
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", f"{_REGIME}@{_PERIOD}")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     solution = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")

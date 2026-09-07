@@ -1,8 +1,9 @@
 """Tests for planner-owned target-to-source value transfers."""
 
-from dataclasses import FrozenInstanceError
+from collections.abc import Mapping
+from dataclasses import FrozenInstanceError, dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -446,6 +447,104 @@ def test_plan_rebuilds_nested_mappings_and_tuples_without_mutation() -> None:
     assert isinstance(rebuilt_inner["working"], tuple)
     assert rebuilt_inner["working"][0].sharding == destination
     assert working[0] is stored
+
+
+@dataclass(frozen=True)
+class _CarryPayload:
+    """A published carry shaped like the EGM family's own frozen payload."""
+
+    values: object
+    """The row a reader's transfer replaces."""
+
+    breakpoints: object
+    """A sibling row the rebuild must leave alone."""
+
+    policy: object
+    """A second sibling row the rebuild must leave alone."""
+
+
+def _dataclass_plan_result(
+    *, path: tuple[str | int, ...], payload: _CarryPayload, stored: jax.Array
+) -> object:
+    """Apply one transfer whose consumer path descends into `payload`."""
+    transfer = resolve_value_transfer(
+        target=_target(),
+        source=_source(path=path),
+        kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
+        stored_template=stored,
+        source_sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+    )
+    arguments = MappingProxyType(
+        {
+            ValueInputChannel.NEXT_REGIME_VALUE.value: MappingProxyType(
+                {"working": payload}
+            )
+        }
+    )
+    result = cast(
+        "Mapping[str, Mapping[str, object]]",
+        apply_value_transfer_plan(arguments=arguments, plan=(transfer,)),
+    )
+    return result[ValueInputChannel.NEXT_REGIME_VALUE.value]["working"]
+
+
+def test_a_dataclass_branch_is_rebuilt_under_its_declaring_type() -> None:
+    """A consumer path through a frozen dataclass rebuilds it as that dataclass."""
+    stored = _stored_value()
+    payload = _CarryPayload(values=stored, breakpoints=object(), policy=object())
+
+    rebuilt = _dataclass_plan_result(
+        path=("working", "values"), payload=payload, stored=stored
+    )
+
+    assert type(rebuilt) is _CarryPayload
+
+
+def test_a_dataclass_rebuild_keeps_every_field_it_did_not_transfer() -> None:
+    """Only the addressed field moves; the siblings are the objects they were."""
+    stored = _stored_value()
+    payload = _CarryPayload(values=stored, breakpoints=object(), policy=object())
+
+    rebuilt = cast(
+        "_CarryPayload",
+        _dataclass_plan_result(
+            path=("working", "values"), payload=payload, stored=stored
+        ),
+    )
+
+    assert (rebuilt.breakpoints, rebuilt.policy) == (
+        payload.breakpoints,
+        payload.policy,
+    )
+
+
+def test_a_dataclass_rebuild_moves_the_addressed_field_to_the_source_layout() -> None:
+    """The transferred field lands in the consumer's layout, leaving the input alone."""
+    stored = _stored_value()
+    payload = _CarryPayload(values=stored, breakpoints=object(), policy=object())
+
+    rebuilt = cast(
+        "_CarryPayload",
+        _dataclass_plan_result(
+            path=("working", "values"), payload=payload, stored=stored
+        ),
+    )
+
+    assert (
+        cast("jax.Array", rebuilt.values).sharding,
+        payload.values is stored,
+    ) == (jax.sharding.SingleDeviceSharding(jax.devices()[0]), True)
+
+
+def test_plan_rejects_a_dataclass_path_segment_that_is_not_a_field() -> None:
+    """A path naming something the dataclass does not declare is refused."""
+    stored = _stored_value()
+    payload = _CarryPayload(values=stored, breakpoints=object(), policy=object())
+
+    with pytest.raises(KeyError, match="requires a field name of _CarryPayload"):
+        _dataclass_plan_result(
+            path=("working", "not_a_field"), payload=payload, stored=stored
+        )
 
 
 def test_plan_rejects_duplicate_consumer_paths() -> None:

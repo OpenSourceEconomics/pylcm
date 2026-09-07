@@ -29,6 +29,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.solution.backward_induction import (
     _build_planned_input_liveness,
+    _classify_dispatch_value_artifacts,
     _ProgramExecutionMetadata,
 )
 from _lcm.solution.continuation_reads import published_continuation_template
@@ -40,6 +41,7 @@ from _lcm.typing import RegimeName
 from lcm import Model
 from lcm.solver_api import EGM_CONTINUATION, ArtifactRef
 from lcm.solvers import EGM, NNBEGM
+from tests.simulation.test_nnbegm_split_workflow_parity import _MESH
 from tests.solution.test_egm_solver import _SAVINGS_GRID
 from tests.solution.test_egm_solver import _model as _egm_model
 from tests.solution.test_gated_edge_fold_reads import _model as _gated_model
@@ -247,6 +249,69 @@ def test_host_read_leaves_name_exactly_the_egm_breakpoints_row() -> None:
     assert dict(HOST_READ_CONTINUATION_LEAVES) == {
         EGM_CONTINUATION: (("breakpoints",),)
     }
+
+
+def _nested_source_and_period(*, model: Model) -> tuple[RegimeName, int]:
+    """Return the nested regime and its middle active period, which reaches a next."""
+    source = next(
+        name
+        for name, regime in model.user_regimes.items()
+        if isinstance(regime.solver, NNBEGM)
+    )
+    active = model._regimes[source].active_periods
+    return source, active[len(active) // 2]
+
+
+def _nested_dispatch_programs(
+    *, model: Model, scope_suffix: str
+) -> dict[str, _ProgramExecutionMetadata]:
+    """Return one nested regime-period's programs of one dispatch scope."""
+    source, period = _nested_source_and_period(model=model)
+    return {
+        core_key: metadata
+        for (name, at, core_key), metadata in _metadata(model=model).items()
+        if name == source and at == period and core_key.endswith(f":{scope_suffix}")
+    }
+
+
+def test_the_adaptive_nested_dispatch_has_no_undeclared_reader() -> None:
+    """Every program of the adaptive nested node declares the leaves it reads.
+
+    The keeper and the host-driven adjuster both name their targets' published
+    carry leaves, so the node's ledger pins the declared set instead of falling
+    back to every reachable leaf.
+    """
+    model = _build_nnbegm_model(variant="n_nbegm", outer_search=_MESH)
+
+    _, declares_no_reads = _classify_dispatch_value_artifacts(
+        programs=_nested_dispatch_programs(model=model, scope_suffix="main")
+    )
+
+    assert declares_no_reads is False
+
+
+def test_the_adaptive_nested_dispatch_pins_no_undeclared_leaf() -> None:
+    """A fully declared node's ledger pins nothing beyond what its programs name.
+
+    `n_nbegm_toy` declares no boundary, so none of its targets publishes the
+    `breakpoints` row the EGM builder reads on the host, and the undeclared-read
+    pin set of the node is empty.
+    """
+    model = _build_nnbegm_model(variant="n_nbegm", outer_search=_MESH)
+    source, period = _nested_source_and_period(model=model)
+    _, declares_no_reads = _classify_dispatch_value_artifacts(
+        programs=_nested_dispatch_programs(model=model, scope_suffix="main")
+    )
+
+    assert (
+        undeclared_read_pins(
+            regimes=model._regimes,
+            regime_name=source,
+            period=period,
+            declares_no_reads=declares_no_reads,
+        )
+        == ()
+    )
 
 
 def test_a_program_declaring_no_reads_pins_every_reachable_continuation_leaf() -> None:

@@ -20,6 +20,7 @@ the degenerate plain-EGM case.
 """
 
 from collections.abc import Callable, Mapping
+from copy import copy
 from dataclasses import replace
 from types import MappingProxyType
 
@@ -440,14 +441,16 @@ def build_model(
 
 
 def with_outer_dispatch_width(*, model: Model, width: int | None) -> Model:
-    """Return `model` with every nested kernel dispatching `width` nodes at a time.
+    """Return a copy of `model` whose nested kernels dispatch `width` at a time.
 
     The nested outer collapse runs as a host loop over separate dispatches of
     the compiled adjuster, so its `outer_candidate` width is a field of the
     period kernel rather than a static keyword bound into one compiled program.
-    `None` dispatches every pending node at once.
+    `None` dispatches every pending node at once. The argument is left as it
+    was, so one built model serves a whole width parametrization.
     """
-    model._regimes = MappingProxyType(
+    rebuilt = copy(model)
+    rebuilt._regimes = MappingProxyType(
         {
             name: replace(
                 regime,
@@ -468,4 +471,4 @@ def with_outer_dispatch_width(*, model: Model, width: int | None) -> Model:
             for name, regime in model._regimes.items()
         }
     )
-    return model
+    return rebuilt

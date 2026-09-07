@@ -6,8 +6,8 @@ whatever the blocks are. What the width does change is the vector width the
 inner adjuster is compiled for, and XLA emits a differently vectorized kernel
 per width, so the published values land on representable neighbours rather than
 on the same bit pattern. The bound is therefore in units of the working
-format's spacing; a partition-dependent reduction would move a value by orders
-of magnitude more.
+format's spacing, and set from what those neighbours actually are rather than
+from a defensive round number.
 """
 
 from typing import Any
@@ -86,15 +86,21 @@ def _solve(*, widths: dict[str, int]) -> Any:
     )
 
 
-@pytest.mark.parametrize("width", [1, 2, 3, 5, _N_OUTER])
+@pytest.mark.parametrize("width", [1, 2, 3, 5])
 def test_outer_sweep_value_is_identical_across_widths(*, width: int) -> None:
-    """A hard max with lowest-id tie-break does not depend on the block schedule."""
+    """A hard max with lowest-id tie-break does not depend on the block schedule.
+
+    The bound is twice the worst gap measured over these widths against the
+    whole-axis solve: 1 ULP at float64 and 2 at float32, both at the narrowest
+    widths. A partition-dependent reduction would miss by orders of magnitude
+    more, so the doubling leaves the test discriminating.
+    """
     reference = _solve(widths={OUTER_CANDIDATE_AXIS: _N_OUTER})
     streamed = _solve(widths={OUTER_CANDIDATE_AXIS: width})
 
     assert_agrees_to_ulp(
         got=np.asarray(streamed.values[1]["alive"]),
         expected=np.asarray(reference.values[1]["alive"]),
-        n_ulp=16,
+        n_ulp=4,
         err_msg=f"period-1 value at outer_candidate width {width}",
     )

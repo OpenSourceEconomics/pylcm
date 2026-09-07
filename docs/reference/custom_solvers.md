@@ -165,20 +165,22 @@ axis folded by a reduction, `tiled_axes` for one whose tiles are concatenated �
 solver whose body streams nothing declares an empty set; the shipped NB-EGM graph does
 exactly that. Only a planned program may declare an execution axis.
 
-A `ReducedAxis` is the Cartesian product of the grids in `coordinate_names`, counted in
-`canonical_order`, and folded to a single result by its `reduction`. A `TiledOutputAxis`
-is an output axis over the states in `state_names`: its tiles are concatenated, never
-folded, so the published array is the same whatever width the tiles run at. Both name
-the planner-visible axis in `name`, take the compiled width through `width_keyword`, and
-constrain the widths the planner may pick with `minimum_width` and `alignment`: the
-widths an axis admits are its full extent, whatever the alignment divides, plus every
-multiple of `alignment` between `minimum_width` and that extent. A proposal is rounded
-down onto that set, and one that falls through it — below the floor, or below the
-alignment and so at zero — is lifted to the narrowest width the set holds, which is the
-extent when no multiple of the alignment reaches the floor without passing it.
-`ACTION_PRODUCT_AXIS` is the name the shipped `GridSearch` gives its action product, and
-`OUTER_CANDIDATE_AXIS` the name a nested outer search gives its exogenous post-decision
-candidates; each is the name to pass when fixing that solver's width.
+A `ReducedAxis` is the Cartesian product of the coordinates its `coordinate_names`
+address — each names a program argument holding that coordinate's 1-D values, whether a
+declared grid or an engine-only transport key such as the outer nodes NEGM sweeps —
+counted in `canonical_order`, and folded to a single result by its `reduction`. A
+`TiledOutputAxis` is an output axis over the states in `state_names`: its tiles are
+concatenated, never folded, so the published array is the same whatever width the tiles
+run at. Both name the planner-visible axis in `name`, take the compiled width through
+`width_keyword`, and constrain the widths the planner may pick with `minimum_width` and
+`alignment`: the widths an axis admits are its full extent, whatever the alignment
+divides, plus every multiple of `alignment` between `minimum_width` and that extent. A
+proposal is rounded down onto that set, and one that falls through it — below the floor,
+or below the alignment and so at zero — is lifted to the narrowest width the set holds,
+which is the extent when no multiple of the alignment reaches the floor without passing
+it. `ACTION_PRODUCT_AXIS` is the name the shipped `GridSearch` gives its action product,
+and `OUTER_CANDIDATE_AXIS` the name a nested outer search gives its exogenous
+post-decision candidates; each is the name to pass when fixing that solver's width.
 
 `ExecutionConfig(axis_widths=...)` fixes the compiled width of a declared axis by its
 name. It is hardware-local: it changes what is compiled, never what is published, and
@@ -209,13 +211,14 @@ boundaries are.
 declarations: each names a contract that a solver's own kernel fulfils.
 `HardMaxWithCarryReduction` publishes the full fold over an `OuterCandidateAccumulator`,
 whose state is the running winner's value, its global candidate id and the payload that
-winner carries; `add` folds a block of values, and a driver that owns a payload per
+winner carries; `add` folds a block of values, a driver that owns a payload per
 candidate merges that block's state in so the carry travels with the winner it belongs
-to. The reductions the shipped `GridSearch` body owns — the hard max over the action
-product, its collective counterpart, and the logsumexp under taste shocks — publish
-their fold too, so the planner can drive them directly. `EXACTNESS_VALUES` holds the two
-spellings an `exactness` may take, so a custom reduction can be checked against the
-published set rather than against a literal.
+to, and `finalize` publishes a `HardMaxWithCarryResult` with the same three rows. The
+reductions the shipped `GridSearch` body owns — the hard max over the action product,
+its collective counterpart, and the logsumexp under taste shocks — publish their fold
+too, so the planner can drive them directly. `EXACTNESS_VALUES` holds the two spellings
+an `exactness` may take, so a custom reduction can be checked against the published set
+rather than against a literal.
 
 `donation_candidates` names arguments the engine may donate to the compiled program. An
 argument is donated when every artifact it carries by a declared `ValueRead` addressed

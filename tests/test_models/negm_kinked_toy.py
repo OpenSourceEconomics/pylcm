@@ -172,7 +172,6 @@ NEGM_SOLVER = NEGM(
 def build_alive_regime() -> NestedConsumptionSavingsRegime:
     """The non-terminal NEGM regime (two assets, two continuous actions)."""
     final_age_alive = 20 + (N_PERIODS - 2) * 5
-    solver = NEGM_SOLVER
     return NestedConsumptionSavingsRegime(
         active=lambda age, n=final_age_alive: age <= n,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
@@ -190,7 +189,7 @@ def build_alive_regime() -> NestedConsumptionSavingsRegime:
             "credited": credited,
             "inverse_marginal_utility": inverse_marginal_utility,
         },
-        solver=solver,
+        solver=NEGM_SOLVER,
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
