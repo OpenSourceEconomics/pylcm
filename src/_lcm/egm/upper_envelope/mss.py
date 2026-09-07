@@ -27,7 +27,9 @@ a true emitting scan would carry one query at a time.
 
 Three decisions here are structural rather than numerical — which link owns a
 query, whether the owner changed between two queries, and where the change
-happened — and none of them is settled by a rounded comparison:
+happened. The geometry posing them is fixed; what settles each comparison is the
+selected `arithmetic`. Under the default, `"certified"`, none of the three is
+settled by a rounded comparison:
 
 - **Ownership is certified before reading.** One exact reduction over the
   admitted links decides the winner from the stored operands. Admission depends
@@ -49,6 +51,15 @@ happened — and none of them is settled by a rounded comparison:
   stored-operand root is rounded upward to the first representable state owned
   by the incoming branch. Record coalescence uses that emitted state, including
   when a nonrepresentable root hands over at an existing query node.
+
+The `"ordinary"` arithmetic keeps every geometric rule above — the same pieces
+are admitted, the same order separates links certified level, the same interval
+is searched — and settles each comparison on two rounded readings instead of on
+the stored operands. Candidates whose values fall in one rounding bin read level
+there and are separated by the tie order rather than by value, and the handover
+abscissa is the state the working format can express rather than a certified
+upper bound. It reaches no native kernel, so it is the route available where the
+exact-affine payload is absent.
 
 A crossing abscissa is inserted twice — same abscissa, left- and
 right-extrapolated policy — so the refined arrays stay weakly ascending and the
@@ -82,6 +93,7 @@ from typing import Any, NamedTuple
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.upper_envelope._exact_affine import (
     UNRESOLVED_STATUS,
     exact_affine_handover,
@@ -99,6 +111,7 @@ def refine_envelope(
     value: Float1D,
     n_refined: int,
     segment_id: Float1D | None = None,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its upper envelope.
 
@@ -126,6 +139,16 @@ def refine_envelope(
             are never bridged, and the topology is declared rather than inferred.
             `None` (the default) infers it from a grid or value decrease past a
             noise floor — HARK's monotone split.
+        arithmetic: Which arithmetic settles a comparison between two candidate
+            chords. The geometry is the same either way — piece selection, node
+            ownership, and handover location are all decided identically.
+            - `"certified"` (the default) decides on the stored operands, so an
+              ordering the working format cannot separate is still settled and a
+              comparison the arithmetic cannot decide publishes NaN. It needs the
+              installed exact-affine payload for the active backend.
+            - `"ordinary"` compares two rounded readings, so candidates falling in
+              one rounding bin read level and are separated by the declared tie
+              order instead. It reaches no native kernel.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each
@@ -170,7 +193,10 @@ def refine_envelope(
     )
 
     envelope_value, envelope_policy, winner_link, winner_segment = _evaluate_envelope(
-        query_grid=query_grid, links=links, segment_id=link_segment
+        query_grid=query_grid,
+        links=links,
+        segment_id=link_segment,
+        arithmetic=arithmetic,
     )
 
     # A query no segment brackets (e.g. the lone dead-padded tail) yields no
@@ -192,6 +218,7 @@ def refine_envelope(
         winner_segment=winner_segment,
         links=links,
         link_segment=link_segment,
+        arithmetic=arithmetic,
     )
 
     # The actual envelope owner must agree with a CONSTRUCTING piece, not
@@ -199,7 +226,10 @@ def refine_envelope(
     # piece: exact equality at the shared supported endpoint then establishes
     # provenance without extrapolating that following piece into the left cell.
     _, _, crossing_link, crossing_owner = _evaluate_envelope(
-        query_grid=crossing.grid, links=links, segment_id=link_segment
+        query_grid=crossing.grid,
+        links=links,
+        segment_id=link_segment,
+        arithmetic=arithmetic,
     )
     same_branch = (crossing_owner == crossing.segment_left) | (
         crossing_owner == crossing.segment_right
@@ -209,7 +239,7 @@ def refine_envelope(
         crossing.link_left,
         crossing.link_right,
     )
-    owner_agreement = certified_margin_sign(
+    owner_agreement = _margin_sign(
         a_x0=links.x0[event_link],
         a_x1=links.x1[event_link],
         a_v0=links.v0[event_link],
@@ -219,6 +249,7 @@ def refine_envelope(
         b_v0=links.v0[crossing_link],
         b_v1=links.v1[crossing_link],
         x_query=crossing.grid,
+        arithmetic=arithmetic,
     )
     on_envelope = same_branch & (owner_agreement == 0)
     left_valid = crossing.left_valid & on_envelope
@@ -432,7 +463,13 @@ def _comparable_links(
 
 
 def _chord_value(
-    *, x: FloatND, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND
+    *,
+    x: FloatND,
+    x0: FloatND,
+    x1: FloatND,
+    v0: FloatND,
+    v1: FloatND,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> FloatND:
     """Read a chord with one nearest rounding, or NaN on an unresolved read.
 
@@ -441,8 +478,189 @@ def _chord_value(
     can change a finite answer. Upward event publication is kept separate from
     this nearest reading, and localization uses the exact affine difference.
     """
-    reading, _status = _chord_reading(x=x, x0=x0, x1=x1, v0=v0, v1=v1)
+    reading, _status = _chord_reading(
+        x=x, x0=x0, x1=x1, v0=v0, v1=v1, arithmetic=arithmetic
+    )
     return reading
+
+
+def _ordinary_line_value(
+    *, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND, x_query: FloatND
+) -> FloatND:
+    """Read the affine line through two endpoints in the working format.
+
+    A stored point of zero width has no slope; its own value is its reading
+    everywhere it is consulted.
+    """
+    width = x1 - x0
+    slope = jnp.where(width == 0, jnp.zeros_like(width), (v1 - v0) / width)
+    return v0 + slope * (x_query - x0)
+
+
+def _margin_sign(
+    *,
+    a_x0: FloatND,
+    a_x1: FloatND,
+    a_v0: FloatND,
+    a_v1: FloatND,
+    b_x0: FloatND,
+    b_x1: FloatND,
+    b_v0: FloatND,
+    b_v1: FloatND,
+    x_query: FloatND,
+    arithmetic: ComparisonArithmetic = "certified",
+) -> IntND:
+    """Sign of `A(x_query) - B(x_query)` under the selected arithmetic.
+
+    The certified arithmetic settles the sign on the stored operands, so a
+    difference below the working format's resolution is still ordered. The
+    ordinary one compares two rounded readings, so such a difference reads level
+    and the declared tie order decides it instead. Both refuse a non-finite
+    operand or a non-positive width rather than inventing an order.
+    """
+    operands = (a_x0, a_x1, a_v0, a_v1, b_x0, b_x1, b_v0, b_v1, x_query)
+    if arithmetic == "certified":
+        return certified_margin_sign(
+            a_x0=a_x0,
+            a_x1=a_x1,
+            a_v0=a_v0,
+            a_v1=a_v1,
+            b_x0=b_x0,
+            b_x1=b_x1,
+            b_v0=b_v0,
+            b_v1=b_v1,
+            x_query=x_query,
+        )
+    gap = _ordinary_line_value(
+        x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=x_query
+    ) - _ordinary_line_value(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=x_query)
+    usable = (a_x1 > a_x0) & (b_x1 > b_x0) & jnp.isfinite(gap)
+    for operand in operands:
+        usable = usable & jnp.isfinite(operand)
+    return jnp.where(usable, jnp.sign(gap), UNRESOLVED_STATUS).astype(jnp.int32)
+
+
+def _affine_read(
+    *,
+    x0: FloatND,
+    x1: FloatND,
+    v0: FloatND,
+    v1: FloatND,
+    x_query: FloatND,
+    arithmetic: ComparisonArithmetic = "certified",
+) -> tuple[FloatND, IntND]:
+    """Read one link's channel at a query, with its publication status."""
+    if arithmetic == "certified":
+        return exact_affine_read(x0=x0, x1=x1, v0=v0, v1=v1, x_query=x_query)
+    reading = _ordinary_line_value(x0=x0, x1=x1, v0=v0, v1=v1, x_query=x_query)
+    usable = jnp.isfinite(reading) & (x1 > x0)
+    return reading, jnp.where(usable, 0, 1).astype(jnp.int32)
+
+
+def _affine_handover(
+    *,
+    left: FloatND,
+    right: FloatND,
+    a_x0: FloatND,
+    a_x1: FloatND,
+    a_v0: FloatND,
+    a_v1: FloatND,
+    b_x0: FloatND,
+    b_x1: FloatND,
+    b_v0: FloatND,
+    b_v1: FloatND,
+    arithmetic: ComparisonArithmetic = "certified",
+) -> tuple[FloatND, IntND]:
+    """Locate where two lines hand over between two abscissae.
+
+    The ordinary arithmetic solves the affine gap's root in the working format
+    and steps once toward `+inf` while the outgoing line is still above, so the
+    published state is one the incoming line owns. That step is a single
+    representable move, not a certificate: where the two lines are level to
+    within a rounding, the location it returns is the one the format can express.
+    """
+    if arithmetic == "certified":
+        return exact_affine_handover(
+            left=left,
+            right=right,
+            a_x0=a_x0,
+            a_x1=a_x1,
+            a_v0=a_v0,
+            a_v1=a_v1,
+            b_x0=b_x0,
+            b_x1=b_x1,
+            b_v0=b_v0,
+            b_v1=b_v1,
+        )
+
+    def gap(at: FloatND) -> FloatND:
+        return _ordinary_line_value(
+            x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=at
+        ) - _ordinary_line_value(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=at)
+
+    gap_left, gap_right = gap(left), gap(right)
+    slope = gap_left - gap_right
+    root = jnp.where(
+        slope == 0,
+        jnp.nan,
+        left + (right - left) * (gap_left / jnp.where(slope == 0, 1, slope)),
+    )
+    root = jnp.clip(root, jnp.minimum(left, right), jnp.maximum(left, right))
+    root = jnp.where(
+        gap(root) > 0, jnp.nextafter(root, jnp.full_like(root, jnp.inf)), root
+    )
+    usable = jnp.isfinite(root)
+    return jnp.where(usable, root, jnp.nan), jnp.where(usable, 0, 1).astype(jnp.int32)
+
+
+def _ordinary_owner(
+    *,
+    brackets: BoolND,
+    links: _Links,
+    query: FloatND,
+    stable_index: IntND,
+) -> tuple[Int1D, BoolND]:
+    """Order admitted links by rounded value, then the declared tie chain.
+
+    The chain is the certified one — greatest value, then reaching strictly right
+    of the query, then steeper, then the earliest stored link — applied to
+    readings rather than to the stored operands. Only the first key changes: two
+    links whose values fall in one rounding bin are level here and are separated
+    by the remaining keys, where the certified order would have separated them by
+    value.
+    """
+    value = _ordinary_line_value(
+        x0=links.lower,
+        x1=links.upper,
+        v0=links.v0,
+        v1=links.upper_value,
+        x_query=query,
+    )
+    floor = jnp.full_like(value, -jnp.inf)
+    live = brackets & jnp.isfinite(value)
+    level = live & (
+        value == jnp.max(jnp.where(live, value, floor), axis=-1, keepdims=True)
+    )
+
+    reaches = _stored_less(left=query, right=links.upper) & jnp.ones_like(level)
+    level = level & (
+        reaches
+        == jnp.max(
+            jnp.where(level, reaches, jnp.zeros_like(level)), axis=-1, keepdims=True
+        )
+    )
+
+    width = links.upper - links.lower
+    slope = jnp.where(
+        width == 0, jnp.zeros_like(width), (links.upper_value - links.v0) / width
+    ) * jnp.ones_like(value)
+    level = level & (
+        slope == jnp.max(jnp.where(level, slope, floor), axis=-1, keepdims=True)
+    )
+
+    last = jnp.full_like(stable_index, jnp.iinfo(jnp.int32).max)
+    owner = jnp.min(jnp.where(level, stable_index, last), axis=-1)
+    return owner.reshape(-1).astype(jnp.int32), jnp.any(level, axis=-1).reshape(-1)
 
 
 def _stored_key(*, value: FloatND) -> jax.Array:
@@ -524,7 +742,13 @@ def _same_bits(*, left: FloatND, right: FloatND) -> BoolND:
 
 
 def _chord_reading(
-    *, x: FloatND, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND
+    *,
+    x: FloatND,
+    x0: FloatND,
+    x1: FloatND,
+    v0: FloatND,
+    v1: FloatND,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[FloatND, IntND]:
     """Read one selected channel with an explicit native publication status.
 
@@ -534,7 +758,9 @@ def _chord_reading(
     that check also preserves signed zeros, which rational arithmetic alone does
     not distinguish. These shortcuts must never override a failed status.
     """
-    reading, status = exact_affine_read(x0=x0, x1=x1, v0=v0, v1=v1, x_query=x)
+    reading, status = _affine_read(
+        x0=x0, x1=x1, v0=v0, v1=v1, x_query=x, arithmetic=arithmetic
+    )
     reading = jnp.where(
         _stored_equal(left=x, right=x0),
         v0,
@@ -548,7 +774,13 @@ def _chord_reading(
 
 
 def _chord_upper_value(
-    *, x: FloatND, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND
+    *,
+    x: FloatND,
+    x0: FloatND,
+    x1: FloatND,
+    v0: FloatND,
+    v1: FloatND,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> FloatND:
     """Publish the least working-format value at or above the exact chord.
 
@@ -558,8 +790,8 @@ def _chord_upper_value(
     comparison is native/exact, including subnormals and negative values. A
     refused comparison or unrepresentable upper bound stays explicitly NaN.
     """
-    reading = _chord_value(x=x, x0=x0, x1=x1, v0=v0, v1=v1)
-    sign = certified_margin_sign(
+    reading = _chord_value(x=x, x0=x0, x1=x1, v0=v0, v1=v1, arithmetic=arithmetic)
+    sign = _margin_sign(
         a_x0=x0,
         a_x1=x1,
         a_v0=v0,
@@ -569,6 +801,7 @@ def _chord_upper_value(
         b_v0=reading,
         b_v1=reading,
         x_query=x,
+        arithmetic=arithmetic,
     )
     upper = jnp.where(
         sign == 1, jnp.nextafter(reading, jnp.full_like(reading, jnp.inf)), reading
@@ -582,6 +815,7 @@ def _certified_owner(
     links: _Links,
     query: FloatND,
     stable_index: IntND,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Int1D, BoolND]:
     """Return the column of the link that owns each query, and whether it is exact.
 
@@ -607,6 +841,10 @@ def _certified_owner(
         unresolved rather than settled by a rounded reading.
     """
     shape = brackets.shape
+    if arithmetic == "ordinary":
+        return _ordinary_owner(
+            brackets=brackets, links=links, query=query, stable_index=stable_index
+        )
     winner, exact_status = exact_query_winner_batched(
         left_grid=jnp.broadcast_to(links.lower[None, :], shape),
         right_grid=jnp.broadcast_to(links.upper[None, :], shape),
@@ -622,7 +860,11 @@ def _certified_owner(
 
 
 def _evaluate_envelope(
-    *, query_grid: Float1D, links: _Links, segment_id: Int1D
+    *,
+    query_grid: Float1D,
+    links: _Links,
+    segment_id: Int1D,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[Float1D, Float1D, Int1D, Int1D]:
     """Evaluate the upper envelope and its owning link/branch at every query.
 
@@ -657,6 +899,7 @@ def _evaluate_envelope(
         links=links,
         query=query,
         stable_index=stable_index,
+        arithmetic=arithmetic,
     )
     # Gather first: publication costs one read per selected channel/query, not
     # one exact read per candidate in the dense admission block.
@@ -666,6 +909,7 @@ def _evaluate_envelope(
         x1=links.x1[owner],
         v0=links.v0[owner],
         v1=links.v1[owner],
+        arithmetic=arithmetic,
     )
     policy, policy_status = _chord_reading(
         x=query_grid,
@@ -673,6 +917,7 @@ def _evaluate_envelope(
         x1=links.x1[owner],
         v0=links.p0[owner],
         v1=links.p1[owner],
+        arithmetic=arithmetic,
     )
     any_bracket = jnp.any(brackets, axis=1)
     published = resolved & (value_status == 0) & (policy_status == 0)
@@ -729,6 +974,7 @@ def _crossing_blocks(
     winner_segment: Int1D,
     links: _Links,
     link_segment: Int1D,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> _CrossingBlocks:
     """Construct crossings from the represented traces on adjacent query cells.
 
@@ -748,6 +994,7 @@ def _crossing_blocks(
         query_grid=query_grid,
         links=links,
         link_segment=link_segment,
+        arithmetic=arithmetic,
     )
     carry_init = (
         jnp.int32(0),
@@ -842,6 +1089,7 @@ def _interval_piece(
     incoming: bool,
     links: _Links,
     link_segment: Int1D,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[ScalarInt, BoolND]:
     """Select a branch's represented trace, then certify its node provenance.
 
@@ -874,7 +1122,7 @@ def _interval_piece(
         # or nextafter coordinate is used. Outgoing ties keep the ordinary
         # right-continuous order at the left anchor.
         anchor = this_grid if incoming else prev_grid
-        signs = certified_margin_sign(
+        signs = _margin_sign(
             a_x0=links.x0,
             a_x1=links.x1,
             a_v0=links.v0,
@@ -884,6 +1132,7 @@ def _interval_piece(
             b_v0=links.v0[node_link],
             b_v1=links.v1[node_link],
             x_query=anchor,
+            arithmetic=arithmetic,
         )
         admitted = covers & (signs == 0)
         owner, resolved = _certified_owner(
@@ -891,6 +1140,7 @@ def _interval_piece(
             links=links,
             query=prev_grid.reshape(1, 1),
             stable_index=jnp.arange(links.x0.shape[0], dtype=jnp.int32)[None, :],
+            arithmetic=arithmetic,
         )
         certified = jnp.all(~covers | ((signs >= -1) & (signs <= 1)))
         return owner[0], resolved[0] & certified & jnp.any(admitted)
@@ -915,7 +1165,7 @@ def _interval_piece(
         & links.live[node_link]
         & (link_segment[node_link] == branch)
     )
-    agreement = certified_margin_sign(
+    agreement = _margin_sign(
         a_x0=links.x0[piece],
         a_x1=links.x1[piece],
         a_v0=links.v0[piece],
@@ -925,6 +1175,7 @@ def _interval_piece(
         b_v0=links.v0[node_link],
         b_v1=links.v1[node_link],
         x_query=this_grid if incoming else prev_grid,
+        arithmetic=arithmetic,
     )
     return piece, supported & (agreement == 0)
 
@@ -940,6 +1191,7 @@ def _crossing_step(
     query_grid: Float1D,
     links: _Links,
     link_segment: Int1D,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> tuple[tuple[ScalarInt, ScalarInt, FloatND], _CrossingRow]:
     """Emit the crossing query `idx` opens, and advance the previous-owner carry.
 
@@ -964,6 +1216,7 @@ def _crossing_step(
         incoming=False,
         links=links,
         link_segment=link_segment,
+        arithmetic=arithmetic,
     )
     piece_b, resolved_b = _interval_piece(
         node_link=this_link,
@@ -973,6 +1226,7 @@ def _crossing_step(
         incoming=True,
         links=links,
         link_segment=link_segment,
+        arithmetic=arithmetic,
     )
     pieces_resolved = resolved_a & resolved_b
     row = _crossing_in_interval(
@@ -981,6 +1235,7 @@ def _crossing_step(
         prev_grid=prev_grid,
         this_grid=this_grid,
         links=links,
+        arithmetic=arithmetic,
     )
     valid = switches & pieces_resolved & row.resolved
     emitted = _CrossingRow(
@@ -1034,6 +1289,7 @@ def _crossing_in_interval(
     prev_grid: FloatND,
     this_grid: FloatND,
     links: _Links,
+    arithmetic: ComparisonArithmetic = "certified",
 ) -> _SegmentIntersection:
     """Locate where chords `seg_a` and `seg_b` cross between the two abscissae.
 
@@ -1108,8 +1364,8 @@ def _crossing_in_interval(
         & jnp.isfinite(right)
         & ~_stored_less(left=right, right=left)
     )
-    sign_prev = certified_margin_sign(x_query=left, **chords)
-    sign_this = certified_margin_sign(x_query=right, **chords)
+    sign_prev = _margin_sign(x_query=left, arithmetic=arithmetic, **chords)
+    sign_this = _margin_sign(x_query=right, arithmetic=arithmetic, **chords)
     at_left_root = (sign_prev == 0) & (sign_this == -1)
     at_right_root = (sign_prev == 1) & (sign_this == 0)
     crosses_inside = (sign_prev == 1) & (sign_this == -1)
@@ -1123,7 +1379,9 @@ def _crossing_in_interval(
         )
         & (sign_prev == 0)
     )
-    handover, location_status = exact_affine_handover(left=left, right=right, **chords)
+    handover, location_status = _affine_handover(
+        left=left, right=right, arithmetic=arithmetic, **chords
+    )
     grid = jnp.where(
         touching, left, jnp.where(bracketed & (location_status == 0), handover, jnp.nan)
     )
@@ -1139,7 +1397,7 @@ def _crossing_in_interval(
     # Select the higher exact chord at the *emitted* abscissa before reading it.
     # The handover can lie above the root, so max(two nearest readings) is not an
     # upper certificate. One directed read of the higher chord bounds both.
-    order = certified_margin_sign(x_query=grid, **chords)
+    order = _margin_sign(x_query=grid, arithmetic=arithmetic, **chords)
     take_b = order == -1
     value = _chord_upper_value(
         x=grid,
@@ -1147,9 +1405,14 @@ def _crossing_in_interval(
         x1=jnp.where(take_b, b_x1, a_x1),
         v0=jnp.where(take_b, b_v0, a_v0),
         v1=jnp.where(take_b, b_v1, a_v1),
+        arithmetic=arithmetic,
     )
-    policy_a, status_a = _chord_reading(x=grid, x0=a_x0, x1=a_x1, v0=a_p0, v1=a_p1)
-    policy_b, status_b = _chord_reading(x=grid, x0=b_x0, x1=b_x1, v0=b_p0, v1=b_p1)
+    policy_a, status_a = _chord_reading(
+        x=grid, x0=a_x0, x1=a_x1, v0=a_p0, v1=a_p1, arithmetic=arithmetic
+    )
+    policy_b, status_b = _chord_reading(
+        x=grid, x0=b_x0, x1=b_x1, v0=b_p0, v1=b_p1, arithmetic=arithmetic
+    )
     published = (
         (order >= -1)
         & (order <= 1)

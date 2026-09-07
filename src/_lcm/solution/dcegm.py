@@ -34,6 +34,7 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.published_policy import EGMSimPolicy, egm_sim_policy_role_tree
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
@@ -177,6 +178,23 @@ class LTMEnvelope:
 @dataclass(frozen=True, kw_only=True)
 class MSSEnvelope:
     """HARK-style left-to-right segment envelope configuration."""
+
+    arithmetic: ComparisonArithmetic = "certified"
+    """Which arithmetic settles a comparison between two candidate chords.
+
+    The geometry is the same either way: which stored piece covers an interval,
+    which node owns a query, and where two branches hand over. Only the
+    comparison changes.
+
+    - `"certified"` decides on the stored operands, so an ordering the working
+      format cannot separate is still settled, and a comparison the arithmetic
+      cannot decide publishes `NaN` rather than a guess. Requires the installed
+      exact-affine payload for the active backend.
+    - `"ordinary"` compares two rounded readings. Candidates that fall in one
+      rounding bin read level and are separated by the declared tie order
+      instead. It reaches no native kernel, so it is the route available when
+      that payload is absent, under its documented approximation contract.
+    """
 
 
 type EnvelopeConfig = (
@@ -356,6 +374,14 @@ class DCEGM(OneMarginSolver):
             _fail_if_exact_affine_kernel_unavailable(
                 regime_name=context.regime_name,
                 selection="ExactEnvelope",
+            )
+        if (
+            isinstance(self.envelope, MSSEnvelope)
+            and self.envelope.arithmetic == "certified"
+        ):
+            _fail_if_exact_affine_kernel_unavailable(
+                regime_name=context.regime_name,
+                selection="the certified MSSEnvelope arithmetic",
             )
 
     def build_constraint_routes(

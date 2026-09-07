@@ -15,6 +15,7 @@ import pytest
 
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from lcm.exceptions import ExactAffineKernelUnavailableError, ModelInitializationError
+from lcm.solvers import MSSEnvelope
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.test_models import nbegm_medicaid_toy, negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
@@ -36,6 +37,16 @@ def test_certified_nbegm_requires_the_exact_kernel_at_construction(monkeypatch):
         nbegm_medicaid_toy.build_model(variant="nbegm")
 
     nbegm_medicaid_toy.build_model(variant="nbegm", envelope_arithmetic="ordinary")
+
+
+def test_certified_mss_requires_the_exact_kernel_at_construction(monkeypatch):
+    """A certified MSS envelope fails before solving while the ordinary one builds."""
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
+
+    with pytest.raises(ExactAffineKernelUnavailableError, match="certified"):
+        build_dcegm_model(envelope=MSSEnvelope())
+
+    build_dcegm_model(envelope=MSSEnvelope(arithmetic="ordinary"))
 
 
 def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(

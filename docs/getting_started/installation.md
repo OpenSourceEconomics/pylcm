@@ -62,17 +62,18 @@ LCM_SKIP_EXACT_AFFINE=1 pip install pylcm
 
 The build then compiles no exact-affine payload and reports the omitted capability. Any
 other value, including `0`, requests the normal build. A skipped installation can use
-`GridSearch`, a typed approximate DCEGM envelope, or
-`NBEGM(envelope_arithmetic="ordinary")`—including as the inner solver of `NNBEGM`—under
-that mode's approximation contract.
+`GridSearch`, a typed approximate DCEGM envelope, `MSSEnvelope(arithmetic="ordinary")`,
+or `NBEGM(envelope_arithmetic="ordinary")`—the last also as the inner solver of
+`NNBEGM`—under that mode's approximation contract.
 
 Defaults that request certified arithmetic require a compatible payload and never
-silently fall back: DCEGM's `ExactEnvelope` checks the active backend during
-`Model(...)`, while NBEGM's default `envelope_arithmetic="certified"` requires the same
-installed payload. If it is absent or unloadable, certified mode fails before returning
-a certified result and raises `ExactAffineKernelUnavailableError`. The validation
-boundary may move earlier; NBEGM never silently falls back. The same requirement applies
-when it is the inner solver of `NNBEGM`.
+silently fall back: DCEGM's `ExactEnvelope` and `MSSEnvelope`'s default
+`arithmetic="certified"` both check the active backend during `Model(...)`, while
+NBEGM's default `envelope_arithmetic="certified"` requires the same installed payload.
+If it is absent or unloadable, certified mode fails before returning a certified result
+and raises `ExactAffineKernelUnavailableError`. The validation boundary may move
+earlier; NBEGM never silently falls back. The same requirement applies when it is the
+inner solver of `NNBEGM`.
 
 To restore the capability after changing the toolchain or native sources, reinstall
 pylcm in the target environment; for a pixi development checkout use:
@@ -203,10 +204,11 @@ import lcm
   install one — on Windows, activate an MSVC developer environment so `cl.exe` is on the
   path — or install without the certified upper envelope using `LCM_SKIP_EXACT_AFFINE=1`
   (see above), accepting that DCEGM and NBEGM will not run on their certified defaults.
-- **An `ExactEnvelope` availability error during `Model(...)`**: the install skipped the
-  kernel, or carries one built by a different toolchain. Rebuild in the current
-  environment with `pixi reinstall pylcm`, or explicitly select another typed envelope
-  under its approximation contract.
+- **An `ExactEnvelope` or certified `MSSEnvelope` availability error during
+  `Model(...)`**: the install skipped the kernel, or carries one built by a different
+  toolchain. Rebuild in the current environment with `pixi reinstall pylcm`, or
+  explicitly select another typed envelope — `MSSEnvelope(arithmetic="ordinary")` among
+  them — under its approximation contract.
 - **An `ExactAffineKernelUnavailableError` for certified NBEGM**: no compatible payload
   is available for the active JAX backend. Reinstall pylcm in that environment, or
   select `NBEGM(envelope_arithmetic="ordinary")` only after validating its
