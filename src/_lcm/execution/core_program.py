@@ -24,7 +24,8 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     apply_value_transfer_plan,
 )
-from _lcm.typing import ActionName
+from _lcm.typing import ActionName, StateName
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 
 _CORE_PROGRAM_VERSION = 7
@@ -96,11 +97,23 @@ class ReducedAxis:
     width_keyword: str
     """Keyword the core function accepts for the compiled block width."""
 
+    minimum_width: int = 1
+    """Narrowest block the planner may propose for this axis."""
+
+    alignment: int = 1
+    """Multiple a proposed block width below the extent is rounded down to."""
+
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences and require a non-empty name."""
         _fail_if_axis_name_invalid(name=self.name)
         object.__setattr__(self, "coordinate_names", tuple(self.coordinate_names))
         object.__setattr__(self, "coordinate_extents", tuple(self.coordinate_extents))
+        _fail_if_width_policy_invalid(
+            name=self.name,
+            extent=self.extent,
+            minimum_width=self.minimum_width,
+            alignment=self.alignment,
+        )
 
     @property
     def extent(self) -> int:
@@ -115,18 +128,34 @@ class TiledOutputAxis:
     name: str
     """Planner-visible axis name; `ExecutionConfig.axis_widths` keys match it."""
 
+    state_names: tuple[StateName, ...]
+    """Names of the output states the tiles of this axis run over."""
+
     extent: int
     """Number of cells along the axis."""
 
     width_keyword: str
     """Keyword the core function accepts for the compiled tile width."""
 
+    minimum_width: int = 1
+    """Narrowest tile the planner may propose for this axis."""
+
+    alignment: int = 1
+    """Multiple a proposed tile width below the extent is rounded down to."""
+
     def __post_init__(self) -> None:
         """Require a non-empty name and a positive extent."""
         _fail_if_axis_name_invalid(name=self.name)
+        object.__setattr__(self, "state_names", tuple(self.state_names))
         if type(self.extent) is not int or self.extent <= 0:
             msg = f"TiledOutputAxis {self.name!r} extent must be a positive int."
             raise ValueError(msg)
+        _fail_if_width_policy_invalid(
+            name=self.name,
+            extent=self.extent,
+            minimum_width=self.minimum_width,
+            alignment=self.alignment,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1242,6 +1271,29 @@ def _fail_if_axis_name_invalid(*, name: object) -> None:
     if type(name) is not str or not name:
         msg = "An execution axis name must be a non-empty string."
         raise TypeError(msg)
+
+
+def _fail_if_width_policy_invalid(
+    *, name: str, extent: int, minimum_width: object, alignment: object
+) -> None:
+    """Require a width floor and an alignment the axis extent can actually serve.
+
+    A non-positive extent is not this check's business: the planner seam refuses
+    such an axis by itself, and comparing a floor against it would report the floor
+    for a declaration whose extent is what is wrong.
+    """
+    if type(minimum_width) is not int or minimum_width < 1:
+        msg = f"Execution axis {name!r} minimum_width must be a positive int."
+        raise ExecutionPlanningError(msg)
+    if type(alignment) is not int or alignment < 1:
+        msg = f"Execution axis {name!r} alignment must be a positive int."
+        raise ExecutionPlanningError(msg)
+    if extent >= 1 and minimum_width > extent:
+        msg = (
+            f"Execution axis {name!r} minimum_width {minimum_width} exceeds its "
+            f"extent {extent}."
+        )
+        raise ExecutionPlanningError(msg)
 
 
 def _validate_reduced_axis(

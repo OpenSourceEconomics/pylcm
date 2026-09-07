@@ -217,10 +217,9 @@ def test_budget_below_every_candidate_fails_closed(*, monkeypatch, tmp_path) -> 
     assert not (tmp_path / _CAPTURE_TARGET).exists()
 
 
-def test_fixed_action_product_width_is_the_only_candidate(
-    *, synthetic_peaks, monkeypatch, tmp_path
-) -> None:
-    """A fixed axis width leaves the planner exactly one candidate to compile."""
+@pytest.fixture
+def fixed_width_solve(*, synthetic_peaks, monkeypatch, tmp_path) -> dict[str, object]:
+    """Solve the regression model with the action product pinned to width four."""
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
@@ -228,9 +227,38 @@ def test_fixed_action_product_width_is_the_only_candidate(
         device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
         axis_widths={"action_product": 4},
     )
+    return {
+        "compiled": {widths["action_product"] for widths in synthetic_peaks if widths},
+        "dispatched": _captured_widths(tmp_path),
+    }
 
-    assert {widths["action_product"] for widths in synthetic_peaks if widths} == {4}
-    assert _captured_widths(tmp_path) == {"main": {"action_product": 4}}
+
+def test_a_fixed_width_leaves_the_planner_one_candidate_to_compile(
+    *, fixed_width_solve
+) -> None:
+    """A fixed axis width is the only width the planner ever compiles."""
+    assert fixed_width_solve["compiled"] == {4}
+
+
+def test_a_fixed_width_is_the_width_the_core_is_dispatched_at(
+    *, fixed_width_solve
+) -> None:
+    """The dispatched core runs at exactly the width the config fixed."""
+    assert fixed_width_solve["dispatched"] == {"main": {"action_product": 4}}
+
+
+def test_a_fixed_width_for_an_axis_no_program_declares_is_refused(
+    *, monkeypatch, tmp_path
+) -> None:
+    """A misspelled axis name is refused at the solve, listing the declared names."""
+    with pytest.raises(ExecutionPlanningError, match="action_product"):
+        _solve_capturing(
+            monkeypatch=monkeypatch,
+            tmp_path=tmp_path,
+            model=_model(),
+            device_memory_bytes=None,
+            axis_widths={"action_produkt": 8},
+        )
 
 
 @pytest.mark.usefixtures("synthetic_peaks")

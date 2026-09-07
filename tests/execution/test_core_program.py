@@ -857,7 +857,13 @@ def test_resolver_rejects_invalid_canonical_product_declarations(
 
 
 def test_resolver_rejects_a_non_canonical_product_order() -> None:
-    """The resolver refuses an axis whose declared flattening order is not C order."""
+    """The resolver refuses an axis whose declared flattening order is not C order.
+
+    `canonical_order` is typed `Literal["c"]`, so any other spelling is refused at
+    construction and the state is reached by writing the field on the frozen
+    instance. The resolver's own check is what keeps the flat product identity from
+    depending on an order the compilation key never recorded.
+    """
     axis = _axis()
     object.__setattr__(axis, "canonical_order", "fortran")
 

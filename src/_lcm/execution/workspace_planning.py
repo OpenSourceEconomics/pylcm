@@ -58,8 +58,10 @@ def workspace_width_candidates(
     `bootstrap_width`).  With a budget it holds the Cartesian product of the
     per-axis frontiers, widest first: descending width product, ties broken toward
     the lexicographically greatest width tuple in axis declaration order.  A fixed
-    axis contributes one width, clamped to its extent; names no axis declares are
-    ignored here.
+    axis contributes one width.  Every width an axis contributes satisfies the
+    width policy it declares: never below its `minimum_width`, and below the full
+    extent a multiple of its `alignment`.  Names no axis declares are ignored here;
+    a name no program of the solve declares is refused before planning starts.
     """
     declared_axes = _validate_axes(axes=axes)
     widths = _validate_fixed_widths(fixed_widths=fixed_widths)
@@ -273,7 +275,7 @@ def _workspace_width_candidates(
         values = tuple(
             _fixed_width(axis=axis, fixed_widths=fixed_widths)
             if axis.name in fixed_widths
-            else bootstrap_width(extent=axis.extent)
+            else _admissible_width(axis=axis, width=bootstrap_width(extent=axis.extent))
             for axis in axes
         )
         return (_width_mapping(axes=axes, values=values),)
@@ -297,7 +299,7 @@ def _candidate_rank(widths: Mapping[str, int]) -> tuple[int, tuple[int, ...]]:
 def _axis_frontier(
     *, axis: ReducedAxis | TiledOutputAxis, fixed_widths: Mapping[str, int]
 ) -> tuple[int, ...]:
-    """Return one fixed width, or 1/powers-of-two/full without duplicates."""
+    """Return one fixed width, or the admissible 1/powers-of-two/full ladder."""
     if axis.name in fixed_widths:
         return (_fixed_width(axis=axis, fixed_widths=fixed_widths),)
 
@@ -306,16 +308,30 @@ def _axis_frontier(
     while power < axis.extent:
         widths.append(power)
         power *= 2
-    if widths[-1] != axis.extent:
-        widths.append(axis.extent)
-    return tuple(widths)
+    widths.append(axis.extent)
+    admissible = {_admissible_width(axis=axis, width=width) for width in widths}
+    return tuple(sorted(admissible))
 
 
 def _fixed_width(
     *, axis: ReducedAxis | TiledOutputAxis, fixed_widths: Mapping[str, int]
 ) -> int:
-    """Return the fixed width of one axis, clamped to the extent it declares."""
-    return min(fixed_widths[axis.name], axis.extent)
+    """Return the fixed width of one axis under the width policy it declares."""
+    return _admissible_width(axis=axis, width=min(fixed_widths[axis.name], axis.extent))
+
+
+def _admissible_width(*, axis: ReducedAxis | TiledOutputAxis, width: int) -> int:
+    """Return the width the axis admits closest to, and never above, the proposal.
+
+    The full extent is always admissible, whatever the alignment divides.  Below it
+    a proposal is rounded down to a multiple of the alignment and then lifted back
+    to the declared floor, so the floor — not the alignment — is what a narrow
+    proposal ends at.
+    """
+    if width >= axis.extent:
+        return axis.extent
+    aligned = width - width % axis.alignment
+    return max(aligned, axis.minimum_width)
 
 
 def _width_mapping(

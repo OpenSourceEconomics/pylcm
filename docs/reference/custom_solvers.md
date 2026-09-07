@@ -164,8 +164,23 @@ A planned program declares whichever axes the engine may stream — `reduced_axe
 axis folded by a reduction, `tiled_axes` for one whose tiles are concatenated — and a
 solver whose body streams nothing declares an empty set; the shipped NB-EGM graph does
 exactly that. Only a planned program may declare an execution axis.
-`ExecutionConfig(axis_widths=...)` fixes the compiled width of any declared axis by its
-name.
+
+A `ReducedAxis` is the Cartesian product of the grids in `coordinate_names`, counted in
+`canonical_order`, and folded to a single result by its `reduction`. A `TiledOutputAxis`
+is an output axis over the states in `state_names`: its tiles are concatenated, never
+folded, so the published array is the same whatever width the tiles run at. Both name
+the planner-visible axis in `name`, take the compiled width through `width_keyword`, and
+constrain the widths the planner may pick with `minimum_width` (no narrower block is
+ever proposed) and `alignment` (a width below the extent is rounded down to a multiple
+of it, and never below `minimum_width`); the full extent is always admissible.
+`ACTION_PRODUCT_AXIS` is the name the shipped `GridSearch` gives its action product, and
+the name to pass when fixing that solver's width.
+
+`ExecutionConfig(axis_widths=...)` fixes the compiled width of a declared axis by its
+name. It is hardware-local: it changes what is compiled, never what is published, and
+never enters the durable model fingerprint. A width above an axis's extent is taken as
+the extent, and a name no program of the model declares is refused with the declared
+names listed, so a typo cannot pass as a tuning choice.
 
 A reduced axis names its reduction at one of two levels. `ReductionDeclaration` is the
 contract: a stable `semantic_key`, which enters static program identity so two programs
@@ -185,11 +200,15 @@ picks, and carries the dense argmax identity — for the hard maxes, the winner 
 candidate at the first canonical position attaining the maximum, whatever the block
 boundaries are.
 
-`WeightedExpectationReduction`, `HardMaxWithCarryReduction` and
-`IntervalEnvelopeReduction` are declarations: they name a contract that a solver's own
-kernel fulfils. The reductions the shipped `GridSearch` body owns — the hard max over
-the action product, its collective counterpart, and the logsumexp under taste shocks —
-publish their fold, so the planner can drive them directly.
+`WeightedExpectationReduction` (a probability-weighted sum over stochastic nodes),
+`HardMaxWithCarryReduction` (a hard max carrying the winner's payload) and
+`IntervalEnvelopeReduction` (an upper envelope over candidate intervals) are
+declarations: each names a contract that a solver's own kernel fulfils. The reductions
+the shipped `GridSearch` body owns — the hard max over the action product, its
+collective counterpart, and the logsumexp under taste shocks — publish their fold, so
+the planner can drive them directly. `EXACTNESS_VALUES` holds the two spellings an
+`exactness` may take, so a custom reduction can be checked against the published set
+rather than against a literal.
 
 `donation_candidates` names arguments the engine may donate to the compiled program. An
 argument is donated when every artifact it carries by a declared `ValueRead` addressed

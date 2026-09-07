@@ -70,6 +70,8 @@ def _axis(
     extent: int = 8,
     coordinate_names: tuple[str, ...] | None = None,
     coordinate_extents: tuple[int, ...] | None = None,
+    minimum_width: int = 1,
+    alignment: int = 1,
 ) -> ReducedAxis:
     extents = (extent,) if coordinate_extents is None else coordinate_extents
     names = (
@@ -84,11 +86,26 @@ def _axis(
         canonical_order="c",
         reduction=cast("ReductionDeclaration", _Reduction()),
         width_keyword=f"_lcm_{name}_width",
+        minimum_width=minimum_width,
+        alignment=alignment,
     )
 
 
-def _tiled(*, name: str = "cell", extent: int = 8) -> TiledOutputAxis:
-    return TiledOutputAxis(name=name, extent=extent, width_keyword=f"_lcm_{name}_width")
+def _tiled(
+    *,
+    name: str = "cell",
+    extent: int = 8,
+    minimum_width: int = 1,
+    alignment: int = 1,
+) -> TiledOutputAxis:
+    return TiledOutputAxis(
+        name=name,
+        state_names=(f"{name}_state",),
+        extent=extent,
+        width_keyword=f"_lcm_{name}_width",
+        minimum_width=minimum_width,
+        alignment=alignment,
+    )
 
 
 def _stats(peak: object) -> SimpleNamespace:
@@ -224,8 +241,13 @@ def test_a_fixed_width_above_the_extent_is_clamped_to_the_extent() -> None:
     assert candidates == ({"action_product": 8},)
 
 
-def test_a_fixed_width_for_an_undeclared_axis_is_ignored() -> None:
-    """Widths naming no declared axis leave the frontier untouched."""
+def test_a_fixed_width_declared_by_another_program_is_ignored() -> None:
+    """A width for an axis this program does not declare leaves its frontier alone.
+
+    Every program of a solve is planned against the same `axis_widths` mapping, so
+    a name one program declares reaches the planner for programs that do not. A
+    name no program of the solve declares is refused before planning starts.
+    """
     candidates = workspace_width_candidates(
         axes=(_axis(extent=8),),
         fixed_widths={"interval": 2},
@@ -646,7 +668,13 @@ def test_an_empty_fixed_width_axis_name_is_rejected_before_compilation() -> None
 
 
 def test_an_axis_whose_name_was_emptied_is_rejected_at_the_planner_seam() -> None:
-    """The planner refuses an axis that reaches it without a usable name."""
+    """The planner refuses an axis that reaches it without a usable name.
+
+    `ReducedAxis` refuses an empty name at construction, so the state is reached by
+    writing the field on the frozen instance. The planner's own check is what keeps
+    a name emptied after construction — by a solver, or by a future field default —
+    from silently producing an unaddressable width entry.
+    """
     axis = _axis()
     object.__setattr__(axis, "name", "")
 
@@ -787,3 +815,70 @@ def test_resident_bytes_are_ignored_without_a_budget() -> None:
     )
 
     assert plan.widths == {"actions": 4}
+
+
+def test_a_width_below_the_axis_minimum_is_never_proposed() -> None:
+    """The budgeted frontier holds no width under the axis's declared floor."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=8, minimum_width=4),),
+        budget_bytes=1,
+    )
+
+    assert {widths["action_product"] for widths in candidates} == {4, 8}
+
+
+def test_a_bootstrap_width_below_the_axis_minimum_is_lifted_to_it() -> None:
+    """An unbudgeted solve streams at the floor when the bootstrap sits below it."""
+    candidates = workspace_width_candidates(axes=(_axis(extent=8, minimum_width=6),))
+
+    assert candidates == ({"action_product": 6},)
+
+
+def test_a_frontier_width_is_rounded_down_to_the_axis_alignment() -> None:
+    """Every proposed width below the extent is a multiple of the alignment."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=12, minimum_width=3, alignment=3),),
+        budget_bytes=1,
+    )
+
+    assert {widths["action_product"] for widths in candidates} == {3, 6, 12}
+
+
+def test_the_full_extent_stays_admissible_under_an_alignment_it_violates() -> None:
+    """The extent itself is always a candidate, alignment notwithstanding."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=10, alignment=4),),
+        budget_bytes=1,
+    )
+
+    assert 10 in {widths["action_product"] for widths in candidates}
+
+
+def test_an_alignment_never_rounds_a_width_below_the_axis_minimum() -> None:
+    """Alignment shortens a width; the floor is what stops it."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=16, minimum_width=3, alignment=8),),
+        budget_bytes=1,
+    )
+
+    assert {widths["action_product"] for widths in candidates} == {3, 8, 16}
+
+
+def test_a_fixed_width_is_rounded_down_to_the_axis_alignment() -> None:
+    """A fixed width the alignment does not divide is shortened, never widened."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=12, alignment=4),),
+        fixed_widths={"action_product": 7},
+    )
+
+    assert candidates == ({"action_product": 4},)
+
+
+def test_a_tiled_axis_frontier_respects_its_minimum_width() -> None:
+    """A tiled output axis honours its own floor like a reduced axis does."""
+    candidates = workspace_width_candidates(
+        axes=(_tiled(extent=8, minimum_width=4),),
+        budget_bytes=1,
+    )
+
+    assert {widths["cell"] for widths in candidates} == {4, 8}

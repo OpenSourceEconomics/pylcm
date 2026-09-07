@@ -74,6 +74,29 @@ runtime against the whole-axis setting on the model and backend you will use. Le
 axis out of the mapping lets the planner choose, which is what a device-memory budget
 asks it to do.
 
+## Stream work with solver-owned batch widths
+
+Some controls a solver owns itself reduce live intermediates. Grid `batch_size`,
+`stochastic_node_batch_size`, `envelope_segment_block_size`, `subject_batch_size`, and
+any solver field whose Reference contract explicitly says it streams an evaluation axis
+can lower temporary workspace. The exact effect still depends on retained banks and
+downstream folds; for example, `NEGM.outer_batch_size` can lower temporary evaluation
+memory without capping the retained candidate bank.
+
+NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
+batch widths for the corresponding `lax.map` axes. A positive value smaller than the
+axis bounds how many entries are evaluated together; `0`, or a value covering the axis,
+uses one vectorized pass. Lower values can reduce live intermediates inside that mapped
+core at the cost of more sequential execution. They do not cap surrounding arrays,
+retained candidate banks, compilation memory, or total device memory.
+
+Choose the largest batch that meets the measured memory target, then verify values and
+runtime against the whole-axis setting on the model and backend you will use.
+
+Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
+[Upper envelopes](../reference/envelopes.md), and
+[Outer search](../reference/outer_search.md).
+
 ## Distribute independent discrete state work
 
 `distributed=True` shards a supported discrete grid over visible devices. Continuous

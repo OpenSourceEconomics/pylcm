@@ -2811,6 +2811,10 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             for core_name, program in graph.items():
                 all_programs[(regime_name, period, core_name)] = program
 
+    _fail_if_axis_widths_name_an_undeclared_axis(
+        all_programs=all_programs, axis_widths=execution_config.axis_widths
+    )
+
     # Materialize each named core's exact program before representative selection.
     # The resulting function, arguments, roles, specialization, and layout form
     # one lowering source of truth.
@@ -3245,6 +3249,33 @@ def _count_triples_per_lowering_key(
     for key in lowering_keys.values():
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def _fail_if_axis_widths_name_an_undeclared_axis(
+    *,
+    all_programs: Mapping[_CoreTriple, CoreProgram],
+    axis_widths: Mapping[str, int],
+) -> None:
+    """Refuse a fixed width whose axis no program of this solve declares.
+
+    Widths are hardware-local names, so a misspelling has no other way to surface:
+    the planner ignores a name the program at hand does not declare, because a
+    name one program declares legitimately reaches programs that do not. The union
+    over every program of the solve is therefore the only place the spelling can
+    be checked.
+    """
+    declared = {
+        axis.name
+        for program in all_programs.values()
+        for axis in program.requirements.axes
+    }
+    unknown = sorted(set(axis_widths) - declared)
+    if unknown:
+        msg = (
+            f"ExecutionConfig.axis_widths names axes no program of this model "
+            f"declares: {unknown}. Declared axis names: {sorted(declared)}."
+        )
+        raise ExecutionPlanningError(msg)
 
 
 def _fail_if_one_key_covers_two_callables(
