@@ -69,9 +69,15 @@ from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
     CoreProgram,
+    ValueRead,
     core_program_graph,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from _lcm.solution.continuation_reads import (
+    continuation_leaf_reads,
+    published_continuation_templates,
+    rekeyed_value_reads,
+)
 from _lcm.solution.contract import (
     GENERATED_REPLAY_AUTHORITY,
     ConstraintRouteContext,
@@ -94,6 +100,7 @@ from _lcm.solution.nbegm import (
     proved_post_decision_of,
 )
 from _lcm.solution.negm import (
+    OUTER_CANDIDATE_AXIS,
     _fail_if_outer_grid_is_stochastic,
     _stack_carry_template,
     _with_no_adjustment_outer_function,
@@ -247,6 +254,30 @@ class NNBEGM(TwoMarginSolver):
         """The EGM step reads the target's value and its marginal in resources."""
         return ContinuationCapabilities(
             value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
+
+    def declare_continuation_reads(
+        self, *, kernels: SolutionKernels, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Declare the carry leaves the host-driven adjuster reads per node.
+
+        An adaptive mesh dispatches its adjuster from a host loop, so no
+        transfer plan is resolved against the declaration and the reads are
+        exactly the record of which stored leaves the loop touches. The
+        finite search's adjuster keeps the inner program's planned disposition,
+        whose declared read would have to be resolved into a transfer through a
+        replaced carry leaf, so it declares nothing.
+        """
+        return replace(
+            kernels,
+            period_kernels=MappingProxyType(
+                {
+                    period: _with_declared_adjuster_reads(
+                        kernel=kernel, context=context, period=period
+                    )
+                    for period, kernel in kernels.period_kernels.items()
+                }
+            ),
         )
 
     @property
@@ -564,7 +595,6 @@ class NNBEGM(TwoMarginSolver):
                     _FiniteNNBEGMPeriodKernel, outer_search=search
                 )
                 outer_grid_values = search.grid.to_jax()
-                outer_batch_size = search.batch_size
                 template = _stack_carry_template(
                     template=cast("EGMCarry", inner_template),
                     n_candidates=int(outer_grid_values.shape[0]) + 1,
@@ -574,7 +604,6 @@ class NNBEGM(TwoMarginSolver):
                     _AdaptiveNNBEGMPeriodKernel, outer_search=search
                 )
                 outer_grid_values = search.initial_grid.to_jax()
-                outer_batch_size = search.batch_size
                 # The continuous collapse republishes a policy-free carry. Its
                 # nested simulation payload reads the raw keeper/adjuster rows
                 # instead, so the standalone inner policy leaf must not leak into
@@ -641,7 +670,7 @@ class NNBEGM(TwoMarginSolver):
                     ),
                     outer_post_decision=bound.outer_post_decision,
                     outer_target_function=outer_target_function_by_period[period],
-                    outer_batch_size=outer_batch_size,
+                    outer_dispatch_width=context.axis_widths.get(OUTER_CANDIDATE_AXIS),
                     outer_action=bound.outer_action,
                     inner_action=inner_action,
                     resources_target=spec.budget_target,
@@ -901,9 +930,13 @@ class _NNBEGMPeriodKernel:
     outer_target_function: Callable
     """Resolved solve-phase DAG used to recover the outer action bank."""
 
-    outer_batch_size: int
-    """Outer-grid nodes solved per chunk before folding into the running
-    maximum; `0` solves every node at once."""
+    outer_dispatch_width: int | None
+    """Outer nodes dispatched per host loop step, or `None` for all pending.
+
+    The outer collapse runs as a host loop over separate dispatches of the
+    compiled adjuster, so the `outer_candidate` width reaches it as this field
+    rather than as a static keyword the planner binds into one program.
+    """
 
     outer_action: ActionName
     """The regime's outer continuous action (published for the nested
@@ -977,6 +1010,14 @@ class _NNBEGMPeriodKernel:
     """The fixed cost's scale function, arguments restricted to
     `period`/`age`/flat params (resolved per period at call time)."""
 
+    adjuster_value_reads: tuple[ValueRead, ...] = ()
+    """Stored leaves every republished adjuster program reads, or empty.
+
+    Filled once the model's continuation templates are known, so the reads name
+    leaves that exist. Each republished adjuster program takes them under its
+    own graph key.
+    """
+
     _core_programs: Mapping[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
@@ -1024,9 +1065,21 @@ class _NNBEGMPeriodKernel:
                     if role == "keeper"
                     else self._adjuster_disposition(program=program)
                 )
-                programs[f"{role}:{name}"] = replace(
+                graph_key = f"{role}:{name}"
+                requirements = (
+                    replace(
+                        program.requirements,
+                        value_reads=rekeyed_value_reads(
+                            reads=self.adjuster_value_reads, core_key=graph_key
+                        ),
+                    )
+                    if role == "adjuster" and self.adjuster_value_reads
+                    else program.requirements
+                )
+                programs[graph_key] = replace(
                     program,
-                    name=f"{role}:{name}",
+                    name=graph_key,
+                    requirements=requirements,
                     replaces_program=(
                         None
                         if program.replaces_program is None
@@ -1091,10 +1144,10 @@ class _NNBEGMPeriodKernel:
         The retention shows in the compiled programs: the inner `replay`
         programs are present exactly when the solve retains replay artifacts,
         and only then does the outer search assemble a nested policy. The
-        finite search folds completed chunks immediately, so `outer_batch_size`
-        bounds retained candidate data while publishing the complete finite
-        candidate identities for exact replay. The adaptive search keeps its
-        exact-node bank because interpolation and policy publication consume
+        finite search folds completed chunks immediately, so the outer dispatch
+        width bounds retained candidate data while publishing the complete
+        finite candidate identities for exact replay. The adaptive search keeps
+        its exact-node bank because interpolation and policy publication consume
         every refined node.
         """
         keeper_result = self._solve_keeper(
@@ -1535,7 +1588,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         adjuster_carries: list[EGMCarry] = []
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         nodes = list(self.outer_grid_values)
-        chunk_size = self.outer_batch_size or len(nodes)
+        chunk_size = self.outer_dispatch_width or len(nodes)
         for chunk_start in range(0, len(nodes), chunk_size):
             chunk_results = [
                 self.adjuster_kernel(
@@ -1708,8 +1761,8 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         """Adaptively refine the shared outer mesh, then collapse continuously.
 
         The mesh driver's exact-solve callback runs the adjuster's inner
-        solve per requested node (chunked by the strategy's `batch_size`)
-        and caches every `OuterCandidateResult` by node value, so the final
+        solve per requested node, chunked by the outer dispatch width, and
+        caches every `OuterCandidateResult` by node value, so the final
         bank reuses the refinement solves instead of re-solving. The keeper
         stays a separate exact branch throughout; its `sim_policy` rides
         through unchanged until the continuous simulation reader lands.
@@ -1724,7 +1777,7 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             kernel=self,
             adjuster_cores=_subcores(compiled_cores=compiled_cores, role="adjuster"),
             cache=cache,
-            batch_size=config.batch_size,
+            dispatch_width=self.outer_dispatch_width,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
@@ -1876,12 +1929,51 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         )
 
 
+def _with_declared_adjuster_reads(
+    *, kernel: PeriodKernel, context: SolverBuildContext, period: int
+) -> PeriodKernel:
+    """Return one adaptive period's kernel with its adjuster's reads declared.
+
+    The adjuster reads each reachable target's published carry through the
+    rolling continuation mapping, one read per published leaf, so the leaves are
+    named from the targets' own templates. A period reaching no target that
+    publishes a readable payload declares nothing.
+    """
+    if not isinstance(kernel, _AdaptiveNNBEGMPeriodKernel):
+        return kernel
+    reachable = (
+        ()
+        if period == context.solution_reachability.n_periods - 1
+        else context.solution_reachability.targets(
+            period=period, source=context.regime_name
+        )
+    )
+    reads = tuple(
+        read
+        for target, template in published_continuation_templates(
+            continuation_specs=context.continuation_specs,
+            targets=kernel.adjuster_kernel.stateful_targets & frozenset(reachable),
+        ).items()
+        for read in continuation_leaf_reads(
+            template=template,
+            artifact_key=EGM_CONTINUATION,
+            target=target,
+            source_regime=kernel.regime_name,
+            source_period=period,
+            core_key="adjuster",
+        )
+    )
+    if not reads:
+        return kernel
+    return replace(kernel, adjuster_value_reads=reads)
+
+
 @dataclass(frozen=True, kw_only=True)
 class _AdaptiveNodeSolver:
     """The adaptive mesh driver's exact-solve callback for one period.
 
     Solves every requested outer node through the adjuster kernel, chunked by
-    the strategy's `batch_size`, and caches each `OuterCandidateResult` by node
+    the outer dispatch width, and caches each `OuterCandidateResult` by node
     value so a node the driver revisits is solved once. Every input the callback
     reads is an explicit field, so the compiled adjuster cores stay reachable
     only through this instance, which the period's solve drops on return.
@@ -1897,8 +1989,8 @@ class _AdaptiveNodeSolver:
     """Node value to its solved candidate; the driver's caller reads it back
     to assemble the final bank."""
 
-    batch_size: int
-    """Mesh nodes solved per chunk; `0` solves every pending node at once."""
+    dispatch_width: int | None
+    """Mesh nodes dispatched per host loop step, or `None` for all pending."""
 
     state_action_space: StateActionSpace
     """The period's state-action space."""
@@ -1929,7 +2021,7 @@ class _AdaptiveNodeSolver:
         """
         requested = [float(node) for node in np.asarray(nodes_arr)]
         pending = [node for node in requested if node not in self.cache]
-        chunk_size = self.batch_size or max(len(pending), 1)
+        chunk_size = self.dispatch_width or max(len(pending), 1)
         for chunk_start in range(0, len(pending), chunk_size):
             chunk = pending[chunk_start : chunk_start + chunk_size]
             chunk_results = [

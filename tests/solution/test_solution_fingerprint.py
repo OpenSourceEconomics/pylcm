@@ -48,7 +48,6 @@ from lcm.solver_api import (
     SolverIdentity,
 )
 from lcm.solvers import (
-    FiniteOuterGrid,
     FUESEnvelope,
     SolutionKernels,
     Solver,
@@ -866,11 +865,6 @@ def test_builtin_execution_fields_are_excluded_only_on_their_owner_types() -> No
     assert fingerprints._semantic_fingerprint(
         FUESEnvelope(scan_unroll=1)
     ) == fingerprints._semantic_fingerprint(FUESEnvelope(scan_unroll=4))
-
-    mesh = LinSpacedGrid(start=0, stop=1, n_points=3)
-    assert fingerprints._semantic_fingerprint(
-        FiniteOuterGrid(grid=mesh, batch_size=1)
-    ) == fingerprints._semantic_fingerprint(FiniteOuterGrid(grid=mesh, batch_size=2))
 
     assert fingerprints._semantic_fingerprint(
         _SolverModuleNeighbor(batch_size=1)

@@ -143,6 +143,41 @@ def test_the_adaptive_kernel_marks_its_adjuster_programs_host_driven():
             assert program.disposition_reason is None
 
 
+def test_the_host_driven_adjuster_declares_its_continuation_reads():
+    """The adaptive adjuster names every target whose carry its host loop reads.
+
+    The captured period's only reachable target publishing a carry is the terminal
+    regime, so that one target is the whole declaration.
+    """
+    kernel, _ = _kernel("adaptive")
+    program = core_program_graph(kernel=kernel)["adjuster:main"]
+
+    assert {read.target.regime for read in program.requirements.value_reads} == {"dead"}
+
+
+def test_the_host_driven_adjuster_reads_are_keyed_by_the_program_that_runs_them():
+    """Each republished adjuster program owns its reads under its own graph key."""
+    kernel, _ = _kernel("adaptive")
+    graph = core_program_graph(kernel=kernel)
+
+    assert {
+        name: {read.source.core_key for read in program.requirements.value_reads}
+        for name, program in graph.items()
+        if name.startswith("adjuster:")
+    } == {
+        "adjuster:main": {"adjuster:main"},
+        "adjuster:replay": {"adjuster:replay"},
+    }
+
+
+def test_the_finite_adjuster_declares_no_continuation_reads():
+    """A planned adjuster declares nothing: its read has no resolvable transfer."""
+    kernel, _ = _kernel("finite")
+    graph = core_program_graph(kernel=kernel)
+
+    assert all(program.requirements.value_reads == () for program in graph.values())
+
+
 @pytest.mark.parametrize(
     ("route", "payload_type"),
     [("finite", NNBEGMSimPolicy), ("adaptive", NestedEGMSimPolicy)],

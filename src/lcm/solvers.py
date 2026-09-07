@@ -48,7 +48,7 @@ such a solver constructs — the execution-contract types (`CoreProgram`,
 `CoreBuildContext`, `CoreExecutionRequirements`, `CoreExecutionDisposition`,
 `ProgramScope`, `ReducedAxis`, `TiledOutputAxis`, `ReductionDeclaration`,
 `ReductionSemantics`, `ACTION_PRODUCT_AXIS`, `STOCHASTIC_NODE_AXIS`,
-`CELL_AXIS`, `SAVINGS_POINT_AXIS`, `EULER_POINT_AXIS`,
+`CELL_AXIS`, `SAVINGS_POINT_AXIS`, `EULER_POINT_AXIS`, `OUTER_CANDIDATE_AXIS`,
 `EXACTNESS_VALUES`, `OutputRole`,
 `StateAxesLeading`, `PeriodKernel`, `StateActionSpace`), the continuation types
 and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
@@ -137,7 +137,7 @@ from _lcm.solution.dcegm import (
 from _lcm.solution.egm import EGM
 from _lcm.solution.grid_search import ACTION_PRODUCT_AXIS, GridSearch
 from _lcm.solution.nbegm import NBEGM
-from _lcm.solution.negm import NEGM
+from _lcm.solution.negm import NEGM, OUTER_CANDIDATE_AXIS
 from _lcm.solution.nnbegm import NNBEGM
 from lcm.branch_aggregation import (
     BranchAggregateResult,
@@ -213,6 +213,7 @@ __all__ = [
     "NBEGM",
     "NEGM",
     "NNBEGM",
+    "OUTER_CANDIDATE_AXIS",
     "PYLCM_VERSION",
     "SAVINGS_POINT_AXIS",
     "SIMULATION_POLICY",

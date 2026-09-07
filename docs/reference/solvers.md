@@ -209,15 +209,17 @@ probabilities. The intrinsic budget is still applied as a simulation feasibility
 ### `NEGM`
 
 ```python
-NEGM(inner=..., outer_grid=..., outer_batch_size=0)
+NEGM(inner=..., outer_grid=...)
 ```
 
 Runs the bound `DCEGM` inner solve for every finite outer-grid node and includes the
-keeper. `outer_batch_size` limits how many candidate values are evaluated at once. It
-can reduce temporary evaluation memory, but it does not in general cap the size of the
-candidate bank retained for later envelope or ordered-fold operations. Peak memory can
-therefore continue to grow with the full candidate set. Measure both temporary and
-retained arrays for the exact model and solver profile.
+keeper. The sweep declares those nodes as the `outer_candidate` execution axis, so how
+many candidate values are evaluated at once is a planner width
+(`ExecutionConfig(axis_widths={"outer_candidate": k})`) rather than a solver field. A
+narrow width reduces temporary evaluation memory, but it does not in general cap the
+size of the candidate bank retained for later envelope or ordered-fold operations. Peak
+memory can therefore continue to grow with the full candidate set. Measure both
+temporary and retained arrays for the exact model and solver profile.
 
 `NEGM` rejects EV1 taste shocks. Its outer durable-margin maximum currently wraps the
 inner DCEGM solve, but a taste-shocked discrete choice must be the outermost aggregation:
@@ -305,8 +307,11 @@ use a bridged carry compatible with the outer fold. See
 
 The nested period kernel publishes no traced body of its own: its core-program graph
 republishes the inner NB-EGM programs as `keeper:main`, `keeper:replay`,
-`adjuster:main`, and `adjuster:replay`, each with the inner program's output roles,
-scope, and planned disposition. The keeper programs are built from the period's own
+`adjuster:main`, and `adjuster:replay`, each with the inner program's output roles and
+scope. The keeper programs keep the inner planned disposition; under
+`AdaptiveOuterMesh` the adjuster programs are host-driven, because the mesh decides
+from the solves it has already seen how many more nodes to request, and they declare
+the continuation leaves that host loop reads. The keeper programs are built from the period's own
 inputs; the adjuster programs bind the outer post-decision at the first outer node, the
 same shape every per-node call rebinds. A values-only solve dispatches the inner `main`
 programs and the nested collapse publishes the value and the carry alone; a

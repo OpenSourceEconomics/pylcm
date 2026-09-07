@@ -43,13 +43,11 @@ import lcm.exceptions as lcm_exceptions
 import lcm.koopmans_aggregation as koopmans_declarations
 import lcm.processes as process_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.solution.dcegm import ExactEnvelope, FUESEnvelope
 from _lcm.solution.nbegm import NBEGM
-from _lcm.solution.negm import NEGM
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
 from lcm.case_piece import (
@@ -98,8 +96,6 @@ _PYTHON_IMPLEMENTATION_SEAL = (
 # the same name.
 _GRID_EXECUTION_FIELDS = frozenset({"batch_size", "distributed"})
 _BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ...] = (
-    (AdaptiveOuterMesh, frozenset({"batch_size"})),
-    (FiniteOuterGrid, frozenset({"batch_size"})),
     (ExactEnvelope, frozenset({"cell_batch_size"})),
     (FUESEnvelope, frozenset({"scan_unroll"})),
     (
@@ -114,7 +110,6 @@ _BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ..
             }
         ),
     ),
-    (NEGM, frozenset({"outer_batch_size"})),
 )
 _BUILTIN_TYPE_OBJECTS = frozenset(
     value for value in vars(builtins).values() if isinstance(value, type)

@@ -11,7 +11,7 @@ import pytest
 
 from lcm.exceptions import RegimeInitializationError
 from lcm.grids import LinSpacedGrid
-from lcm.solvers import NBEGM, FiniteOuterGrid
+from lcm.solvers import NBEGM
 
 SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=5)
 
@@ -36,14 +36,3 @@ def test_a_negative_nbegm_batching_control_is_named_and_rejected(knob: str) -> N
 def test_zero_is_the_accepted_default_batching_setting() -> None:
     """`0` selects the documented default for either batching contract."""
     assert NBEGM(savings_grid=SAVINGS_GRID, branch_batch_size=0).branch_batch_size == 0
-
-
-def test_a_negative_outer_batch_size_is_rejected_by_the_search_strategy() -> None:
-    """The outer chunk size is the search strategy's knob, so it validates there.
-
-    `NNBEGM` no longer carries an `outer_batch_size` of its own to name.
-    """
-    with pytest.raises(RegimeInitializationError, match="batch_size"):
-        FiniteOuterGrid(
-            grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=4), batch_size=-1
-        )

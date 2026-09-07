@@ -2,8 +2,9 @@
 
 `keeper` is the inner passive DC-EGM's own program under a new name: it solves
 the regime once with the durable stock held at its no-adjustment level.
-`outer_sweep` is one deliberately dense program that sweeps the exogenous outer
-grid inside the compiled program, binding the outer post-decision per node,
+`outer_sweep` is one program that sweeps the exogenous outer grid inside the
+compiled program in blocks of the planner's `outer_candidate` width, binding
+the outer post-decision per node,
 takes the exact maximum of the keeper value and every node value, and stacks the
 keeper carry with every node carry on the candidate axis after lifting each
 into common cash on hand. Its builder delegates to the inner adjuster's builder
@@ -64,7 +65,9 @@ from _lcm.solution.negm import (
 )
 from _lcm.solution.period_replay import replay_period
 from _lcm.typing import FlatParams
+from lcm import ExecutionConfig
 from lcm.solver_api import EGM_CONTINUATION, KernelOutput
+from lcm.solvers import OUTER_CANDIDATE_AXIS
 from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.test_models import negm_kinked_toy
@@ -73,7 +76,6 @@ _REGIME = "alive"
 _PERIOD = 1
 _PARAMS: dict[str, Any] = {"discount_factor": 0.95, "alive": {}}
 _LOGGER = logging.getLogger(__name__)
-_SWEEP_REASON = "deliberately_dense:negm_outer_candidates_retained_not_reduced"
 _N_OUTER = negm_kinked_toy.N_AZ
 # The sweep's block width only reschedules the `lax.map` over the outer nodes,
 # leaving every operation and its operand order untouched; the compiled sweep
@@ -125,7 +127,9 @@ def _aligned_transfer_plan(*, program: Any) -> tuple[ResolvedValueTransfer, ...]
     )
 
 
-def _compiled_cores(*, kernel: Any, context: Mapping[str, Any]) -> dict[str, Any]:
+def _compiled_cores(
+    *, kernel: Any, context: Mapping[str, Any], width: int
+) -> dict[str, Any]:
     """Compile every program of the graph the way the solve loop does.
 
     Programs are visited so every producer precedes its consumers, and each
@@ -142,6 +146,12 @@ def _compiled_cores(*, kernel: Any, context: Mapping[str, Any]) -> dict[str, Any
             program=graph[name], context=build_context
         )
         templates = internal_input_templates(program=materialized, producers=producers)
+        # The width bindings the planner would supply; the sweep's own reads are
+        # resolved into transfers by the solve loop, not by this helper.
+        static_kwargs = {
+            axis.width_keyword: min(width, axis.extent)
+            for axis in materialized.requirements.axes
+        }
         if name in consumed:
             resolved = resolve_core_program(
                 program=materialized,
@@ -156,18 +166,20 @@ def _compiled_cores(*, kernel: Any, context: Mapping[str, Any]) -> dict[str, Any
                 {(): resolve_producer(program=resolved, templates=templates)}
             )
         compiled[name] = (
-            jax.jit(materialized.function)
-            .lower(**materialized.arguments, **templates)
+            jax.jit(materialized.function, static_argnames=tuple(static_kwargs))
+            .lower(**materialized.arguments, **templates, **static_kwargs)
             .compile()
         )
     return compiled
 
 
-def _call(*, kernel: Any, context: Mapping[str, Any]) -> KernelOutput:
+def _call(
+    *, kernel: Any, context: Mapping[str, Any], width: int = _N_OUTER
+) -> KernelOutput:
     return cast(
         "KernelOutput",
         kernel(
-            compiled_cores=_compiled_cores(kernel=kernel, context=context),
+            compiled_cores=_compiled_cores(kernel=kernel, context=context, width=width),
             logger=_LOGGER,
             **context,
         ),
@@ -231,11 +243,11 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
     keeper, sweep = graph["keeper"], graph["outer_sweep"]
     assert keeper.disposition is CoreExecutionDisposition.PLANNED
     assert keeper.disposition_reason is None
-    assert sweep.disposition is CoreExecutionDisposition.DENSE
-    assert sweep.disposition_reason == _SWEEP_REASON
+    assert sweep.disposition is CoreExecutionDisposition.PLANNED
+    assert sweep.disposition_reason is None
     assert keeper.scope is ProgramScope.VALUES_ONLY
     assert sweep.scope is ProgramScope.ANY
-    assert sweep.requirements.axes == ()
+    assert sweep.requirements.axis_names == (OUTER_CANDIDATE_AXIS,)
     assert {read.source.core_key for read in sweep.requirements.value_reads} == {
         "outer_sweep"
     }
@@ -345,12 +357,12 @@ def _carry_leaves_with_paths(carry: EGMCarry) -> list[tuple[str, Any]]:
     return list(zip(paths, jax.tree.leaves(carry), strict=True))
 
 
-_WIDTHS = [0, 1, 2, 3, 5, _N_OUTER]
+_WIDTHS = [1, 2, 3, 5, _N_OUTER]
 
 
-@pytest.mark.parametrize("outer_batch_size", _WIDTHS)
+@pytest.mark.parametrize("width", _WIDTHS)
 def test_the_compiled_sweep_value_agrees_with_the_per_node_loop(
-    *, captured, outer_batch_size: int
+    *, captured, width: int
 ):
     """The value is the exact maximum over candidates, so it agrees to a few ULP.
 
@@ -362,18 +374,16 @@ def test_the_compiled_sweep_value_agrees_with_the_per_node_loop(
     """
     kernel, context = captured
     expected_value, _ = _keeper_then_per_node_loop(kernel=kernel, context=context)
-    output = _call(
-        kernel=replace(kernel, outer_batch_size=outer_batch_size), context=context
-    )
+    output = _call(kernel=kernel, context=context, width=width)
 
     assert_agrees_to_ulp(
         got=output.value, expected=expected_value, n_ulp=_INVARIANCE_ULP
     )
 
 
-@pytest.mark.parametrize("outer_batch_size", _WIDTHS)
+@pytest.mark.parametrize("width", _WIDTHS)
 def test_the_compiled_sweep_carry_rows_agree_with_the_per_node_loop(
-    *, captured, outer_batch_size: int
+    *, captured, width: int
 ):
     """Under x64, block width preserves every carry row's support exactly.
 
@@ -391,9 +401,7 @@ def test_the_compiled_sweep_carry_rows_agree_with_the_per_node_loop(
         pytest.skip("x64 run only; float32 support is checked end to end")
     kernel, context = captured
     _, expected_carry = _keeper_then_per_node_loop(kernel=kernel, context=context)
-    output = _call(
-        kernel=replace(kernel, outer_batch_size=outer_batch_size), context=context
-    )
+    output = _call(kernel=kernel, context=context, width=width)
 
     got_carry = cast("EGMCarry", output.continuations[EGM_CONTINUATION])
     assert jax.tree.structure(got_carry) == jax.tree.structure(expected_carry)
@@ -412,7 +420,7 @@ def test_the_compiled_sweep_carry_rows_agree_with_the_per_node_loop(
             np.testing.assert_array_equal(
                 predicate(got_arr),
                 predicate(expected_arr),
-                err_msg=f"{path}: {label} support differs by outer_batch_size",
+                err_msg=f"{path}: {label} support differs by block width",
             )
         finite = expected_arr[np.isfinite(expected_arr)]
         assert_agrees_to_ulp(
@@ -424,10 +432,8 @@ def test_the_compiled_sweep_carry_rows_agree_with_the_per_node_loop(
         )
 
 
-@pytest.mark.parametrize("outer_batch_size", [1, 2, 3, 5, 7, _N_OUTER])
-def test_block_width_leaves_every_periods_solved_values_within_ulp(
-    *, outer_batch_size: int
-):
+@pytest.mark.parametrize("width", [1, 2, 3, 5, 7, _N_OUTER])
+def test_block_width_leaves_every_periods_solved_values_within_ulp(*, width: int):
     """The parent-read differential: block width is not observable in any period.
 
     Every earlier period reads the sweep's carry through its valid prefix, so a
@@ -436,9 +442,15 @@ def test_block_width_leaves_every_periods_solved_values_within_ulp(
     array with the one-block solve bounds that effect at both precisions; the
     finiteness pattern of the values must agree exactly.
     """
-    reference = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")
-    solution = negm_kinked_toy.build_model(outer_batch_size=outer_batch_size).solve(
-        params=_PARAMS, log_level="off"
+    reference = negm_kinked_toy.build_model().solve(
+        params=_PARAMS,
+        log_level="off",
+        execution_config=ExecutionConfig(axis_widths={OUTER_CANDIDATE_AXIS: _N_OUTER}),
+    )
+    solution = negm_kinked_toy.build_model().solve(
+        params=_PARAMS,
+        log_level="off",
+        execution_config=ExecutionConfig(axis_widths={OUTER_CANDIDATE_AXIS: width}),
     )
 
     assert solution.values.keys() == reference.values.keys()
@@ -519,7 +531,7 @@ def test_a_replay_lowers_the_dense_programs_the_solve_ran(*, monkeypatch, tmp_pa
 
     assert dispositions == [
         CoreExecutionDisposition.PLANNED,
-        CoreExecutionDisposition.DENSE,
+        CoreExecutionDisposition.PLANNED,
     ]
     assert_agrees_to_ulp(
         got=np.asarray(replay.output.value),

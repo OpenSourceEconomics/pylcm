@@ -258,6 +258,16 @@ class SolverBuildContext:
     values* in a particular period, read `period_to_state_nodes`.
     """
 
+    axis_widths: MappingProxyType[str, int] = MappingProxyType({})
+    """Immutable mapping of execution axis name to the width it is fixed at.
+
+    A solver whose outer loop runs on the host rather than inside a compiled
+    program reads its axis's width here: the planner cannot bind a static
+    keyword into a dispatch the solver itself schedules, so the width reaches
+    the driver at build time instead. A name the mapping omits leaves the
+    driver's own default in place.
+    """
+
     submesh_device_ids: tuple[int, ...] = ()
     """Ascending device ids this regime's nodes run on; empty means every device.
 

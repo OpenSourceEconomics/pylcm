@@ -241,17 +241,19 @@ def _enumerate_joint_candidate(
 def _simulate_replay(
     *,
     points: tuple[float, ...],
-    outer_batch_size: int,
+    outer_dispatch_width: int | None,
     dtype: DTypeLike,
 ):
     """Run the public solve-and-simulate path for three off-grid subjects."""
-    model = toy.build_model(
-        variant="n_nbegm",
-        n_periods=2,
-        outer_batch_size=outer_batch_size,
-        illiquid_grid=toy.ILLIQUID_GRID,
-        illiquid_investment_grid=IrregSpacedGrid(points=points),
-        consumption_grid=toy.CONSUMPTION_GRID,
+    model = toy.with_outer_dispatch_width(
+        model=toy.build_model(
+            variant="n_nbegm",
+            n_periods=2,
+            illiquid_grid=toy.ILLIQUID_GRID,
+            illiquid_investment_grid=IrregSpacedGrid(points=points),
+            consumption_grid=toy.CONSUMPTION_GRID,
+        ),
+        width=outer_dispatch_width,
     )
     initial_conditions = {
         "wealth": jnp.asarray([4.0, 15.0, 24.0], dtype=dtype),
@@ -310,12 +312,12 @@ def test_solve_and_simulate_matches_the_scalar_conditional_oracle(
 
         narrow = _simulate_replay(
             points=(-20.0, 0.01, 20.0),
-            outer_batch_size=0,
+            outer_dispatch_width=None,
             dtype=dtype,
         )
         refined = _simulate_replay(
             points=(-20.0, 0.01, 5.0, 20.0),
-            outer_batch_size=4,
+            outer_dispatch_width=4,
             dtype=dtype,
         )
         terminal_data = _terminal_grid(scalar)

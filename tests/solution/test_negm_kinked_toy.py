@@ -26,6 +26,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -38,6 +39,7 @@ from lcm import (
 from lcm.solvers import (
     DCEGM,
     NEGM,
+    OUTER_CANDIDATE_AXIS,
 )
 from lcm.typing import (
     BoolND,
@@ -373,16 +375,16 @@ def test_brute_value_converges_up_to_negm_as_grids_refine(
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-@pytest.mark.parametrize("outer_batch_size", [1, 8])
-def test_outer_batch_size_leaves_value_function_unchanged(outer_batch_size: int):
+@pytest.mark.parametrize("width", [1, 8])
+def test_outer_candidate_width_leaves_value_function_unchanged(*, width: int):
     """Blocking the NEGM outer sweep leaves the solved value function unchanged.
 
     The outer sweep maps the inner adjuster over the outer-grid nodes in blocks
-    of `outer_batch_size` and takes the exact maximum over every candidate, so
-    the block width reschedules the same operations without changing any
-    operand order. The two solves differ only by the vectorized kernel XLA
-    emits per block width — a gap of a few ULP, not of an economic magnitude —
-    so the knob trades parallelism for bounded memory only.
+    of the planner's `outer_candidate` width and takes the exact maximum over
+    every candidate, so the block width reschedules the same operations without
+    changing any operand order. The two solves differ only by the vectorized
+    kernel XLA emits per block width — a gap of a few ULP, not of an economic
+    magnitude — so the width trades parallelism for bounded memory only.
 
     Both solves must also be finite throughout. Agreement alone would be
     satisfied by two solves that agree only in being NaN, which is how a solver
@@ -390,8 +392,12 @@ def test_outer_batch_size_leaves_value_function_unchanged(outer_batch_size: int)
     """
     base = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="debug").values
     blocked = (
-        negm_kinked_toy.build_model(outer_batch_size=outer_batch_size)
-        .solve(params=_PARAMS, log_level="debug")
+        negm_kinked_toy.build_model()
+        .solve(
+            params=_PARAMS,
+            log_level="debug",
+            execution_config=ExecutionConfig(axis_widths={OUTER_CANDIDATE_AXIS: width}),
+        )
         .values
     )
     assert base.keys() == blocked.keys()

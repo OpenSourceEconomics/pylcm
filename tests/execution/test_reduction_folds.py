@@ -8,11 +8,14 @@ compared against a scalar loop over the whole axis.
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.roar import BeartypeCallHintViolation
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.execution.reductions import (
     WEIGHTED_EXPECTATION_REDUCTION,
     WeightedExpectationResult,
+    HARD_MAX_WITH_CARRY_REDUCTION,
+    OuterCandidateAccumulator,
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
 from _lcm.solution.collective_action_reduction import (
@@ -330,6 +333,109 @@ def test_weighted_expectation_block_fold_accumulates_the_whole_weight_mass(
     )
 
 
+def _candidate_carry() -> FloatND:
+    """Return a per-candidate payload row the winner's carry is read from."""
+    rng = np.random.default_rng(seed=20260910)
+    drawn = jnp.asarray(rng.integers(0, 50, size=(_N_STATES, _N_ACTIONS, 2)))
+    carry = drawn.astype(jnp.zeros(()).dtype)
+    assert bool(jnp.isfinite(carry).all())
+    return carry
+
+
+def _dense_hard_max_with_carry(
+    *, values: FloatND, feasible: BoolND, carry: FloatND
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Scan the whole axis once, keeping the smallest identity among equals."""
+    observed = np.asarray(values)
+    live = np.asarray(feasible)
+    payload = np.asarray(carry)
+    best_value = np.full(_N_STATES, -np.inf, dtype=observed.dtype)
+    best_identity = np.full(_N_STATES, -1, dtype=np.int32)
+    best_carry = np.zeros((_N_STATES, payload.shape[-1]), dtype=payload.dtype)
+    for state in range(_N_STATES):
+        for position in range(_N_ACTIONS):
+            if not live[state, position]:
+                continue
+            candidate = observed[state, position]
+            if best_identity[state] == -1 or candidate > best_value[state]:
+                best_value[state] = candidate
+                best_identity[state] = position
+                best_carry[state] = payload[state, position]
+    return best_value, best_identity, best_carry
+
+
+def _folded_hard_max_with_carry(
+    *, partition: tuple[int, ...]
+) -> OuterCandidateAccumulator:
+    """Fold the candidate axis in the blocks one partition cuts.
+
+    Each block's value fold runs through `add`; the block's winning carry is
+    merged in as a state of its own, which is how a driver that owns a payload
+    per candidate drives this reduction.
+    """
+    values, feasible, action_ids = _values(), _feasible(), _action_ids()
+    carry = _candidate_carry()
+    accumulator = HARD_MAX_WITH_CARRY_REDUCTION.initialize(
+        value_template=jnp.zeros(_N_STATES)
+    )
+    for start, stop in _blocks(partition=partition):
+        block = HARD_MAX_WITH_CARRY_REDUCTION.add(
+            accumulator=HARD_MAX_WITH_CARRY_REDUCTION.initialize(
+                value_template=jnp.zeros(_N_STATES)
+            ),
+            values=values[:, start:stop],
+            feasible=feasible[:, start:stop],
+            action_ids=action_ids[start:stop],
+        )
+        winner = block.best_candidate_id - start
+        block_carry = jnp.take_along_axis(
+            carry[:, start:stop, :],
+            jnp.clip(winner, 0, stop - start - 1)[:, None, None],
+            axis=1,
+        )[:, 0, :]
+        accumulator = HARD_MAX_WITH_CARRY_REDUCTION.merge(
+            left=accumulator,
+            right=OuterCandidateAccumulator(
+                best_value=block.best_value,
+                best_candidate_id=block.best_candidate_id,
+                carry=block_carry,
+            ),
+        )
+    return HARD_MAX_WITH_CARRY_REDUCTION.finalize(accumulator=accumulator)
+
+
+@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
+def test_hard_max_with_carry_block_fold_matches_the_dense_maximum(
+    *, partition: tuple[int, ...]
+) -> None:
+    """Blockwise hard max with carry publishes the maximum a single pass would."""
+    expected, _identity, _carry = _dense_hard_max_with_carry(
+        values=_values(), feasible=_feasible(), carry=_candidate_carry()
+    )
+
+    assert_agrees_to_ulp(
+        got=np.asarray(_folded_hard_max_with_carry(partition=partition).best_value),
+        expected=expected,
+        n_ulp=0,
+    )
+
+
+@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
+def test_weighted_expectation_block_fold_accumulates_the_whole_weight_mass(
+    *, partition: tuple[int, ...]
+) -> None:
+    """The published mass is the sum of every block's weights, to a few ULP."""
+    assert_agrees_to_ulp(
+        got=np.asarray(
+            _folded_weighted_expectation(
+                partition=partition, values=_values(), weights=_weights()
+            ).weight_mass
+        ),
+        expected=np.asarray(_weights()).sum(),
+        n_ulp=16,
+    )
+
+
 @pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
 def test_weighted_expectation_is_invariant_to_rescaling_every_weight(
     *, partition: tuple[int, ...]
@@ -382,3 +488,63 @@ def test_weighted_expectation_gives_a_zero_weight_infinity_no_contribution() -> 
         np.asarray(reduction.finalize(accumulator=accumulator).expectation),
         np.full(_N_STATES, 2.0),
     )
+def test_hard_max_with_carry_block_fold_selects_the_dense_winner_identity(
+    *, partition: tuple[int, ...]
+) -> None:
+    """The winning global identity is the one a single pass selects, exactly."""
+    _value, expected, _carry = _dense_hard_max_with_carry(
+        values=_values(), feasible=_feasible(), carry=_candidate_carry()
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(_folded_hard_max_with_carry(partition=partition).best_candidate_id),
+        expected,
+    )
+
+
+@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
+def test_hard_max_with_carry_block_fold_keeps_the_winners_payload(
+    *, partition: tuple[int, ...]
+) -> None:
+    """The published carry is the winning candidate's own row, bit for bit."""
+    _value, _identity, expected = _dense_hard_max_with_carry(
+        values=_values(), feasible=_feasible(), carry=_candidate_carry()
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(_folded_hard_max_with_carry(partition=partition).carry),
+        expected,
+    )
+
+
+def test_hard_max_with_carry_publishes_the_empty_state_of_an_infeasible_cell() -> None:
+    """A cell with no feasible candidate keeps value `-inf` at identity `-1`."""
+    values = jnp.zeros((1, _N_ACTIONS))
+    result = HARD_MAX_WITH_CARRY_REDUCTION.finalize(
+        accumulator=HARD_MAX_WITH_CARRY_REDUCTION.add(
+            accumulator=HARD_MAX_WITH_CARRY_REDUCTION.initialize(
+                value_template=jnp.zeros(1)
+            ),
+            values=values,
+            feasible=jnp.zeros(values.shape, dtype=bool),
+            action_ids=_action_ids(),
+        )
+    )
+
+    assert (float(result.best_value[0]), int(result.best_candidate_id[0])) == (
+        -np.inf,
+        -1,
+    )
+
+
+def test_hard_max_with_carry_rejects_a_non_int32_identity() -> None:
+    """Candidate identities are exactly `int32`; another integer width is refused."""
+    with pytest.raises(BeartypeCallHintViolation, match="int32"):
+        HARD_MAX_WITH_CARRY_REDUCTION.add(
+            accumulator=HARD_MAX_WITH_CARRY_REDUCTION.initialize(
+                value_template=jnp.zeros(_N_STATES)
+            ),
+            values=_values(),
+            feasible=_feasible(),
+            action_ids=_action_ids().astype(jnp.int16),
+        )

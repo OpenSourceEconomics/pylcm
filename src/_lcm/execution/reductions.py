@@ -19,10 +19,11 @@ from collections.abc import Hashable
 from dataclasses import dataclass
 from typing import Literal, NamedTuple, Protocol, runtime_checkable
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.zero_safe import zero_safe_weighted_term
-from lcm.typing import FloatND
+from lcm.typing import BoolND, FloatND, IntND
 
 __all__ = [
     "EXACTNESS_VALUES",
@@ -32,6 +33,7 @@ __all__ = [
     "BoundWeightedExpectationReduction",
     "HardMaxWithCarryReduction",
     "IntervalEnvelopeReduction",
+    "OuterCandidateAccumulator",
     "ReductionDeclaration",
     "ReductionSemantics",
     "WeightedExpectationAccumulator",
@@ -312,11 +314,41 @@ class WeightedExpectationReduction:
 
 
 @dataclass(frozen=True)
+class OuterCandidateAccumulator:
+    """Running winner over outer candidates and the carry it owns."""
+
+    best_value: FloatND
+    """Largest value seen so far, or `-inf` before a candidate is seen."""
+
+    best_candidate_id: IntND
+    """Canonical global identity of the winner, or `-1` while none is seen."""
+
+    carry: object
+    """Pytree carry of the current winner, same structure for every block."""
+
+
+@dataclass(frozen=True)
 class HardMaxWithCarryReduction:
     """Hard max over outer candidates that also carries the winner's payload.
 
     Ties resolve to the lowest global candidate id, so the fold is exact and order
-    independent.
+    independent. Candidates occupy the last axis of `values`; `feasible` and
+    `action_ids` broadcast to that shape, and the identities are canonical global
+    `int32` values rather than positions within a block.
+
+    `-inf` is the empty-state marker the fold compares against, so a cell whose
+    every candidate is infeasible publishes value `-inf` at identity `-1`, and a
+    feasible candidate valued `-inf` is published the same way. The outer sweeps
+    that drive this fold form each candidate's value from a bounded utility plus a
+    discounted continuation, so `-inf` is the infeasibility sentinel there rather
+    than an attainable value.
+
+    `add` folds a block of values alone; a driver that also owns a per-candidate
+    payload builds that block's state directly and `merge`s it, so the carry
+    travels with the winner it belongs to. `merge` selects each carry leaf under
+    the same comparison that selects the value, and a `None` carry on either side
+    yields the other side's, which is what lets an empty initial state merge with
+    the first block that has one.
     """
 
     @property
@@ -328,6 +360,88 @@ class HardMaxWithCarryReduction:
     def exactness(self) -> Literal["exact"]:
         """Return `"exact"`: a max with deterministic tie-break is order independent."""
         return "exact"
+
+    def initialize(self, *, value_template: FloatND) -> OuterCandidateAccumulator:
+        """Start from an all-infeasible winner with an empty carry."""
+        return OuterCandidateAccumulator(
+            best_value=jnp.full_like(value_template, -jnp.inf),
+            best_candidate_id=jnp.full(value_template.shape, -1, dtype=jnp.int32),
+            carry=None,
+        )
+
+    def add(
+        self,
+        *,
+        accumulator: OuterCandidateAccumulator,
+        values: FloatND,
+        feasible: BoolND,
+        action_ids: IntND,
+    ) -> OuterCandidateAccumulator:
+        """Fold one block; `values[..., k]` is candidate `action_ids[k]`'s value."""
+        mask = jnp.broadcast_to(feasible, values.shape)
+        ids = jnp.broadcast_to(action_ids, values.shape)
+        comparable = jnp.where(mask, values, -jnp.inf)
+        block_best = jnp.max(comparable, axis=-1, initial=-jnp.inf)
+        winner = mask & (values == jnp.expand_dims(block_best, axis=-1))
+        sentinel = jnp.asarray(jnp.iinfo(jnp.int32).max, dtype=jnp.int32)
+        block_id = jnp.min(jnp.where(winner, ids, sentinel), axis=-1, initial=sentinel)
+        block = OuterCandidateAccumulator(
+            best_value=block_best, best_candidate_id=block_id, carry=None
+        )
+        return self.merge(left=accumulator, right=block)
+
+    def merge(
+        self, *, left: OuterCandidateAccumulator, right: OuterCandidateAccumulator
+    ) -> OuterCandidateAccumulator:
+        """Keep the larger value; on a tie keep the lower candidate id."""
+        choose_right = (right.best_value > left.best_value) | (
+            (right.best_value == left.best_value)
+            & (right.best_candidate_id < left.best_candidate_id)
+        )
+        return OuterCandidateAccumulator(
+            best_value=jnp.where(choose_right, right.best_value, left.best_value),
+            best_candidate_id=jnp.where(
+                choose_right, right.best_candidate_id, left.best_candidate_id
+            ),
+            carry=_select_carry(
+                choose_right=choose_right, left=left.carry, right=right.carry
+            ),
+        )
+
+    def finalize(
+        self, *, accumulator: OuterCandidateAccumulator
+    ) -> OuterCandidateAccumulator:
+        """Publish the winner; an all-infeasible row keeps id -1 and value -inf."""
+        return accumulator
+
+
+@dataclass(frozen=True, eq=False)
+class _CarrySelector:
+    """Pick one carry leaf per cell under a decision made on the value axis.
+
+    `jax.tree.map` calls this positionally with the two sides' leaves, and the
+    decision mask is a field rather than a closure so no traced array is captured
+    by a nested definition.
+    """
+
+    choose_right: BoolND
+    """Per-cell decision, shaped like the accumulator's value."""
+
+    # keyword-only-exempt: library-callback=jax.tree.map
+    def __call__(self, left_leaf: FloatND, right_leaf: FloatND) -> FloatND:
+        """Return `right_leaf` where the winner changed sides, else `left_leaf`."""
+        trailing = (1,) * (left_leaf.ndim - self.choose_right.ndim)
+        mask = jnp.reshape(self.choose_right, self.choose_right.shape + trailing)
+        return jnp.where(mask, right_leaf, left_leaf)
+
+
+def _select_carry(*, choose_right: BoolND, left: object, right: object) -> object:
+    """Pick the carry leaf-wise; `None` on either side yields the other side."""
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return jax.tree.map(_CarrySelector(choose_right=choose_right), left, right)
 
 
 @dataclass(frozen=True)

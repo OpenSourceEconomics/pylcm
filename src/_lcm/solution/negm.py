@@ -6,8 +6,9 @@ carries are lifted into common cash-on-hand (via the declared outer cost) and
 stacked; the parent read collapses the candidate axis by the exact query-side
 maximum. `_NEGMPeriodKernel` publishes a native two-program graph: `keeper` is
 the inner keeper's own program under a new name, and `outer_sweep` is one
-deliberately dense program that maps the inner adjuster over the outer grid,
-takes the exact maximum with the keeper value, and stacks every candidate carry.
+program that maps the inner adjuster over the outer grid in blocks of the
+planner's `outer_candidate` width, takes the exact maximum with the keeper
+value, and stacks every candidate carry.
 The graph declares the dependency between them: `keeper` publishes its value and
 carry as typed internal outputs, `outer_sweep` names them as internal inputs, so
 the engine lowers the sweep against the keeper's own abstract output and the
@@ -47,9 +48,11 @@ from _lcm.execution.core_program import (
     CoreProgram,
     InternalInputRef,
     InternalOutputSpec,
+    ReducedAxis,
     core_program_graph,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.reductions import HARD_MAX_WITH_CARRY_REDUCTION
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_reads import rekeyed_value_reads
@@ -99,9 +102,10 @@ from lcm.typing import (
     StateOrActionName,
 )
 
-_NEGM_SWEEP_DENSE_REASON = (
-    "deliberately_dense:negm_outer_candidates_retained_not_reduced"
-)
+# Planner name of the outer post-decision candidate axis the sweep folds.
+OUTER_CANDIDATE_AXIS = "outer_candidate"
+
+_OUTER_CANDIDATE_WIDTH_KEYWORD = "_lcm_outer_candidate_width"
 # The keeper's outputs and the sweep's own inputs enter the compiled sweep next
 # to the inner adjuster's arguments, under engine-only names. A public regime,
 # function, state, or action name cannot contain the ``__`` qualified-name
@@ -160,33 +164,8 @@ class NEGM(TwoMarginSolver):
     outer_grid: ContinuousGrid
     r"""Exogenous grid over the outer post-decision margin $s_t^\textit{post-dec}$."""
 
-    outer_batch_size: int = 0
-    """Number of outer-grid nodes solved per block of the compiled outer sweep.
-
-    The sweep maps the inner adjuster over the exogenous outer grid in blocks
-    of this many nodes; a block is the vector width the adjuster is compiled
-    for, so the knob bounds the *solve-side* block transients only. It does not
-    bound the period's peak, whose remaining candidate-scaled contributions
-    blocking cannot remove:
-
-    - the candidate *carries* are all retained — the published stacked
-      continuation holds every outer candidate (`(A+1) * n_pad` grid slots per
-      leading cell), inherent to the exact query-side outer maximum,
-    - while the stack is built, the unstacked candidate carries and the
-      stacked output coexist transiently,
-    - the parent's continuation read prepares a search key of the full stacked
-      shape and evaluates every candidate per query.
-
-    A positive value solves that many nodes per block; `0` (the default)
-    solves every node in one block — fastest, but its solve-side peak grows
-    with the outer-grid size. It is a memory-vs-parallelism knob only: the
-    solved value function and every carry leaf agree across batch sizes to
-    the working format's spacing.
-    """
-
     def __post_init__(self) -> None:
         _fail_if_outer_grid_is_stochastic(self.outer_grid)
-        _fail_if_outer_batch_size_negative(outer_batch_size=self.outer_batch_size)
 
     def _with_margins(
         self,
@@ -548,7 +527,6 @@ class NEGM(TwoMarginSolver):
                     ),
                     durable_axis_in_carry=durable_axis_in_carry,
                     carry_row_state_names=carry_row_state_names,
-                    outer_batch_size=bound_self.outer_batch_size,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
@@ -706,12 +684,12 @@ class _NEGMPeriodKernel:
       DC-EGM (`next_illiquid = illiquid`, identity) that keeps the durable
       stock unchanged for free (`credited(s, s) = 0`), run once over the full
       durable grid; and
-    - `outer_sweep` — one deliberately dense program that maps the inner
-      adjuster (the DC-EGM with the outer transition stripped) over the
-      exogenous outer grid with `outer_post_decision` bound to each node,
-      collapses the value by `V = max(V_keeper, max_j W_j)` and stacks the
-      keeper carry with every node carry, lifted into common cash on hand, on
-      the candidate axis.
+    - `outer_sweep` — one program that maps the inner adjuster (the DC-EGM
+      with the outer transition stripped) over the exogenous outer grid with
+      `outer_post_decision` bound to each node, in blocks of the planner's
+      `outer_candidate` width, collapses the value by
+      `V = max(V_keeper, max_j W_j)` and stacks the keeper carry with every
+      node carry, lifted into common cash on hand, on the candidate axis.
 
     `keeper` publishes its value and carry as typed internal outputs and
     `outer_sweep` names them as internal inputs, so the engine lowers the sweep
@@ -762,9 +740,6 @@ class _NEGMPeriodKernel:
     carry_row_state_names: tuple[StateName, ...]
     """The discrete then passive state names leading every carry row."""
 
-    outer_batch_size: int
-    """Outer-grid nodes solved per block of the sweep; `0` is one block."""
-
     fixed_sweep_kwargs: Mapping[str, object] = MappingProxyType({})
     """The regime's and its targets' fixed params, bound into the sweep."""
 
@@ -782,7 +757,6 @@ class _NEGMPeriodKernel:
             inner_core=adjuster.function,
             outer_post_decision=self.outer_post_decision,
             durable_axis=self.durable_axis_in_carry,
-            outer_batch_size=self.outer_batch_size,
             **self.fixed_sweep_kwargs,
         )
         row = StateAxesLeading(state_names=self.carry_row_state_names)
@@ -816,6 +790,16 @@ class _NEGMPeriodKernel:
                     coh_shift_func=self.coh_shift_func,
                 ),
                 requirements=CoreExecutionRequirements(
+                    reduced_axes=(
+                        ReducedAxis(
+                            name=OUTER_CANDIDATE_AXIS,
+                            coordinate_names=(_OUTER_NODES,),
+                            coordinate_extents=(self.outer_grid_values.shape[0],),
+                            canonical_order="c",
+                            reduction=HARD_MAX_WITH_CARRY_REDUCTION,
+                            width_keyword=_OUTER_CANDIDATE_WIDTH_KEYWORD,
+                        ),
+                    ),
                     internal_inputs=MappingProxyType(
                         {
                             _KEEPER_VALUE: InternalInputRef(
@@ -839,8 +823,7 @@ class _NEGMPeriodKernel:
                         policy=None,
                     ),
                 ),
-                disposition=CoreExecutionDisposition.DENSE,
-                disposition_reason=_NEGM_SWEEP_DENSE_REASON,
+                disposition=CoreExecutionDisposition.PLANNED,
                 donation_candidates=(),
             ),
         }
@@ -1005,16 +988,18 @@ def _outer_sweep_program(
     inner_core: Callable[..., tuple[FloatND, EGMCarry]],
     outer_post_decision: FunctionName,
     durable_axis: int,
-    outer_batch_size: int,
+    _lcm_outer_candidate_width: int,
     **arguments: object,
 ) -> tuple[FloatND, EGMCarry]:
     """Solve the adjuster at every outer node and stack it with the keeper.
 
     The inner adjuster program runs once per exogenous node with the outer
-    post-decision bound into its arguments, in blocks of `outer_batch_size`
-    nodes (`0`: one block). The value is the exact maximum of the keeper value
+    post-decision bound into its arguments, in blocks of the planner's
+    `outer_candidate` width. The value is the exact maximum of the keeper value
     and every node value; the continuation is the keeper carry followed by
     every node carry lifted into common cash on hand on the candidate axis.
+    Every candidate carry is retained, so the block width reschedules the sweep
+    without changing which operations run on which operands.
 
     The keeper's value and carry, the outer nodes, and the cash-on-hand shifts
     arrive among `arguments` under the engine-only transport keys; everything
@@ -1034,7 +1019,7 @@ def _outer_sweep_program(
             adjuster_arguments=MappingProxyType(adjuster_arguments),
         ),
         outer_nodes,
-        batch_size=outer_batch_size or n_nodes,
+        batch_size=min(_lcm_outer_candidate_width, n_nodes),
     )
     V_arr = jnp.maximum(keeper_value, jnp.max(node_values, axis=0))
     carry = build_stacked_outer_carry(
@@ -1503,20 +1488,6 @@ def _with_outer_post_decision(
             for name, regime_pool in flat_params.items()
         }
     )
-
-
-def _fail_if_outer_batch_size_negative(
-    *, outer_batch_size: int, solver_name: str = "NEGM"
-) -> None:
-    """Reject a negative outer batch size, naming the solver that declared it."""
-    if outer_batch_size < 0:
-        msg = (
-            f"{solver_name}.outer_batch_size must be non-negative, got "
-            f"{outer_batch_size}. Use 0 to solve every outer-grid node in one "
-            "block, or a positive value to sweep the outer grid in blocks of "
-            "that many nodes."
-        )
-        raise RegimeInitializationError(msg)
 
 
 def _fail_if_outer_grid_is_stochastic(outer_grid: ContinuousGrid) -> None:

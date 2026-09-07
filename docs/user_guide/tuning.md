@@ -77,6 +77,7 @@ Which axis names exist depends on which solver a regime uses; each solver's sect
 | `cell`            | the output state cells a `DCEGM` per-combo solve is tiled over          |
 | `savings_point`   | the exogenous savings nodes a `DCEGM` continuation is tiled over        |
 | `euler_point`     | the exogenous Euler nodes a `DCEGM` asset-row solve is tiled over       |
+| `outer_candidate` | the exogenous outer post-decision nodes of a nested outer search        |
 
 Choose the largest width that meets the measured memory target, then verify values and
 runtime against the whole-axis setting on the model and backend you will use. Leaving an
@@ -89,8 +90,8 @@ Some controls a solver owns itself reduce live intermediates. Grid `batch_size`,
 `envelope_segment_block_size`, `subject_batch_size`, and any solver field whose
 Reference contract explicitly says it streams an evaluation axis can lower temporary
 workspace. The exact effect still depends on retained banks and downstream folds; for
-example, `NEGM.outer_batch_size` can lower temporary evaluation memory without capping
-the retained candidate bank.
+example, the `outer_candidate` width can lower a nested solver's temporary evaluation
+memory without capping the retained candidate bank.
 
 A `DCEGM` regime owns none of these: each loop it could stream is one of the axes in the
 table above, so a `batch_size` on one of its grids is refused at model build and the

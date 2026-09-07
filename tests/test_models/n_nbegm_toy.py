@@ -20,10 +20,13 @@ the degenerate plain-EGM case.
 """
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
+from types import MappingProxyType
 
 import jax.numpy as jnp
 
 from _lcm.grids.base import Grid
+from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -209,7 +212,6 @@ def adjustment_scale_from_param(adjustment_scale_level: float) -> FloatND:
 def build_solver(
     *,
     variant: str,
-    outer_batch_size: int = 0,
     outer_search: OuterSearch | None = None,
 ) -> TwoMarginSolver | GridSearch:
     """Build the requested solver flavour for the alive regime.
@@ -227,7 +229,6 @@ def build_solver(
                 savings_grid=SAVINGS_GRID,
             ),
             outer_grid=OUTER_GRID,
-            outer_batch_size=outer_batch_size,
         )
     if variant == "n_nbegm":
         return NNBEGM(
@@ -237,7 +238,7 @@ def build_solver(
             outer_search=(
                 outer_search
                 if outer_search is not None
-                else FiniteOuterGrid(grid=OUTER_GRID, batch_size=outer_batch_size)
+                else FiniteOuterGrid(grid=OUTER_GRID)
             ),
         )
     msg = f"unknown variant: {variant}"
@@ -247,7 +248,6 @@ def build_solver(
 def build_model(
     *,
     variant: str,
-    outer_batch_size: int = 0,
     n_periods: int = N_PERIODS,
     illiquid_grid: Grid | AgeSpecializedGrid = ILLIQUID_GRID,
     outer_search: OuterSearch | None = None,
@@ -374,11 +374,7 @@ def build_model(
         # durable law — is unchanged.
         del functions["new_illiquid"]
         actions = {"consumption": consumption_grid, "new_illiquid": OUTER_GRID}
-    solver = build_solver(
-        variant=variant,
-        outer_batch_size=outer_batch_size,
-        outer_search=outer_search,
-    )
+    solver = build_solver(variant=variant, outer_search=outer_search)
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
     # argument types the narrowing is expressed in.
@@ -441,3 +437,35 @@ def build_model(
         fixed_params={"final_age_alive": final_age_alive},
         execution_config=execution_config,
     )
+
+
+def with_outer_dispatch_width(*, model: Model, width: int | None) -> Model:
+    """Return `model` with every nested kernel dispatching `width` nodes at a time.
+
+    The nested outer collapse runs as a host loop over separate dispatches of
+    the compiled adjuster, so its `outer_candidate` width is a field of the
+    period kernel rather than a static keyword bound into one compiled program.
+    `None` dispatches every pending node at once.
+    """
+    model._regimes = MappingProxyType(
+        {
+            name: replace(
+                regime,
+                solution=replace(
+                    regime.solution,
+                    period_kernels=MappingProxyType(
+                        {
+                            period: (
+                                replace(kernel, outer_dispatch_width=width)
+                                if isinstance(kernel, _NNBEGMPeriodKernel)
+                                else kernel
+                            )
+                            for period, kernel in regime.solution.period_kernels.items()
+                        }
+                    ),
+                ),
+            )
+            for name, regime in model._regimes.items()
+        }
+    )
+    return model

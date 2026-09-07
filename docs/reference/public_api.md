@@ -219,6 +219,7 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.CELL_AXIS`](custom_solvers.md)                                               | Name of the output state-cell axis    |
 | [`lcm.solvers.SAVINGS_POINT_AXIS`](custom_solvers.md)                                      | Name of the savings-node axis         |
 | [`lcm.solvers.EULER_POINT_AXIS`](custom_solvers.md)                                        | Name of the Euler-node axis           |
+| [`lcm.solvers.OUTER_CANDIDATE_AXIS`](custom_solvers.md)                                    | Name of the outer-candidate axis      |
 | [`lcm.solvers.ReductionDeclaration`](custom_solvers.md)                                    | Contract a reduced axis names         |
 | [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Declaration carrying its own fold     |
 | [`lcm.solvers.EXACTNESS_VALUES`](custom_solvers.md)                                        | The two published exactness values    |

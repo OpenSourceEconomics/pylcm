@@ -254,8 +254,8 @@ def test_three_period_toy_tracks_nested_dcegm_through_published_carries() -> Non
         )
 
 
-@pytest.mark.parametrize("outer_batch_size", [1, 4, 100])
-def test_outer_batch_size_is_value_invariant(outer_batch_size: int) -> None:
+@pytest.mark.parametrize("width", [1, 4, 100])
+def test_outer_dispatch_width_is_value_invariant(*, width: int) -> None:
     """Chunking the outer sweep never changes the solved values."""
     reference = (
         toy.build_model(variant="n_nbegm", n_periods=2)
@@ -263,8 +263,8 @@ def test_outer_batch_size_is_value_invariant(outer_batch_size: int) -> None:
         .values
     )
     chunked = (
-        toy.build_model(
-            variant="n_nbegm", outer_batch_size=outer_batch_size, n_periods=2
+        toy.with_outer_dispatch_width(
+            model=toy.build_model(variant="n_nbegm", n_periods=2), width=width
         )
         .solve(params=_PARAMS, log_level="debug")
         .values
@@ -293,7 +293,7 @@ def test_finite_outer_grid_does_not_materialize_a_candidate_bank(monkeypatch) ->
     solution = (
         toy.build_model(
             variant="n_nbegm",
-            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID, batch_size=2),
+            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID),
             n_periods=2,
         )
         .solve(params=_PARAMS, log_level="debug")
