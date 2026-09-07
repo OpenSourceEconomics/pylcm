@@ -292,8 +292,11 @@ def release_closed_artifacts(
     Each artifact must be release eligible in the ledger — a remaining consumer
     is an `ExecutionPlanningError`, never a warning. A buffer is deleted only when
     every key the registry holds on it is eligible too, so a leaf that is also a
-    retained value survives; keys that share a shard are one release, named
-    together on the record of the array that frees them. A buffer no dispatch
+    retained value survives. Arrays whose buffers overlap in any shard are one
+    release: the array holding the group's whole shard set is deleted, and every
+    key of the group is named on its record, so the shards freed are exactly the
+    union of the eligible arrays' and each is freed once, whatever order the
+    keys arrive in. A buffer no dispatch
     produced is never deleted, whatever the ledger says about the key that
     reached it. Nothing is deleted
     before one `block_until_ready` over `pending_outputs`, the outputs of every
@@ -302,8 +305,7 @@ def release_closed_artifacts(
     key and the closing dispatch, and so is every key kept because no dispatch
     produced its buffer.
     """
-    to_delete: dict[BufferIdentity, tuple[jax.Array, tuple[Hashable, ...]]] = {}
-    scheduled_shards: set[ShardIdentity] = set()
+    eligible: list[_ReleaseCandidate] = []
     for artifact in artifacts:
         if not ledger.is_release_eligible(artifact=artifact):
             msg = (
@@ -332,25 +334,23 @@ def release_closed_artifacts(
             for partner in partners
         ):
             continue
-        shards = shard_identities(array=array)
-        if shards & scheduled_shards:
-            # A partner scheduled above already frees these shards, and names
-            # this key among the ones it releases. Deleting the same buffer a
-            # second time would free memory the runtime has already reclaimed.
-            continue
-        scheduled_shards |= shards
-        to_delete[buffer_identity(array=array)] = (
-            array,
-            tuple(sorted(partners, key=repr)),
+        eligible.append(
+            _ReleaseCandidate(
+                array=array,
+                shards=shard_identities(array=array),
+                keys=tuple(sorted(partners, key=repr)),
+            )
         )
+    to_delete = _one_delete_per_shared_buffer(candidates=eligible)
     if not to_delete:
         return ()
     jax.block_until_ready(tuple(pending_outputs))
     records: list[ReleaseRecord] = []
-    for array, keys in to_delete.values():
+    for candidate in to_delete:
+        array = candidate.array
         registry.forget(array=array)
         array.delete()
-        for key in keys:
+        for key in candidate.keys:
             logger.debug(
                 "released %r after dispatch %r",
                 key,
@@ -361,6 +361,55 @@ def release_closed_artifacts(
                 ReleaseRecord(artifact=key, closing_dispatch=closing_dispatch)
             )
     return tuple(records)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _ReleaseCandidate:
+    """One array a release may delete, and the keys deleting it would free."""
+
+    array: jax.Array
+    """The array whose buffer the release would hand back."""
+
+    shards: frozenset[ShardIdentity]
+    """Every device buffer the array occupies."""
+
+    keys: tuple[Hashable, ...]
+    """Every registered key on those buffers, the candidate's own included."""
+
+
+def _one_delete_per_shared_buffer(
+    *, candidates: Sequence[_ReleaseCandidate]
+) -> tuple[_ReleaseCandidate, ...]:
+    """Pick, per group of buffer-sharing candidates, the one that frees them all.
+
+    Deleting an array frees every shard it holds, so a group whose members
+    overlap is freed by exactly one delete — and that one must hold the group's
+    whole shard set, or the shards it lacks would stay allocated with no live
+    array left to reach them, and the result would turn on the order the keys
+    arrived in. A group no member covers is refused: no sequence of deletes
+    frees such a group exactly once.
+    """
+    groups: list[tuple[set[ShardIdentity], list[_ReleaseCandidate]]] = []
+    for candidate in candidates:
+        shards = set(candidate.shards)
+        members = [candidate]
+        for group in [group for group in groups if group[0] & candidate.shards]:
+            shards |= group[0]
+            members.extend(group[1])
+            groups.remove(group)
+        groups.append((shards, members))
+    chosen: list[_ReleaseCandidate] = []
+    for shards, members in groups:
+        covering = [member for member in members if member.shards == shards]
+        if not covering:
+            named = sorted({key for member in members for key in member.keys}, key=repr)
+            msg = (
+                "No single buffer of the release group covers every shard its "
+                f"members occupy, so {named!r} cannot be freed exactly once."
+            )
+            raise ExecutionPlanningError(msg)
+        chosen.append(covering[0])
+    return tuple(chosen)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

@@ -289,7 +289,16 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # of a compilation key — so the loop commits to the one they were keyed by
     # rather than building a second.
     input_liveness = compiled_programs.input_liveness
+    input_templates = SolveInputMappings(
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_continuation=next_regime_to_continuation,
+        next_edge_to_V_arr=next_edge_to_V_arr,
+    )
     buffer_registry = BufferRegistry()
+    # The templates live for the whole solve and stand in the mappings wherever
+    # a key's buffer has gone — a period that rolls one forward unchanged, a
+    # released key, a donated one. Declaring them here makes that a property of
+    # the buffer rather than of each release decision.
     buffer_registry.declare_not_produced(
         tree=(
             flat_params,
@@ -302,6 +311,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 for regime in regimes.values()
                 if regime.solution.period_state_axes is not None
             ),
+            input_templates.next_regime_to_V_arr,
+            input_templates.next_regime_to_continuation,
+            input_templates.next_edge_to_V_arr,
         )
     )
     # An eager solve's dispatches are ordinary Python calls, so any object an
@@ -311,11 +323,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             "release skipped: eager dispatch",
             extra={"release_skipped": "eager dispatch"},
         )
-    input_templates = SolveInputMappings(
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        next_regime_to_continuation=next_regime_to_continuation,
-        next_edge_to_V_arr=next_edge_to_V_arr,
-    )
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}

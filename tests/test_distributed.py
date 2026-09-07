@@ -23,6 +23,7 @@ from _lcm.execution.scheduler import (
     BufferRegistry,
     PeriodTransferCache,
     release_closed_artifacts,
+    shard_identities,
     shares_a_buffer,
 )
 from _lcm.execution.value_transfer import (
@@ -1512,6 +1513,56 @@ def test_two_keys_on_one_shared_shard_are_partners() -> None:
     registry.register(array=wider, artifact="wider")
 
     assert registry.artifacts_sharing(array=stored) == frozenset({"stored", "wider"})
+
+
+class _FreedShardRegistry(BufferRegistry):
+    """A registry that records the shards of every buffer a release frees.
+
+    `release_closed_artifacts` forgets a buffer immediately before deleting it,
+    so the recorded shards are exactly the ones the release hands back to the
+    runtime, in the order it frees them.
+    """
+
+    def __init__(self) -> None:
+        """Start with an empty release record."""
+        super().__init__()
+        self.freed: list[tuple[int, int]] = []
+
+    def forget(self, *, array: jax.Array) -> None:
+        """Record the shards this buffer occupies, then drop its keys."""
+        self.freed.extend(sorted(shard_identities(array=array)))
+        super().forget(array=array)
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(
+    "order",
+    [("stored", "wider"), ("wider", "stored")],
+    ids=["narrow first", "wide first"],
+)
+def test_a_release_frees_every_shard_of_two_sharing_keys_exactly_once(
+    order: tuple[str, str],
+) -> None:
+    """The freed shards are the union of the eligible buffers', each freed once."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    expected = sorted(shard_identities(array=stored) | shard_identities(array=wider))
+    registry = _FreedShardRegistry()
+    registry.register(array=stored, artifact="stored")
+    registry.register(array=wider, artifact="wider")
+    ledger = PlannedInputLiveness(dispatch_accesses={"d": ("stored", "wider")})
+    ledger.commit_successful_dispatch(dispatch="d")
+
+    release_closed_artifacts(
+        ledger=ledger,
+        registry=registry,
+        artifacts=order,
+        arrays_by_artifact=MappingProxyType({"stored": stored, "wider": wider}),
+        pending_outputs=(),
+        closing_dispatch="d",
+        logger=logging.getLogger("lcm.tests.distributed"),
+    )
+
+    assert registry.freed == expected
 
 
 @_skip_pytest_parallel

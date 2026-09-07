@@ -13,9 +13,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.donation import DonatedBuffer, ResolvedDonation
+from _lcm.execution.scheduler import BufferRegistry, DispatchUnit, shard_identities
+from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.kernel_output import ConsumedKernelOutput
+from _lcm.solution.solve_inputs import SolveInputMappings
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey, ContinuationCapabilities
 from lcm.solvers import (
     ContinuationSpec,
@@ -201,16 +206,166 @@ def test_the_solve_lifetime_template_survives_a_donating_solve() -> None:
     assert not _TEMPLATES[-1].count.is_deleted()
 
 
-def test_donation_changes_no_published_value() -> None:
-    """The donating and the non-donating solver publish identical values."""
+@pytest.fixture(scope="module")
+def published_values() -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
+    """Per period, the values the donating and the non-donating solver publish."""
     donating = _solve(solver=_DonatingCounterSolver())
     plain = _solve(solver=_CounterSolver())
+    return (
+        {
+            period: np.asarray(donating.values[period]["alive"])  # ty: ignore[unresolved-attribute]
+            for period in range(_N_PERIODS)
+        },
+        {
+            period: np.asarray(plain.values[period]["alive"])  # ty: ignore[unresolved-attribute]
+            for period in range(_N_PERIODS)
+        },
+    )
 
-    for period in range(_N_PERIODS):
-        np.testing.assert_array_equal(
-            np.asarray(donating.values[period]["alive"]),  # ty: ignore[unresolved-attribute]
-            np.asarray(plain.values[period]["alive"]),  # ty: ignore[unresolved-attribute]
+
+@pytest.mark.parametrize("period", range(_N_PERIODS))
+def test_donation_changes_no_published_value(
+    *,
+    period: int,
+    published_values: tuple[dict[int, np.ndarray], dict[int, np.ndarray]],
+) -> None:
+    """The donating and the non-donating solver publish identical values."""
+    donating, plain = published_values
+
+    np.testing.assert_array_equal(donating[period], plain[period])
+
+
+_VALUE = ValueArtifactAddress(
+    kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="alive"
+)
+
+
+def _donation(*, argument: str = "next_value") -> ResolvedDonation:
+    """One resolved donation of the regime value the fixtures address."""
+    return ResolvedDonation(
+        argument=argument,
+        artifacts=(_VALUE,),
+        buffer=DonatedBuffer.STORED_ARTIFACT,
+    )
+
+
+def _mappings(*, value: FloatND) -> SolveInputMappings:
+    """Rolling input mappings holding one regime value and nothing else."""
+    return SolveInputMappings(
+        next_regime_to_V_arr=MappingProxyType({"alive": value}),
+        next_regime_to_continuation=MappingProxyType({}),
+        next_edge_to_V_arr=MappingProxyType({}),
+    )
+
+
+def _locate_donated(
+    *,
+    donations: MappingProxyType[tuple[str, int, str], tuple[ResolvedDonation, ...]],
+    programs: tuple[str, ...],
+    value: FloatND,
+    template: FloatND,
+    registry: BufferRegistry,
+) -> tuple[object, ...]:
+    """Run the loop's pre-dispatch donation check over one dispatch unit."""
+    return backward_induction._donated_input_arrays(
+        donations=donations,
+        unit=DispatchUnit(period=0, regime="alive", programs=programs),
+        inputs=_mappings(value=value),
+        templates=_mappings(value=template),
+        registry=registry,
+    )
+
+
+def test_two_programs_of_one_unit_may_not_donate_one_artifact() -> None:
+    """One buffer is handed over once, whichever program of the unit names it."""
+    with pytest.raises(ExecutionPlanningError, match="lowered two programs to donate"):
+        _locate_donated(
+            donations=MappingProxyType(
+                {
+                    ("alive", 0, "main"): (_donation(),),
+                    ("alive", 0, "second"): (_donation(argument="also_next"),),
+                }
+            ),
+            programs=("main", "second"),
+            value=jnp.arange(3.0),
+            template=jnp.zeros(3),
+            registry=BufferRegistry(),
         )
+
+
+def test_an_artifact_standing_at_its_template_is_not_donated() -> None:
+    """A key whose leaf is the solve-lifetime template is no input of its own."""
+    template = jnp.zeros(3)
+
+    with pytest.raises(ExecutionPlanningError, match="not a solve input of its own"):
+        _locate_donated(
+            donations=MappingProxyType({("alive", 0, "main"): (_donation(),)}),
+            programs=("main",),
+            value=template,
+            template=template,
+            registry=BufferRegistry(),
+        )
+
+
+def test_a_buffer_no_executable_produced_is_not_donated() -> None:
+    """A buffer the model owns is refused however the ledger reads its key."""
+    value = jnp.arange(3.0)
+    registry = BufferRegistry()
+    registry.declare_not_produced(tree=(value,))
+
+    with pytest.raises(ExecutionPlanningError, match="no compiled executable produced"):
+        _locate_donated(
+            donations=MappingProxyType({("alive", 0, "main"): (_donation(),)}),
+            programs=("main",),
+            value=value,
+            template=jnp.zeros(3),
+            registry=registry,
+        )
+
+
+def test_a_buffer_a_second_key_still_names_is_not_donated() -> None:
+    """A key the ledger did not close keeps the buffer its partner would donate."""
+    value = jnp.arange(3.0)
+    registry = BufferRegistry()
+    registry.register(array=value, artifact="another_key")
+
+    with pytest.raises(ExecutionPlanningError, match="still name"):
+        _locate_donated(
+            donations=MappingProxyType({("alive", 0, "main"): (_donation(),)}),
+            programs=("main",),
+            value=value,
+            template=jnp.zeros(3),
+            registry=registry,
+        )
+
+
+class _SnapshottingRegistry(BufferRegistry):
+    """A registry that snapshots its declared set after each declaration."""
+
+    def __init__(self) -> None:
+        """Start with no snapshot and record this instance for the test."""
+        super().__init__()
+        self.snapshots: list[frozenset[tuple[int, int]]] = []
+        _REGISTRIES.append(self)
+
+    def declare_not_produced(self, *, tree: object) -> None:
+        """Declare, then record the shards declared at that moment."""
+        super().declare_not_produced(tree=tree)
+        self.snapshots.append(self.declared_shards)
+
+
+_REGISTRIES: list[_SnapshottingRegistry] = []
+
+
+def test_the_input_templates_are_declared_before_the_first_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No solve-lifetime template buffer is a release candidate at any period."""
+    _REGISTRIES.clear()
+    monkeypatch.setattr(backward_induction, "BufferRegistry", _SnapshottingRegistry)
+    _solve(solver=_DonatingCounterSolver())
+
+    assert shard_identities(array=_TEMPLATES[-1].count) <= _REGISTRIES[0].snapshots[0]
 
 
 def test_the_donation_set_is_part_of_the_lowering_key() -> None:
