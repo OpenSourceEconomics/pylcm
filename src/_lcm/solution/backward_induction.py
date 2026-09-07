@@ -54,6 +54,7 @@ from _lcm.execution.output_layout import (
 )
 from _lcm.execution.scheduler import (
     BufferRegistry,
+    PeriodTransferCache,
     ScheduledNode,
     plan_period_waves,
     release_closed_artifacts,
@@ -429,6 +430,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         )
         period_pending_outputs: list[FloatND] = []
         period_release_candidates: dict[ValueArtifactAddress, _InputDispatch] = {}
+        period_transfer_cache = PeriodTransferCache()
 
         active_regimes = {
             regime_name: regime
@@ -477,7 +479,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     regime=regime,
                     regime_name=regime_name,
                     period=period,
-                    compiled_cores=compiled_functions[(regime_name, period)],
+                    compiled_cores=_cores_with_transfer_cache(
+                        cores=compiled_functions[(regime_name, period)],
+                        cache=period_transfer_cache,
+                    ),
                     capture_target=capture_target,
                     state_action_space=base_state_action_spaces[regime_name],
                     flat_params=flat_params,
@@ -1062,6 +1067,18 @@ def _run_period_kernel(
         ages=ages,
         logger=logger,
         **same_period_kwargs,
+    )
+
+
+def _cores_with_transfer_cache(
+    *, cores: MappingProxyType[str, PlannedCore], cache: PeriodTransferCache
+) -> MappingProxyType[str, PlannedCore]:
+    """Hand one period's transfer cache to every core a kernel dispatches."""
+    return MappingProxyType(
+        {
+            core_key: dataclasses.replace(core, transfer_cache=cache)
+            for core_key, core in cores.items()
+        }
     )
 
 

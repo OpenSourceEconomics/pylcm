@@ -189,8 +189,8 @@ _SOURCE_SEALS = {
     PROCESSING_SOURCE: "97793eea4b14aaae57bcdada37f00b45da772c539e9b9a6783782113a33e4b3a",
     GRID_SEARCH_SOURCE: "b1753aa03fcd6eab34838b868e532008ccb1280bb9fca9ab6e27e7f506b43e06",
     CORE_PROGRAM_SOURCE: "f5f86bf2976d80ee87c3c9560bd91f62ee51e82b94ad72c9c1fe34c0cd35e63b",
-    OUTPUT_LAYOUT_SOURCE: "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d",
-    VALUE_TRANSFER_SOURCE: "1ed3973244ab896098c5ed165c538f6562393192f3330f11efaa9eb21cd53c7f",
+    OUTPUT_LAYOUT_SOURCE: "e48aee467d8c7730cd79f2ee981b8d407614ee412d6cac8191dd625edded468a",
+    VALUE_TRANSFER_SOURCE: "93ecb46bf251579c6c68b554cfb752487dd3bd1cfe78f29bb87cfa324c27a859",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "bd693f4bab250215dea9b6fb6021c518163305a890a9536f66af9e1d7dc5c308",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
@@ -208,7 +208,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "eca63257bd882066c608c34791cb0399f8d283fa79f5e0640091e12321da82a9",
     MODEL_SOURCE: "b251854ac9cad72579c37137b6fa5e13a303fbc95108de6147de974f0bf39382",
     SOLVER_API_SOURCE: "55eda6369c0f3c13d1c92241338ffab0d73b5f87517cbae5f0c83875894227a2",
-    BACKWARD_INDUCTION_SOURCE: "ad01a367a89dd64acc8fc44184e900c94f96a931466c54cedbab373d537f2693",
+    BACKWARD_INDUCTION_SOURCE: "8188d67eb09a3fec232161052fa3186d8a8f4b8caf7019f07d0b5bcd8d88c401",
     PERIOD_REPLAY_SOURCE: "a5c59359171047ef860e879c66b4ac8eba28732f4d9af3df1fcaf5ccf3813874",
     INITIAL_CONDITIONS_SOURCE: "582c29e7f99072d975c7a4c9070a93e707d25a98c09e216b47fa71c7bb2d6022",
     RESULT_SOURCE: "7390877272bc23fd7c153e2a51ac4a6072e88fe950d5de695ff015205aff5058",
@@ -2326,6 +2326,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "tile_widths: Mapping[str, int]",
                 "input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()",
                 "internal_input_templates: Mapping[str, object] = MappingProxyType({})",
+                "transfer_cache: TransferCache | None = None",
                 "name: str",
             ),
             methods=("__post_init__", "__call__"),
@@ -2369,7 +2370,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "assert_output_layout": "daad2a8d5013f547b1004e7f51d7c71d6051b57badf5d3933c866774f862c2a8",
                 "_assert_output_metadata": "4fdb1d8439ec600990e801f0da9197759f71dc01661a1d0cf14d332be05b1209",
                 "PlannedCore.__post_init__": "ebb7de9740b5d6b471b106fc7927210a128754af2504f3a90987105a1c431ed3",
-                "PlannedCore.__call__": "6f10b5f5d4aa8b41d62e8d2347c36eee8e4ddbfb2a8eaae55ca1a4f7f4f29707",
+                "PlannedCore.__call__": "5ee61337ebbab597c5e7fee8e8a90c19bc50331a747ba57a93e7540e065c8703",
                 "assert_value_leaf_layout": "9362aaf98344976ae13de7ac67e05d23fe983f12e34eac9f2ad439762a5d159d",
                 "_assert_output_leaf": "8a75af878a85e6cc997e5d823b55ba0545ff3f147a30a7ddbfd2666db07d70fd",
                 "_resolve_output_leaf": "b321849f4ff64dbab550be131a31a74157e9749a396958917b8e587fdffe5fa4",
@@ -2537,13 +2538,13 @@ COLLECTIVE = "collective"
                 "ResolvedValueTransfer.__post_init__": "6fc7223a75c3dc5fbb6072004915bbf08a05c9d1d42711b12ba6aae4306192c8",
                 "resolve_value_transfer": "232ec967f8b1c8c9055ae513e5afce130d808e8afe7f90271fc19f111db0cc1e",
                 "apply_value_transfer": "76b11059204dc6786aab1701a6c2523ddedd4f6fff16d80df49b1428784db311",
-                "apply_value_transfer_plan": "e68a7ffc5021a56c47ca597387c31cff59138d97a3c84527e74c1660cf8fd498",
+                "apply_value_transfer_plan": "d17240965105a83382d4a0a71809dece1aa4770143729968bbc370177ea3e7e6",
                 "classify_value_transfer": "c55b04af4530ac76c2dce1b47bb3ccf0d4056efa7c4dd68417257f59e03d506e",
                 "ResolvedValueTransfer.cost": "d4ba108ad4354ef103fbb3806be95b4192066979e9fefd2acea6a6ffeb4de471",
                 "_device_ids": "c66e89e2760e52cbdda063cccb1e45e26f78a66be5f9bebb97b28a076261e049",
                 "_per_device_bytes": "1bcd84c8b146dfaab63ec3e6c3985d029024d476c02dd27fb5022100010a9b1b",
                 "_named_axes": "46fa78227ccbe7e1dd881030b05d16794d3f45003c37b638ba0badc434d977ed",
-                "_replace_transfer_leaf": "ea8d139bc1d7fca22f40144bc343840b0be464fad21f636362a0aedd9e1af1ce",
+                "_replace_transfer_leaf": "90c72d4e22e6d4705f423ecb007ee460a5e2c2959563c5d46befa1f698a22a2a",
                 "_validate_edge_identity": "315fd9e827952a158fd9b60fe83c408fb78ef17abe8c3a8da8e422b5f62b89e7",
                 "_validate_continuation_leaf_identity": "88493fd0b4b5ef9670c2958f580de3d53e855b187f3548e335193364a3cb61f8",
                 "_assert_value_metadata": "7ebe6eb927b678ae88ed2a12d8f7571bdd8a86d5a4bf3dc55cd24f92da6e389d",
@@ -2568,6 +2569,7 @@ COLLECTIVE = "collective"
                 "Iterable",
                 "Mapping",
                 "MappingProxyType",
+                "Protocol",
                 "RegimeName",
                 "StrEnum",
                 "dataclass",
@@ -2575,6 +2577,7 @@ COLLECTIVE = "collective"
                 "jax",
                 "jnp",
                 "math",
+                "runtime_checkable",
             },
             expected_imports=[
                 "import math",
@@ -2582,6 +2585,7 @@ COLLECTIVE = "collective"
                 "from dataclasses import dataclass, field",
                 "from enum import StrEnum",
                 "from types import MappingProxyType",
+                "from typing import Protocol, runtime_checkable",
                 "import jax",
                 "import jax.numpy as jnp",
                 "from _lcm.typing import RegimeName",
@@ -2595,9 +2599,11 @@ COLLECTIVE = "collective"
                 "Iterable": 1,
                 "Mapping": 1,
                 "MappingProxyType": 1,
+                "Protocol": 1,
                 "RegimeName": 1,
                 "ResolvedValueTransfer": 1,
                 "StrEnum": 1,
+                "TransferCache": 1,
                 "TransferCost": 1,
                 "TransferOperationClass": 1,
                 "ValueArtifactAddress": 1,
@@ -2640,6 +2646,7 @@ COLLECTIVE = "collective"
                 "math": 1,
                 "object": 0,
                 "resolve_value_transfer": 1,
+                "runtime_checkable": 1,
                 "set": 0,
                 "sorted": 0,
                 "tuple": 0,
@@ -2862,7 +2869,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "468f6e8b2bbda133f7d127431834079bd9b13df230e7ec3b36eba47e5e6ac0ec"
+        expected = "4ba675cde9b977b4aaeceea22d901bb878ccb0ca1897313d492512fb48aabc83"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -5552,8 +5559,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             source=output_layout_source,
             old=(
                 "        planned_kwargs = (\n"
-                "            apply_value_transfer_plan("
-                "arguments=kwargs, plan=self.input_transfer_plan)\n"
+                "            apply_value_transfer_plan(\n"
+                "                arguments=kwargs,\n"
+                "                plan=self.input_transfer_plan,\n"
+                "                cache=self.transfer_cache,\n"
+                "            )\n"
                 "            if self.input_transfer_plan\n"
                 "            else kwargs\n"
                 "        )"
@@ -5563,8 +5573,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "value_transfer:runtime_plan_truncated": replace_once(
             source=output_layout_source,
-            old="plan=self.input_transfer_plan)",
-            new="plan=self.input_transfer_plan[:-1])",
+            old="plan=self.input_transfer_plan,",
+            new="plan=self.input_transfer_plan[:-1],",
             label="PlannedCore complete runtime transfer plan",
         ),
         "value_transfer:planned_core_plan_erased": replace_once(

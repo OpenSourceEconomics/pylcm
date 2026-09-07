@@ -13,6 +13,7 @@ from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
+from typing import Protocol, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -96,6 +97,19 @@ class TransferCost:
 
     reused_by_several_consumers: bool
     """Whether more than one source core of the period reads this result."""
+
+
+@runtime_checkable
+class TransferCache(Protocol):
+    """A per-period store of transferred copies several consumers share."""
+
+    def get(self, *, transfer: ResolvedValueTransfer) -> jax.Array | None:
+        """Return the copy made for this transfer's artifact and layout, if any."""
+        ...
+
+    def put(self, *, transfer: ResolvedValueTransfer, array: jax.Array) -> None:
+        """Record the copy made for this transfer's artifact and layout."""
+        ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -383,8 +397,12 @@ def apply_value_transfer_plan(
     *,
     arguments: Mapping[str, object],
     plan: Iterable[ResolvedValueTransfer],
+    cache: TransferCache | None = None,
 ) -> Mapping[str, object]:
     """Apply a transfer plan to an immutable copy of a core-argument tree.
+
+    With a `cache`, a transfer marked as reused by several consumers is
+    executed once per cache lifetime and served from the cache afterwards.
 
     A source locator is the read's named argument, or ``channel.value`` when it
     names none, followed by ``path``. Each locator may occur once in a plan.
@@ -419,6 +437,7 @@ def apply_value_transfer_plan(
             path=path,
             transfer=transfer,
             traversed=(root,),
+            cache=cache,
         )
         updated = dict(result)
         updated[root] = replaced
@@ -527,10 +546,18 @@ def _replace_transfer_leaf(
     path: tuple[str | int, ...],
     transfer: ResolvedValueTransfer,
     traversed: tuple[str | int, ...],
+    cache: TransferCache | None,
 ) -> object:
     """Rebuild one supported argument branch and replace its selected leaf."""
     if not path:
-        return apply_value_transfer(value=node, transfer=transfer)
+        if cache is None or not transfer.reused_by_several_consumers:
+            return apply_value_transfer(value=node, transfer=transfer)
+        cached = cache.get(transfer=transfer)
+        if cached is not None and not cached.is_deleted():
+            return cached
+        copied = apply_value_transfer(value=node, transfer=transfer)
+        cache.put(transfer=transfer, array=copied)
+        return copied
     segment, *remaining = path
     rest = tuple(remaining)
     if isinstance(node, Mapping):
@@ -543,6 +570,7 @@ def _replace_transfer_leaf(
             path=rest,
             transfer=transfer,
             traversed=(*traversed, segment),
+            cache=cache,
         )
         return MappingProxyType(updated)
     if isinstance(node, tuple):
@@ -564,6 +592,7 @@ def _replace_transfer_leaf(
             path=rest,
             transfer=transfer,
             traversed=(*traversed, segment),
+            cache=cache,
         )
         return tuple(updated)
     msg = (

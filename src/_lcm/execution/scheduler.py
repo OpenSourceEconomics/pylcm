@@ -21,6 +21,7 @@ import jax
 from jaxtyping import PyTree
 
 from _lcm.execution.liveness import PlannedInputLiveness
+from _lcm.execution.value_transfer import ResolvedValueTransfer
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
 
@@ -74,6 +75,10 @@ class BufferRegistry:
 
     The guards overlap deliberately: each is sound alone for the cases it sees,
     and none is trusted to see every case.
+
+    This is the one mutable engine-internal object: every other execution-side
+    structure the solve loop threads is immutable and replaced, never written
+    into in place.
     """
 
     __slots__ = ("_keys_by_buffer", "_unproduced_buffers")
@@ -334,3 +339,41 @@ def replace_leaf_by_identity(*, tree: object, old: object, new: object) -> objec
     return jax.tree.unflatten(
         treedef, [new if leaf is old else leaf for leaf in leaves]
     )
+
+
+class PeriodTransferCache:
+    """Copies of shared value transfers, held for one period and then dropped.
+
+    Keyed by the artifact and the required layout, which is what
+    `_consumer_key` counts, so two source cores asking for one artifact on one
+    layout receive one buffer. The loop creates one cache per period; dropping
+    it releases every copy.
+
+    A cached copy is a buffer the engine produced, not one the model owns, so
+    it may be registered with `BufferRegistry` and released like any other
+    engine-produced buffer — the registry's refusal to free a model-owned
+    buffer does not apply to it. A copy shared by several sources must not be
+    released before the last of them has dispatched; registering it once and
+    releasing it only once every consuming dispatch has committed would
+    enforce that directly, but holding the whole cache for the period and
+    dropping it only after every wave has dispatched enforces the same rule
+    without a separate per-consumer count.
+    """
+
+    __slots__ = ("_arrays",)
+
+    def __init__(self) -> None:
+        """Start with no cached copy."""
+        self._arrays: dict[tuple[Hashable, Hashable], jax.Array] = {}
+
+    def get(self, *, transfer: ResolvedValueTransfer) -> jax.Array | None:
+        """Return the copy made for the transfer's artifact and layout, if any."""
+        return self._arrays.get((transfer.target, transfer.source_sharding))
+
+    def put(self, *, transfer: ResolvedValueTransfer, array: jax.Array) -> None:
+        """Record the copy made for the transfer's artifact and layout."""
+        self._arrays[(transfer.target, transfer.source_sharding)] = array
+
+    def __len__(self) -> int:
+        """Return the number of cached copies."""
+        return len(self._arrays)

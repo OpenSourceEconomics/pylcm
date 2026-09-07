@@ -1254,3 +1254,99 @@ def test_v_array_has_inf_keeps_reduction_sharded_on_distributed_input():
     assert bool(result) is True
     assert result.sharding.num_devices == 4
     assert result.sharding.is_fully_replicated
+
+
+def _make_two_source_partially_distributed_model() -> Model:
+    """Two distributed working regimes reading one single-device `retirement` value.
+
+    `retirement` reads `wealth` only, so the model-level distributed `type1` is
+    pruned from it and its value lives on one device; both sources read that
+    value as a replicated input on their four-device mesh, one copy per period.
+    """
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working_life: ScalarInt
+        working_life_b: ScalarInt
+        retirement: ScalarInt
+
+    @categorical(ordered=True)
+    class Type:
+        lowest: ScalarInt
+        low: ScalarInt
+        high: ScalarInt
+        highest: ScalarInt
+
+    def working_utility(*, wealth, consumption, type1):
+        return (jnp.log(consumption) + wealth * 0.001) * type1
+
+    def next_wealth(*, wealth, consumption):
+        return wealth - consumption
+
+    def to_retirement(age):
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
+
+    def to_retirement_b(age):
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life_b)
+
+    def retirement_utility(*, wealth):
+        return wealth * 0.5
+
+    working = UserRegime(
+        functions={"utility": working_utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        state_transitions={"wealth": next_wealth},
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transition=to_retirement,
+        active=lambda age: age < 5,
+    )
+    working_b = UserRegime(
+        functions={"utility": working_utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        state_transitions={"wealth": next_wealth},
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transition=to_retirement_b,
+        active=lambda age: age < 5,
+    )
+    retirement = UserRegime(
+        transition=None,
+        functions={"utility": retirement_utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        active=lambda age: age >= 5,
+    )
+    return Model(
+        regimes={
+            "working_life": working,
+            "working_life_b": working_b,
+            "retirement": retirement,
+        },
+        ages=AgeGrid(start=0, stop=5, step="Y"),
+        regime_id_class=RegimeId,
+        states={"type1": DiscreteGrid(category_class=Type, distributed=True)},
+        state_transitions={"type1": fixed_transition("type1")},
+    )
+
+
+@_skip_pytest_parallel
+def test_a_transfer_two_sources_share_is_copied_once_per_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared copy of `retirement`'s value is made once, not once per source."""
+    from _lcm.execution import value_transfer  # noqa: PLC0415
+
+    executed: list[tuple[int, object]] = []
+    real = value_transfer.apply_value_transfer
+
+    def count(
+        *, value: object, transfer: value_transfer.ResolvedValueTransfer
+    ) -> jax.Array:
+        if transfer.reused_by_several_consumers:
+            executed.append((transfer.source.source_period, transfer.target))
+        return real(value=value, transfer=transfer)
+
+    monkeypatch.setattr(value_transfer, "apply_value_transfer", count)
+    _make_two_source_partially_distributed_model().solve(
+        log_level="off", params={"discount_factor": 0.95}
+    )
+
+    assert executed and len(executed) == len(set(executed))  # noqa: PT018

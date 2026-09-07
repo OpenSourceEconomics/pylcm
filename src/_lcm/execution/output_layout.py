@@ -21,6 +21,7 @@ import jax.numpy as jnp
 from _lcm.execution.internal_outputs import assert_internal_inputs
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
+    TransferCache,
     apply_value_transfer_plan,
 )
 from _lcm.typing import StateName
@@ -425,6 +426,8 @@ class PlannedCore:
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
     internal_input_templates: Mapping[str, object] = MappingProxyType({})
     """Abstract template per internal input this core was lowered against."""
+    transfer_cache: TransferCache | None = None
+    """Per-period store shared transfers are served from, or `None` to copy."""
     name: str
     """Graph key of the program this core was compiled for."""
 
@@ -471,7 +474,11 @@ class PlannedCore:
             )
             raise TypeError(msg)
         planned_kwargs = (
-            apply_value_transfer_plan(arguments=kwargs, plan=self.input_transfer_plan)
+            apply_value_transfer_plan(
+                arguments=kwargs,
+                plan=self.input_transfer_plan,
+                cache=self.transfer_cache,
+            )
             if self.input_transfer_plan
             else kwargs
         )
