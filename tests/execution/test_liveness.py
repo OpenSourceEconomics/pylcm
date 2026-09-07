@@ -6,6 +6,7 @@ from typing import cast
 import pytest
 
 from _lcm.execution.liveness import PlannedInputLiveness
+from lcm.exceptions import ExecutionPlanningError
 
 
 def test_remaining_consumers_reach_eligibility_only_at_zero() -> None:
@@ -323,3 +324,34 @@ def test_is_pinned_is_false_for_a_planned_artifact_no_pin_names() -> None:
     )
 
     assert not ledger.is_pinned(artifact="x")
+
+
+def test_accesses_of_returns_the_declared_accesses_in_declaration_order() -> None:
+    """A dispatch's planned accesses read back exactly as declared."""
+    ledger = PlannedInputLiveness(dispatch_accesses={"a": ("second", "first")})
+
+    assert ledger.accesses_of(dispatch="a") == ("second", "first")
+
+
+def test_accesses_of_is_unchanged_by_committing_the_dispatch() -> None:
+    """Reading the plan is a pure query, so a commit does not empty it."""
+    ledger = PlannedInputLiveness(dispatch_accesses={"a": ("x",)})
+    ledger.commit_successful_dispatch(dispatch="a")
+
+    assert ledger.accesses_of(dispatch="a") == ("x",)
+
+
+def test_accesses_of_does_not_commit_the_dispatch() -> None:
+    """Reading a dispatch's accesses leaves it pending."""
+    ledger = PlannedInputLiveness(dispatch_accesses={"a": ("x",)})
+    ledger.accesses_of(dispatch="a")
+
+    assert ledger.pending_dispatches == frozenset({"a"})
+
+
+def test_accesses_of_an_unknown_dispatch_names_the_dispatch() -> None:
+    """A dispatch outside the plan is refused with its own ID in the message."""
+    ledger = PlannedInputLiveness(dispatch_accesses={"a": ("x",)})
+
+    with pytest.raises(ExecutionPlanningError, match="'missing'"):
+        ledger.accesses_of(dispatch="missing")

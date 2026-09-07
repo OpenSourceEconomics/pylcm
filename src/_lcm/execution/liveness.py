@@ -10,6 +10,8 @@ never releases, donates, or offloads an array.
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 
+from lcm.exceptions import ExecutionPlanningError
+
 
 class PlannedInputLiveness[DispatchKey, ArtifactKey]:
     """Track the planned consumers, retention and aliases of solve-time artifacts.
@@ -141,6 +143,19 @@ class PlannedInputLiveness[DispatchKey, ArtifactKey]:
     def aliases(self) -> Mapping[ArtifactKey, ArtifactKey]:
         """Return the declared alias map, artifact to the key one period later."""
         return self._alias_of
+
+    def accesses_of(self, *, dispatch: DispatchKey) -> tuple[ArtifactKey, ...]:
+        """Return one dispatch's planned accesses, in declaration order.
+
+        A pure read of the immutable plan: it neither moves a count nor commits
+        the dispatch, so a planner may walk the whole schedule ahead of the run
+        and a committed dispatch still reports what it declared.
+        """
+        _require_hashable(value=dispatch, label="planned dispatch ID")
+        if dispatch not in self._dispatch_accesses:
+            msg = f"Unknown planned dispatch ID: {dispatch!r}."
+            raise ExecutionPlanningError(msg)
+        return self._dispatch_accesses[dispatch]
 
     def is_known(self, *, artifact: ArtifactKey) -> bool:
         """Report whether the artifact is part of the immutable logical plan."""

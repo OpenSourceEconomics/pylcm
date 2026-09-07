@@ -78,10 +78,10 @@ def plan_workspace[Compiled](
 
     Without a budget, the bootstrap width (or an axis's requested width) is compiled
     exactly once and compiler memory analysis is deliberately not consulted, so
-    `resident_bytes` is not consulted either.  With a
-    budget, candidates are compiled and analyzed in rank order — descending width
-    product, ties broken toward the lexicographically greatest width tuple in axis
-    declaration order — and the first whose compiler-reported peak fits is returned.
+    `resident_bytes` is not consulted either.  With a budget, candidates are
+    compiled and analyzed in rank order — descending width product, ties broken
+    toward the lexicographically greatest width tuple in axis declaration order —
+    and the first whose compiler-reported peak fits is returned.
     A candidate is feasible when its compiler-reported peak plus the bytes the plan
     keeps resident on the device at the node's scheduled position fits the budget.
     That is the feasible maximum of the whole frontier, reached without compiling any

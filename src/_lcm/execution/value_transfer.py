@@ -18,6 +18,7 @@ from typing import Protocol, runtime_checkable
 import jax
 import jax.numpy as jnp
 
+from _lcm.execution.footprint import layout_footprint, sharding_device_ids
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
@@ -319,13 +320,13 @@ class ResolvedValueTransfer:
         """Return what this transfer occupies, from its two concrete layouts."""
         item_bytes = jnp.dtype(self.expected_dtype).itemsize
         logical_bytes = item_bytes * math.prod(self.expected_shape)
-        stored_devices = _device_ids(sharding=self.stored_sharding)
-        required_devices = _device_ids(sharding=self.source_sharding)
-        per_device_bytes = _per_device_bytes(
+        stored_devices = sharding_device_ids(sharding=self.stored_sharding)
+        required = layout_footprint(
             sharding=self.source_sharding,
             shape=self.expected_shape,
             item_bytes=item_bytes,
         )
+        per_device_bytes = required.bytes_per_device
         return TransferCost(
             operation_class=_OPERATION_CLASS_BY_KIND[self.kind],
             logical_bytes=logical_bytes,
@@ -333,7 +334,7 @@ class ResolvedValueTransfer:
             temporary_bytes=(
                 0 if self.kind is ValueTransferKind.ALIGNED_LOCAL else per_device_bytes
             ),
-            devices=tuple(sorted(set(stored_devices) | set(required_devices))),
+            devices=tuple(sorted(set(stored_devices) | set(required.device_ids))),
             reused_by_several_consumers=self.reused_by_several_consumers,
         )
 
@@ -535,18 +536,6 @@ def _named_axes(*, spec: jax.sharding.PartitionSpec) -> tuple[str, ...]:
         )
         raise ExecutionPlanningError(msg)
     return tuple(axes)
-
-
-def _device_ids(*, sharding: jax.sharding.Sharding) -> tuple[int, ...]:
-    """Return the ascending ids of the devices one sharding places on."""
-    return tuple(sorted(device.id for device in sharding.device_set))
-
-
-def _per_device_bytes(
-    *, sharding: jax.sharding.Sharding, shape: tuple[int, ...], item_bytes: int
-) -> int:
-    """Return the bytes one device holds under this sharding."""
-    return item_bytes * math.prod(sharding.shard_shape(shape))
 
 
 def _replace_transfer_leaf(
