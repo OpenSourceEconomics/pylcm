@@ -8,13 +8,20 @@ per-period axis — stays readable even when a solver hands it through as a
 continuation leaf.
 """
 
+import dataclasses
 import logging
+from types import MappingProxyType
+from typing import cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from _lcm.execution.value_transfer import ValueArtifactKind
 from _lcm.grids.base import Grid
+from _lcm.solution import backward_induction
+from _lcm.solution.kernel_output import ConsumedKernelOutput
 from lcm import AgeGrid, AgeSpecializedGrid, LinSpacedGrid, Model, categorical
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
@@ -22,7 +29,7 @@ from lcm.consumption_savings_regime import (
     post_decision_lower_bound,
 )
 from lcm.regime import Regime
-from lcm.solver_api import SolutionResult
+from lcm.solver_api import ArtifactKey, SolutionResult
 from lcm.solvers import EGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.regime_building.test_gated_edges_collective_solve import (
@@ -275,3 +282,49 @@ def test_an_age_specialized_axis_survives_an_eager_solve() -> None:
         np.asarray(second.values[0]["working"]),
         np.asarray(first.values[0]["working"]),
     )
+
+
+def test_an_age_specialized_axis_is_still_on_device_after_a_solve() -> None:
+    """The per-period node table the solve read is not deleted by it."""
+    model = _pass_through_model(wealth_grid=_age_specialized_wealth_grid())
+    model.solve(params=_pass_through_params(), log_level="debug")
+
+    axes = model._regimes["dead"].solution.period_state_axes
+    nodes = [
+        cast("jax.Array", axis)
+        for period_axes in (axes or {}).values()
+        for axis in period_axes.values()
+    ]
+
+    assert [axis.is_deleted() for axis in nodes] == [False]
+
+
+_ALIASED_REPLAY_KEY = ArtifactKey(type_id="tests.release_log.aliased", schema_version=1)
+
+
+def test_a_replay_payload_sharing_a_continuation_leaf_survives_the_solve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One array published on two channels outlives a release of either."""
+    published: list[FloatND] = []
+    consume = backward_induction.consume_kernel_output
+
+    def _also_publish_on_replay(**kwargs: object) -> ConsumedKernelOutput:
+        result = consume(**kwargs)  # ty: ignore[invalid-argument-type]
+        if result.continuation is None:
+            return result
+        leaf = jax.tree.leaves(result.continuation)[0]
+        published.append(leaf)
+        return dataclasses.replace(
+            result,
+            replay_artifacts=MappingProxyType({_ALIASED_REPLAY_KEY: leaf}),
+        )
+
+    monkeypatch.setattr(
+        backward_induction, "consume_kernel_output", _also_publish_on_replay
+    )
+    _pass_through_model(enable_jit=True).solve(
+        params=_pass_through_params(), log_level="debug"
+    )
+
+    assert [leaf.is_deleted() for leaf in published] == [False, False]

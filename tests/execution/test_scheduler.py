@@ -370,3 +370,40 @@ def test_an_input_no_output_reused_stays_releasable() -> None:
     )
 
     assert not registry.is_not_produced(array=consumed)
+
+
+def test_a_same_period_value_handed_on_is_marked_unproduced() -> None:
+    """A regime republishing another's value of this period did not produce it."""
+    registry = BufferRegistry()
+    reference_value = jnp.arange(4.0)
+    period_solution = {"reference": reference_value}
+
+    registry.declare_passed_through(
+        inputs=(MappingProxyType({}), period_solution),
+        outputs=(jnp.asarray(reference_value),),
+    )
+
+    assert registry.is_not_produced(array=reference_value)
+
+
+def test_an_unfolded_edge_carried_forward_is_marked_unproduced() -> None:
+    """An edge the fold left alone keeps the buffer it already had."""
+    registry = BufferRegistry()
+    carried = jnp.arange(4.0)
+    edges = MappingProxyType({("source", "target"): carried})
+
+    registry.declare_passed_through(inputs=(edges,), outputs=(dict(edges),))
+
+    assert registry.is_not_produced(array=carried)
+
+
+def test_a_declaration_over_two_channels_marks_the_shared_buffer() -> None:
+    """A payload retained on one channel protects the array another published."""
+    registry = BufferRegistry()
+    shared = jnp.arange(4.0)
+
+    registry.declare_not_produced(
+        tree={("regime", "replay-key"): shared, ("regime", "aux-key"): shared}
+    )
+
+    assert registry.is_not_produced(array=shared)

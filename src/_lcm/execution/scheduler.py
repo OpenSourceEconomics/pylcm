@@ -56,6 +56,12 @@ class BufferRegistry:
     - the arrays the model holds for its whole life are declared once through
       `declare_not_produced`, before the first dispatch.
 
+    The second guard binds per dispatch unit, and a solve has more than one kind
+    of them: for every unit — kernel, fold, terminal — `declare_passed_through`
+    runs with that unit's own inputs and outputs before any release that could
+    reach a buffer the unit touched. `declare_not_produced` takes the rest: the
+    model's arrays, and the payloads the result retains but has not yet copied.
+
     The guards overlap deliberately: each is sound alone for the cases it sees,
     and none is trusted to see every case.
     """

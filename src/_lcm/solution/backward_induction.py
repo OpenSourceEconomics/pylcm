@@ -298,7 +298,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # An eager solve's dispatches are ordinary Python calls, so any object an
     # input contained can come back out as an output; nothing is released.
     if not enable_jit:
-        logger.debug("release skipped: eager dispatch")
+        logger.debug(
+            "release skipped: eager dispatch",
+            extra={"release_skipped": "eager dispatch"},
+        )
     input_templates = SolveInputMappings(
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_continuation=next_regime_to_continuation,
@@ -581,7 +584,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             # Whatever this dispatch handed straight back out, it did not
             # produce. The inputs are read the way the dispatch reads them —
             # through the same period-axis overlay — so an age-specialized
-            # axis is compared as the dispatch actually saw it.
+            # axis is compared as the dispatch actually saw it, and including
+            # this period's own values, which a same-period-ref regime reads.
             buffer_registry.declare_passed_through(
                 inputs=(
                     _states_for_period(
@@ -592,6 +596,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     next_regime_to_V_arr,
                     next_regime_to_continuation,
                     next_edge_to_V_arr,
+                    period_solution,
                 ),
                 outputs=(
                     V_arr,
@@ -601,6 +606,19 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     result.auxiliary_artifacts,
                     result.simulation_policy,
                 ),
+            )
+            # The result keeps these payloads, and the copy that would make
+            # them independent runs only once the period is finished — after
+            # the releases below. Two artifact channels carrying one array is
+            # enough for a release addressed at one of them to reach the other,
+            # so they are declared before any release of this period can run.
+            buffer_registry.declare_not_produced(
+                tree=(
+                    period_retained_continuations,
+                    period_replay_artifacts,
+                    period_auxiliary_artifacts,
+                    period_simulation_policies,
+                )
             )
             next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
                 _release_closed_period_inputs(
@@ -641,7 +659,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         # `period_dissolution_flags`). The node fold is streamed to cap peak
         # memory; parents then read Wbar in place of the raw target V via the
         # existing next_regime_to_V_arr threading.
-        next_edge_to_V_arr = _roll_gated_edges(
+        folded_edge_to_V_arr = _roll_gated_edges(
             regimes=regimes,
             ages=ages,
             period=period,
@@ -651,6 +669,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             flat_params=flat_params,
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
+        # The fold is a dispatch unit in its own right, and it passes a great
+        # deal through: an edge it does not fold keeps its previous Wbar, and
+        # the sharding match a folded one ends in returns its argument whenever
+        # the shardings already agree. Its grids and params need no mention —
+        # those are declared for the whole solve before the first dispatch.
+        buffer_registry.declare_passed_through(
+            inputs=(
+                next_edge_to_V_arr,
+                period_solution,
+                period_dissolution_flags,
+            ),
+            outputs=folded_edge_to_V_arr,
+        )
+        next_edge_to_V_arr = folded_edge_to_V_arr
         # A fold is a consumer of the period's raw values in its own right, so
         # each edge folded above commits the dispatch declared for it. An edge
         # the same enumeration left unfolded declared none and commits nothing.
@@ -1729,7 +1761,9 @@ def _release_closed_period_inputs(
     unchanged: an eager dispatch is an ordinary Python call whose outputs may be
     any object its inputs contained, so no buffer it touched is known to be one
     the engine produced. The ledger is unaffected either way — it counts
-    consumers, and releasing is a separate decision.
+    consumers, and releasing is a separate decision — but its eligibility is
+    never consulted on that path, so an `ExecutionPlanningError` from a release
+    of a still-read key cannot fire under `enable_jit=False`.
     """
     if not release_enabled:
         candidates.clear()
