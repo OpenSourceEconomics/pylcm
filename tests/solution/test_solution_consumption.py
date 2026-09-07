@@ -16,10 +16,10 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 import lcm.model as model_module
-import lcm.solver_api as solver_api_module
 from _lcm.persistence import solution as solution_persistence
 from _lcm.solution import fingerprint as fingerprint_module
 from _lcm.solution import model_authority as model_authority_module
+from lcm._solver_api import entries as entries_module
 from lcm.persistence import load_solution
 from tests.simulation.test_nnbegm_split_workflow_parity import (
     _INITIAL,
@@ -43,8 +43,9 @@ class _Counter:
 
 
 def _count_leaf_copies(monkeypatch: pytest.MonkeyPatch) -> _Counter:
-    counter = _Counter(solver_api_module._copy_artifact_array_leaf)
-    monkeypatch.setattr(solver_api_module, "_copy_artifact_array_leaf", counter)
+    """Count leaf copies in the module whose lazy entries perform them."""
+    counter = _Counter(entries_module._copy_artifact_array_leaf)
+    monkeypatch.setattr(entries_module, "_copy_artifact_array_leaf", counter)
     return counter
 
 

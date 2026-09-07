@@ -1,6 +1,7 @@
 """Constraint routing reaches the solver builder as one complete contract."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import ClassVar
 
 from _lcm.constraints.dispositions import (
     BoundaryProgram,
@@ -36,9 +37,14 @@ def _resources(liquid: ContinuousState) -> FloatND:
 
 @dataclass(frozen=True, kw_only=True)
 class _BoundaryRecordingGridSearch(GridSearch):
-    """Compile solve constraints and record the context handed to the builder."""
+    """Compile solve constraints and record the context handed to the builder.
 
-    contexts: list[SolverBuildContext] = field(default_factory=list)
+    The recorder is class state rather than a declared field: a solver's declared
+    fields enter the model's durable identity, and a build context is not a
+    declaration.
+    """
+
+    contexts: ClassVar[list[SolverBuildContext]] = []
 
     def build_constraint_routes(
         self, *, context: ConstraintRouteContext

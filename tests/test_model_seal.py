@@ -14,7 +14,7 @@ from lcm.exceptions import ModelSealError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
 
-_UTILITY_SCALE = jnp.float64(1.0)
+_UTILITY_SCALE = jnp.asarray(1.0)
 
 
 @categorical(ordered=False)
@@ -64,7 +64,7 @@ _PARAMS = {"discount_factor": 0.95}
 @pytest.fixture
 def restore_scale() -> object:
     yield None
-    globals()["_UTILITY_SCALE"] = jnp.float64(1.0)
+    globals()["_UTILITY_SCALE"] = jnp.asarray(1.0)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -75,7 +75,7 @@ def test_rebinding_a_referenced_global_after_build_is_refused(
     model = _build_model(enable_jit=enable_jit)
     model.solve(params=_PARAMS, log_level="off")
 
-    globals()["_UTILITY_SCALE"] = jnp.float64(7.0)
+    globals()["_UTILITY_SCALE"] = jnp.asarray(7.0)
 
     with pytest.raises(ModelSealError, match="_UTILITY_SCALE"):
         model.solve(params=_PARAMS, log_level="off")
@@ -85,7 +85,7 @@ def test_simulate_checks_the_seal_too(restore_scale: object) -> None:
     del restore_scale
     model = _build_model(enable_jit=False)
     solution = model.solve(params=_PARAMS, log_level="off")
-    globals()["_UTILITY_SCALE"] = jnp.float64(7.0)
+    globals()["_UTILITY_SCALE"] = jnp.asarray(7.0)
 
     with pytest.raises(ModelSealError, match="_UTILITY_SCALE"):
         model.simulate(
@@ -105,7 +105,7 @@ def test_rebinding_back_to_the_captured_object_lifts_the_refusal(
     del restore_scale
     original = _UTILITY_SCALE
     model = _build_model(enable_jit=False)
-    globals()["_UTILITY_SCALE"] = jnp.float64(7.0)
+    globals()["_UTILITY_SCALE"] = jnp.asarray(7.0)
     globals()["_UTILITY_SCALE"] = original
 
     solution = model.solve(params=_PARAMS, log_level="off")
