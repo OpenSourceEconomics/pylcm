@@ -13,6 +13,7 @@ import dataclasses
 import functools
 import logging
 import operator
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -22,7 +23,7 @@ import numpy as np
 import pytest
 
 from _lcm.execution.scheduler import buffer_identity
-from _lcm.execution.value_transfer import ValueArtifactKind
+from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.grids import categorical
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.solution import backward_induction
@@ -66,6 +67,14 @@ _skip_pytest_parallel = pytest.mark.skipif(
 _COUNTER = ArtifactKey(type_id="tests.lifetime_counter", schema_version=1)
 _N_PERIODS = 4
 _PARAMS = {"discount_factor": 1.0}
+
+#: A regime value of the model below, and a dispatch that runs in every solve.
+#: Logged as a release by the one test that shows the release log reports a
+#: regime value when one is released.
+_A_REGIME_VALUE = ValueArtifactAddress(
+    kind=ValueArtifactKind.REGIME_VALUE, period=0, regime="alive"
+)
+_A_DISPATCH = (0, "alive")
 
 #: Every count leaf an argument builder handed to a reading program, build calls
 #: included; the dispatch's own read is the last entry when its output is
@@ -113,6 +122,37 @@ class _Carry:
         return MappingProxyType({("count",): self.count})
 
 
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class _TwoLeafCarry:
+    """A two-leaf continuation whose leaves may name one array."""
+
+    count: FloatND
+    echo: FloatND
+
+    @property
+    def artifact_key(self) -> ArtifactKey:
+        """Name the versioned key this payload is published under."""
+        return _COUNTER
+
+    @property
+    def capabilities(self) -> ContinuationCapabilities:
+        """Report that the payload answers no query of its own."""
+        return ContinuationCapabilities()
+
+    def value_at(self, *, query: FloatND) -> FloatND:
+        """Refuse a value query: this payload publishes leaves only."""
+        raise NotImplementedError
+
+    def marginal_at(self, *, query: FloatND, state: StateName) -> FloatND:
+        """Refuse a marginal query: this payload publishes leaves only."""
+        raise NotImplementedError
+
+    def leaves(self) -> MappingProxyType[tuple[str, ...], FloatND]:
+        """Return the two addressable arrays of this payload."""
+        return MappingProxyType({("count",): self.count, ("echo",): self.echo})
+
+
 def _state_sum(*, states: tuple[FloatND, ...]) -> FloatND:
     """One value per state node: the sum of the node's own coordinates."""
     return functools.reduce(operator.add, jnp.meshgrid(*states, indexing="ij"))
@@ -124,9 +164,22 @@ def _value_and_fresh_carry(*, states: tuple[FloatND, ...]) -> tuple[FloatND, _Ca
     return value, _Carry(count=value + 1.0)
 
 
+def _value_and_shared_leaf(*, states: tuple[FloatND, ...]) -> tuple[FloatND, FloatND]:
+    """Publish the state sum, and one further array of its own."""
+    value = _state_sum(states=states)
+    return value, value + 1.0
+
+
 def _value_from_count(*, states: tuple[FloatND, ...], count: FloatND) -> FloatND:
     """One value per state node: the state sum plus the target's count."""
     return _state_sum(states=states) + count
+
+
+def _value_from_two_counts(
+    *, states: tuple[FloatND, ...], count: FloatND, echo: FloatND
+) -> FloatND:
+    """One value per state node: the state sum plus both leaves read."""
+    return _state_sum(states=states) + count + echo
 
 
 def _terminal_arguments(build: Any) -> dict[str, Any]:
@@ -141,6 +194,17 @@ def _reading_arguments(build: Any) -> dict[str, Any]:
     return {
         "states": tuple(build.state_action_space.states.values()),
         "count": count,
+    }
+
+
+def _two_leaf_reading_arguments(build: Any) -> dict[str, Any]:
+    """Feed the state grids and both published leaves to the program."""
+    payload = build.next_regime_to_continuation["dead"]
+    _READ_INPUTS.append(payload.count)
+    return {
+        "states": tuple(build.state_action_space.states.values()),
+        "count": payload.count,
+        "echo": payload.echo,
     }
 
 
@@ -162,6 +226,13 @@ def _placed_zeros(
     mesh; the state nodes a solver is handed at build carry the unplaced
     layout, so the mesh is resolved from the regime's grids and placed devices
     the way the engine resolves it for its own carries.
+
+    That resolution reaches into `_lcm.engine`, whose `_build_regime_sharding`
+    is private, and this helper breaks if it is renamed. Nothing public offers
+    it: `lcm.solvers` and `lcm.solver_api` publish no sharding, the build
+    context carries only `grids` and `submesh_device_ids`, and
+    `_lcm.egm.carry.shard_carry_template` is typed to the EGM carry, so a
+    foreign payload cannot go through it.
     """
     from _lcm.engine import (  # noqa: PLC0415
         _build_regime_sharding,
@@ -296,6 +367,119 @@ class _AliasingTerminalSolver(Solver):
         )
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _SharedLeafKernel:
+    """Publish one array the executable produced under both leaf paths."""
+
+    programs: MappingProxyType[str, CoreProgram]
+
+    def core_programs(self) -> MappingProxyType[str, CoreProgram]:
+        """Return the core graph the planner consumes."""
+        return self.programs
+
+    def with_fixed_params(self, *, fixed_flat_params: Any) -> _SharedLeafKernel:  # noqa: ARG002
+        """Return this parameter-free kernel unchanged."""
+        return self
+
+    def __call__(
+        self,
+        *,
+        compiled_cores: Any,
+        state_action_space: Any,
+        next_regime_to_V_arr: Any,
+        next_regime_to_continuation: Any,
+        flat_params: Any,
+        period: int,
+        ages: Any,
+        logger: Any,  # noqa: ARG002
+        **_unused: Any,
+    ) -> KernelOutput:
+        """Dispatch the program and put its second output under both paths."""
+        context = CoreBuildContext(
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+        )
+        value, leaf = compiled_cores["main"](
+            **self.programs["main"].argument_builder(context)
+        )
+        return KernelOutput(
+            value=value,
+            continuations={_COUNTER: _TwoLeafCarry(count=leaf, echo=leaf)},
+        )
+
+
+class _SharedLeafTerminalSolver(Solver):
+    """Publishes one produced array under both leaf paths of its payload."""
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Declare one dense program per active period, publishing both paths."""
+        program = _terminal_program(
+            function=_value_and_shared_leaf,
+            output_roles=(
+                OutputRole.VALUE,
+                StateAxesLeading(state_names=tuple(context.state_action_space.states)),
+            ),
+        )
+        zeros = _terminal_template(context=context).count
+        kernels = {
+            period: _SharedLeafKernel(programs=MappingProxyType({"main": program}))
+            for period in context.regimes_to_active_periods[context.regime_name]
+        }
+        return SolutionKernels(
+            period_kernels=MappingProxyType(kernels),
+            continuation_spec=ContinuationSpec(
+                template=_TwoLeafCarry(count=zeros, echo=zeros),
+                artifact_key=_COUNTER,
+            ),
+        )
+
+
+def _reading_kernels(
+    *,
+    context: SolverBuildContext,
+    function: Any,
+    argument_builder: Any,
+    template: Any,
+    argument_by_leaf: Mapping[tuple[str, ...], str],
+    donation_candidates: tuple[str, ...],
+) -> SolutionKernels:
+    """One dense reading program per active period, over the declared leaves.
+
+    The template is read for its leaf paths alone, so the reader's own shapes
+    say nothing about the arrays the target publishes.
+    """
+    from tests.test_solver_api_out_of_tree import _GraphKernel  # noqa: PLC0415
+
+    kernels = {}
+    for period in context.regimes_to_active_periods[context.regime_name]:
+        program = CoreProgram(
+            name="main",
+            function=function,
+            argument_builder=argument_builder,
+            requirements=CoreExecutionRequirements(
+                value_reads=continuation_leaf_reads(
+                    template=template,
+                    artifact_key=_COUNTER,
+                    target="dead",
+                    source_regime=context.regime_name,
+                    source_period=period,
+                    core_key="main",
+                    argument_by_leaf=argument_by_leaf,
+                )
+            ),
+            output_roles=OutputRole.VALUE,
+            disposition=CoreExecutionDisposition.DENSE,
+            disposition_reason="one_row_per_state_node",
+            donation_candidates=donation_candidates,
+        )
+        kernels[period] = _GraphKernel(programs=MappingProxyType({"main": program}))
+    return SolutionKernels(period_kernels=MappingProxyType(kernels))
+
+
 class _ReadingSolver(Solver):
     """Reads the terminal regime's published leaf into its own value."""
 
@@ -308,41 +492,35 @@ class _ReadingSolver(Solver):
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Declare one dense program per active period, reading the count leaf."""
-        from tests.test_solver_api_out_of_tree import _GraphKernel  # noqa: PLC0415
-
-        # Read for its leaf paths alone, so its own shape says nothing about the
-        # arrays the target publishes.
-        template = _Carry(count=jnp.zeros(()))
-        kernels = {}
-        for period in context.regimes_to_active_periods[context.regime_name]:
-            program = CoreProgram(
-                name="main",
-                function=_value_from_count,
-                argument_builder=_reading_arguments,
-                requirements=CoreExecutionRequirements(
-                    value_reads=continuation_leaf_reads(
-                        template=template,
-                        artifact_key=_COUNTER,
-                        target="dead",
-                        source_regime=context.regime_name,
-                        source_period=period,
-                        core_key="main",
-                        argument_by_leaf={("count",): "count"},
-                    )
-                ),
-                output_roles=OutputRole.VALUE,
-                disposition=CoreExecutionDisposition.DENSE,
-                disposition_reason="one_row_per_state_node",
-                donation_candidates=self.donation_candidates,
-            )
-            kernels[period] = _GraphKernel(programs=MappingProxyType({"main": program}))
-        return SolutionKernels(period_kernels=MappingProxyType(kernels))
+        return _reading_kernels(
+            context=context,
+            function=_value_from_count,
+            argument_builder=_reading_arguments,
+            template=_Carry(count=jnp.zeros(())),
+            argument_by_leaf={("count",): "count"},
+            donation_candidates=self.donation_candidates,
+        )
 
 
 class _DonatingReadingSolver(_ReadingSolver):
     """Names the continuation leaf it reads as a donation candidate."""
 
     donation_candidates = ("count",)
+
+
+class _TwoLeafReadingSolver(_ReadingSolver):
+    """Reads both leaves of the target's payload into its own value."""
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Declare one dense program per active period, reading both leaves."""
+        return _reading_kernels(
+            context=context,
+            function=_value_from_two_counts,
+            argument_builder=_two_leaf_reading_arguments,
+            template=_TwoLeafCarry(count=jnp.zeros(()), echo=jnp.zeros(())),
+            argument_by_leaf={("count",): "count", ("echo",): "echo"},
+            donation_candidates=self.donation_candidates,
+        )
 
 
 def _model(
@@ -495,8 +673,14 @@ def _solve_with_events(
     terminal_solver: Solver | None = None,
     monkeypatch: pytest.MonkeyPatch,
     compile_recorder: _CompileRecorder | None = None,
+    seeded_release: ValueArtifactAddress | None = None,
 ) -> _Observation:
-    """Solve the sharded model, interleaving its records with its dispatches."""
+    """Solve the sharded model, interleaving its records with its dispatches.
+
+    `seeded_release` is logged as a release of the run, in the record shape the
+    engine uses, so a claim that the solve released no artifact of some kind can
+    be paired with the same predicate reporting one that was.
+    """
     _READ_INPUTS.clear()
     handler = _Events()
     reads: list[tuple[int, FloatND]] = []
@@ -529,6 +713,16 @@ def _solve_with_events(
         solution = _model(solver=solver, terminal_solver=terminal_solver).solve(
             params=_PARAMS, log_level="debug"
         )
+        if seeded_release is not None:
+            logger.debug(
+                "released %r after dispatch %r",
+                seeded_release,
+                _A_DISPATCH,
+                extra={
+                    "artifact_key": seeded_release,
+                    "closing_dispatch": _A_DISPATCH,
+                },
+            )
     finally:
         logger.removeHandler(handler)
     return _Observation(
@@ -595,6 +789,24 @@ def test_no_later_dispatch_reads_a_released_artifact(
 
 
 @_skip_pytest_parallel
+def test_every_reading_dispatch_declares_the_leaf_it_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ledger names one leaf per reading dispatch, the one it was handed."""
+    recorder = _CompileRecorder(
+        compile_programs=backward_induction._compile_all_functions
+    )
+    observed = _solve_with_events(monkeypatch=monkeypatch, compile_recorder=recorder)
+    (programs,) = recorder.compiled
+    ledger = programs.input_liveness
+
+    assert [
+        [artifact.period for artifact in ledger.accesses_of(dispatch=(period, "alive"))]
+        for period, _ in observed.reads
+    ] == [[period + 1] for period, _ in observed.reads]
+
+
+@_skip_pytest_parallel
 def test_the_continuation_leaf_of_every_read_period_is_released(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -619,15 +831,29 @@ def test_no_regime_value_is_released(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @_skip_pytest_parallel
+def test_a_released_regime_value_is_reported_by_the_kind_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The filter that reports no released regime value does report one."""
+    observed = _solve_with_events(
+        monkeypatch=monkeypatch, seeded_release=_A_REGIME_VALUE
+    )
+
+    assert [
+        artifact
+        for kind, artifact, _ in observed.events
+        if kind == "release" and artifact.kind is ValueArtifactKind.REGIME_VALUE
+    ] == [_A_REGIME_VALUE]
+
+
+@_skip_pytest_parallel
 def test_every_retained_value_stays_readable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every value a period published is still readable after the solve."""
     observed = _solve_with_events(monkeypatch=monkeypatch)
 
-    assert not [
-        period
-        for period, (value, _) in observed.published.items()
-        if value.is_deleted()
-    ]
+    assert [
+        value.is_deleted() for _, (value, _) in sorted(observed.published.items())
+    ] == [False] * _N_PERIODS
 
 
 @_skip_pytest_parallel
@@ -671,6 +897,33 @@ def test_no_release_names_a_leaf_the_retained_value_shares(
     )
 
     assert _released_leaf_periods(observed=observed, regime="dead") == []
+
+
+@_skip_pytest_parallel
+def test_two_keys_on_one_produced_buffer_are_released_together(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One release frees a buffer two keys name, and names both on its records.
+
+    Both keys address one array a compiled executable produced, so the release
+    reaches the partner-eligibility rule rather than the not-produced skip: a
+    second delete of the same buffer would report one key, not two.
+    """
+    observed = _solve_with_events(
+        solver=_TwoLeafReadingSolver(),
+        terminal_solver=_SharedLeafTerminalSolver(),
+        monkeypatch=monkeypatch,
+    )
+
+    assert sorted(
+        (artifact.period, artifact.leaf_path)
+        for kind, artifact, _ in observed.events
+        if kind == "release" and artifact.kind is ValueArtifactKind.CONTINUATION_LEAF
+    ) == [
+        (period, path)
+        for period in range(1, _N_PERIODS)
+        for path in (("count",), ("echo",))
+    ]
 
 
 @_skip_pytest_parallel
@@ -744,9 +997,9 @@ def test_a_read_no_solver_donates_survives_its_own_dispatch(
 def donating_and_plain_values() -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
     """Per period, the values the donating and the releasing solver publish."""
     donating = _model(solver=_DonatingReadingSolver()).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
-    plain = _model().solve(params=_PARAMS, log_level="off")
+    plain = _model().solve(params=_PARAMS, log_level="debug")
     return (
         {
             period: np.asarray(donating.values[period]["dead"])
@@ -783,9 +1036,9 @@ def donating_and_plain_reading_values() -> tuple[
 ]:
     """Per read period, the values the two reading solvers publish."""
     donating = _model(solver=_DonatingReadingSolver()).solve(
-        params=_PARAMS, log_level="off"
+        params=_PARAMS, log_level="debug"
     )
-    plain = _model().solve(params=_PARAMS, log_level="off")
+    plain = _model().solve(params=_PARAMS, log_level="debug")
     return (
         {
             period: np.asarray(donating.values[period]["alive"])
@@ -821,6 +1074,6 @@ def test_donation_leaves_every_reading_value_unchanged(
 @_skip_pytest_parallel
 def test_the_value_is_sharded_over_all_four_devices() -> None:
     """The model whose lifetimes are measured really is sharded on this topology."""
-    solution = _model().solve(params=_PARAMS, log_level="off")
+    solution = _model().solve(params=_PARAMS, log_level="debug")
 
     assert len(solution.values[0]["alive"].sharding.device_set) == 4
