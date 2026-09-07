@@ -19,7 +19,6 @@ from _lcm.execution.core_program import (
     CoreProgramGraphAware,
     MaterializedCoreProgram,
     ReducedAxis,
-    ReductionSemantics,
     ResolvedCoreProgram,
     ValueRead,
     core_program_graph,
@@ -31,6 +30,7 @@ from _lcm.execution.output_layout import (
     VALUE,
     resolve_output_layout,
 )
+from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
     ValueArtifactKind,
@@ -96,7 +96,7 @@ def _axis(
     coordinate_names: tuple[str, ...] = ("first", "second"),
     coordinate_extents: tuple[int, ...] = (2, 3),
     canonical_order: Literal["c"] = "c",
-    reduction: ReductionSemantics = HARD_MAX_REDUCTION,
+    reduction: ReductionDeclaration = HARD_MAX_REDUCTION,
 ) -> ReducedAxis:
     return ReducedAxis(
         name="action_product",
@@ -915,7 +915,7 @@ def test_resolver_rejects_a_dynamic_argument_colliding_with_the_width() -> None:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _UnhashableReductionSemantics:
+class _UnhashableReductionDeclaration:
     @property
     def semantic_key(self) -> Hashable:
         return cast("Hashable", [])
@@ -926,7 +926,7 @@ class _UnhashableReductionSemantics:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ExactnessFreeReductionSemantics:
+class _ExactnessFreeReductionDeclaration:
     @property
     def semantic_key(self) -> Hashable:
         return ("no-exactness", 1)
@@ -935,17 +935,17 @@ class _ExactnessFreeReductionSemantics:
 @pytest.mark.parametrize(
     ("reduction", "message"),
     [
-        (cast("ReductionSemantics", object()), "stable semantic_key"),
+        (cast("ReductionDeclaration", object()), "stable semantic_key"),
         (
-            cast("ReductionSemantics", _ExactnessFreeReductionSemantics()),
+            cast("ReductionDeclaration", _ExactnessFreeReductionDeclaration()),
             "stable semantic_key",
         ),
-        (_UnhashableReductionSemantics(), "semantic_key.*hashable"),
+        (_UnhashableReductionDeclaration(), "semantic_key.*hashable"),
     ],
     ids=["missing-semantic-key", "missing-exactness", "unhashable-semantic-key"],
 )
 def test_resolver_rejects_reduction_without_a_stable_semantic_key(
-    *, reduction: ReductionSemantics, message: str
+    *, reduction: ReductionDeclaration, message: str
 ) -> None:
     axis = _axis()
     object.__setattr__(axis, "reduction", reduction)

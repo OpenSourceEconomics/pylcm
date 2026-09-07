@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 import jax
 
+from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
@@ -73,36 +74,6 @@ class _TransferArgumentLeaf(Protocol):
     sharding: object
 
 
-@runtime_checkable
-class ReductionSemantics(Protocol):
-    """Solver-owned reduction over the blocks of one reduced axis.
-
-    - `semantic_key` names the numerical contract and enters static program
-      identity.
-    - `exactness` says whether block order can change the published value:
-      `"exact"` results are bit-identical across widths, `"tolerance_equivalent"`
-      results agree to the working format's rounding.
-
-    A specification also carries the fold the planner drives when it streams the
-    axis — an accumulator created once, one contribution per block, a merge of two
-    partial accumulators, and a finalization that publishes the reduced value.
-    Every block sees only its own cells. The accumulator type and the exact
-    argument names of that fold belong to the solver family that owns the axis, so
-    the two members above are what every specification has in common and what this
-    protocol checks.
-    """
-
-    @property
-    def semantic_key(self) -> Hashable:
-        """Return a stable key for the reduction's numerical contract."""
-        ...
-
-    @property
-    def exactness(self) -> Literal["exact", "tolerance_equivalent"]:
-        """Return whether block order can move the published value."""
-        ...
-
-
 @dataclass(frozen=True, kw_only=True)
 class ReducedAxis:
     """One Cartesian-product axis the planner may stream and fold with `reduction`."""
@@ -119,8 +90,8 @@ class ReducedAxis:
     canonical_order: Literal["c"]
     """Order the flat product identity counts the coordinates in."""
 
-    reduction: ReductionSemantics
-    """Fold that makes any block schedule equivalent to one canonical pass."""
+    reduction: ReductionDeclaration
+    """Contract the fold behind this axis satisfies, by key and exactness."""
 
     width_keyword: str
     """Keyword the core function accepts for the compiled block width."""
@@ -1283,7 +1254,7 @@ def _validate_reduced_axis(
     if axis.canonical_order != "c":
         msg = f"Reduced axis {axis.name!r} canonical order must be 'c'."
         raise ValueError(msg)
-    _validate_reduction_semantics(axis=axis)
+    _validate_reduction_declaration(axis=axis)
     for coordinate_name, coordinate_extent in zip(
         axis.coordinate_names, axis.coordinate_extents, strict=True
     ):
@@ -1326,10 +1297,13 @@ def _validate_coordinate_declaration(*, axis: ReducedAxis) -> None:
         raise ValueError(msg)
 
 
-def _validate_reduction_semantics(*, axis: ReducedAxis) -> None:
-    """Require stable, hashable semantics for the axis reduction."""
-    if not isinstance(axis.reduction, ReductionSemantics):
-        msg = f"Reduced axis {axis.name!r} reduction must expose a stable semantic_key."
+def _validate_reduction_declaration(*, axis: ReducedAxis) -> None:
+    """Require a stable, hashable key and a declared exactness for the reduction."""
+    if not isinstance(axis.reduction, ReductionDeclaration):
+        msg = (
+            f"Reduced axis {axis.name!r} reduction must expose a stable "
+            "semantic_key and a declared exactness."
+        )
         raise TypeError(msg)
     try:
         hash(axis.reduction.semantic_key)

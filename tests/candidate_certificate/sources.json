@@ -14,7 +14,7 @@
           },
           {
             "path": "src/_lcm/execution/core_program.py",
-            "sha256": "3f4bf9c68976e619d7a776fec0b041a9dbb53598c12ec3637b59030428c3ee67"
+            "sha256": "9c15b4cb05ef32f8a98bb9c52da767f56b1ffad357cdfa7a3dfd44c3b11f1104"
           },
           {
             "path": "src/_lcm/execution/footprint.py",
@@ -174,7 +174,7 @@
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
-            "sha256": "126d59d8c81b88113d4b41d8876ee9cc2d6abf0f4344a625fcd3d9e9c201466c"
+            "sha256": "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445"
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
@@ -222,7 +222,7 @@
           }
         ],
         "source_count": 54,
-        "source_inventory_sha256": "df58f5d82f6bca2412105928b37c00428bdf361d16fd79c5515d8b1ba2e13265"
+        "source_inventory_sha256": "9617234a295958e40ce4ad16d7ba969062b97ace824afd3968cebecdc7bc0229"
       },
       "fast": {
         "candidate_sources": [
@@ -236,7 +236,7 @@
           },
           {
             "path": "src/_lcm/execution/core_program.py",
-            "sha256": "3f4bf9c68976e619d7a776fec0b041a9dbb53598c12ec3637b59030428c3ee67"
+            "sha256": "9c15b4cb05ef32f8a98bb9c52da767f56b1ffad357cdfa7a3dfd44c3b11f1104"
           },
           {
             "path": "src/_lcm/execution/footprint.py",
@@ -396,7 +396,7 @@
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
-            "sha256": "126d59d8c81b88113d4b41d8876ee9cc2d6abf0f4344a625fcd3d9e9c201466c"
+            "sha256": "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445"
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
@@ -444,13 +444,13 @@
           }
         ],
         "source_count": 54,
-        "source_inventory_sha256": "df58f5d82f6bca2412105928b37c00428bdf361d16fd79c5515d8b1ba2e13265"
+        "source_inventory_sha256": "9617234a295958e40ce4ad16d7ba969062b97ace824afd3968cebecdc7bc0229"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "df58f5d82f6bca2412105928b37c00428bdf361d16fd79c5515d8b1ba2e13265",
+  "source_inventory_sha256": "9617234a295958e40ce4ad16d7ba969062b97ace824afd3968cebecdc7bc0229",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -462,7 +462,7 @@
     },
     {
       "path": "src/_lcm/execution/core_program.py",
-      "sha256": "3f4bf9c68976e619d7a776fec0b041a9dbb53598c12ec3637b59030428c3ee67"
+      "sha256": "9c15b4cb05ef32f8a98bb9c52da767f56b1ffad357cdfa7a3dfd44c3b11f1104"
     },
     {
       "path": "src/_lcm/execution/footprint.py",
@@ -622,7 +622,7 @@
     },
     {
       "path": "src/_lcm/solution/logsumexp_action_reduction.py",
-      "sha256": "126d59d8c81b88113d4b41d8876ee9cc2d6abf0f4344a625fcd3d9e9c201466c"
+      "sha256": "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445"
     },
     {
       "path": "src/_lcm/solution/period_replay.py",

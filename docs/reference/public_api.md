@@ -215,7 +215,8 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.ReducedAxis`](custom_solvers.md)                                             | Declared axis folded by a reduction   |
 | [`lcm.solvers.TiledOutputAxis`](custom_solvers.md)                                         | Declared axis whose tiles concatenate |
 | [`lcm.solvers.ACTION_PRODUCT_AXIS`](custom_solvers.md)                                     | Name of the action-product axis       |
-| [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Reduction a streamed axis performs    |
+| [`lcm.solvers.ReductionDeclaration`](custom_solvers.md)                                    | Contract a reduced axis names         |
+| [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Declaration carrying its own fold     |
 | [`lcm.solvers.EXACTNESS_VALUES`](custom_solvers.md)                                        | The two published exactness values    |
 | [`lcm.solvers.WeightedExpectationReduction`](custom_solvers.md)                            | Weighted sum over stochastic nodes    |
 | [`lcm.solvers.HardMaxWithCarryReduction`](custom_solvers.md)                               | Hard max carrying the winner payload  |

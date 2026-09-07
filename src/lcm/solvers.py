@@ -46,8 +46,8 @@ paper rather than here.
 A solver may also be written outside pylcm. `lcm.solvers` re-exports everything
 such a solver constructs — the execution-contract types (`CoreProgram`,
 `CoreBuildContext`, `CoreExecutionRequirements`, `CoreExecutionDisposition`,
-`ProgramScope`, `ReducedAxis`, `TiledOutputAxis`, `ReductionSemantics`,
-`ACTION_PRODUCT_AXIS`, `EXACTNESS_VALUES`, `OutputRole`,
+`ProgramScope`, `ReducedAxis`, `TiledOutputAxis`, `ReductionDeclaration`,
+`ReductionSemantics`, `ACTION_PRODUCT_AXIS`, `EXACTNESS_VALUES`, `OutputRole`,
 `StateAxesLeading`, `PeriodKernel`, `StateActionSpace`), the continuation types
 and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
 `period_to_continuation_target`, `target_period_grid`, `union_free_params`,
@@ -84,7 +84,6 @@ from _lcm.execution.core_program import (
     InternalOutputSpec,
     ProgramScope,
     ReducedAxis,
-    ReductionSemantics,
     TiledOutputAxis,
     ValueRead,
 )
@@ -93,6 +92,8 @@ from _lcm.execution.reductions import (
     EXACTNESS_VALUES,
     HardMaxWithCarryReduction,
     IntervalEnvelopeReduction,
+    ReductionDeclaration,
+    ReductionSemantics,
     WeightedExpectationReduction,
 )
 from _lcm.execution.value_transfer import (
@@ -261,6 +262,7 @@ __all__ = [
     "ProgramScope",
     "RFCEnvelope",
     "ReducedAxis",
+    "ReductionDeclaration",
     "ReductionSemantics",
     "ReplayMode",
     "ReplayModelContext",

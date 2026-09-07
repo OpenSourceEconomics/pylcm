@@ -7,11 +7,8 @@ from typing import Literal, cast
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
-from _lcm.execution.core_program import (
-    ReducedAxis,
-    ReductionSemantics,
-    TiledOutputAxis,
-)
+from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
+from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.workspace_planning import (
     WorkspacePlan,
     plan_workspace,
@@ -85,7 +82,7 @@ def _axis(
         coordinate_names=names,
         coordinate_extents=extents,
         canonical_order="c",
-        reduction=cast("ReductionSemantics", _Reduction()),
+        reduction=cast("ReductionDeclaration", _Reduction()),
         width_keyword=f"_lcm_{name}_width",
     )
 

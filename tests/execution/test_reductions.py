@@ -1,26 +1,32 @@
-"""Every reduction specification satisfies the public protocol."""
+"""Reductions are declared at two levels: the contract, and the fold behind it."""
 
 import pytest
 
 from _lcm.execution.reductions import (
     EXACTNESS_VALUES,
-    HardMaxWithCarryReduction,
-    IntervalEnvelopeReduction,
+    HARD_MAX_WITH_CARRY_REDUCTION,
+    INTERVAL_ENVELOPE_REDUCTION,
+    WEIGHTED_EXPECTATION_REDUCTION,
+    ReductionDeclaration,
     ReductionSemantics,
-    WeightedExpectationReduction,
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.collective_action_reduction import COLLECTIVE_HARD_MAX_REDUCTION
 from _lcm.solution.logsumexp_action_reduction import LOGSUMEXP_REDUCTION
 
-_SPECS = {
+_SHIPPED_FOLDS = {
     "hard_max": HARD_MAX_REDUCTION,
     "logsumexp": LOGSUMEXP_REDUCTION,
     "collective_hard_max": COLLECTIVE_HARD_MAX_REDUCTION,
-    "weighted_expectation": WeightedExpectationReduction(),
-    "hard_max_with_carry": HardMaxWithCarryReduction(),
-    "interval_envelope": IntervalEnvelopeReduction(),
 }
+
+_DECLARATIONS_ONLY = {
+    "weighted_expectation": WEIGHTED_EXPECTATION_REDUCTION,
+    "hard_max_with_carry": HARD_MAX_WITH_CARRY_REDUCTION,
+    "interval_envelope": INTERVAL_ENVELOPE_REDUCTION,
+}
+
+_SPECS = _SHIPPED_FOLDS | _DECLARATIONS_ONLY
 
 _EXPECTED_EXACTNESS = {
     "hard_max": "exact",
@@ -33,9 +39,21 @@ _EXPECTED_EXACTNESS = {
 
 
 @pytest.mark.parametrize("key", sorted(_SPECS))
-def test_reduction_satisfies_the_protocol(key: str) -> None:
-    """A reduction specification is an instance of the runtime-checkable protocol."""
-    assert isinstance(_SPECS[key], ReductionSemantics)
+def test_reduction_satisfies_the_declaration_protocol(key: str) -> None:
+    """Every specification names its contract through the declaration protocol."""
+    assert isinstance(_SPECS[key], ReductionDeclaration)
+
+
+@pytest.mark.parametrize("key", sorted(_SHIPPED_FOLDS))
+def test_shipped_reduction_carries_a_planner_drivable_fold(key: str) -> None:
+    """A specification whose kernel this module owns satisfies the fold protocol."""
+    assert isinstance(_SHIPPED_FOLDS[key], ReductionSemantics)
+
+
+@pytest.mark.parametrize("key", sorted(_DECLARATIONS_ONLY))
+def test_declaration_only_reduction_carries_no_fold(key: str) -> None:
+    """A specification whose kernel lives with its solver stays a declaration."""
+    assert not isinstance(_DECLARATIONS_ONLY[key], ReductionSemantics)
 
 
 @pytest.mark.parametrize("key", sorted(_SPECS))

@@ -14,7 +14,6 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     MaterializedCoreProgram,
     ReducedAxis,
-    ReductionSemantics,
     ValueRead,
     resolve_core_program,
 )
@@ -23,6 +22,7 @@ from _lcm.execution.output_layout import (
     PlannedCore,
     resolve_output_layout,
 )
+from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
@@ -38,7 +38,7 @@ _WIDTH_KEYWORD = "_test_action_tile_width"
 
 
 @dataclass(frozen=True, kw_only=True)
-class _FakeReductionSemantics:
+class _FakeReductionDeclaration:
     """Test adapter proving execution depends on semantics, not a solver class."""
 
     semantic_key: Hashable
@@ -106,7 +106,7 @@ def _program(
     *,
     arguments: Mapping[str, object] | None = None,
     coordinate_extent: int = 2,
-    reduction: ReductionSemantics = HARD_MAX_REDUCTION,
+    reduction: ReductionDeclaration = HARD_MAX_REDUCTION,
     function: Callable[..., object] = _core,
 ) -> MaterializedCoreProgram:
     """Build one canonical action-product declaration for resolver tests."""
@@ -448,19 +448,19 @@ def test_planned_core_applies_and_retains_its_absolute_input_transfer_plan() -> 
 def test_reduction_semantics_supply_stable_specialization_identity() -> None:
     first = resolve_core_program(
         program=_program(
-            reduction=_FakeReductionSemantics(semantic_key=("fake-reduction", 1))
+            reduction=_FakeReductionDeclaration(semantic_key=("fake-reduction", 1))
         ),
         tile_widths={"action_product": 1},
     )
     equivalent = resolve_core_program(
         program=_program(
-            reduction=_FakeReductionSemantics(semantic_key=("fake-reduction", 1))
+            reduction=_FakeReductionDeclaration(semantic_key=("fake-reduction", 1))
         ),
         tile_widths={"action_product": 1},
     )
     changed = resolve_core_program(
         program=_program(
-            reduction=_FakeReductionSemantics(semantic_key=("fake-reduction", 2))
+            reduction=_FakeReductionDeclaration(semantic_key=("fake-reduction", 2))
         ),
         tile_widths={"action_product": 1},
     )

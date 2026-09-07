@@ -161,13 +161,35 @@ program a data-dependent number of times — the driver that owns the loop also 
 results it caches between dispatches — so it too must carry a reason. `PLANNED` hands
 the width choice to the engine and must *not* carry a reason; declaring one is refused.
 A planned program declares whichever axes the engine may stream — `reduced_axes` for an
-axis folded by a `ReductionSemantics`, `tiled_axes` for one whose tiles are concatenated
-— and a solver whose body streams nothing declares an empty set; the shipped NB-EGM
-graph does exactly that. Only a planned program may declare an execution axis. Every
-reduction states its `exactness`: `"exact"` when block order cannot move the published
-value, `"tolerance_equivalent"` when results agree to the working format's rounding.
+axis folded by a reduction, `tiled_axes` for one whose tiles are concatenated — and a
+solver whose body streams nothing declares an empty set; the shipped NB-EGM graph does
+exactly that. Only a planned program may declare an execution axis.
 `ExecutionConfig(axis_widths=...)` fixes the compiled width of any declared axis by its
 name.
+
+A reduced axis names its reduction at one of two levels. `ReductionDeclaration` is the
+contract: a stable `semantic_key`, which enters static program identity so two programs
+folding the same axis differently never share a compiled executable, and an `exactness`
+— `"exact"` when block order cannot move the published value, `"tolerance_equivalent"`
+when results agree to the working format's rounding. That pair is what the axis
+references and what the engine validates, and it is all a solver owes when the fold
+kernel belongs to the solver's own body: the planner's width reaches such a kernel
+through the axis's `width_keyword`, as it does for any streamed core.
+
+`ReductionSemantics` is a declaration that also publishes the fold itself, so the
+planner may drive it block by block: `initialize` builds one accumulator from a value
+template, `add` folds one block of candidates into it, `merge` combines two accumulators
+covering disjoint blocks, and `finalize` turns an accumulator into the published result.
+A reduction at this level publishes the same value whichever partition the planner
+picks, and carries the dense argmax identity — for the hard maxes, the winner is the
+candidate at the first canonical position attaining the maximum, whatever the block
+boundaries are.
+
+`WeightedExpectationReduction`, `HardMaxWithCarryReduction` and
+`IntervalEnvelopeReduction` are declarations: they name a contract that a solver's own
+kernel fulfils. The reductions the shipped `GridSearch` body owns — the hard max over
+the action product, its collective counterpart, and the logsumexp under taste shocks —
+publish their fold, so the planner can drive them directly.
 
 `donation_candidates` names arguments the engine may donate to the compiled program. An
 argument is donated when every artifact it carries by a declared `ValueRead` addressed

@@ -14,7 +14,6 @@ from _lcm.execution.core_program import (
     InternalOutputSpec,
     MaterializedCoreProgram,
     ReducedAxis,
-    ReductionSemantics,
     ResolvedCoreProgram,
     TiledOutputAxis,
     ValueRead,
@@ -24,8 +23,13 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.reductions import (
     EXACTNESS_VALUES,
+    HARD_MAX_WITH_CARRY_REDUCTION,
+    INTERVAL_ENVELOPE_REDUCTION,
+    WEIGHTED_EXPECTATION_REDUCTION,
     HardMaxWithCarryReduction,
     IntervalEnvelopeReduction,
+    ReductionDeclaration,
+    ReductionSemantics,
     WeightedExpectationReduction,
 )
 from _lcm.execution.value_transfer import (
@@ -40,6 +44,9 @@ from _lcm.execution.value_transfer import (
 
 __all__ = [
     "EXACTNESS_VALUES",
+    "HARD_MAX_WITH_CARRY_REDUCTION",
+    "INTERVAL_ENVELOPE_REDUCTION",
+    "WEIGHTED_EXPECTATION_REDUCTION",
     "CoreBuildContext",
     "CoreExecutionDisposition",
     "CoreExecutionRequirements",
@@ -51,6 +58,7 @@ __all__ = [
     "IntervalEnvelopeReduction",
     "MaterializedCoreProgram",
     "ReducedAxis",
+    "ReductionDeclaration",
     "ReductionSemantics",
     "ResolvedCoreProgram",
     "TiledOutputAxis",

@@ -126,7 +126,12 @@ class BoundLogSumExpReduction:
 
 
 class LogSumExpReduction:
-    """Create a value-only reduction session bound to one dynamic scale."""
+    """Stable log-sum-exp over branch blocks, folded at a caller-supplied scale.
+
+    Every fold step names the ``scale`` its exponential mass is rescaled by, since
+    the scale is a dynamic value rather than part of the contract. ``bind`` fixes
+    one scale for a whole session so partial steps cannot disagree about it.
+    """
 
     @property
     def semantic_key(self) -> tuple[str, int]:
@@ -141,6 +146,38 @@ class LogSumExpReduction:
     def bind(self, *, scale: FloatND) -> BoundLogSumExpReduction:
         """Bind ``scale`` once so partial operations cannot disagree about it."""
         return BoundLogSumExpReduction(scale=scale)
+
+    def initialize(self, *, value_template: FloatND) -> LogSumExpAccumulator:
+        """Create an empty exponential-mass accumulator; the scale does not enter."""
+        return BoundLogSumExpReduction(scale=jnp.ones_like(value_template)).initialize(
+            value_template=value_template
+        )
+
+    def add(
+        self,
+        *,
+        accumulator: LogSumExpAccumulator,
+        values: FloatND,
+        scale: FloatND,
+    ) -> LogSumExpAccumulator:
+        """Reduce one branch block at ``scale`` and merge its exponential mass."""
+        return self.bind(scale=scale).add(accumulator=accumulator, values=values)
+
+    def merge(
+        self,
+        *,
+        left: LogSumExpAccumulator,
+        right: LogSumExpAccumulator,
+        scale: FloatND,
+    ) -> LogSumExpAccumulator:
+        """Merge two partial masses after rescaling to one running maximum."""
+        return self.bind(scale=scale).merge(left=left, right=right)
+
+    def finalize(
+        self, *, accumulator: LogSumExpAccumulator, scale: FloatND
+    ) -> LogSumExpResult:
+        """Publish the smoothed maximum of a complete mass at ``scale``."""
+        return self.bind(scale=scale).finalize(accumulator=accumulator)
 
 
 LOGSUMEXP_REDUCTION = LogSumExpReduction()
