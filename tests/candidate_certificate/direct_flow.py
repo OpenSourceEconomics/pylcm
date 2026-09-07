@@ -1567,7 +1567,7 @@ def _functools_adapter_errors(tree: ast.Module) -> list[str]:
                 "a7350bd29eb79dcb783acfc520638b8e959684ba5be19f3c4e4cac6f895534d8"
             ),
             "allow_args": (
-                "b4701afeb55c6320acd6eb3229a663143b8964f135476246c2e12e96d2b484f6"
+                "aafbd21439f91d8e29c52097e4b0711469942a9ca6bafce071278ef69b3d78fe"
             ),
         },
     )
@@ -1875,15 +1875,15 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "_StreamingCollectiveHardMax.__call__": "9674dcfc6fd7026209d97cb30018f96088595a132bd88124b35e65c97bd7b3af",
                 "_StreamingEV1ExpectedMax.__call__": "9ad46e41de04ab0efb45f873459340f6933d984939f51d120afa6e53e2ad9510",
                 "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
-                "_evaluate_block": "ee4a59644e10e1f5ebb8aaa917967a74eab852bd1bf1d5e824310bc2a26ab63f",
-                "_evaluate_ev1_branch_block": "4c4cb2e7de9cf3a732f4ee528f526f83e9bdeb7424ea4ce8acc74f10f041e467",
-                "_evaluate_collective_block": "8030607cabf36d76d766c5e8eea3ec1e8d9bbd8f41214c3490691f8dbe718d89",
+                "_evaluate_block": "ef561620b6da26cd26cd4dda89f95cf480bc1c31a3ecd5d27eee12f8c7f3fc17",
+                "_evaluate_ev1_branch_block": "5f88bff6dc8900c8d179df8c4be4763ff7c9656ee66bc78fe44f10f3939517fe",
+                "_evaluate_collective_block": "33db932726923fa9e5cde59e3d1974b6500ef8cfebc166cc65f67a39d6dd8616",
                 "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
-                "_scan_remaining_blocks": "ccfb2af321657915e360867fd57bfec3e26eae86a031380fba94cd73a7384bc7",
+                "_scan_remaining_blocks": "c22ed2d6f392d72483a2d8cfbf5e741d8c248a8aef1baf9b914938ef255f03d2",
                 "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
                 "_reduce_no_action": "47067ad94112c815eccf14395b03ad372376e53cfd5b4f337ec70404d3a32da6",
                 "_start_collective_reduction": "019872b31d89c2a2c8ba68ee6128a9feb2b90b52c6ee3b00506708db6195adce",
-                "_scan_remaining_collective_blocks": "15c53ba8cc665ca03333103fe94a5f101e92fb216341e521fd1360097eb7987b",
+                "_scan_remaining_collective_blocks": "e40fba3b89b43e03a36d8b5fd6ebc32560bbe7fb8b5817c47bd8735fa27b641b",
                 "_add_collective_block": "5ed017db741c30cae43dd1c4a526c703c8601857c2fbca23e9900ca560e78198",
                 "_reduce_collective_no_action": "dbd215d04c091bdf6942fa6edb4a561468a5bc234f13ae24a67362dc5d48a9ff",
                 "_decode_action": "5ac47e5a2d400754255cd938bf9e27ec91007741c8bbf5ad18e04bb3a9a24cbe",
@@ -1892,10 +1892,10 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "_validate_collective_scalar_Q_and_F": "600332c08d2ed5aa6a4ffaeee07a878c8a713a674f54456c8a9d05dbe9eddd35",
                 "_validate_collective_block_Q_and_F": "1e12615fa5fa04137cebb137387bc1c2ad98b31f1978dd47f209d00207036bef",
                 "_initialize_ev1_reduction": "41728c9433880bdb06c0ab5d3c0821a7f100f238fa1faec90dc5ca967c627650",
-                "_add_ev1_block": "92fb55ab8e7ae853357ff9987d7f2f2a922141bf7222dc41436a0e0b2d84644f",
+                "_add_ev1_block": "5c63a9ca306c889a05581aaab90a9da4a43082772a67a7098603818fc5dbb283",
                 "_finalize_open_ev1_branch_group": "f1eea36aa27ec48e7e79557c8928ed62d5e6cf01d0cc100a8e558ebdb31196fd",
-                "_scan_remaining_ev1_blocks": "8914c1d83aa24460dbba72c0984b4ed3af8a67e82dfb6749423a131002f9c2a6",
-                "_flush_ev1_branch_group": "cda5422b10b274dcd2b7b2db8a15b56a6688e5d6ed64a112a6ce212a4dd314e3",
+                "_scan_remaining_ev1_blocks": "219ff26f338b96e2fce757277ef6495afcda3bf134c7a36fe1d8822aaa0151a9",
+                "_flush_ev1_branch_group": "cb87cd4217df5fb3e45806593d2013a2ba452f17cbb08097a9d0cacd1e6f9270",
             },
         )
     )
@@ -2600,7 +2600,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "cce03681dc7cb7fba3c6cbc41594a7d4aa8ec2857557ce74a956fb1449acda8f",
+            "_compile_all_functions": "7892e8c0185460a7a889df9ba6f9e139c9531e7285937498e0d42de0eb410b75",
             "_resolve_output_layouts_and_lowering_keys": "e7a68f078e0937fe7fa276a534f902f3957508ebcfa612c5d173f1320c069ee1",
             "_resolve_program_for_execution": "247155a79a8cdc2c16845aeb9d222b2c6aeea7129c90d9a733ecc66cf793f5d0",
             "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",
