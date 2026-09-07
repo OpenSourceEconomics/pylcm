@@ -23,7 +23,7 @@ from _lcm.execution.scheduler import (
     ReleaseRecord,
     shares_a_buffer,
 )
-from _lcm.execution.value_transfer import ResolvedValueTransfer
+from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueTransferKind
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
@@ -427,3 +427,121 @@ def test_two_co_active_sharded_regimes_take_the_same_block() -> None:
     solution = _make_two_mesh_model().solve(params=_PARAMS, log_level="off")
 
     assert solution.values[0]["alpha"].sharding == solution.values[0]["beta"].sharding
+
+
+@categorical(ordered=False)
+class _TwoBlockRegimeId:
+    """Regime vocabulary of the two-block model."""
+
+    first: ScalarInt
+    second: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=True)
+class _TwoValuedType:
+    """A two-valued preference type; its extent is each block's mesh size."""
+
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _make_two_block_model(*, distributed: bool) -> Model:
+    """Two sharded regimes over a two-valued type; the first enters the second.
+
+    Both regimes carry the type, so each takes a two-device block, and on four
+    devices the blocks are disjoint. The first regime's continuation therefore
+    reads the second regime's value from devices its own mesh does not hold.
+    """
+
+    def _utility(*, wealth: Any, consumption: Any, type1: Any) -> Any:
+        return (jnp.log(consumption) + wealth * 0.001) * (type1 + 1)
+
+    def _next_wealth(*, wealth: Any, consumption: Any) -> Any:
+        return wealth - consumption
+
+    def _worker(*, transition: Any, active: Any) -> UserRegime:
+        return UserRegime(
+            functions={"utility": _utility},
+            states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+            state_transitions={"wealth": _next_wealth},
+            actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+            transition=transition,
+            active=active,
+        )
+
+    first = _worker(
+        transition=lambda age: jnp.where(
+            age >= 1, _TwoBlockRegimeId.second, _TwoBlockRegimeId.first
+        ),
+        active=lambda age: age < 3,
+    )
+    second = _worker(
+        transition=lambda age: jnp.where(
+            age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
+        ),
+        active=lambda _age: True,
+    )
+    dead = UserRegime(
+        transition=None,
+        functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        active=lambda age: age >= 4,
+    )
+    return Model(
+        regimes={"first": first, "second": second, "dead": dead},
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=_TwoBlockRegimeId,
+        states={
+            "type1": DiscreteGrid(
+                category_class=_TwoValuedType, distributed=distributed
+            )
+        },
+        state_transitions={"type1": fixed_transition("type1")},
+    )
+
+
+@_skip_pytest_parallel
+def test_a_value_read_across_disjoint_blocks_is_a_cross_mesh_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first block's regime reads the second block's value by cross-mesh copy."""
+    captured: list[Any] = []
+    original = backward_induction._attach_resolved_output_layout
+
+    def capture(**kwargs: Any) -> Any:
+        core = original(**kwargs)
+        captured.append(core)
+        return core
+
+    monkeypatch.setattr(backward_induction, "_attach_resolved_output_layout", capture)
+    _make_two_block_model(distributed=True).solve(params=_PARAMS, log_level="off")
+    kinds = {
+        transfer.kind
+        for core in captured
+        for transfer in core.input_transfer_plan
+        if transfer.target.regime == "second"
+    }
+
+    assert ValueTransferKind.CROSS_MESH_COPY in kinds
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("regime", ["first", "second"])
+def test_a_two_block_solve_publishes_the_single_device_values(
+    *, regime: RegimeName
+) -> None:
+    """A cross-mesh copy delivers the stored values unchanged."""
+    placed = _make_two_block_model(distributed=True).solve(
+        params=_PARAMS, log_level="off"
+    )
+    reference = _make_two_block_model(distributed=False).solve(
+        params=_PARAMS, log_level="off"
+    )
+
+    for period in placed.values:
+        if regime in placed.values[period]:
+            np.testing.assert_array_equal(
+                np.asarray(placed.values[period][regime]),
+                np.asarray(reference.values[period][regime]),
+            )
