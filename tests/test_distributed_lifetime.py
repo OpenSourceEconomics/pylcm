@@ -36,6 +36,7 @@ from lcm.solvers import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    DeclaredReplay,
     OutputRole,
     SolutionKernels,
     Solver,
@@ -304,6 +305,7 @@ class _TerminalCarrySolver(Solver):
             continuation_spec=ContinuationSpec(
                 template=_terminal_template(context=context), artifact_key=_COUNTER
             ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
         )
 
 
@@ -364,6 +366,7 @@ class _AliasingTerminalSolver(Solver):
             continuation_spec=ContinuationSpec(
                 template=_terminal_template(context=context), artifact_key=_COUNTER
             ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
         )
 
 
@@ -435,6 +438,7 @@ class _SharedLeafTerminalSolver(Solver):
                 template=_TwoLeafCarry(count=zeros, echo=zeros),
                 artifact_key=_COUNTER,
             ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
         )
 
 
@@ -477,7 +481,10 @@ def _reading_kernels(
             donation_candidates=donation_candidates,
         )
         kernels[period] = _GraphKernel(programs=MappingProxyType({"main": program}))
-    return SolutionKernels(period_kernels=MappingProxyType(kernels))
+    return SolutionKernels(
+        period_kernels=MappingProxyType(kernels),
+        replay_route=DeclaredReplay.GRID_RECOMPUTATION,
+    )
 
 
 class _ReadingSolver(Solver):

@@ -27,6 +27,7 @@ from lcm.solvers import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    DeclaredReplay,
     OutputRole,
     SolutionKernels,
     Solver,
@@ -143,6 +144,7 @@ class _CounterSolver(Solver):
             continuation_spec=ContinuationSpec(
                 template=template, artifact_key=_COUNTER
             ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
         )
 
 
