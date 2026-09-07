@@ -35,6 +35,15 @@ def _kept(grid, *arrays):
     return (np.asarray(grid)[keep], *(np.asarray(a)[keep] for a in arrays))
 
 
+def _kept_records(*, grid, policy, value):
+    """Render the published rows so a failed read names what the envelope kept."""
+    rows = zip(*_kept(grid, policy, value), strict=True)
+    body = "\n".join(
+        f"  R={float(x)!r} c={float(c)!r} V={float(v)!r}" for x, c, v in rows
+    )
+    return f"kept records (grid, policy, value):\n{body}"
+
+
 def _read_value(*, grid, policy, value, query):
     """Hermite value read with node slopes `1/c` (the production convention)."""
     slopes = jnp.where(jnp.isnan(policy), jnp.nan, 1.0 / policy)
@@ -470,11 +479,15 @@ def test_mss_resolves_the_coincident_interval_ownership():
     g, p, v, _ = refine_envelope_mss(
         endog_grid=grid, policy=policy, value=value, n_refined=12
     )
+    kept = _kept_records(grid=g, policy=p, value=v)
     np.testing.assert_allclose(
-        _read_value(grid=g, policy=p, value=v, query=9.5), 4.9375, atol=_ATOL
+        _read_value(grid=g, policy=p, value=v, query=9.5),
+        4.9375,
+        atol=_ATOL,
+        err_msg=kept,
     )
     np.testing.assert_allclose(
-        _read_policy(grid=g, policy=p, query=9.5), 8.0, atol=_ATOL
+        _read_policy(grid=g, policy=p, query=9.5), 8.0, atol=_ATOL, err_msg=kept
     )
 
 

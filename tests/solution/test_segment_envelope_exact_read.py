@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.segment_envelope import _line_value
+from _lcm.egm.upper_envelope.segment_envelope import _line_read
 from tests import conftest
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 
@@ -46,7 +46,7 @@ def _cancelling_link(*, dtype):
     return v0, v1, smallest_subnormal
 
 
-def test_line_value_publishes_a_subnormal_result_from_normal_endpoints(dtype):
+def test_line_read_publishes_a_subnormal_result_from_normal_endpoints(dtype):
     """A link whose read cancels to the smallest subnormal publishes it, not zero."""
     v0, v1, smallest_subnormal = _cancelling_link(dtype=dtype)
 
@@ -56,7 +56,7 @@ def test_line_value_publishes_a_subnormal_result_from_normal_endpoints(dtype):
     exact = (Fraction(float(v0)) + Fraction(float(v1))) / 2
     assert exact == Fraction(float(smallest_subnormal))
 
-    published = _line_value(
+    published, status = _line_read(
         low=jnp.asarray(0, dtype=jnp.int32),
         high=jnp.asarray(1, dtype=jnp.int32),
         x_query=jnp.asarray(0.5, dtype=dtype),
@@ -64,27 +64,31 @@ def test_line_value_publishes_a_subnormal_result_from_normal_endpoints(dtype):
         ordinate=jnp.asarray([v0, v1], dtype=dtype),
     )
 
+    # A refused read publishes nothing, so the value below is only a value.
+    assert int(status) == 0
     assert _bits(value=published, dtype=dtype) == _bits(
         value=smallest_subnormal, dtype=dtype
     )
 
 
-def test_line_value_returns_the_stored_ordinate_at_a_node(dtype):
+def test_line_read_returns_the_stored_ordinate_at_a_node(dtype):
     """Read at an endpoint, a link takes exactly the value stored there."""
     endog_grid = jnp.asarray([0.0, 4.0], dtype=dtype)
     ordinate = jnp.asarray([2.5, -7.25], dtype=dtype)
 
-    at_low = _line_value(
+    at_low, status = _line_read(
         low=jnp.asarray(0, dtype=jnp.int32),
         high=jnp.asarray(1, dtype=jnp.int32),
         x_query=endog_grid[0],
         endog_grid=endog_grid,
         ordinate=ordinate,
     )
+
+    assert int(status) == 0
     assert _bits(value=at_low, dtype=dtype) == _bits(value=ordinate[0], dtype=dtype)
 
 
-def test_line_value_is_correctly_rounded_on_an_ordinary_link(dtype):
+def test_line_read_is_correctly_rounded_on_an_ordinary_link(dtype):
     """An ordinary read is the exact quotient rounded once to the target format."""
     endog_grid = jnp.asarray([1.0, 3.0], dtype=dtype)
     ordinate = jnp.asarray([1.0, 2.0], dtype=dtype)
@@ -99,11 +103,13 @@ def test_line_value_is_correctly_rounded_on_an_ordinary_link(dtype):
     numpy_dtype = np.float64 if dtype == jnp.float64 else np.float32
     expected = np.asarray(float(exact), dtype=numpy_dtype)
 
-    published = _line_value(
+    published, status = _line_read(
         low=jnp.asarray(0, dtype=jnp.int32),
         high=jnp.asarray(1, dtype=jnp.int32),
         x_query=x_query,
         endog_grid=endog_grid,
         ordinate=ordinate,
     )
+
+    assert int(status) == 0
     assert _bits(value=published, dtype=dtype) == _bits(value=expected, dtype=dtype)

@@ -559,24 +559,6 @@ def _emit_envelope(
     return out_grid, out_policy, out_value, jnp.sum(row_valid, dtype=jnp.int32)
 
 
-def _line_value(
-    *,
-    low: IntND,
-    high: IntND,
-    x_query: FloatND,
-    endog_grid: Float1D,
-    ordinate: Float1D,
-) -> FloatND:
-    """Read a link's affine value at `x_query`, correctly rounded.
-
-    Returns NaN where the read is refused; `_line_read` states when that is.
-    """
-    published, status = _line_read(
-        low=low, high=high, x_query=x_query, endog_grid=endog_grid, ordinate=ordinate
-    )
-    return jnp.where(status == 0, published, jnp.asarray(jnp.nan, ordinate.dtype))
-
-
 def _line_read(
     *,
     low: IntND,
