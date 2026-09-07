@@ -953,10 +953,11 @@ def _diagnostic_arrays(
 ) -> tuple[object, ...]:
     """Return the field values of each diagnostic payload, flattened.
 
-    `SolverDiagnostics` is a plain frozen dataclass rather than a registered
-    pytree, so walking one as a tree yields a single opaque leaf and reaches
-    none of the arrays inside it. Callers that need those arrays — declaring
-    the buffers a retained diagnostic payload occupies — take them from here.
+    `SolverDiagnostics` is a registered pytree, so walking one reaches exactly
+    the arrays this returns. The enumeration is the solve loop's route because
+    it makes the release invariant it feeds — every retained diagnostics buffer
+    declared before the period's first release — a property of the payload's
+    own fields rather than of a registration made for persistence.
     """
     return tuple(
         getattr(payload, field.name)

@@ -18,7 +18,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.execution.scheduler import BufferRegistry
+from _lcm.execution.scheduler import BufferRegistry, shard_identities
 from _lcm.execution.value_transfer import ValueArtifactKind
 from _lcm.grids.base import Grid
 from _lcm.solution import backward_induction
@@ -361,7 +361,7 @@ def test_a_retained_dissolution_flag_is_declared_on_its_own_buffer() -> None:
 
 
 def test_a_retained_diagnostic_payload_is_declared_on_its_own_buffers() -> None:
-    """A diagnostic payload's arrays are reached even though it is no pytree."""
+    """A retained diagnostic payload's arrays are declared through its fields."""
     registry = BufferRegistry()
     leaf = jnp.arange(3.0)
     payload = {"working": _diagnostics_carrying(leaf=leaf)}
@@ -371,16 +371,6 @@ def test_a_retained_diagnostic_payload_is_declared_on_its_own_buffers() -> None:
     )
 
     assert registry.is_not_produced(array=leaf)
-
-
-def test_a_diagnostic_payload_walked_as_a_tree_reaches_no_array() -> None:
-    """Walking the payload directly is the mistake the flattening exists for."""
-    registry = BufferRegistry()
-    leaf = jnp.arange(3.0)
-
-    registry.declare_not_produced(tree=({"working": _diagnostics_carrying(leaf=leaf)},))
-
-    assert not registry.is_not_produced(array=leaf)
 
 
 def test_a_diagnostic_payload_sharing_a_continuation_leaf_survives_the_solve(
@@ -469,3 +459,36 @@ def test_every_diagnostics_field_is_declared_before_a_release_or_donation() -> N
         registry.is_not_produced(array=getattr(payload, field.name))
         for field in dataclasses.fields(payload)
     )
+
+
+def test_both_diagnostic_routes_declare_the_same_buffers() -> None:
+    """A payload's fields and a walk of the payload reach one set of buffers."""
+    payload = _diagnostics_with_distinct_leaves()
+    walked, enumerated = BufferRegistry(), BufferRegistry()
+
+    walked.declare_not_produced(tree=({"working": payload},))
+    enumerated.declare_not_produced(
+        tree=backward_induction._diagnostic_arrays(diagnostics=(payload,))
+    )
+
+    every_field = frozenset(
+        shard
+        for field in dataclasses.fields(payload)
+        for shard in shard_identities(array=getattr(payload, field.name))
+    )
+    assert walked.declared_shards == enumerated.declared_shards == every_field
+
+
+def test_both_diagnostic_routes_leave_one_declaration_per_buffer() -> None:
+    """Naming one payload through both routes declares each buffer exactly once."""
+    registry = BufferRegistry()
+    payload = _diagnostics_with_distinct_leaves()
+
+    registry.declare_not_produced(
+        tree=backward_induction._diagnostic_arrays(diagnostics=(payload,))
+    )
+    registry.declare_not_produced(tree=({"working": payload},))
+
+    assert [len(declaring) for declaring in registry._unproduced_shards.values()] == [
+        1
+    ] * len(dataclasses.fields(payload))
