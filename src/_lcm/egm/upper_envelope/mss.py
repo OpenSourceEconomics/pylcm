@@ -484,7 +484,7 @@ def _chord_value(
     return reading
 
 
-def _line_value(
+def _ordinary_line_value(
     *, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND, x_query: FloatND
 ) -> FloatND:
     """Read the affine line through two endpoints in the working format.
@@ -531,9 +531,9 @@ def _margin_sign(
             b_v1=b_v1,
             x_query=x_query,
         )
-    gap = _line_value(
+    gap = _ordinary_line_value(
         x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=x_query
-    ) - _line_value(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=x_query)
+    ) - _ordinary_line_value(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=x_query)
     usable = (a_x1 > a_x0) & (b_x1 > b_x0) & jnp.isfinite(gap)
     for operand in operands:
         usable = usable & jnp.isfinite(operand)
@@ -552,7 +552,7 @@ def _affine_read(
     """Read one link's channel at a query, with its publication status."""
     if arithmetic == "certified":
         return exact_affine_read(x0=x0, x1=x1, v0=v0, v1=v1, x_query=x_query)
-    reading = _line_value(x0=x0, x1=x1, v0=v0, v1=v1, x_query=x_query)
+    reading = _ordinary_line_value(x0=x0, x1=x1, v0=v0, v1=v1, x_query=x_query)
     usable = jnp.isfinite(reading) & (x1 > x0)
     return reading, jnp.where(usable, 0, 1).astype(jnp.int32)
 
@@ -594,9 +594,9 @@ def _affine_handover(
         )
 
     def gap(at: FloatND) -> FloatND:
-        return _line_value(
+        return _ordinary_line_value(
             x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=at
-        ) - _line_value(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=at)
+        ) - _ordinary_line_value(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=at)
 
     gap_left, gap_right = gap(left), gap(right)
     slope = gap_left - gap_right
@@ -629,7 +629,7 @@ def _ordinary_owner(
     by the remaining keys, where the certified order would have separated them by
     value.
     """
-    value = _line_value(
+    value = _ordinary_line_value(
         x0=links.lower,
         x1=links.upper,
         v0=links.v0,
