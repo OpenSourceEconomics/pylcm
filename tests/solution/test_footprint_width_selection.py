@@ -268,7 +268,7 @@ def test_the_position_holding_nothing_besides_its_argument_keeps_the_full_extent
     assert widths[("acting", 2)] == _ACTION_EXTENT
 
 
-def test_a_budget_no_position_can_bind_leaves_every_period_at_the_full_extent(
+def test_a_large_budget_no_position_can_bind_keeps_every_period_at_full_extent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A budget far above every peak selects the full extent at every period."""
@@ -279,6 +279,76 @@ def test_a_budget_no_position_can_bind_leaves_every_period_at_the_full_extent(
     assert {
         cell: width for cell, width in widths.items() if cell[0] == "acting"
     } == dict.fromkeys((("acting", 0), ("acting", 1), ("acting", 2)), _ACTION_EXTENT)
+
+
+def test_a_solve_without_a_budget_does_not_walk_the_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No budget consults no peak, so no position is predicted for any core."""
+    walks: list[object] = []
+    original = backward_induction.plan_resident_bytes
+
+    def record(**kwargs: Any) -> object:
+        walks.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(backward_induction, "plan_resident_bytes", record)
+    _solve_capturing_compilation(monkeypatch=monkeypatch, budget_bytes=None)
+
+    assert walks == []
+
+
+def test_a_cell_the_budget_cannot_host_never_enters_a_compilation_wave(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A position that already fills the budget lowers no width of its own.
+
+    The wave loop's pending set is read through the per-wave triple count it
+    builds, whose keys are the candidates of every triple still being lowered.
+    """
+    lowered: set[tuple[str, int]] = set()
+    original = backward_induction._count_triples_per_lowering_key
+
+    def record(*, lowering_keys: Mapping[Any, Any]) -> Any:
+        lowered.update((triple[0], triple[1]) for triple, _width in lowering_keys)
+        return original(lowering_keys=lowering_keys)
+
+    monkeypatch.setattr(backward_induction, "_count_triples_per_lowering_key", record)
+    with pytest.raises(ExecutionPlanningError):
+        _selected_width_products(
+            monkeypatch=monkeypatch, budget_bytes=2 * _value_bytes()
+        )
+
+    assert ("acting", 0) not in lowered
+
+
+def test_a_cell_whose_position_fills_the_budget_is_refused_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resident bytes reaching the budget leave nothing for any workspace."""
+    with pytest.raises(
+        ExecutionPlanningError, match=re.escape("Regime 'acting' at period 0")
+    ):
+        _selected_width_products(
+            monkeypatch=monkeypatch, budget_bytes=2 * _value_bytes()
+        )
+
+
+@pytest.mark.parametrize(
+    ("resident_bytes", "expected"),
+    [(9, ("a", 0, "main")), (10, None), (11, None)],
+)
+def test_only_a_core_with_room_left_for_a_workspace_is_lowered(
+    *, resident_bytes: int, expected: tuple[str, int, str] | None
+) -> None:
+    """A core is lowered only while its position leaves part of the budget free."""
+    triple = ("a", 0, "main")
+
+    assert backward_induction._triples_within_budget(
+        candidates_by_triple={triple: [(triple, ())]},
+        resident_bytes_by_triple={triple: resident_bytes},
+        budget_bytes=10,
+    ) == ((expected,) if expected is not None else ())
 
 
 @pytest.mark.parametrize(

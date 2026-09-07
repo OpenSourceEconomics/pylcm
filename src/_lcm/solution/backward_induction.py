@@ -2460,10 +2460,13 @@ def _resident_bytes_by_triple(
     its cores together as one unit.
 
     The number leaves out what the cell's own executables are handed as device
-    arguments without a copy: a compiler-reported peak counts those buffers
-    already, so adding them here would charge one allocation twice. A value the
-    plan copies or reshards for the read stays charged, since the stored buffer
-    and the copy are both live.
+    arguments without a copy, under the argument convention
+    `plan_resident_bytes` states: the compiler report the budget compares
+    against is assumed to count them, as the XLA CPU backend's does, so adding
+    them here would charge one allocation twice. A value the plan copies or
+    reshards for the read stays charged, since the stored buffer and the copy
+    are both live. A program that declares no reads names no arguments, so what
+    the ledger pins for it is charged twice — the safe direction.
 
     Sizes come from the solve-lifetime templates, which are period-invariant,
     so an artifact of any period finds the template of what it names.
@@ -2646,6 +2649,29 @@ def _aligned_input_artifacts(
             if transfer.kind is ValueTransferKind.ALIGNED_LOCAL
         )
     return tuple(read.target for read in metadata.requirements.value_reads)
+
+
+def _triples_within_budget(
+    *,
+    candidates_by_triple: Mapping[_CoreTriple, Sequence[_CoreCandidate]],
+    resident_bytes_by_triple: Mapping[_CoreTriple, int],
+    budget_bytes: int | None,
+) -> tuple[_CoreTriple, ...]:
+    """Name the cores whose position still leaves room for a workspace.
+
+    A core whose resident bytes already reach the budget is served by no width,
+    so lowering its frontier would compile, on the very device that cannot host
+    them, candidates that are refused either way. It is left out of the
+    compilation waves entirely and refused by name when selection reaches it,
+    with no compiled candidate of its own.
+    """
+    if budget_bytes is None:
+        return tuple(candidates_by_triple)
+    return tuple(
+        triple
+        for triple in candidates_by_triple
+        if resident_bytes_by_triple[triple] < budget_bytes
+    )
 
 
 def _width_selection_failure(
@@ -2894,7 +2920,14 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     compiled: dict[Hashable, jax.stages.Compiled] = {}
     labels: dict[Hashable, str] = {}
     peak_bytes_by_lowering_key: dict[Hashable, int] = {}
-    pending: dict[_CoreTriple, int] = dict.fromkeys(candidates_by_triple, 0)
+    pending: dict[_CoreTriple, int] = dict.fromkeys(
+        _triples_within_budget(
+            candidates_by_triple=candidates_by_triple,
+            resident_bytes_by_triple=resident_bytes_by_triple,
+            budget_bytes=budget_bytes,
+        ),
+        0,
+    )
     wave = 0
     while pending:
         wave_candidates = {
@@ -2951,10 +2984,13 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     logger=logger,
                     precomputed_peak_bytes=peak_bytes,
                 )
-                logger.debug(
-                    "  resident at position: %d bytes",
-                    resident_bytes_by_triple[triple],
-                )
+            logger.debug(
+                "  resident at %r period %d core %r: %d bytes",
+                triple[0],
+                triple[1],
+                triple[2],
+                resident_bytes_by_triple[triple],
+            )
             if (
                 peak_bytes_by_lowering_key[lowering_key]
                 + resident_bytes_by_triple[triple]

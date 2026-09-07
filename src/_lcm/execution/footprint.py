@@ -11,8 +11,8 @@ devices; a sharded one costs a single shard.
 reports, per unit, what it already finds on its busiest device. Residency is
 per buffer rather than per key: the keys of one alias group name a single
 allocation and are charged once. What a unit is handed as a device argument is
-left out, because the compiler-reported peak this number is added to counts
-the executable's arguments already.
+left out, under the convention `plan_resident_bytes` states about the compiler
+report this number is meant to be added to.
 """
 
 import dataclasses
@@ -65,11 +65,10 @@ class ScheduledUnit:
     consumes: tuple[Hashable, ...]
     """Artifact keys the unit's executables are handed as device arguments.
 
-    A compiler-reported peak counts the buffers the executable receives, so a
-    buffer named here is already inside the number the resident bytes are
-    compared against and is not charged a second time. A value the plan copies
+    A buffer named here is left out of the unit's resident bytes under the
+    argument convention `plan_resident_bytes` states. A value the plan copies
     or reshards before the read does not belong here: the stored buffer and the
-    copy are both live.
+    copy are both live, and only the copy reaches the executable.
     """
 
     output_bytes_per_device: int
@@ -95,8 +94,25 @@ def plan_resident_bytes(
     unit's number is what is already resident on its busiest device plus the
     outputs of the units dispatched concurrently with it on that device; its
     own outputs are not part of it, since the width it is being planned for
-    decides them, and neither are the buffers it is handed as arguments, which
-    a compiler-reported peak counts on its own.
+    decides them, and neither are the buffers it is handed as arguments — see
+    the argument convention below.
+
+    **The argument convention.** This number is meant to be added to a
+    compiler-reported peak, and it assumes that report already counts the
+    buffers the executable receives as arguments. That is what the XLA CPU
+    backend does: `peak_memory_in_bytes` there equals `argument + output +
+    temp` and tracks the argument size one for one. So a unit's own arguments
+    are left out here, and each buffer is charged exactly once across the sum.
+    On a backend whose report excludes arguments the sum under-counts by
+    exactly those bytes, which is the direction that overruns a device; such a
+    backend needs the exclusion dropped rather than the budget widened, and the
+    convention re-measured before either.
+
+    Two approximations sit inside that convention. A program declaring no reads
+    names no arguments, so the inputs the ledger pins on its behalf are charged
+    both here and inside its peak — an over-count, the safe direction. And the
+    exclusion is per unit: a buffer another unit holds stays charged to that
+    unit, since it is not in that unit's peak.
 
     `fold_dispatches` maps each fold dispatch id `(period, source, target)` to
     the artifact key it produces. Every unit's `(period, regime)` and every
@@ -112,9 +128,9 @@ def plan_resident_bytes(
     remaining consumers, none pinned and none retained.
 
     A donated buffer needs no rule of its own. Donation aliases one of the
-    unit's own arguments into its output, and an argument is exactly what the
-    compiler-reported peak already holds, so the buffer is counted once
-    whichever way it is read — never twice, and never not at all.
+    unit's own arguments into its output, and an argument is what the
+    convention above assigns to the peak, so the buffer is charged once like
+    any other — never twice, and never not at all.
     """
     _fail_if_footprint_is_unplanned(ledger=ledger, footprints=footprints)
     counts = dict(ledger.remaining_counts)
@@ -283,8 +299,7 @@ def _device_bytes(
     that device: the keys of an alias group are names for one allocation, so
     adding them up would bill the same bytes several times. A buffer the
     measured unit is handed as an argument on this device is not charged at
-    all, because the compiler-reported peak it is compared against holds it
-    already.
+    all, under the argument convention `plan_resident_bytes` states.
     """
     return sum(
         _group_bytes(members=members, device=device)
