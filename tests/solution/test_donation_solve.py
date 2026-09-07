@@ -6,6 +6,7 @@ non-donating twin publishes.
 """
 
 import dataclasses
+import re
 from types import MappingProxyType
 
 import jax
@@ -379,3 +380,44 @@ def test_the_donation_set_is_part_of_the_lowering_key() -> None:
     )
 
     assert plain != donating
+
+
+def _plan_donations(
+    *,
+    donations: MappingProxyType[
+        tuple[tuple[str, int, str], tuple[tuple[str, int], ...]],
+        tuple[ResolvedDonation, ...],
+    ],
+) -> None:
+    """Run the plan-time donation check over a mapping of width candidates."""
+    backward_induction._fail_if_a_unit_donates_one_artifact_twice(donations=donations)
+
+
+def test_a_plan_donating_one_artifact_from_two_programs_is_refused() -> None:
+    """A plan handing one buffer over twice names it before anything compiles."""
+    with pytest.raises(ExecutionPlanningError, match=re.escape(repr(_VALUE))):
+        _plan_donations(
+            donations=MappingProxyType(
+                {
+                    (("alive", 0, "main"), ()): (_donation(),),
+                    (("alive", 0, "second"), ()): (_donation(argument="also_next"),),
+                }
+            )
+        )
+
+
+def test_a_plan_donating_one_artifact_at_two_widths_of_one_program_is_accepted() -> (
+    None
+):
+    """Two widths of one core are alternatives, so only one of them is dispatched."""
+    assert (
+        _plan_donations(
+            donations=MappingProxyType(
+                {
+                    (("alive", 0, "main"), ()): (_donation(),),
+                    (("alive", 0, "main"), (("consumption", 4),)): (_donation(),),
+                }
+            )
+        )
+        is None
+    )

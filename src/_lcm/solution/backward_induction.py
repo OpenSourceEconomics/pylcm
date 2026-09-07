@@ -479,6 +479,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             registry=buffer_registry,
             consumer_counts=shared_transfer_counts,
             pending_outputs=period_pending_outputs,
+            release_enabled=enable_jit,
             logger=logger,
         )
 
@@ -3450,6 +3451,7 @@ def _resolve_output_layouts_and_lowering_keys(
         )
         for candidate, resolved in resolved_programs.items()
     }
+    _fail_if_a_unit_donates_one_artifact_twice(donations=donations)
     lowering_keys = _lowering_keys(
         resolved_programs=resolved_programs,
         internal_templates=internal_templates,
@@ -3498,6 +3500,47 @@ def _lowering_keys(
             placement_key=regime.solution.submesh_device_ids,
         )
     return keys
+
+
+def _fail_if_a_unit_donates_one_artifact_twice(
+    *, donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]]
+) -> None:
+    """Refuse a plan in which two programs of one unit donate one artifact.
+
+    A donated buffer is handed to its executable once, so the second program
+    naming it would receive what the first gave away. The donation set is
+    plan-time data, so the refusal names the artifact before any candidate is
+    lowered; the dispatch loop asks the same question again over the programs
+    it is about to call.
+
+    Width candidates of one core are alternatives, not two donors, so the
+    programs of a unit are counted by core name.
+
+    Args:
+        donations: Mapping of width candidate to that candidate's resolved
+            donations.
+
+    Raises:
+        ExecutionPlanningError: Two cores of one regime and period donate one
+            artifact.
+
+    """
+    donors: dict[tuple[RegimeName, int, ValueArtifactAddress], set[str]] = {}
+    for (triple, _widths), resolved in donations.items():
+        regime_name, period, core_key = triple
+        for donation in resolved:
+            if not donation.donated:
+                continue
+            for artifact in donation.artifacts:
+                donors.setdefault((regime_name, period, artifact), set()).add(core_key)
+    for (regime_name, period, artifact), cores in donors.items():
+        if len(cores) > 1:
+            msg = (
+                f"Dispatch {(period, regime_name)!r} lowers programs "
+                f"{sorted(cores)!r} to donate {artifact!r}; one buffer is "
+                "handed over once."
+            )
+            raise ExecutionPlanningError(msg)
 
 
 def _donated_arguments(*, donations: tuple[ResolvedDonation, ...]) -> tuple[str, ...]:

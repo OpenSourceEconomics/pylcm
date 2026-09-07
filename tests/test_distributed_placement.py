@@ -7,6 +7,7 @@ values two placements of one model publish name the same real numbers, and a
 simulation reads them off the canonical layout either way.
 """
 
+import re
 import subprocess
 import sys
 from collections.abc import Hashable
@@ -28,12 +29,14 @@ from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.solution import backward_induction
+from _lcm.solution.v_topology import fail_if_a_value_is_on_a_proper_submesh
 from _lcm.typing import RegimeName
 from lcm import fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
+from lcm.solver_api import ContinuationReader
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 
@@ -545,3 +548,93 @@ def test_a_two_block_solve_publishes_the_single_device_values(
                 np.asarray(placed.values[period][regime]),
                 np.asarray(reference.values[period][regime]),
             )
+
+
+def _nbegm_toy(*, distributed_kind: bool) -> Model:
+    """The NB-EGM ride-along toy at its smallest grids.
+
+    Its terminal `dead` regime does not read the ride-along type, so on four
+    devices the sharded `alive` regime takes a two-device block and `dead` is
+    placed on a device that block leaves free.
+    """
+    from tests.test_models import nbegm_ride_along_toy  # noqa: PLC0415
+
+    return nbegm_ride_along_toy.build_model(
+        variant="nbegm",
+        n_periods=4,
+        n_liquid=24,
+        n_savings=32,
+        distributed_kind=distributed_kind,
+    )
+
+
+def _nbegm_toy_params() -> dict[str, float]:
+    """The toy's parameters."""
+    from tests.test_models import nbegm_ride_along_toy  # noqa: PLC0415
+
+    return nbegm_ride_along_toy.build_params()
+
+
+def _carry_template_devices(
+    *, model: Model, regime_name: RegimeName
+) -> set[jax.Device]:
+    """Return every device one regime's continuation template leaves sit on."""
+    template = model._regimes[regime_name].solution.continuation_template
+    assert isinstance(template, ContinuationReader)
+    return {
+        device
+        for leaf in template.leaves().values()
+        for device in leaf.sharding.device_set
+    }
+
+
+@_skip_pytest_parallel
+def test_the_terminal_egm_regime_beside_a_sharded_one_is_placed_off_device_zero() -> (
+    None
+):
+    """The block the sharded regime takes leaves the terminal regime elsewhere."""
+    model = _nbegm_toy(distributed_kind=True)
+
+    assert model._regimes["dead"].solution.submesh_device_ids != (0,)
+
+
+@_skip_pytest_parallel
+def test_a_placed_single_device_regime_keeps_its_carry_template_on_its_device() -> None:
+    """An EGM carry template lives on the devices its regime was placed on."""
+    model = _nbegm_toy(distributed_kind=True)
+    placed = set(model._regimes["dead"].solution.placed_devices())
+
+    assert _carry_template_devices(model=model, regime_name="dead") == placed
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("regime", ["alive", "dead"])
+def test_the_nbegm_toy_publishes_the_same_values_under_both_placements(
+    *, regime: RegimeName
+) -> None:
+    """Sharding the ride-along type partitions the solve without changing it."""
+    params = _nbegm_toy_params()
+    placed = _nbegm_toy(distributed_kind=True).solve(params=params, log_level="off")
+    canonical = _nbegm_toy(distributed_kind=False).solve(params=params, log_level="off")
+
+    for period in placed.values:
+        if regime not in placed.values[period]:
+            continue
+        assert_agrees_to_ulp(
+            got=np.asarray(placed.values[period][regime]),
+            expected=np.asarray(canonical.values[period][regime]),
+            n_ulp=8,
+            err_msg=f"regime {regime!r}, period {period}",
+        )
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("fragment", ["Regime 'working'", "device ids (0, 1, 2)"])
+def test_the_submesh_refusal_names_the_regime_and_its_device_ids(
+    *, fragment: str
+) -> None:
+    """Refusing a submesh-placed solution says which regime sat on which devices."""
+    model = _make_three_type_model(distributed=True)
+
+    with pytest.raises(ExecutionPlanningError, match=re.escape(fragment)):
+        fail_if_a_value_is_on_a_proper_submesh(regimes=model._regimes)

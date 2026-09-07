@@ -504,3 +504,50 @@ def test_a_two_core_regime_declares_one_consumer_of_a_shared_read() -> None:
     )
 
     assert dict(consumer_counts) == {_key(transfer=transfer): 1}
+
+
+def test_a_cache_that_does_not_release_keeps_its_copy_after_every_commit() -> None:
+    """An eager solve's cache frees no buffer, however many consumers commit.
+
+    An eager dispatch is an ordinary Python call whose result may be any object
+    its arguments contained, so no buffer it touched is known to be one the
+    engine produced — the same reason the period's other release paths do
+    nothing when releasing is off.
+    """
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry,
+        consumer_counts=MappingProxyType({key: 1}),
+        release_enabled=False,
+    )
+    copy = jax.device_put(np.arange(3.0), source_sharding)
+    cache.put(transfer=transfer, array=copy, stored=stored)
+
+    cache.commit_consumer(key=key)
+
+    assert not copy.is_deleted()
+
+
+def test_a_cache_that_does_not_release_still_refuses_an_undeclared_commit() -> None:
+    """Consumer counting is a plan check, not a release decision."""
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=BufferRegistry(),
+        consumer_counts=MappingProxyType({key: 1}),
+        release_enabled=False,
+    )
+    cache.commit_consumer(key=key)
+
+    with pytest.raises(ExecutionPlanningError, match="declared consumer"):
+        cache.commit_consumer(key=key)

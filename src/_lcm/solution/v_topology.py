@@ -122,9 +122,10 @@ def fail_if_a_value_is_on_a_proper_submesh(
             )
             msg = (
                 f"Regime {regime_name!r} was solved on a submesh of "
-                f"{len(device_ids)} of {n_devices} devices (distributed extents "
-                f"{extents!r}); simulation spreads subjects over every device "
-                "and cannot read a value from a proper submesh."
+                f"{len(device_ids)} of {n_devices} devices — device ids "
+                f"{device_ids!r}, distributed extents {extents!r}; simulation "
+                "spreads subjects over every device and cannot read a value "
+                "from a proper submesh."
             )
             raise ExecutionPlanningError(msg)
 

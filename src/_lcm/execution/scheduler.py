@@ -539,6 +539,12 @@ class PeriodTransferCache:
     kept-buffer decision, is logged exactly like `release_closed_artifacts`'s
     other callers.
 
+    A cache built with releasing off frees nothing at all, however many
+    consumers commit: an eager dispatch is an ordinary Python call whose result
+    may be any object its arguments contained, so no buffer it touched is known
+    to be one the engine produced. That is the gate the solve's other release
+    paths answer to as well.
+
     A copy that shares at least one buffer with the stored artifact — a
     `device_put` the required layout already matched, or one that reused the
     stored buffer for a shard of a wider replicated layout — is served from
@@ -558,6 +564,7 @@ class PeriodTransferCache:
         "_pending_outputs",
         "_registered_keys",
         "_registry",
+        "_release_enabled",
     )
 
     def __init__(
@@ -566,6 +573,7 @@ class PeriodTransferCache:
         registry: BufferRegistry,
         consumer_counts: Mapping[tuple[Hashable, Hashable], int],
         pending_outputs: Sequence[jax.Array] = (),
+        release_enabled: bool = True,
         logger: logging.Logger = _logger,
     ) -> None:
         """Start with no cached copy and the period's declared consumer counts.
@@ -573,6 +581,9 @@ class PeriodTransferCache:
         `pending_outputs` is read fresh at every `commit_consumer` call, so
         passing the same growing sequence the solve loop appends to keeps the
         release barrier current without threading it through every call.
+        `release_enabled` is the solve's own release gate: with it false the
+        cache counts consumers and refuses an over-commit as ever, and frees
+        nothing.
         """
         # Keyed by Hashable, not the exact tuple shape, so the mapping widens
         # cleanly to `release_closed_artifacts`'s `Mapping[Hashable, jax.Array]`
@@ -580,6 +591,7 @@ class PeriodTransferCache:
         self._arrays: dict[Hashable, jax.Array] = {}
         self._registry = registry
         self._pending_outputs = pending_outputs
+        self._release_enabled = release_enabled
         self._logger = logger
         self._registered_keys: set[tuple[Hashable, Hashable]] = set()
         self._next_dispatch_index: dict[tuple[Hashable, Hashable], int] = dict.fromkeys(
@@ -634,8 +646,9 @@ class PeriodTransferCache:
         released through `release_closed_artifacts` — blocked on this
         period's pending outputs, refused if any shard is declared not
         produced, logged like any other release. A copy that was never
-        registered (served from a shared buffer) is never a release
-        candidate, so it survives this call regardless of the count.
+        registered (served from a shared buffer), and every copy of a cache
+        whose solve does not release, is never a release candidate, so it
+        survives this call regardless of the count.
         """
         if key not in self._next_dispatch_index:
             return ()
@@ -651,7 +664,7 @@ class PeriodTransferCache:
             )
             raise ExecutionPlanningError(msg) from error
         registered = newly_eligible & self._registered_keys
-        if not registered:
+        if not registered or not self._release_enabled:
             return ()
         return release_closed_artifacts(
             ledger=self._ledger,

@@ -368,3 +368,37 @@ def test_the_refusal_names_the_cell_the_budget_and_the_resident_bytes(
 
     with pytest.raises(ExecutionPlanningError, match=re.escape(pattern)):
         _selected_width_products(monkeypatch=monkeypatch, budget_bytes=budget)
+
+
+def test_a_solve_with_a_budget_walks_the_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A budget is spent against a position, so every core's position is predicted."""
+    walks: list[object] = []
+    original = backward_induction.plan_resident_bytes
+
+    def record(**kwargs: Any) -> object:
+        walks.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(backward_induction, "plan_resident_bytes", record)
+    _selected_width_products(monkeypatch=monkeypatch, budget_bytes=100 * _value_bytes())
+
+    assert walks != []
+
+
+def test_a_cell_the_budget_can_host_enters_a_compilation_wave(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A position leaving room for a workspace lowers a width of its own."""
+    lowered: set[tuple[str, int]] = set()
+    original = backward_induction._count_triples_per_lowering_key
+
+    def record(*, lowering_keys: Mapping[Any, Any]) -> Any:
+        lowered.update((triple[0], triple[1]) for triple, _width in lowering_keys)
+        return original(lowering_keys=lowering_keys)
+
+    monkeypatch.setattr(backward_induction, "_count_triples_per_lowering_key", record)
+    _selected_width_products(monkeypatch=monkeypatch, budget_bytes=100 * _value_bytes())
+
+    assert ("acting", 0) in lowered
