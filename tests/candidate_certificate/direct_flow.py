@@ -152,8 +152,10 @@ COMPILER_INPUTS_SOURCE = "src/_lcm/execution/compiler_inputs.py"
 SIMULATION_MEMBERSHIP_SOURCE = "src/_lcm/simulation/membership.py"
 
 SIMULATION_TASTE_STREAM_SOURCE = "src/_lcm/simulation/taste_stream.py"
+SIMULATION_ENTRY_ALLOCATIONS_SOURCE = "src/_lcm/simulation/entry_allocations.py"
 
 _CERTIFIED_CORRIDOR_SOURCES = (
+    SIMULATION_ENTRY_ALLOCATIONS_SOURCE,
     SIMULATION_TASTE_STREAM_SOURCE,
     SIMULATION_MEMBERSHIP_SOURCE,
     COMPILER_INPUTS_SOURCE,
@@ -238,6 +240,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
+    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "85ee8ee4be05eb1e332221228478691ebb5da7922cb9d8092c575b78538eacae",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c28ac1ab4acab2166120867158dec5eb866c082cdd05f7cb7877f2dc3c52ef8a",
@@ -287,11 +290,11 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "6215536d5dfe2c2dc32639280c591abf54df561c303dc85e4231138ed8212818",
     SIMULATION_TRANSITIONS_SOURCE: "18f53b35a8a11536f9e3df03cfc48cec357bbc2fa11308d04091620d02e179a6",
     SIMULATION_COMPILE_SOURCE: "3ca1959d612dbfbf323e523fee496a56390ddaa1f509f607803a111d728899d2",
-    MODEL_SOURCE: "8ef3cdf76aa2ba621c0d556c9bbd51ef336f645b0d6a94759f73d01cbb927cab",
+    MODEL_SOURCE: "c774110ee388ae6c7a2a4814edf05f38add7e3508cb8d605f92bc076adaade24",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "320d88ecb4959c19274da453a5bacd7995b5e7d54a6da76d47d0fe24f583809d",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
-    INITIAL_CONDITIONS_SOURCE: "7017df18560acd35178c29f24c87977bcf2eda20eb16f1dccc28dfe417f4757f",
+    INITIAL_CONDITIONS_SOURCE: "5114b119e318dceb693e9cdb99ee8207155c9301ad5a883d7e111cb21f0ca2c5",
     RESULT_SOURCE: "bfc4b1f19bf1852c86c4f5b87d40abed2521d0519af99ff613975fb8d3ab09f0",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
@@ -311,8 +314,8 @@ _SOURCE_SEALS = {
     PROCESS_AR1_SOURCE: "05c03c7ac6f9b600a160be81851b8c868c7919daeeeadb817b201c87d7d9213e",
     VARIABLES_SOURCE: "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6",
     PARAMS_REGIME_TEMPLATE_SOURCE: "f8d856ab22f7308e27454e9f045ac0258e74c87f42b513840aa81a48d9cb5ae2",
-    PARAMS_PROCESSING_SOURCE: "c9056369922b5f088355f7f404b6fa6377c6a2b587bbf5c804e9686f0dcab8e9",
-    DTYPES_SOURCE: "0df3aa83d3d7d2f55438d91b9d4af2f25a17ea0ce836e923ab06a7458c59e73a",
+    PARAMS_PROCESSING_SOURCE: "7406b1a17a7e3ed306790d9939e3fd0c37e14670200b5aceaf48ff31d9f2aa87",
+    DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "254509e538c6a2264a71e04cdd5abdb60ad92f04899a37f710004222ae855bea",
     PANDAS_UTILS_SOURCE: "a0e3f5efb79cf0b252690ee1177bb0c6a3d52882dea15cc70854e71da4ea57a8",
     MODEL_PROCESSING_SOURCE: "7bf036615ed4014bb2a7e9c90348dd0932d0c377a420ede40068b0af53071fc5",
@@ -3048,14 +3051,15 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "6c848dbfdd6217204bb3b50b1e45b0de9328aabb4fdb596ac32ddf70af6ffc1a",
+            "b3317b4ea04842b43a47c34dac7f15c48ba3f4c952a6e4aa294fe23aead142de",
             {
                 "Model._resolve_simulate_regimes": "5a11f26e52496d8210ae0ab2b9846d5ca234569764f82d47e871f26e33751ee2",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model._ensure_simulate_compiled": "2e59224333ce9bd7453608d05359e933217971dbf8867e3f9851b9f503a2df86",
-                "Model.simulate": "03aae0b664add4294cb63aac980e9446afc5dfa5d16a64492039312191b8cd0e",
+                "Model.simulate": "e7e78e373e2684630b9d98171f818144740a99ae24091c6da99730546e281118",
                 "Model._build_external_replay_readers": "33c41f2c3f7bd300f3e0b4ac042f7371b93efbfe1762e5fe639fc854b19f1f5f",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
+                "Model._process_params": "511c26a9c31acbf937c226881d9105b08e759e0b81b139e5b0187f2169bd0837",
             },
         ),
         SIMULATION_RANDOM_SOURCE: (
@@ -3087,10 +3091,39 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
 
 
 _SIMULATION_ADAPTER_CONTRACTS = {
+    DTYPES_SOURCE: (
+        "661c05486d0b4cc02d475d8f74bfc9f845a3a4d1e7c2d3fdd03b90b8a2b82c24",
+        {
+            "CanonicalArrayWriter.__call__": "909bf3b8d82f3612f5246d4c2a152acd55505894f856567f0b1bcbaa343a390b",
+            "canonical_float_dtype": "ff7daf524547e5f62b1d854c3a2a606c3b5903f3a436eb4e8a087a0fda2ca3fe",
+            "safe_to_int_dtype": "86a320656f3eeda21585f62873741bcff8d92b336364b48c920261c503a0d152",
+            "safe_to_float_dtype": "9ccfddda18e625106d7d9cd4be5fda4319583cb9e665efc24b16bdd2dc169a07",
+        },
+    ),
+    PARAMS_PROCESSING_SOURCE: (
+        "57bf8cfb10f45b118e3c5f09ca964bebc7f2a289fb8abbda6c1e20b2f9971676",
+        {
+            "cast_params_to_canonical_dtypes": "4a8f4b204ea7de32d0c4ff2a500ceea8fe5bd5b3f51e158771359572973610e9",
+            "_cast_shared": "8d132f4bfc4c96b597e62f6bd48c2326624bb5ea88dc13b0fb62e3b8b2b51e80",
+            "_cast_leaves_to_canonical_dtype": "0d326605061f3956372a589edc5244a2297ed1966a41a5f5a80a6ba1eefa04e1",
+        },
+    ),
+    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: (
+        "5c7bb977a05b12784fe90b12da72bae6779c4a08de582b3060698d598fb97c4e",
+        {
+            "SimulationEntryAllocations.snapshot": "e7ae5d93555a3a4f4f683bb21d19096a8385b87a8d2a7d11a4365ff61cfba963",
+            "SimulationEntryAllocations.__call__": "d16c9d254801ebbff8ef1ce18125a3a9fe68073d83672bf8855eabf923da6624",
+            "SimulationEntryAllocations.publish": "a8e437cc229448ceb3f4338fc580081b830cc530dd2fc837b1073fbe546e2ae8",
+            "SimulationEntryAllocations.pad": "cfe078114a6c07cfa9ad0ecb0bf0411b8985742aee92a5359d8bae8315d4f0c5",
+            "SimulationEntryAllocations.update_solution": "c0b444df24bb2bc44e0d3db1253353b129ca4c881063066a59fcb7c6a37d7972",
+            "SimulationEntryAllocations.close": "2bf72cd82e3c7e142febbff779235771a93857885b007922821d885a7f1fd7cc",
+            "_pad_initial_leaf": "b5ce0e61085c360e97280d593948a3e8e775e10424620a905c038f34142dd7a0",
+        },
+    ),
     # The entry coordinator preserves both validation families and passes the
     # real retained inventory to each newly profiled summary allocation.
     INITIAL_CONDITIONS_SOURCE: (
-        "eb55929b8e8ee3b0ef22e204e7110331435f523ecbab40af05d93292d933126f",
+        "12b2aa5964002cd67a04f7e8ae71f132b66febe22595ad90da7322d2c20f7f7c",
         {
             "validate_simulation_inputs": "db221b7a09a394ea9d6eb5e1c0329d4ff61a78737de85ea604b5467ba9179f86",
             "_preflight_memory": "24af3b888fd7f85f2f580b19b08c0ed565ed2bc3da34ed883c4e7982f5bc5caf",
@@ -3104,6 +3137,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "_gather_feasibility_inputs": "042f8474176d738b9219516fd96c3d09c5ccc3e4ce18d0641bede57a8ce7d40e",
             "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
             "_constant_feasibility_flag": "f7b994fa04576c7157f8bab30ef0e17126c181ba874cbe493c1e19e6be056f17",
+            "canonicalize_initial_conditions": "c11e1f052794f712ecff808acc643787e6347c4f2234d4612d3e5ae2c4fecca0",
         },
     ),
     SIMULATION_TASTE_STREAM_SOURCE: (
@@ -4973,6 +5007,11 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
 
 
 _SUPPLEMENTAL_SOURCE_MUTATIONS = {
+    "simulation_entry:upload_budget_omitted": (
+        SIMULATION_ENTRY_ALLOCATIONS_SOURCE,
+        "budget_bytes=self.budget_bytes,\n            live_footprint=live,",
+        "budget_bytes=None,\n            live_footprint=live,",
+    ),
     "simulation_taste_stream:global_row_high_word_ignored": (
         SIMULATION_TASTE_STREAM_SOURCE,
         "return jax.random.fold_in(jax.random.fold_in(key, high), low)",

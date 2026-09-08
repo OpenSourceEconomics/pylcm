@@ -20,6 +20,7 @@ from jax import numpy as jnp
 from numpy.typing import NDArray
 
 from _lcm.dtypes import (
+    CanonicalArrayWriter,
     canonical_float_dtype,
     safe_to_float_dtype,
     safe_to_int_dtype,
@@ -366,6 +367,7 @@ def canonicalize_initial_conditions(
     *,
     initial_conditions: UserInitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
+    array_writer: CanonicalArrayWriter | None = None,
 ) -> InitialConditions:
     """Cast every initial-conditions array to its canonical pylcm dtype.
 
@@ -400,13 +402,21 @@ def canonicalize_initial_conditions(
     canonical: dict[str, FloatND | IntND] = {}
     for name, value in initial_conditions.items():
         if name == "regime_id" or name in discrete_state_names:
-            canonical[name] = safe_to_int_dtype(value=value, name=name)
+            canonical[name] = safe_to_int_dtype(
+                value=value, name=name, array_writer=array_writer
+            )
         elif name == "age" or name in known_state_names:
-            canonical[name] = safe_to_float_dtype(value=value, name=name)
+            canonical[name] = safe_to_float_dtype(
+                value=value, name=name, array_writer=array_writer
+            )
         elif np.asarray(value).dtype.kind in "iu":
-            canonical[name] = safe_to_int_dtype(value=value, name=name)
+            canonical[name] = safe_to_int_dtype(
+                value=value, name=name, array_writer=array_writer
+            )
         else:
-            canonical[name] = safe_to_float_dtype(value=value, name=name)
+            canonical[name] = safe_to_float_dtype(
+                value=value, name=name, array_writer=array_writer
+            )
     return MappingProxyType(canonical)
 
 

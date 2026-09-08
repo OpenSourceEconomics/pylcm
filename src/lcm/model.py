@@ -22,6 +22,7 @@ from _lcm.engine import (
     EGMPolicyRead,
     NNBEGMPolicyRead,
     UnsupportedReplayRoute,
+    placed_devices_for_ids,
 )
 from _lcm.execution.core_program import CoreProgram, core_program_graph
 from _lcm.execution.execution_plan import (
@@ -68,6 +69,7 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.simulation.compile import bind_simulation_runtime, lower_simulation_programs
+from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
@@ -2142,7 +2144,7 @@ class Model:
         raise UnsupportedOperationError(msg)
 
     @beartype(conf=PARAMS_CONF)
-    def simulate(  # noqa: C901
+    def simulate(  # noqa: C901, PLR0912, PLR0915
         self,
         *,
         params: UserParams,
@@ -2244,9 +2246,38 @@ class Model:
             initial_conditions=initial_conditions,
             solution=solution,
         )
+        entry_allocations = (
+            None
+            if entry_inputs is None
+            else SimulationEntryAllocations(
+                original_inputs=entry_inputs,
+                solution=solution,
+                model_roots=(
+                    self.ages.values,  # noqa: PD011
+                    self.regime_names_to_ids,
+                    tuple(
+                        (
+                            regime.resolved_fixed_params,
+                            regime.solution.resolved_fixed_params,
+                            regime.solution._base_state_action_space.states,  # noqa: SLF001
+                            regime.solution._base_state_action_space.actions,  # noqa: SLF001
+                        )
+                        for regime in self._regimes.values()
+                    ),
+                ),
+                devices=placed_devices_for_ids(
+                    submesh_device_ids=(), visible_device_ids=self._execution.device_ids
+                ),
+                budget_bytes=cast("int", self._execution.device_memory_bytes),
+            )
+        )
         # The canonical parameters bind both the supplied result preflight and an
         # automatic solve. Process them once and keep one model-authoritative seam.
-        flat_params = self._process_params(params)
+        flat_params = (
+            self._process_params(params)
+            if entry_allocations is None
+            else self._process_params(params, array_writer=entry_allocations)
+        )
         if solution is not None:
             (
                 period_to_regime_to_V_arr,
@@ -2267,10 +2298,24 @@ class Model:
                 user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
+        if entry_allocations is not None:
+            entry_allocations.update_solution(
+                solution=solution,
+                resolved_inputs=(
+                    period_to_regime_to_V_arr,
+                    period_to_regime_to_sim_policy,
+                    period_to_regime_to_dissolution_flags,
+                    period_to_regime_to_replay_reader,
+                ),
+            )
+            entry_allocations.publish(stage="initial", tree=initial_conditions)
         initial_conditions = canonicalize_initial_conditions(
             initial_conditions=initial_conditions,
             regimes=self._regimes,
+            array_writer=entry_allocations,
         )
+        if entry_allocations is not None:
+            entry_allocations.publish(stage="initial", tree=initial_conditions)
         # Align the subject axis to the block size the simulate path needs.
         # Every chunk must match the AOT-compiled shape, and under distributed
         # grids each chunk is additionally placed onto the subject mesh axis,
@@ -2290,10 +2335,19 @@ class Model:
             alignment = n_devices
         else:
             alignment = 1
-        initial_conditions, original_n_subjects = pad_initial_conditions_to_multiple(
-            initial_conditions=initial_conditions,
-            multiple=alignment,
-        )
+        if entry_allocations is None:
+            initial_conditions, original_n_subjects = (
+                pad_initial_conditions_to_multiple(
+                    initial_conditions=initial_conditions,
+                    multiple=alignment,
+                )
+            )
+        else:
+            initial_conditions, original_n_subjects = entry_allocations.pad(
+                initial_conditions=initial_conditions,
+                multiple=alignment,
+            )
+            entry_allocations.publish(stage="initial", tree=initial_conditions)
         # The edge-fold state/source-param collision guard runs on simulation as
         # well as solve because a supplied SolutionResult skips backward induction.
         # Running it before compilation or routing covers both entry paths.
@@ -2314,8 +2368,8 @@ class Model:
             logger=log,
             execution=self._execution,
             retained_footprint=(
-                entry_inputs.footprint(solution=solution)
-                if entry_inputs is not None and validation_enabled(log)
+                entry_allocations.snapshot()
+                if entry_allocations is not None and validation_enabled(log)
                 else None
             ),
         )
@@ -2357,6 +2411,17 @@ class Model:
             or period_to_regime_to_replay_reader is None
         ):
             raise AssertionError("Simulation solution inputs were not resolved.")
+        if entry_allocations is not None:
+            entry_allocations.update_solution(
+                solution=solution,
+                resolved_inputs=(
+                    period_to_regime_to_V_arr,
+                    period_to_regime_to_sim_policy,
+                    period_to_regime_to_dissolution_flags,
+                    period_to_regime_to_replay_reader,
+                ),
+            )
+            entry_allocations.publish(stage="initial", tree=initial_conditions)
         # Values and replay artifacts retain their solve placement. The forward
         # period owner acquires only the copies consumed by that period's units.
         simulate_regimes = self._resolve_simulate_regimes(
@@ -2384,11 +2449,11 @@ class Model:
             original_n_subjects=original_n_subjects,
             device_ids=self._execution.device_ids,
             retained_footprint=(
-                entry_inputs.footprint(solution=solution)
-                if entry_inputs is not None
-                else None
+                entry_allocations.snapshot() if entry_allocations is not None else None
             ),
         )
+        if entry_allocations is not None:
+            entry_allocations.close()
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads
         # the lazy DAG functions / constraints / transitions on
@@ -2487,7 +2552,13 @@ class Model:
         with self._simulate_compile_lock:
             self._simulate_compile_cache[compile_batch_size] = compiled
 
-    def _process_params(self, params: UserParams) -> FlatParams:
+    # keyword-only-exempt: primary-argument=params
+    def _process_params(
+        self,
+        params: UserParams,
+        *,
+        array_writer: SimulationEntryAllocations | None = None,
+    ) -> FlatParams:
         """Broadcast, convert Series, dtype-cast, and validate user params.
 
         Step order matters: `convert_series_in_params` runs *between*
@@ -2505,7 +2576,13 @@ class Model:
                 user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
-        flat_params = cast_params_to_canonical_dtypes(flat_params)
+        if array_writer is not None:
+            # Converted Series payloads already exist; observing them does not
+            # admit that separate conversion operation retroactively.
+            array_writer.publish(stage="params", tree=flat_params)
+        flat_params = cast_params_to_canonical_dtypes(
+            flat_params, array_writer=array_writer
+        )
         flat_params = materialize_granular_transition_params(
             flat_params=flat_params,
             expansions={
@@ -2515,6 +2592,8 @@ class Model:
         )
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
+        if array_writer is not None:
+            array_writer.publish(stage="params", tree=flat_params)
         return flat_params
 
 

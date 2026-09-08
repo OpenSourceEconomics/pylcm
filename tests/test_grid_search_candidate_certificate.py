@@ -518,6 +518,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/params/regime_template.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/params/processing.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/dtypes.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/entry_allocations.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/namespace.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/pandas_utils.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/model_processing.py"), ast.Module)

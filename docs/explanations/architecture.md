@@ -378,6 +378,18 @@ budgeted core planning. Executable reuse still requires a fresh residency check.
 remaining limits of whole-call simulation accounting are recorded in the
 [architecture transition ledger](../development/architecture_transition_ledger.md).
 
+Budgeted simulation entry retains the original caller arrays and existing model grids,
+fixed parameters, regime IDs and ages while canonicalizing plain numeric parameters and
+initial conditions. Host dtype conversion and the existing range checks run first; each
+upload admits its destination payload and declared transfer scratch before allocating on
+the first selected device. This staging device is explicit even when device zero is
+excluded. Padding profiles the unchanged last-row repeat and concatenate operation
+against its actual compiler peak. Completed leaves remain owned and charged before the
+next leaf is admitted; the full canonical input mapping remains live throughout padding.
+Subsequent subject placement uses the ordered simulation devices after padding. Series
+and DataFrame conversion, foreign result copying and automatic-solve overlap remain
+separate accounting boundaries.
+
 ## The solver seam: keys and routes
 
 Two declarations connect a solver to the engine without either reading the other's

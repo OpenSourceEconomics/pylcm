@@ -80,6 +80,64 @@ _RANDOM_HELPER_MUTATIONS = {
 }
 
 _PROFILED_HELPER_MUTATIONS = {
+    "simulation_entry:model_owner_inventory_omitted": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "                        self.model_roots,",
+        "                        (),",
+    ),
+    "simulation_entry:preflight_owner_inventory_omitted": (
+        "src/lcm/model.py",
+        (
+            "entry_allocations.snapshot()\n"
+            "                if entry_allocations is not None "
+            "and validation_enabled(log)"
+        ),
+        (
+            "entry_inputs.footprint(solution=solution)\n"
+            "                if entry_allocations is not None "
+            "and validation_enabled(log)"
+        ),
+    ),
+    "simulation_entry:completed_output_owner_omitted": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "        self._pending.append(result)\n        return result",
+        "        return result",
+    ),
+    "simulation_entry:resolved_view_inventory_omitted": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "                        self._resolved_inputs,",
+        "                        (),",
+    ),
+    "simulation_entry:canonical_padding_inputs_omitted": (
+        "src/_lcm/simulation/entry_allocations.py",
+        'self._stages["initial"] = initial_conditions',
+        'self._stages["initial"] = MappingProxyType({})',
+    ),
+    "simulation_entry:padding_budget_bypassed": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "                    budget_bytes=self.budget_bytes,",
+        "                    budget_bytes=2**63 - 1,",
+    ),
+    "simulation_entry:excluded_source_inventory_omitted": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "budget_devices = tuple(dict.fromkeys((*self.devices, *live.spans)))",
+        "budget_devices = self.devices",
+    ),
+    "simulation_entry:padding_wrong_row": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "jnp.repeat(array[-1:], pad, axis=0)",
+        "jnp.repeat(array[:1], pad, axis=0)",
+    ),
+    "simulation_entry:parameter_writer_bypassed": (
+        "src/lcm/model.py",
+        "flat_params, array_writer=array_writer",
+        "flat_params, array_writer=None",
+    ),
+    "simulation_entry:integer_upload_bypassed": (
+        "src/_lcm/dtypes.py",
+        "return array_writer(value=np_value, dtype=np.dtype(np.int32), name=name)",
+        "return jnp.asarray(np_value, dtype=jnp.int32)",
+    ),
     "simulation_preflight:initial_feasibility_bypassed": (
         "src/_lcm/simulation/initial_conditions.py",
         "            _collect_feasibility_errors(",
@@ -99,13 +157,15 @@ _PROFILED_HELPER_MUTATIONS = {
         "src/lcm/model.py",
         (
             "retained_footprint=(\n"
-            "                entry_inputs.footprint(solution=solution)\n"
-            "                if entry_inputs is not None and validation_enabled(log)"
+            "                entry_allocations.snapshot()\n"
+            "                if entry_allocations is not None "
+            "and validation_enabled(log)"
         ),
         (
             "retained_footprint=(\n"
             "                None\n"
-            "                if entry_inputs is not None and validation_enabled(log)"
+            "                if entry_allocations is not None "
+            "and validation_enabled(log)"
         ),
     ),
     "simulation_preflight:invalid_discrete_cohort_accepted": (
@@ -281,6 +341,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "compiler_inputs:eliminated_input_counted_by_compiler",
         "simulation_membership:entry_period_changed",
         "simulation_taste_stream:global_row_high_word_ignored",
+        "simulation_entry:upload_budget_omitted",
     }
     assert not set(registered) & set(supplemental)
     assert {spec["path"] for spec in (registered | supplemental).values()} == set(
@@ -298,6 +359,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "src/_lcm/execution/footprint.py",
         "src/_lcm/simulation/membership.py",
         "src/_lcm/simulation/taste_stream.py",
+        "src/_lcm/simulation/entry_allocations.py",
     ],
 )
 def test_live_simulation_program_sources_are_certified(source: str):
