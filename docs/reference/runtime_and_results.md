@@ -186,10 +186,12 @@ On several devices every regime is placed before anything is compiled:
 
 Two placements of one model publish values that name the same real number: each
 partition is vectorized at its own width, so the two runs agree to within a few units in
-the last place rather than bit for bit. A model on one device, or with one regime active
-per period, is placed exactly as before. `simulate` copies a single-device value back to
-the default device; a value solved on a proper submesh cannot meet subjects spread over
-every device and is refused with an `ExecutionPlanningError`.
+the last place rather than bit for bit. Simulation retains solution arrays on their
+stored devices and acquires each period's declared value inputs on the devices required
+by its forward programs. Matching layouts pass through; other supported layouts use
+explicit copies, with source and destination storage admitted when a budget is supplied.
+A solution produced on a proper submesh can therefore be supplied to simulation. The
+original solution remains owned while the forward period tracks its acquired copies.
 
 (api-solution-result)=
 
