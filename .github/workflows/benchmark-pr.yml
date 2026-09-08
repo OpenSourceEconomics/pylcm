@@ -46,7 +46,7 @@ jobs:
             sleep 60
           done
           echo "GPU is free."
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -67,6 +67,7 @@ jobs:
       - name: Restore or install the benchmark environment
         uses: prefix-dev/setup-pixi@v0.10.2
         with:
+          pixi-version: v0.80.0
           cache: true
           cache-write: false
           environments: benchmarks-cuda12
