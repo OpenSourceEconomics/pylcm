@@ -129,7 +129,9 @@ def _nan_producing_model() -> Model:
     )
 
 
-def test_a_period_with_a_non_finite_value_warns_once_per_offending_regime(caplog):
+def test_a_period_with_a_non_finite_value_warns_once_per_offending_regime(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """At `warning`, each regime with a NaN owned value produces exactly one line."""
     model = _nan_producing_model()
     with caplog.at_level(logging.WARNING, logger="lcm"):
@@ -194,7 +196,9 @@ def _two_offender_model() -> Model:
     )
 
 
-def test_every_offending_regime_of_a_period_is_named_before_debug_raises(caplog):
+def test_every_offending_regime_of_a_period_is_named_before_debug_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """At `debug`, both NaN-holding regimes of a period are named before the raise."""
     model = _two_offender_model()
     with (

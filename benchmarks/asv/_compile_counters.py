@@ -16,6 +16,7 @@ import contextlib
 import dataclasses
 from collections.abc import Iterator
 
+import jax._src.monitoring
 import jax.monitoring
 
 # Monitoring event JAX records once per top-level jaxpr trace.
@@ -56,6 +57,7 @@ def count_compile_requests() -> Iterator[CompileRequestCounts]:
     try:
         yield counts
     finally:
+        listener.disarmed = True
         _unregister(listener=listener)
 
 
@@ -66,40 +68,53 @@ _FIELD_BY_EVENT = {
 }
 
 
-@dataclasses.dataclass(frozen=True, eq=False)
+@dataclasses.dataclass(eq=False)
 class _EventCounter:
     """Add one to `counts` for every duration event of a counted kind.
 
     Identity comparison (`eq=False`) keeps `unregister_event_duration_listener`
-    from removing a listener belonging to a different block.
+    from removing a listener belonging to a different block. A disarmed
+    listener ignores every event, so one that cannot be taken out of JAX's list
+    still stops contributing to any later block's counts.
     """
 
     counts: CompileRequestCounts
     """Counts this listener adds to."""
 
+    disarmed: bool = False
+    """Whether this listener has stopped counting."""
+
     # keyword-only-exempt: library-callback=jax.monitoring.record_event_duration_secs
     def __call__(self, event: str, duration_secs: float, **kwargs: str | int) -> None:
         """Add one to the field the event maps to, ignoring every other event."""
+        if self.disarmed:
+            return
         field = _FIELD_BY_EVENT.get(event)
         if field is not None:
             setattr(self.counts, field, getattr(self.counts, field) + 1)
 
 
-def _unregister(*, listener: _EventCounter) -> None:
+def _unregister(*, listener: _EventCounter) -> bool:
     """Take one listener back out of JAX's duration-listener list.
 
     Unregistering asserts membership, and `clear_event_listeners()` rebinds the
     list, so a listener something else in the process already dropped would
-    raise out of the caller's `finally` and mask whatever the block itself
-    raised. Under `-O` the assert is stripped and `list.remove` raises
-    `ValueError` in its place.
+    raise where the caller unregisters it. Under `-O` the assert is stripped
+    and `list.remove` raises `ValueError` in its place. Either way the caller
+    unregisters from a `finally`, where an exception would replace whatever the
+    measured block itself raised.
 
-    A failure is swallowed only once the listener really is gone. A listener
-    left in the list would keep counting into a later block, so if it is still
-    there the failure propagates rather than being hidden.
+    So a failure is reported as a return value rather than raised, and only
+    after the list is consulted: a listener that is genuinely gone is a clean
+    teardown, while one still in the list would keep counting into a later
+    block and is the case worth knowing about.
+
+    Returns:
+        Whether the listener is out of the list when this returns.
+
     """
     try:
         jax.monitoring.unregister_event_duration_listener(listener)
     except AssertionError, ValueError:
-        if listener in jax.monitoring._event_duration_secs_listeners:  # noqa: SLF001
-            raise
+        return listener not in jax._src.monitoring.get_event_duration_listeners()  # noqa: SLF001
+    return True

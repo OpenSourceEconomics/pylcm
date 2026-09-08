@@ -15,9 +15,10 @@ import contextlib
 import logging
 import statistics
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import jax
+import jax._src.monitoring
 import jax.numpy as jnp
 import pytest
 
@@ -46,6 +47,13 @@ HOST_TIME_BAR = 1.5
 # timed alternately, so a background load that varies slowly over the run moves
 # both medians together rather than the ratio.
 HOST_TIME_REPEATS = 9
+
+# The validators `Model.simulate` runs once before the period loop, which the
+# loop row holds out. Both must reach the seam or the measurement is not the
+# loop's.
+_PREFLIGHT_VALIDATORS = frozenset(
+    {"validate_transitions", "validate_initial_conditions"}
+)
 
 
 def _double(x: FloatND) -> FloatND:
@@ -94,6 +102,46 @@ def test_counters_report_one_of_each_for_a_freshly_compiled_function() -> None:
         counts.lowering_requests,
         counts.compile_requests,
     ) == (1, 1, 1)
+
+
+class _BlockError(Exception):
+    """Raised inside a counting block to see what its teardown does with it."""
+
+
+def test_a_counting_block_leaves_no_listener_behind() -> None:
+    """A finished counting block puts JAX's listener list back as it found it."""
+    before = len(jax._src.monitoring.get_event_duration_listeners())
+    with count_compile_requests():
+        pass
+    assert len(jax._src.monitoring.get_event_duration_listeners()) == before
+
+
+def test_a_cleared_listener_list_does_not_mask_the_blocks_own_error() -> None:
+    """A block whose listener is gone still reports the error the block raised.
+
+    `jax.monitoring.clear_event_listeners()` drops every registered listener,
+    so the teardown has nothing to unregister. Unregistering a listener that is
+    already gone raises inside JAX, and the teardown runs in a `finally`, so a
+    teardown that let that through would replace the block's own exception.
+    """
+    with pytest.raises(_BlockError):
+        _raise_from_a_block_whose_listeners_were_cleared()
+
+
+def _raise_from_a_block_whose_listeners_were_cleared() -> None:
+    """Clear JAX's listener list inside a counting block, then raise."""
+    with count_compile_requests():
+        jax.monitoring.clear_event_listeners()
+        raise _BlockError
+
+
+def test_a_counting_block_stops_counting_once_its_listener_cannot_be_removed() -> None:
+    """A listener the teardown could not remove contributes to no later block."""
+    with count_compile_requests() as stranded:
+        jax.monitoring.clear_event_listeners()
+    with count_compile_requests():
+        jax.jit(_double)(jnp.arange(4.0))
+    assert stranded.compile_requests == 0
 
 
 def test_cold_simulate_call_compiles() -> None:
@@ -170,7 +218,9 @@ def test_repeating_a_subject_width_at_debug_compiles_nothing(*, witness: str) ->
 
 @pytest.mark.parametrize("witness", sorted(WITNESSES))
 def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
-    *, witness: str
+    *,
+    witness: str,
+    record_testsuite_property: Callable[[str, object], None],
 ) -> None:
     """The simulation loop at `progress` costs at most half again its `off` host time.
 
@@ -182,13 +232,25 @@ def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
     emission is held fixed while the level varies. The witnesses are small — 3
     subjects for `dissolution`, 7 for `multi_regime` — which is why pre-flight
     validation dominates the whole call at these widths but not the loop.
+
+    Both legs still carry the level-independent part of `Model.simulate`
+    (padding, batch-size resolution, dispatch), which pulls the ratio toward
+    1.0, so the row is a lower bound on any growth in the loop's validation
+    cost rather than a measurement of it in isolation. The two medians are
+    recorded alongside the ratio so a reader can see how much room there is.
     """
-    ratio = _median_host_time_ratio(
+    off_seconds, progress_seconds = _median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
         stub_preflight=True,
     )
+    ratio = progress_seconds / off_seconds
+    record_testsuite_property(f"loop_off_ms[{witness}]", round(off_seconds * 1e3, 4))
+    record_testsuite_property(
+        f"loop_progress_ms[{witness}]", round(progress_seconds * 1e3, 4)
+    )
+    record_testsuite_property(f"loop_progress_over_off[{witness}]", round(ratio, 4))
     assert ratio <= HOST_TIME_BAR, f"progress/off host time is {ratio:.3f}x"
 
 
@@ -217,7 +279,9 @@ _PREFLIGHT_REASON = (
     ],
 )
 def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
-    *, witness: str
+    *,
+    witness: str,
+    record_testsuite_property: Callable[[str, object], None],
 ) -> None:
     """A whole simulate call at `progress` costs at most half again its `off` host time.
 
@@ -225,38 +289,54 @@ def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
     covers `validate_transitions` and `validate_initial_conditions` as well as
     the period loop.
     """
-    ratio = _median_host_time_ratio(
+    off_seconds, progress_seconds = _median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
         stub_preflight=False,
     )
+    ratio = progress_seconds / off_seconds
+    record_testsuite_property(f"call_progress_over_off[{witness}]", round(ratio, 4))
     assert ratio <= HOST_TIME_BAR, f"progress/off host time is {ratio:.3f}x"
 
 
-def _accept_and_ignore(**kwargs: object) -> None:
-    """Stand in for a validator, accepting its keyword arguments and doing nothing."""
-
-
 @contextlib.contextmanager
-def _preflight_validation_stubbed() -> Iterator[None]:
+def _preflight_validation_stubbed() -> Iterator[list[str]]:
     """Hold out the two validators `Model.simulate` runs before the period loop.
 
     `validate_transitions` and `validate_initial_conditions` carry no switch of
     their own: each is gated on the log level and on nothing else, which is the
     very variable a host-time ratio varies, so there is no public way to hold
     them out while measuring. The seam is therefore the two names as
-    `lcm.model` binds them, replaced by a no-op for the duration of the block
-    and restored afterwards.
+    `lcm.model` binds them, replaced by a recording no-op for the duration of
+    the block and restored afterwards.
+
+    Yields the list of validator names the stub actually absorbed, so a caller
+    can tell a seam that held from one that silently stopped holding --- which
+    is what would happen if `lcm.model` ever reached a validator through a
+    qualified path instead of the bare name.
     """
+    absorbed: list[str] = []
     saved_transitions = lcm.model.validate_transitions
     saved_initial_conditions = lcm.model.validate_initial_conditions
-    # The stub takes any keyword arguments, which is wider than either
-    # validator declares, so the assignment is deliberately off-signature.
-    lcm.model.validate_transitions = _accept_and_ignore  # ty: ignore[invalid-assignment]
-    lcm.model.validate_initial_conditions = _accept_and_ignore  # ty: ignore[invalid-assignment]
+
+    def stub_transitions(**kwargs: object) -> None:  # noqa: ARG001
+        """Stand in for `validate_transitions`, absorbing whatever it is passed."""
+        absorbed.append("validate_transitions")
+
+    def stub_initial_conditions(**kwargs: object) -> None:  # noqa: ARG001
+        """Stand in for `validate_initial_conditions`, absorbing its arguments."""
+        absorbed.append("validate_initial_conditions")
+
+    # Bound by name: a stub takes any keyword arguments, which is wider than
+    # either validator declares, so a direct assignment would be off-signature.
+    for name, stub in (
+        ("validate_transitions", stub_transitions),
+        ("validate_initial_conditions", stub_initial_conditions),
+    ):
+        setattr(lcm.model, name, stub)
     try:
-        yield
+        yield absorbed
     finally:
         lcm.model.validate_transitions = saved_transitions
         lcm.model.validate_initial_conditions = saved_initial_conditions
@@ -308,22 +388,28 @@ def _host_time(
     return time.perf_counter() - start
 
 
-def _median_host_time_ratio(
+def _median_host_times(
     *, witness: str, log_level: LogLevel, repeats: int, stub_preflight: bool
-) -> float:
-    """Return median(host time at `log_level`) / median(host time at `off`).
+) -> tuple[float, float]:
+    """Return the median host time at `off` and at `log_level`, in seconds.
 
     Both levels are warmed at this witness's subject width before any call is
     timed, and the timed calls alternate between the levels.
+
+    With `stub_preflight`, the seam is checked rather than trusted: if neither
+    validator was absorbed by the stub the measurement did not hold anything
+    out, and this raises instead of returning a ratio that quietly covers the
+    whole call.
     """
     model, params, initial_conditions = WITNESSES[witness]()
     solution = model.solve(params=params, log_level="off")
     levels: tuple[LogLevel, ...] = ("off", log_level)
     timings: dict[LogLevel, list[float]] = {level: [] for level in levels}
+    absorbed: list[str] = []
     with contextlib.ExitStack() as stack:
         stack.enter_context(_lcm_log_output_held_fixed())
         if stub_preflight:
-            stack.enter_context(_preflight_validation_stubbed())
+            absorbed = stack.enter_context(_preflight_validation_stubbed())
         for warm_level in levels:
             _host_time(
                 model=model,
@@ -343,4 +429,12 @@ def _median_host_time_ratio(
                         log_level=measured_level,
                     )
                 )
-    return statistics.median(timings[log_level]) / statistics.median(timings["off"])
+        missing = _PREFLIGHT_VALIDATORS - set(absorbed)
+        if stub_preflight and missing:
+            msg = (
+                f"the pre-flight seam held nothing out for {sorted(missing)}; "
+                "`Model.simulate` no longer reaches those validators by the "
+                "bare name `lcm.model` binds"
+            )
+            raise RuntimeError(msg)
+    return statistics.median(timings["off"]), statistics.median(timings[log_level])

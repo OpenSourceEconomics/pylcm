@@ -11,12 +11,15 @@ forkserver imports every `bench_*.py` module to discover benchmarks before it
 forks workers, and a JAX import at module scope puts the multithreaded XLA
 backend into the forkserver, which every fork then inherits.
 
-An asv metric is identified by module, class and method name, and the design
-spec's acceptance clause names `track_second_call_compiles` and
-`track_host_ms_per_period_regime` directly. Those three names therefore stay as
-they are, even though what the first counts is a compile *request*: the counter
-itself says so, and renaming the metric would silently break every reference to
-it outside this file.
+The two metrics answer two different questions, which is why both are tracked:
+`track_second_call_compiles` says whether a warm call still asks JAX to compile
+anything (it should ask for nothing), and `track_host_ms_per_period_regime`
+says what a warm call costs per (period, regime) once nothing compiles, which
+is how the cost of runtime validation becomes visible. An asv metric is
+identified by module, class and method name, so those names are the identity
+under which a measurement is stored and compared across commits: renaming one
+starts a new series and silently orphans the old, which is why they stay as
+they are even though what the first counts is a compile *request*.
 """
 
 import time
