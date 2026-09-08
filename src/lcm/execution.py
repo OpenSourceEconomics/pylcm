@@ -11,14 +11,14 @@ from lcm.typing import StateName
 class ExecutionConfig:
     """Hardware-local controls for solving and simulation.
 
-    None of these values enters a model's durable fingerprint. A missing
-    device-memory budget leaves execution unconstrained; an axis width fixes the
-    compiled block width of every program declaring that axis name; a sharded
-    state spreads its grid axis over the devices its regime is placed on.
+    None of these values enters a model's durable fingerprint. Without a
+    device-memory budget, omitted widths use conservative bootstrap choices.
+    An axis width fixes the execution block of every program declaring that name;
+    a sharded state spreads its grid axis over its regime's assigned devices.
     """
 
     device_memory_bytes: int | None = None
-    """Per-device byte ceiling for compiler-reported peak workspace, or `None`."""
+    """Per-device ceiling for compiler peak plus accounted residency, or `None`."""
 
     sharded_states: tuple[StateName, ...] = ()
     """States whose grid axis is spread over the regime's devices."""
