@@ -232,10 +232,13 @@ def direct_oracle_period(  # noqa: PLR0915
         getattr(core_program_graph(kernel=kernel)["replay"].function, "keywords", None)
         or {}
     )
+    # Captures preserve the solved child payloads. The numerical oracle reads
+    # those economic inputs independently of the production argument adapter,
+    # which may split a marginal leaf out of the continuation tree for donation.
     carries = {
         name: _numpy_carry(carry)
         for name, carry in cast(
-            "Mapping[str, Any]", kwargs["next_regime_to_continuation"]
+            "Mapping[str, EGMCarry]", context["next_regime_to_continuation"]
         ).items()
     }
     dtype = np.asarray(kwargs[statics.liquid_name]).dtype

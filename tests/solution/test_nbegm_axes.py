@@ -13,10 +13,13 @@ from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.execution.core_program import (
     CoreBuildContext,
+    MaterializedCoreProgram,
+    _value_read_argument_leaf,
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
 )
+from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueTransferKind
 from _lcm.execution.workspace_planning import bootstrap_width
 from lcm import ExecutionConfig, LinSpacedGrid, Model, Regime
 from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
@@ -312,12 +315,38 @@ def test_width_changes_the_lowered_computation(axis: str) -> None:
     full_widths = {item.name: item.extent for item in materialized.requirements.axes}
     bodies = []
     for widths in (full_widths, {**full_widths, axis: 1}):
-        resolved = resolve_core_program(program=materialized, tile_widths=widths)
+        resolved = resolve_core_program(
+            program=materialized,
+            tile_widths=widths,
+            input_transfer_plan=_aligned_transfer_plan(program=materialized),
+        )
         lowered = jax.jit(partial(resolved.function, **resolved.static_kwargs)).lower(
             **resolved.arguments
         )
         bodies.append(str(lowered.compiler_ir(dialect="stablehlo")))
     assert bodies[0] != bodies[1]
+
+
+def _aligned_transfer_plan(
+    *, program: MaterializedCoreProgram
+) -> tuple[ResolvedValueTransfer, ...]:
+    """Preserve every captured input leaf at its actual stored layout."""
+    transfers = []
+    for read in program.requirements.value_reads:
+        leaf = _value_read_argument_leaf(program=program, read=read)
+        assert isinstance(leaf, jax.Array)
+        transfers.append(
+            ResolvedValueTransfer(
+                target=read.target,
+                source=read.source,
+                kind=ValueTransferKind.ALIGNED_LOCAL,
+                stored_sharding=leaf.sharding,
+                source_sharding=leaf.sharding,
+                expected_shape=leaf.shape,
+                expected_dtype=leaf.dtype,
+            )
+        )
+    return tuple(transfers)
 
 
 def _constant_one() -> float:
@@ -412,6 +441,7 @@ def test_default_interval_stream_preserves_the_dense_period(
     )
     resolved = resolve_core_program(
         program=materialized,
+        input_transfer_plan=_aligned_transfer_plan(program=materialized),
         tile_widths={
             axis.name: bootstrap_width(extent=axis.extent)
             for axis in materialized.requirements.axes
