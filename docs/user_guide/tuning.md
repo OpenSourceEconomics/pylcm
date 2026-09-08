@@ -46,9 +46,8 @@ locations. They do not declare a budget kink or cliff to NBEGM; use the structur
 
 ## Fix a planner axis width
 
-A solve core declares the axes the execution planner may stream, each under a name.
-`ExecutionConfig(axis_widths=...)` maps such a name to the compiled batch widths every
-program declaring it is lowered at:
+A solver declares its execution axes by name. `ExecutionConfig(axis_widths=...)` fixes
+the width used by each applicable compiled program or host-dispatch loop:
 
 ```python
 from lcm import ExecutionConfig, Model
@@ -61,25 +60,31 @@ model = Model(
 )
 ```
 
-A width smaller than the axis bounds how many entries are evaluated together; a width at
-or above the axis extent selects the whole axis in one vectorized pass. Lower values can
-reduce live intermediates inside that core at the cost of more sequential execution.
-They do not cap surrounding arrays, retained candidate banks, compilation memory, or
-total device memory.
+A width smaller than the axis bounds how many entries are processed together; a width at
+or above the extent selects the whole axis in one chunk. Compiled axes vectorize that
+chunk; a host-dispatch axis bounds pending node calls. Lower values can reduce live
+intermediates at the cost of more sequential execution. They do not cap surrounding
+arrays, retained candidate banks, compilation memory, or total device memory.
 
 Which axis names exist depends on which solver a regime uses; each solver's section in
 [Solvers and capabilities](../reference/solvers.md) names the axes it declares.
 
-| axis              | declared by                                                                               |
-| ----------------- | ----------------------------------------------------------------------------------------- |
-| `action_product`  | the flattened Cartesian action product of a streamed `GridSearch` core                    |
-| `stochastic_node` | the declared child stochastic-node mesh a `DCEGM` or ride-along `NBEGM` expectation folds |
-| `cell`            | the independent state cells a `GridSearch`, `DCEGM`, or ride-along `NBEGM` solve tiles    |
-| `interval`        | liquid intervals a ride-along `NBEGM` continuation reads and folds                        |
-| `branch`          | the discrete-action product a ride-along `NBEGM` solves before its maximum                |
-| `savings_point`   | the exogenous savings nodes a `DCEGM` continuation is tiled over                          |
-| `euler_point`     | the exogenous Euler nodes a `DCEGM` asset-row solve is tiled over                         |
-| `outer_candidate` | the exogenous outer post-decision nodes of a nested outer search                          |
+| axis              | declared by                                                                                          |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| `action_product`  | the flattened Cartesian action product of a streamed `GridSearch` core                               |
+| `stochastic_node` | child stochastic nodes folded by `DCEGM`, ride-along `NBEGM`, and their nested solvers               |
+| `cell`            | independent state cells tiled by `GridSearch`, `DCEGM`, ride-along `NBEGM`, and their nested solvers |
+| `interval`        | liquid intervals folded by ride-along `NBEGM`, including eligible `NNBEGM` inner programs            |
+| `branch`          | discrete-action subproblems mapped by ride-along `NBEGM`, including eligible `NNBEGM` inner programs |
+| `savings_point`   | exogenous savings nodes tiled by `DCEGM`, including `NEGM` inner programs                            |
+| `euler_point`     | Euler nodes tiled by `DCEGM`, including `NEGM` inner programs                                        |
+| `envelope_cell`   | independent envelope cells tiled by `DCEGM`, including `NEGM` inner programs                         |
+| `outer_candidate` | the exogenous outer post-decision nodes of a nested outer search                                     |
+
+These are solver capability names; a particular program declares only its applicable
+axes. Plain `EGM` declares no execution-width axis. Nested solvers inherit the relevant
+inner axes; their outer search determines how `outer_candidate` is used. See the
+generated capability table in [Solvers and capabilities](../reference/solvers.md).
 
 Choose the largest width that meets the measured memory target, then verify values and
 runtime against the whole-axis setting on the model and backend you will use. Leaving an
