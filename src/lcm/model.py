@@ -254,7 +254,12 @@ def _simulation_programs(
     """Yield every core program the simulation phase of every regime declares."""
     for regime in regimes.values():
         programs = regime.simulation.programs
-        for family in (programs.decision, programs.transition, programs.route):
+        for family in (
+            programs.decision,
+            programs.transition,
+            programs.route,
+            programs.policy_prepare,
+        ):
             yield from family.values()
 
 

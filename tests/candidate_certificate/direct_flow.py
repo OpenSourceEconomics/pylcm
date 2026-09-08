@@ -155,8 +155,12 @@ SIMULATION_MEMBERSHIP_SOURCE = "src/_lcm/simulation/membership.py"
 
 SIMULATION_TASTE_STREAM_SOURCE = "src/_lcm/simulation/taste_stream.py"
 SIMULATION_ENTRY_ALLOCATIONS_SOURCE = "src/_lcm/simulation/entry_allocations.py"
+SIMULATION_POLICY_PROGRAMS_SOURCE = "src/_lcm/simulation/policy_programs.py"
+PUBLISHED_POLICY_SOURCE = "src/_lcm/egm/published_policy.py"
 
 _CERTIFIED_CORRIDOR_SOURCES = (
+    SIMULATION_POLICY_PROGRAMS_SOURCE,
+    PUBLISHED_POLICY_SOURCE,
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE,
     SIMULATION_TASTE_STREAM_SOURCE,
     SIMULATION_MEMBERSHIP_SOURCE,
@@ -244,6 +248,8 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
+    SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
+    PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "aa0ccf797a5e4d9669a7d7265458584e09d97f37ff7b6b18cd90b626df5a2075",
     NBEGM_SOURCE: "32037ec1fc4e67cf7523d4a574e0172b91e1e600bfdacfbd2f8afa987319c0a4",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
@@ -254,7 +260,7 @@ _SOURCE_SEALS = {
     SIMULATION_UNIT_SOURCE: "c2c8b34310339ced638e67503251a398047b9c673146bd7d49f69670717c4d3b",
     SIMULATION_HOST_SOURCE: "74bd0ccccd0b25968e502a42ab0a6c7ae19341eb946dcd1b1c21907a469786d3",
     SIMULATION_MEMORY_SOURCE: "917677a73a623cc2c8d836957d7a86832403bb1f319ec5eeeb967abad9ec31a1",
-    SIMULATION_PERIOD_INPUTS_SOURCE: "70a1dc14b09edf1101dea7dac7a82e18693f1a299c413b34c8cd955b0892bac0",
+    SIMULATION_PERIOD_INPUTS_SOURCE: "e29c50dd464cd01f5f48a2c6574e13d454c577afb979e51195fa8394d1099c7f",
     SIMULATION_REPLAY_INPUTS_SOURCE: "6a8f9e1eafbebb264b11d7b6be5535c1e9cdf90e2ec1e17f2343eddc222b01b9",
     SIMULATION_VALUE_READS_SOURCE: "b00b335634970802bc240962c6c7eeba99598924a00b4c0059b87663d4e928e4",
     SIMULATION_VALUE_PLACEMENT_SOURCE: "afd58b343d0385934c3add5552d7926dc3f9ba2700e5a40b26a65a62a75b1e68",
@@ -269,8 +275,8 @@ _SOURCE_SEALS = {
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
     WORKSPACE_PLANNING_SOURCE: "05972cd1ecf48b86c6a9ad4828e7b750ca62c130c1945118735ff002ac586f48",
     SIMULATION_PROGRAMS_SOURCE: "dc05c99c5b3e083e20e5b909ffe3a7910b94697cfb3d0fd9b9426d9cd80d5f1e",
-    SIMULATION_PROGRAM_TYPES_SOURCE: "44b0bf3b343b6a0ad3659e78666c602bf4c64547ddc558c45337db1c2cafd19f",
-    SIMULATION_RUNTIME_SOURCE: "e629b4fad00474a3f638481b1c7d1591a041df7d44af8bfa7b9fc23595a01656",
+    SIMULATION_PROGRAM_TYPES_SOURCE: "3b22c1399e032629734dcff54e29e9e4c00ccd03638d2fafd969f697975c8c6c",
+    SIMULATION_RUNTIME_SOURCE: "629a69bf12c34f7268bca2103b58682cbddefb155b667d76a587ba722de4ff6f",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
@@ -293,10 +299,10 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "400326d4fe75f7ee62daf88ca334c095f30689b37ef5cf16f0aacd61b9cb2b75",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "578e4e7cc142608bdac9d48c604a21abf70c01fce7c7ab3bf32dcef2f75b33f3",
+    SIMULATION_SOURCE: "fe6f2f8e9550314cc4aa76ba9ce41f104f6e55ed8a72804d6b15e18dce9ae8cc",
     SIMULATION_TRANSITIONS_SOURCE: "18f53b35a8a11536f9e3df03cfc48cec357bbc2fa11308d04091620d02e179a6",
-    SIMULATION_COMPILE_SOURCE: "3ca1959d612dbfbf323e523fee496a56390ddaa1f509f607803a111d728899d2",
-    MODEL_SOURCE: "6efb323f743bd96236024eaedb19210fa7dac58aea533c51ad2bf3a932c2f9e5",
+    SIMULATION_COMPILE_SOURCE: "f6b4ec612b6bcf6263995d85ce5bd49c75c0c807af1bafd83a16c89140863d12",
+    MODEL_SOURCE: "1fe60119c587a264285c46f1485b3691ded638c839e1f786e156d8cf127e7185",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "43bfe665ac889a793e2f423aa38b87716228c2dc77e3f8fea2e23219b71c5257",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
@@ -324,7 +330,7 @@ _SOURCE_SEALS = {
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "254509e538c6a2264a71e04cdd5abdb60ad92f04899a37f710004222ae855bea",
     PANDAS_UTILS_SOURCE: "a0e3f5efb79cf0b252690ee1177bb0c6a3d52882dea15cc70854e71da4ea57a8",
-    MODEL_PROCESSING_SOURCE: "7bf036615ed4014bb2a7e9c90348dd0932d0c377a420ede40068b0af53071fc5",
+    MODEL_PROCESSING_SOURCE: "727870dc8917f7aedfe99e4b7f1cacac6ecd11f4763004a29d2b4ef8237522ea",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 404
@@ -2960,12 +2966,12 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_PROGRAM_TYPES_SOURCE: (
-            "bf2290be45903028142ff3cf2fe6239595eba5d4b7208d9e06700a4f984d1e32",
+            "eb901174a407d9d54490f4411c4c6f6a5a45a966c3be09a96194ab43b64d441c",
             {
                 "SimulationBuildContext.__post_init__": "00641d48094283340c57d2137f90f4568bd7dfa8ff6372e0348ccf6abad54a31",
                 "SimulationProgramExecutor.dispatch": "7dc2a7b53175a8eb36dba1ccaf927391aaaffc12a3a913d695f16346ff38883b",
-                "SimulationPrograms.__post_init__": "8a101d3c4179b03c7c0a0759a20e57c9c96535fa5e062cfac4736ddb97e443f3",
-                "SimulationPrograms.declared_axis_names": "4de2577510af20c9e9c469173eee78444dbec2fb5d9e6463c0d475865e0a3ac5",
+                "SimulationPrograms.__post_init__": "8be2e3fd6528472278e59582f4e48d648c3df80da555557faeccbf5ee79976ee",
+                "SimulationPrograms.declared_axis_names": "6c0ff6731e684d92a8e8a7e07b101d9aa6c05794409aa5a2d8bd9153e77e7c45",
                 "transition_output_roles": "ed772c2beff03f47113b71f5d3f0405469b6ef4bf67d4c3ad4df1a3f064e3fab",
                 "route_output_roles": "81ccd2cdf1a29d1dcb3021d775c4abc8cb70364819a027303968afc69af19a2e",
                 "subject_axis": "2d1dda5c95debf5b8c7d0a72c8fa71db6c42b2fb22763cc943ec494dfd3d942f",
@@ -2979,7 +2985,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
                 "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
                 "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
                 "SimulationRuntime._prepare_materialized": "e1660f9fe46061be1e96201b8e2b4f12bcbd3352805428925a9f1d0ae97c36ba",
-                "execute_simulation_program": "6248e86d6a967be348ab00114e7d036d6f40e233c80a71ad07dd4dab67d4667e",
+                "execute_simulation_program": "b75e87e597dcb01eb814282f6f89eafdfbb1121ae0f93ea4ae4fbea68e7f10d8",
                 "_SimulationCandidateCompiler.__call__": "34118b52721ac3374cc3b9744b5196428fbb603551f6d297e1b6ab7deea9e907",
                 "_with_subject_extent": "c48502d31e8f9fb29221122b0de6d10f38f3d6f740854a82512c2b964079e463",
                 "_build_context": "d2de03c66739cd53f5c9e1f95f9fd0ab4c57334ca853e7a5e8f0422cf733852d",
@@ -2995,7 +3001,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             "5ab22656078a47b54126cd1c9bd87566a09ede55ca25c9f8e1633bf9d6d8c8d7",
             {
                 "bind_simulation_runtime": "18a84d95cd797683166f366e455a5c1210b039b11c0ecc6f8a040b16332f57ab",
-                "lower_simulation_programs": "1f62ea281a355ab2f849207188f3d5fc58e504674ee299ae08d4b2b21be7a843",
+                "lower_simulation_programs": "287fc947acf266b3819a6b6ccc6a8e3f40611c2a59cb25b34b38f8de7cdeb53f",
                 "_prepare_and_log": "6380580f956921448a5106ee53accfa712c9bf62bded1b224c18b7561bf63f67",
                 "_compile_and_install_gate": "a0551505388660688c0465fdd862906f608840bc0189c31243f5cb83a8c90b5f",
                 "_drain_compilations": "0d226343d92bb2cc8f0e9d661135cf92e332fe7499dc9c4e910e75fb723fac64",
@@ -3035,9 +3041,10 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     """
     contracts = {
         SIMULATION_SOURCE: (
-            "d74b2a52ca9aaa8026fd44240e66ef30fb609aa7a695214dd8eeaf5f1f82d0bf",
+            "ee0ba5f89922468b7c3530b7fb401b6472fc63b3d8df7db23c6f27bdad2c9b8e",
             {
-                "_simulate_regime_in_period": "2d0ede012becb7860aef63976765e1f9965793b449338399f7ea3ad238208448",
+                "_simulate_regime_in_period": "ceeabfb0aced61f656a810866e8ae18f90f348d4dafe14a3b82cf3675d0a5eca",
+                "_execute_finite_replay": "8b889472c13e0dd4d49371f3cbce5f134eea266236212594169be359d058ce14",
                 "simulate": "de24d5855fc9ca1cd45fbec89bafa783759bc66ecc0f5dce5fcb6d8e0a117c13",
                 "_simulate_subject_chunk": "040cee82b493bbc8630962270a8c692c08186085f8c43bc8108ea673d53b2af9",
                 "_bind_unit_executor": "8a2a8bc6a28f5d7c6a4a2c8d3bea6db86e79c211a8a9b2a409336126a7572a66",
@@ -3073,6 +3080,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
                 "Model._build_external_replay_readers": "33c41f2c3f7bd300f3e0b4ac042f7371b93efbfe1762e5fe639fc854b19f1f5f",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
                 "Model._process_params": "511c26a9c31acbf937c226881d9105b08e759e0b81b139e5b0187f2169bd0837",
+                "_simulation_programs": "02d69b94d7005c2f01cb72585af823fcc62801fb5b45fbbac975fdfc1ceaae70",
             },
         ),
         SIMULATION_RANDOM_SOURCE: (
@@ -3266,8 +3274,8 @@ _SIMULATION_ADAPTER_CONTRACTS = {
     SIMULATION_PERIOD_INPUTS_SOURCE: (
         "3baeebebf1d4693045a911202220c4effdb83c630b7f2ec0ed0c6938dd7e7994",
         {
-            "decision_reads": "f0bb30423ce4d7bee526d21e86cb0ca10851979b130f9340dd350274732f5573",
-            "unit_value_reads": "f493f8fca6a88fbd3e69a9820ddc53457cc13ddb25692dc0974f203686222971",
+            "decision_reads": "e29ce56bda572aff34dde4e8018d11d3d90b5cb620786143efca424674725329",
+            "unit_value_reads": "071faa9504977ee219d69928bc77f2386532a7a921ae038955b4bf24091f8d6b",
             "gate_reads": "9e57467e4a7147bb1de88c0010c73960fd3b966ac76b3e5e575bde8791edd261",
             "acquire_gate_inputs": "a49be6fadbf76e8f8b2fe9b289049711ec3a6fe48851caa0fe31467ecc249abc",
             "acquire_decision_inputs": "752a3aa7e4de32488ec11d44725744c2eb31fdde30ba4ba87c71a217bcfc4ec3",
@@ -3570,6 +3578,56 @@ def _simulation_adapter_errors(*, tree: ast.Module, source: str) -> list[str]:
     )
     if _transport_module_surface(tree) != surface:
         errors.append("simulation owned-input corridor: module bindings changed")
+    return errors
+
+
+_FINITE_REPLAY_CONTRACTS = {
+    SIMULATION_POLICY_PROGRAMS_SOURCE: (
+        "fed9b10f6b0eed6c68bd5f02cf4e8087f499fc6d6017400fcbab3aa267f15a6f",
+        {
+            "ReplayPayload.from_policy": "e29e2d20b51b07a6412aff4392720c1818e0b8662ceac0eee986f31e786dbc98",
+            "ReplayPayload.restore": "e1599af0b523cc29f9c85190c51f29c6276cbb995d9dab8f085543780e511170",
+            "_flatten_payload": "88772a75afb06970eb255fbe2dafb459f2617f1cb727f451e37da99cd2ac978f",
+            "_unflatten_payload": "993e4c674e8a06442716e162a9bf32aa39a8cc31b03724dcea4f4ebe49cd33e6",
+            "declare_finite_replay_programs": "ead89e6e9501a866d391bdd1b4b67d9770a5e95b33fab1b47bb2c9a7c1de9ea2",
+            "_program": "fd061f3011dbf4913421fe3571f7ce4f11d2857b2a41db6a24bad65de75133de",
+            "_policy_reads": "e678aceaa76d010683e744ed0f7c1ed1cea8a4566d97fa21a55f2fc5a21c9eea",
+            "_Prepare.__call__": "374933bb70048d428d6e4167df7eaa6d6d2befaf68ac29bb1c7d8bbfac44cde0",
+            "_Rank.__signature__": "50aa82bb239a45eb831ec1de9cc04766c44b88f9e2a8898243273711d1ca5bd7",
+            "_Rank.__call__": "b445df6a9966f74500b8d48f0f0251d4d9ad712e62722fd471e7504025f55984",
+        },
+    ),
+    PUBLISHED_POLICY_SOURCE: (
+        "37875b498e9524f4e0c4e5e1214b86c9123836be6639ae14de9773d79bb93b3e",
+        {
+            "_flatten_nnbegm_policy": "17b76f15fbdb8367e77d5f1513d811f18602ea4dd3a3735351d1bb392bbb64c8",
+            "_unflatten_nnbegm_policy": "7e5218f3047b4aee879ed8bb21c586f4e820939cc32afb7799d56f0398a35f05",
+        },
+    ),
+    MODEL_PROCESSING_SOURCE: (
+        "efb45c992714840d08ee010c80d73fa2c51ceacc938036fbbc4bd2fe73bdea10",
+        {
+            "build_regimes_and_template": "c5610c5e6a4cf80dd9696685653ee05664ec7824ad45a7ec0455b4901ba70312",
+        },
+    ),
+}
+
+
+def _finite_replay_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Pin the finite producer schema, dynamic payload and declared stage transport.
+
+    Producer numerical kernels are outside this structural obligation. The
+    registered leaf order and immutable reconstruction schema authenticate the
+    four/five array locators, while the stage bodies retain the complete bank
+    and unchanged canonical ranking. Executable tests separately compare real
+    producer payloads, dynamic replacement, masks, candidate owners and levels.
+    """
+    surface, callables = _FINITE_REPLAY_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="finite replay transport", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append("finite replay transport: module or producer schema changed")
     return errors
 
 
@@ -4442,6 +4500,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
+    for relative in _FINITE_REPLAY_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _finite_replay_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     nbegm_tree = parsed.get(NBEGM_SOURCE)
     if nbegm_tree is not None:
         new_errors = _nbegm_donation_errors(nbegm_tree)
@@ -4550,6 +4615,11 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
                 "published dense decision program: Q_and_F -> exact feasibility mask -> "
                 "row-major continuous max -> per-cell Gumbel-max -> subject tiles -> "
                 "materialize -> resolve -> planned executable -> dispatched flat index/value"
+            ),
+            "finite_policy_simulate": (
+                "published NNBEGM payload leaves -> addressed dynamic replay tree -> "
+                "planned complete-bank preparation -> ready host drop diagnostic -> "
+                "planned unchanged canonical Q/F ranking -> selected action/value"
             ),
         },
         "certified_corridor_sources": list(_CERTIFIED_CORRIDOR_SOURCES),
@@ -5076,6 +5146,16 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
 
 
 _SUPPLEMENTAL_SOURCE_MUTATIONS = {
+    "simulation_finite_policy:consumer_locator_shifted": (
+        SIMULATION_POLICY_PROGRAMS_SOURCE,
+        'path=("arrays", i),',
+        'path=("arrays", i + 1),',
+    ),
+    "simulation_finite_policy:producer_leaf_order_changed": (
+        PUBLISHED_POLICY_SOURCE,
+        "        policy.candidate_inner_action,\n        policy.candidate_outer_target,",
+        "        policy.candidate_outer_target,\n        policy.candidate_inner_action,",
+    ),
     "simulation_entry:upload_budget_omitted": (
         SIMULATION_ENTRY_ALLOCATIONS_SOURCE,
         "budget_bytes=self.budget_bytes,\n            live_footprint=live,",

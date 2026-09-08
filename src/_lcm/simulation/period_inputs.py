@@ -42,7 +42,12 @@ def decision_reads(
     if regime.simulation.replay_route.consumer_route == "nnbegm_finite" and isinstance(
         policy, NNBEGMSimPolicy
     ):
-        return rekeyed_value_reads(reads=reads, core_key="simulation_nnbegm_candidates")
+        # Policy payloads are acquired through their separate addressed owner.
+        return tuple(
+            read
+            for read in reads
+            if read.target.kind is not ValueArtifactKind.REPLAY_ARTIFACT_LEAF
+        )
     return reads
 
 
@@ -64,6 +69,16 @@ def unit_value_reads(
         gate_reads(regime=regime, name=name, period=period, values=values, flags=flags)
     )
     if policy is not None and reader is None:
+        for family in (
+            regime.simulation.programs.policy_prepare,
+            regime.simulation.programs.policy_rank,
+        ):
+            if period in family:
+                reads.extend(
+                    read
+                    for read in family[period].requirements.value_reads
+                    if read.target.kind is ValueArtifactKind.REPLAY_ARTIFACT_LEAF
+                )
         reads.extend(
             replay_payload_reads(
                 payload=policy,

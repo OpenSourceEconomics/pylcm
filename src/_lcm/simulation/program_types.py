@@ -94,7 +94,7 @@ class SimulationPrograms:
     """The programs one regime dispatches per period group."""
 
     decision: MappingProxyType[int, CoreProgram]
-    """Period to the argmax-and-value program that period dispatches."""
+    """Period to the selected decision: grid maximization or finite-bank ranking."""
 
     transition: MappingProxyType[int, CoreProgram]
     """Period to the next-state program that period dispatches, over exactly the
@@ -104,12 +104,28 @@ class SimulationPrograms:
     """Period to the regime-transition program that period dispatches; empty
     where the regime draws no successor, which is every terminal regime."""
 
+    policy_prepare: MappingProxyType[int, CoreProgram] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Finite candidate reconstruction, before the host diagnostic."""
+
+    policy_rank: MappingProxyType[int, CoreProgram] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Canonical ranking of the represented finite candidate bank."""
+
     executor: SimulationProgramExecutor | None = None
     """Call-local lowering and dispatch owner, absent from model declarations."""
 
     def __post_init__(self) -> None:
         """Snapshot the caller-owned program mappings."""
-        for field in ("decision", "transition", "route"):
+        for field in (
+            "decision",
+            "transition",
+            "route",
+            "policy_prepare",
+            "policy_rank",
+        ):
             object.__setattr__(
                 self, field, MappingProxyType(dict(getattr(self, field)))
             )
@@ -119,7 +135,13 @@ class SimulationPrograms:
         """Return every planner axis name these programs declare."""
         return frozenset(
             name
-            for family in (self.decision, self.transition, self.route)
+            for family in (
+                self.decision,
+                self.transition,
+                self.route,
+                self.policy_prepare,
+                self.policy_rank,
+            )
             for program in family.values()
             for name in program.requirements.axis_names
         )

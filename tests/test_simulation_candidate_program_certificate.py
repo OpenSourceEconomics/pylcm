@@ -376,6 +376,116 @@ _PROFILED_HELPER_MUTATIONS = {
 }
 
 
+_FINITE_POLICY_MUTATIONS = {
+    "finite_policy:discrete_leaf_omitted": (
+        "src/_lcm/simulation/policy_programs.py",
+        (
+            "n_arrays=5 if read.discrete_action_names else 4,\n"
+            "            core=POLICY_PREPARE,"
+        ),
+        "n_arrays=4,\n            core=POLICY_PREPARE,",
+    ),
+    "finite_policy:smooth_leaf_count_wrong": (
+        "src/_lcm/simulation/policy_programs.py",
+        (
+            "n_arrays=5 if read.discrete_action_names else 4,\n"
+            "            core=POLICY_PREPARE,"
+        ),
+        "n_arrays=5,\n            core=POLICY_PREPARE,",
+    ),
+    "finite_policy:artifact_locator_shifted": (
+        "src/_lcm/simulation/policy_programs.py",
+        'leaf_path=(f"FlattenedIndexKey:{jax.tree_util.FlattenedIndexKey(i)}",),',
+        'leaf_path=(f"FlattenedIndexKey:{jax.tree_util.FlattenedIndexKey(i + 1)}",),',
+    ),
+    "finite_policy:occurrence_core_aliased": (
+        "src/_lcm/simulation/policy_programs.py",
+        "core_key=core,",
+        "core_key=POLICY_PREPARE,",
+    ),
+    "finite_policy:payload_arrays_made_static": (
+        "src/_lcm/simulation/policy_programs.py",
+        "return payload.arrays, payload.structure",
+        "return (), (payload.arrays, payload.structure)",
+    ),
+    "finite_policy:payload_reconstruction_reversed": (
+        "src/_lcm/simulation/policy_programs.py",
+        "jax.tree_util.tree_unflatten(self.structure, self.arrays)",
+        "jax.tree_util.tree_unflatten(self.structure, self.arrays[::-1])",
+    ),
+    "finite_policy:producer_reconstruction_swapped": (
+        "src/_lcm/egm/published_policy.py",
+        'object.__setattr__(policy, "candidate_inner_action", children[0])',
+        'object.__setattr__(policy, "candidate_inner_action", children[1])',
+    ),
+    "finite_policy:fixed_binding_declaration_bypassed": (
+        "src/_lcm/model_processing.py",
+        "name: declare_finite_replay_programs(regime)",
+        "name: regime",
+    ),
+    "finite_policy:output_action_order_changed": (
+        "src/_lcm/simulation/policy_programs.py",
+        "read.inner_action_name,\n                            read.outer_action_name,",
+        "read.outer_action_name,\n                            read.inner_action_name,",
+    ),
+    "finite_policy:subject_bank_not_tiled": (
+        "src/_lcm/simulation/policy_programs.py",
+        'subject_names=("bank", "canonical_states"),',
+        'subject_names=("canonical_states",),',
+    ),
+    "finite_policy:prepared_candidate_order_reversed": (
+        "src/_lcm/simulation/policy_programs.py",
+        "return tuple(value[:, 0] for value in bank)",
+        "return tuple(value[::-1, 0] for value in bank)",
+    ),
+    "finite_policy:rank_outer_candidate_swapped": (
+        "src/_lcm/simulation/policy_programs.py",
+        "candidate_outer=bank[1][:, None],",
+        "candidate_outer=bank[0][:, None],",
+    ),
+    "finite_policy:unrepresented_candidates_ranked": (
+        "src/_lcm/simulation/policy_programs.py",
+        "represented=bank[3][:, None],",
+        "represented=bank[2][:, None],",
+    ),
+    "finite_policy:attained_value_discarded": (
+        "src/_lcm/simulation/policy_programs.py",
+        "            values[0],",
+        "            jnp.zeros_like(values[0]),",
+    ),
+    "finite_policy:actual_diagnostic_bypassed": (
+        "src/_lcm/simulation/simulate.py",
+        "dropped=bank[2] & ~bank[3],",
+        "dropped=jnp.zeros_like(bank[2]),",
+    ),
+    "finite_policy:actual_rank_dispatch_replaced": (
+        "src/_lcm/simulation/simulate.py",
+        'family="policy_rank",',
+        'family="policy_prepare",',
+    ),
+    "finite_policy:actual_preparation_payload_filtered": (
+        "src/_lcm/simulation/simulate.py",
+        "payload = ReplayPayload.from_policy(sim_policy)",
+        "payload = ReplayPayload.from_policy(candidate_filter(sim_policy))",
+    ),
+    "finite_policy:prewarm_cartesian_template_admitted": (
+        "src/_lcm/simulation/compile.py",
+        "if period in programs.policy_rank:",
+        "if False and period in programs.policy_rank:",
+    ),
+    "finite_policy:rank_occurrence_ownership_omitted": (
+        "src/_lcm/simulation/period_inputs.py",
+        "            regime.simulation.programs.policy_rank,",
+        "",
+    ),
+    "finite_policy:preparation_axis_not_enumerated": (
+        "src/lcm/model.py",
+        "            programs.policy_prepare,",
+        "",
+    ),
+}
+
+
 @pytest.fixture(scope="module")
 def program_mutations() -> dict[str, dict[str, str]]:
     """Build registry controls plus explicit random and profiling defects."""
@@ -389,7 +499,9 @@ def program_mutations() -> dict[str, dict[str, str]]:
     for name, (old, new) in _RANDOM_HELPER_MUTATIONS.items():
         assert source.count(old) == 1, name
         mutations[name] = {"path": relative, "source": source.replace(old, new)}
-    for name, (relative, old, new) in _PROFILED_HELPER_MUTATIONS.items():
+    for name, (relative, old, new) in (
+        _PROFILED_HELPER_MUTATIONS | _FINITE_POLICY_MUTATIONS
+    ).items():
         source = (root / relative).read_text(encoding="utf-8")
         assert source.count(old) == 1, name
         mutations[name] = {"path": relative, "source": source.replace(old, new)}
@@ -414,6 +526,8 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
 
     assert set(supplemental) == {
+        "simulation_finite_policy:consumer_locator_shifted",
+        "simulation_finite_policy:producer_leaf_order_changed",
         "donation:unsupported_scope_admitted",
         "donation:replay_nomination_admitted",
         "donation:residual_duplicates_marginal_operand",
@@ -442,6 +556,8 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "src/_lcm/simulation/membership.py",
         "src/_lcm/simulation/taste_stream.py",
         "src/_lcm/simulation/entry_allocations.py",
+        "src/_lcm/simulation/policy_programs.py",
+        "src/_lcm/egm/published_policy.py",
     ],
 )
 def test_live_simulation_program_sources_are_certified(source: str):
@@ -468,6 +584,7 @@ def test_live_simulation_program_sources_are_certified(source: str):
     + list(direct_flow._SIMULATION_ADAPTER_MUTATIONS)
     + list(_RANDOM_HELPER_MUTATIONS)
     + list(_PROFILED_HELPER_MUTATIONS)
+    + list(_FINITE_POLICY_MUTATIONS)
     + list(direct_flow._SUPPLEMENTAL_SOURCE_MUTATIONS),
 )
 def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(

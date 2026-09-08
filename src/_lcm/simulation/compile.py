@@ -163,6 +163,11 @@ def lower_simulation_programs(
             if not isinstance(executor, SimulationRuntime):
                 raise TypeError("Simulation prewarming requires the runtime executor.")
             for period, program in programs.decision.items():
+                if period in programs.policy_rank:
+                    # A finite bank is a solved artifact. Cartesian templates
+                    # neither describe its leaves nor bind its reconstruction.
+                    # First dispatch prepares these stages with the real payload.
+                    continue
                 continuation_targets = (
                     ()
                     if period == ages.n_periods - 1

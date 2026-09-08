@@ -71,6 +71,7 @@ from _lcm.simulation.period_inputs import (
     gate_reads,
     unit_value_reads,
 )
+from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
@@ -1341,21 +1342,19 @@ def _simulate_regime_in_period(
     elif direct_nnbegm_replay:
         # The payload names the complete finite candidate set, so the unrelated
         # Cartesian simulation argmax is neither compiled nor executed.
-        optimal_actions, V_arr = _replay_nnbegm_candidates(
-            optimal_actions=MappingProxyType({}),
+        optimal_actions, V_arr, nested_fallback = _execute_finite_replay(
             regime=regime,
             sim_policy=sim_policy,
             states=states[regime_name],
+            canonical_states=state_action_space.states,
             flat_params=flat_params[regime_name],
             period=period,
             age=age,
-            canonical_states=state_action_space.states,
-            action_names=state_action_space.action_names,
+            n_subjects=n_chunk_subjects,
             next_regime_to_V_arr=next_regime_to_V_arr,
             referenced_value_kwargs=referenced_value_kwargs,
             logger=logger,
         )
-        nested_fallback = None
     else:
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:
@@ -1539,6 +1538,62 @@ def _simulate_regime_in_period(
         new_subject_regime_ids,
         new_own_stakeholder,
         key,
+    )
+
+
+def _execute_finite_replay(
+    *,
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    referenced_value_kwargs: Mapping[str, object],
+    logger: logging.Logger,
+) -> tuple[MappingProxyType, FloatND, BoolND]:
+    """Run declared reconstruction, its host diagnostic, and canonical ranking."""
+    payload = ReplayPayload.from_policy(sim_policy)
+    bank = execute_simulation_program(
+        programs=regime.simulation.programs,
+        family="policy_prepare",
+        period=period,
+        n_subjects=n_subjects,
+        arguments={
+            "payload": payload,
+            "states": states,
+            "params": flat_params,
+            "age": age,
+        },
+    )
+    bank = cast("tuple[FloatND, FloatND, BoolND, BoolND]", bank)
+    _announce_dropped_outer_candidates(
+        logger=logger,
+        dropped=bank[2] & ~bank[3],
+        n_live=bank[2],
+        regime_name=regime.name,
+        period=period,
+    )
+    return cast(
+        "tuple[MappingProxyType, FloatND, BoolND]",
+        execute_simulation_program(
+            programs=regime.simulation.programs,
+            family="policy_rank",
+            period=period,
+            n_subjects=n_subjects,
+            arguments={
+                "payload": payload,
+                "bank": bank,
+                "canonical_states": canonical_states,
+                "params": flat_params,
+                "age": age,
+                "next_regime_to_V_arr": next_regime_to_V_arr,
+                **referenced_value_kwargs,
+            },
+        ),
     )
 
 

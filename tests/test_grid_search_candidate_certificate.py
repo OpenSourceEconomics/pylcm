@@ -547,6 +547,8 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations():
     assert isinstance(_parse("src/_lcm/solution/period_replay.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/programs.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/program_types.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/policy_programs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/published_policy.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/runtime.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/operand_placement.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/unit_executor.py"), ast.Module)
@@ -586,6 +588,7 @@ def test_direct_flow_certificate_names_every_supported_route():
         "taste_shock_solve",
         "taste_shock_streamed_solve",
         "taste_shock_simulate",
+        "finite_policy_simulate",
     }
 
 

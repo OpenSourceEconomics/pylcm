@@ -406,6 +406,8 @@ def execute_simulation_program(
         "decision": programs.decision,
         "transition": programs.transition,
         "route": programs.route,
+        "policy_prepare": programs.policy_prepare,
+        "policy_rank": programs.policy_rank,
     }
     return programs.executor.dispatch(
         program=families[family][period],

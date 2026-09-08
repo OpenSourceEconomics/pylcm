@@ -46,6 +46,7 @@ from _lcm.regime_building.processing import (
     compute_active_periods_by_regime,
     process_regimes,
 )
+from _lcm.simulation.policy_programs import declare_finite_replay_programs
 from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.typing import (
@@ -121,6 +122,14 @@ def build_regimes_and_template(
             execution=execution,
         )
 
+    # Replay bodies must consume the canonical functions after fixed parameters
+    # have been bound, exactly as the ordinary forward decision does.
+    regimes = MappingProxyType(
+        {
+            name: declare_finite_replay_programs(regime)
+            for name, regime in regimes.items()
+        }
+    )
     return regimes, params_template
 
 
