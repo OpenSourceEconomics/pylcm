@@ -130,6 +130,8 @@ from _lcm.regime_building.phases import (
     normalize_all_regime_phases,
     phase_variation_paths,
 )
+from _lcm.simulation.program_types import _PerSubjectFunction
+from _lcm.simulation.programs import build_simulation_programs
 
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
@@ -1081,6 +1083,7 @@ class _CanonicalRegimeBuilder:
                 solve_has_compiled_constraint_boundaries=(
                     solution.has_compiled_constraint_boundaries
                 ),
+                solver_context=solution_build.context,
                 external_replay_route=solution.external_replay_route,
                 replay_unsupported=solution.replay_unsupported,
                 has_taste_shocks=user_regime.taste_shocks is not None,
@@ -4044,6 +4047,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     solve_transition_plans: TargetTransitionPlans,
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     solve_has_compiled_constraint_boundaries: bool,
+    solver_context: SolverBuildContext,
     external_replay_route: ExecutableReplayRoute | None,
     replay_unsupported: bool,
     has_taste_shocks: bool,
@@ -4245,6 +4249,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     collective = stakeholders is not None
     if spec.terminal:
         compute_regime_transition_probs = None
+        per_subject_route = None
         if collective:
             Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
                 n_periods=ages.n_periods,
@@ -4276,6 +4281,20 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
             is_stochastic=spec.simulation.stochastic_regime_transition,
             enable_jit=enable_jit,
             phase="simulate",
+            next_regime_cells=(
+                core.next_regime_cells
+                if core.next_regime_func is not None
+                or core.next_regime_cells is not None
+                else MappingProxyType({})
+            ),
+        )
+        per_subject_route = build_per_subject_regime_transition_probs(
+            functions=simulate_functions,
+            compute_regime_transition_probs=core.next_regime_func,
+            grids=simulate_grids,
+            regime_names_to_ids=regime_names_to_ids,
+            flat_param_names=flat_param_names,
+            is_stochastic=spec.simulation.stochastic_regime_transition,
             next_regime_cells=(
                 core.next_regime_cells
                 if core.next_regime_func is not None
@@ -4351,13 +4370,21 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         pareto_weights=pareto_weights,
     )
 
+    per_subject_decisions = _build_per_subject_decisions_per_period(
+        state_action_space=state_action_space,
+        Q_and_F_functions=Q_and_F_functions,
+        has_taste_shocks=has_taste_shocks,
+        stakeholders=stakeholders,
+        pareto_weights=pareto_weights,
+    )
+
     pointwise_Q_and_F = _build_pointwise_Q_and_F_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         enable_jit=enable_jit,
     )
 
-    next_state = _build_next_state_vmapped(
+    next_state_build = _build_next_state_vmapped(
         active_periods=regimes_to_active_periods[regime_name],
         phase_reachability=simulation_reachability,
         source_regime_name=regime_name,
@@ -4368,6 +4395,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         flat_param_names=flat_param_names,
         enable_jit=enable_jit,
     )
+    next_state = next_state_build.by_period
 
     # Replaying a solve-phase EGM policy is disabled until an envelope backend
     # proves the complete read contract. The required proof covers both branch
@@ -4612,6 +4640,17 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         else constraints
     )
 
+    programs = build_simulation_programs(
+        context=solver_context,
+        Q_and_F_functions=Q_and_F_functions,
+        per_subject_decisions=per_subject_decisions,
+        per_subject_transitions=next_state_build.per_subject_by_period,
+        per_subject_route=per_subject_route,
+        simulation_state_names=simulation_variables.state_names,
+        active_periods=tuple(regimes_to_active_periods[regime_name]),
+        has_gated_edges=bool(user_regime.gated_edges),
+    )
+
     return SimulationPhase(
         _variables=simulation_variables,
         grids=simulate_grids,
@@ -4643,6 +4682,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         ),
         Q_and_F=pointwise_Q_and_F,
         next_state=next_state,
+        programs=programs,
         egm_policy_read=egm_policy_read,
         external_replay_route=external_replay_route,
         replay_unsupported=replay_unsupported,
@@ -6903,6 +6943,36 @@ def build_regime_transition_probs_functions(
             `None` for coarse regime transitions.
 
     """
+    next_regime = _concatenated_regime_transition_probs(
+        functions=functions,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        regime_names_to_ids=regime_names_to_ids,
+        is_stochastic=is_stochastic,
+        next_regime_cells=next_regime_cells,
+    )
+    if phase == "solve":
+        return jax.jit(next_regime) if enable_jit else next_regime
+
+    per_subject = per_subject_regime_transition_probs(
+        next_regime=next_regime, grids=grids, flat_param_names=flat_param_names
+    )
+    next_regime_vmapped = vmap_1d(
+        func=cast("RegimeTransitionFunction", per_subject.function),
+        variables=per_subject.subject_arg_names,
+    )
+
+    return jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
+
+
+def _concatenated_regime_transition_probs(
+    *,
+    functions: EconFunctionsMapping,
+    compute_regime_transition_probs: TransitionFunction | None,
+    regime_names_to_ids: RegimeNamesToIds,
+    is_stochastic: bool,
+    next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None,
+) -> RegimeTransitionFunction:
+    """Compose one regime's transition probabilities out of the model DAG."""
     if next_regime_cells is not None:
         wrapped_regime_transition_probs = _assemble_granular_regime_transition_probs(
             next_regime_cells=next_regime_cells
@@ -6928,35 +6998,63 @@ def build_regime_transition_probs_functions(
     functions_pool = dict(functions) | {
         "regime_transition_probs": wrapped_regime_transition_probs
     }
-
-    next_regime = concatenate_functions(
+    return concatenate_functions(
         functions=functions_pool,
         targets="regime_transition_probs",
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
     )
-    if phase == "solve":
-        return jax.jit(next_regime) if enable_jit else next_regime
 
+
+def build_per_subject_regime_transition_probs(
+    *,
+    functions: EconFunctionsMapping,
+    compute_regime_transition_probs: TransitionFunction | None,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_param_names: frozenset[str],
+    is_stochastic: bool,
+    next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None,
+) -> _PerSubjectFunction:
+    """Build the regime-transition probabilities at one subject's state cell."""
+    return per_subject_regime_transition_probs(
+        next_regime=_concatenated_regime_transition_probs(
+            functions=functions,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            regime_names_to_ids=regime_names_to_ids,
+            is_stochastic=is_stochastic,
+            next_regime_cells=next_regime_cells,
+        ),
+        grids=grids,
+        flat_param_names=flat_param_names,
+    )
+
+
+def per_subject_regime_transition_probs(
+    *,
+    next_regime: RegimeTransitionFunction,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    flat_param_names: frozenset[str],
+) -> _PerSubjectFunction:
+    """Return the regime-transition probabilities at one subject's state cell.
+
+    The body accepts every state the regime declares, whether or not the
+    transition reads it, because a transition function with no argument at all
+    cannot be mapped over the subject axis.
+    """
     sig_args = list(inspect.signature(next_regime).parameters)
-
-    # We do this because a transition function without any parameters will throw
-    # an error with vmap
     next_regime_accepting_all = with_signature(
         next_regime,
         args=sig_args + [state for state in grids if state not in sig_args],
     )
-
-    next_regime_vmapped = vmap_1d(
-        func=next_regime_accepting_all,
-        variables=_get_vmap_params(
+    return _PerSubjectFunction(
+        function=next_regime_accepting_all,
+        subject_arg_names=_get_vmap_params(
             all_args=tuple(inspect.signature(next_regime_accepting_all).parameters),
             flat_param_names=flat_param_names,
         ),
     )
-
-    return jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
 
 
 def _assemble_granular_regime_transition_probs(
@@ -7662,6 +7760,56 @@ def _build_argmax_and_max_Q_over_a_per_period(
     return MappingProxyType(result)
 
 
+def _build_per_subject_decisions_per_period(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    has_taste_shocks: bool = False,
+    stakeholders: tuple[str, ...] | None = None,
+    pareto_weights: ParetoWeights | None = None,
+) -> MappingProxyType[int, ArgmaxQOverAFunction]:
+    """Build the canonical argmax reducer at one subject's state cell, per period.
+
+    The same reducer `_build_argmax_and_max_Q_over_a_per_period` maps over the
+    subject axis, left unmapped so the execution planner owns the width it runs
+    at. Periods sharing a `Q_and_F` object share one reducer.
+    """
+    built: dict[int, ArgmaxQOverAFunction] = {}
+    result: dict[int, ArgmaxQOverAFunction] = {}
+    for period, Q_and_F in Q_and_F_functions.items():
+        q_id = id(Q_and_F)
+        if q_id not in built:
+            built[q_id] = _argmax_reducer(
+                Q_and_F=Q_and_F,
+                state_action_space=state_action_space,
+                has_taste_shocks=has_taste_shocks,
+                stakeholders=stakeholders,
+                pareto_weights=pareto_weights,
+            )
+        result[period] = built[q_id]
+    return MappingProxyType(result)
+
+
+def _argmax_reducer(
+    *,
+    Q_and_F: QAndFFunction,
+    state_action_space: StateActionSpace,
+    has_taste_shocks: bool,
+    stakeholders: tuple[str, ...] | None,
+    pareto_weights: ParetoWeights | None,
+) -> ArgmaxQOverAFunction:
+    """Return the canonical argmax reducer at one subject's state cell."""
+    return get_argmax_and_max_Q_over_a(
+        Q_and_F=Q_and_F,
+        action_names=state_action_space.action_names,
+        state_names=state_action_space.state_names,
+        n_discrete_action_axes=len(state_action_space.discrete_actions),
+        has_taste_shocks=has_taste_shocks,
+        stakeholders=stakeholders,
+        pareto_weights=pareto_weights,
+    )
+
+
 def _build_pointwise_Q_and_F_per_period(
     *,
     state_action_space: StateActionSpace,
@@ -7738,6 +7886,17 @@ def _build_nnbegm_outer_target_functions(
     return expand_groups_to_periods(grouped_periods=configs, built_by_group=built)
 
 
+@dataclass(frozen=True, kw_only=True)
+class _NextStateBuild:
+    """One regime's next-state bodies, per period, in both mapped forms."""
+
+    by_period: MappingProxyType[int, NextStateSimulationFunction]
+    """Period to the body already mapped over the subject axis."""
+
+    per_subject_by_period: MappingProxyType[int, _PerSubjectFunction]
+    """Period to the same body at one subject's state cell."""
+
+
 def _build_next_state_vmapped(
     *,
     active_periods: tuple[int, ...],
@@ -7749,7 +7908,7 @@ def _build_next_state_vmapped(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     flat_param_names: frozenset[str],
     enable_jit: bool,
-) -> MappingProxyType[int, NextStateSimulationFunction]:
+) -> _NextStateBuild:
     """Build a per-period vmapped next-state function for simulation.
 
     A law of motion can read a periodized function (e.g. `next_wealth` reading
@@ -7775,6 +7934,7 @@ def _build_next_state_vmapped(
     built: dict[
         tuple[tuple[RegimeName, ...], Hashable], NextStateSimulationFunction
     ] = {}
+    per_subject: dict[tuple[tuple[RegimeName, ...], Hashable], _PerSubjectFunction] = {}
     for key, periods in configs.items():
         period_targets, _ = key
         representative_period = periods[0]
@@ -7804,8 +7964,18 @@ def _build_next_state_vmapped(
             next_state_vmapped, kwargs=sig_args, enforce=False
         )
         built[key] = jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
+        per_subject[key] = _PerSubjectFunction(
+            function=next_state, subject_arg_names=vmap_variables
+        )
 
-    return expand_groups_to_periods(grouped_periods=configs, built_by_group=built)
+    return _NextStateBuild(
+        by_period=expand_groups_to_periods(
+            grouped_periods=configs, built_by_group=built
+        ),
+        per_subject_by_period=expand_groups_to_periods(
+            grouped_periods=configs, built_by_group=per_subject
+        ),
+    )
 
 
 def _fail_if_phase_state_nodes_disagree(

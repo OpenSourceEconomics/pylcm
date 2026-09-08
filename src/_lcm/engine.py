@@ -16,6 +16,7 @@ from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
+from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -948,6 +949,15 @@ class SimulationPhase:
 
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
+
+    programs: SimulationPrograms
+    """The decision, transition, and route programs this regime declares.
+
+    Each names the axes the execution planner owns — the per-subject tile every
+    family runs in, and the action product a decision streams where its solve
+    counterpart streams — so the width a body is compiled at is an engine
+    choice rather than a regime-builder one.
+    """
 
     edge_reference_regimes_by_period: MappingProxyType[int, tuple[RegimeName, ...]] = (
         MappingProxyType({})
