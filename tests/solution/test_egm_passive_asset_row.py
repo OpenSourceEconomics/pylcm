@@ -545,11 +545,11 @@ def _euler_last_flat(value_array: np.ndarray) -> np.ndarray:
 
 # Tiling the cell axis repartitions the compiled reduction, so the value array
 # is owed agreement to the working precision rather than bit identity. Measured
-# over this file's grids, across widths 1, 2 and 4 and every non-terminal
-# period, the worst relative departure from the untiled solve is 2.72 eps at
-# float32 and 1.99 eps at float64. Eight eps is that measurement with headroom,
-# and is dtype-derived, so it tightens automatically at float64 instead of
-# degrading into a bit-identity claim the way a fixed `1e-12` does.
+# over this file's grids, across cell widths 1, 2 and 4 and every non-terminal
+# period, the worst pointwise relative departure from the untiled solve is
+# 2.69 eps at float32 and 1.99 eps at float64. Eight eps is that measurement
+# with headroom, and is dtype-derived, so it tightens automatically at float64
+# instead of degrading into a bit-identity claim the way a fixed `1e-12` does.
 _INVARIANCE_EPS_MULTIPLE = 8.0
 
 
@@ -603,11 +603,11 @@ def test_passive_aime_cell_width_leaves_value_function_unchanged(cell_width: int
     divide the cell product.
     """
     reference = _model(solver="dcegm").solve(params=_params(), log_level="debug").values
-    splayed = _solve_at_cell_width(cell_width)
-    # `working_life` is the asset-row regime carrying the splayed AIME axis;
+    tiled = _solve_at_cell_width(cell_width)
+    # `working_life` is the asset-row regime whose cells the width tiles;
     # it is inactive in the terminal period, so exclude that period.
     for period in sorted(reference)[:-1]:
-        got = _euler_last_flat(np.asarray(splayed[period]["working_life"]))
+        got = _euler_last_flat(np.asarray(tiled[period]["working_life"]))
         want = _euler_last_flat(np.asarray(reference[period]["working_life"]))
         # Feasibility is structural, so it is owed exact agreement: an
         # infeasible cell carries `-inf`, and a tolerance cannot adjudicate it.

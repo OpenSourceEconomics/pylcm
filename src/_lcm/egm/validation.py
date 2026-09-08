@@ -940,12 +940,9 @@ def _fail_if_grid_hygiene_violated(
         fail_if_grid_withholds_its_points(
             grid=grid, role=role, regime_name=regime_name, solver_name="DCEGM"
         )
-    # A DCEGM regime's every splayable loop is a declared execution axis whose
-    # width the plan owns, so a `batch_size` on one of its grids would change
-    # nothing; it is refused rather than silently ignored. `distributed` stays
-    # rejected on a discrete state — the kernel selects child carry rows by
-    # integer indexing along whole discrete axes, which a sharded (per-device
-    # slice) axis would break.
+    # `distributed` is rejected on a discrete state: the kernel selects child
+    # carry rows by integer indexing along whole discrete axes, which a sharded
+    # (per-device slice) axis would break.
     for name, grid in user_regime.states.items():
         if isinstance(grid, DiscreteGrid) and grid.distributed:
             msg = (
@@ -954,16 +951,10 @@ def _fail_if_grid_hygiene_violated(
                 f"(got distributed={grid.distributed})."
             )
             raise ModelInitializationError(msg)
-    # A discrete action's axis is never split: the action aggregation needs
-    # every action's value at once, so it is neither tiled nor sharded.
-    for name, grid in user_regime.actions.items():
-        if isinstance(grid, DiscreteGrid) and grid.distributed:
-            msg = (
-                f"The grid of the discrete action '{name}' in regime "
-                f"'{regime_name}' must not be distributed in a DCEGM regime "
-                f"(got distributed={grid.distributed})."
-            )
-            raise ModelInitializationError(msg)
+    # An action grid is never distributed in any regime — the action aggregation
+    # needs every action's value at once — and `_validate_distributed_grids` in
+    # `_lcm.user_regime_validation` rejects that model-wide, before any solver
+    # is asked. So there is no DCEGM-local rule to state here.
     _fail_if_a_grid_carries_a_batch_size(
         regime_name=regime_name, user_regime=user_regime, solver=solver
     )

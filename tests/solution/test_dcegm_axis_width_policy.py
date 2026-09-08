@@ -25,6 +25,7 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     categorical,
 )
@@ -139,7 +140,6 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
     """Asset-row DC-EGM toy declaring all three tiled axes at once."""
     ages = _ages()
     last_age = ages.exact_values[-1]
-    from lcm import MarkovTransition  # noqa: PLC0415
 
     working = ConsumptionSavingsRegime(
         transition={
@@ -231,7 +231,9 @@ def test_an_unbudgeted_solve_streams_every_axis_at_its_bootstrap_width(
 
 
 @pytest.mark.parametrize("axis", sorted(_EXTENTS))
-def test_naming_the_extent_plans_the_whole_axis(*, axis: str, monkeypatch, tmp_path):
+def test_naming_the_extent_plans_the_whole_axis(
+    *, axis: str, monkeypatch, tmp_path
+) -> None:
     """`axis_widths={axis: extent}` dispatches the whole axis, i.e. one tile."""
     widths = _captured_widths(
         monkeypatch=monkeypatch,

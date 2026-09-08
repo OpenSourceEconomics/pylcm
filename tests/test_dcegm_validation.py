@@ -24,10 +24,14 @@ from lcm import (
     fixed_transition,
 )
 from lcm.certainty_equivalent import PowerMean
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import EULER_POINT_AXIS, FUESEnvelope, GridSearch
+from lcm.solvers import EULER_POINT_AXIS, SAVINGS_POINT_AXIS, FUESEnvelope, GridSearch
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -465,20 +469,34 @@ def test_batched_euler_state_grid_is_refused():
         _build_model(regime=regime)
 
 
-def test_the_euler_node_loop_is_sized_by_the_execution_plan_instead():
-    """The width `batch_size` used to carry is fixed on the `euler_point` axis.
+def test_the_node_loop_is_sized_by_the_execution_plan_instead():
+    """A width `batch_size` used to carry is fixed through the execution plan.
 
     The same regime, with no `batch_size` on any grid, builds while naming a
-    width for its node loop; a name no program of the model declares would be
-    refused here instead. What the width does to the published values is
-    `tests/solution/test_egm_euler_point_axis.py`.
+    width for the exogenous node loop its value program declares. What such a
+    width does to the published values is
+    `tests/solution/test_egm_savings_point_axis.py`.
     """
     model = _build_model(
         regime=VALID,
-        config=ExecutionConfig(axis_widths={EULER_POINT_AXIS: 8}),
+        config=ExecutionConfig(axis_widths={SAVINGS_POINT_AXIS: 8}),
     )
 
-    assert dict(model._execution.axis_widths) == {EULER_POINT_AXIS: 8}
+    assert dict(model._execution.axis_widths) == {SAVINGS_POINT_AXIS: 8}
+
+
+def test_an_axis_this_regimes_programs_do_not_declare_is_refused():
+    """This regime loops over one Euler node, so it declares no such axis.
+
+    The legal axis names are what the model's own core programs declare, so a
+    width for a loop this kernel does not run is refused rather than carried
+    into a plan that would ignore it.
+    """
+    with pytest.raises(ExecutionPlanningError, match="axis_widths names 'euler_point'"):
+        _build_model(
+            regime=VALID,
+            config=ExecutionConfig(axis_widths={EULER_POINT_AXIS: 8}),
+        )
 
 
 def _impute_pension(age: int) -> ContinuousState:

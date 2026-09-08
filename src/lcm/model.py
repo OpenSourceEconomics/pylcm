@@ -6,7 +6,7 @@ import operator
 import threading
 import uuid
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, cast, runtime_checkable
@@ -20,8 +20,10 @@ from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, UnsupportedReplayRoute
+from _lcm.execution.core_program import CoreProgram, core_program_graph
 from _lcm.execution.execution_plan import (
     ResolvedExecution,
+    fail_if_axis_widths_name_undeclared_axes,
     resolve_execution_config,
     visible_device_ids,
 )
@@ -81,12 +83,6 @@ from _lcm.solution.backward_induction import (
     solve,
 )
 from _lcm.solution.contract import BackwardInductionResult
-from _lcm.solution.dcegm import (
-    CELL_AXIS,
-    EULER_POINT_AXIS,
-    SAVINGS_POINT_AXIS,
-    STOCHASTIC_NODE_AXIS,
-)
 from _lcm.solution.fingerprint import (
     SolutionParamProjection,
     fingerprint_model,
@@ -95,7 +91,6 @@ from _lcm.solution.fingerprint import (
     project_solution_params,
     solution_param_projection,
 )
-from _lcm.solution.grid_search import ACTION_PRODUCT_AXIS
 from _lcm.solution.model_authority import (
     ReplayCellDescriptor,
     SolutionAuthority,
@@ -245,18 +240,12 @@ class _ReplayPayloadSource(Protocol):
 # Distinct grid supports whose declared solution authority a model keeps.
 _DECLARED_AUTHORITY_CACHE_SIZE = 4
 
-# Planner axis names the shipped solvers declare. An `ExecutionConfig.axis_width`
-# for any other name is a misspelling, and naming the legal set is the only way a
-# hardware-local name can be checked at all.
-_DECLARED_AXIS_NAMES = frozenset(
-    {
-        ACTION_PRODUCT_AXIS,
-        STOCHASTIC_NODE_AXIS,
-        CELL_AXIS,
-        SAVINGS_POINT_AXIS,
-        EULER_POINT_AXIS,
-    }
-)
+
+def _solve_programs(*, regimes: Mapping[RegimeName, Regime]) -> Iterator[CoreProgram]:
+    """Yield every core program the solve phase of every regime declares."""
+    for regime in regimes.values():
+        for kernel in regime.solution.period_kernels.values():
+            yield from core_program_graph(kernel=kernel).values()
 
 
 def _built_in_policy_payload_defect(  # noqa: PLR0911
@@ -632,7 +621,6 @@ class Model:
             state_names=frozenset(
                 name for regime in self.user_regimes.values() for name in regime.states
             ),
-            declared_axis_names=_DECLARED_AXIS_NAMES,
         )
         _fail_if_a_sharded_state_is_pruned(
             user_regimes=self.user_regimes,
@@ -662,6 +650,13 @@ class Model:
             params_already_consumed=params_consumed_by_binder,
             prepared_structure=prepared_structure,
             execution=self._execution,
+        )
+        # The axis names a width may fix are what the core programs declare, so
+        # this is the first point at which the declaration can be checked at all.
+        # Each phase contributes one collection of programs.
+        fail_if_axis_widths_name_undeclared_axes(
+            axis_widths=self._execution.axis_widths,
+            program_collections=(_solve_programs(regimes=self._regimes),),
         )
         self.stakeholder_names_to_ids = next(
             (regime.stakeholder_names_to_ids for regime in self._regimes.values()),

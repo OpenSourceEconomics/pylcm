@@ -8,10 +8,12 @@ on.
 
 import dataclasses
 import operator
+from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 
 import jax
 
+from _lcm.execution.core_program import CoreProgram
 from _lcm.typing import StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -39,21 +41,24 @@ def resolve_execution_config(
     config: ExecutionConfig,
     visible_device_ids: tuple[int, ...],
     state_names: frozenset[StateName],
-    declared_axis_names: frozenset[str],
 ) -> ResolvedExecution:
     """Check a configuration against the model and freeze it.
+
+    The axis names are not checked here: they are legal exactly when a core
+    program declares them, and the programs do not exist until the regimes are
+    built. `fail_if_axis_widths_name_undeclared_axes` is that gate, and runs
+    once the programs are in hand.
 
     Args:
         config: The user's configuration.
         visible_device_ids: Ids of the devices JAX reports at model build.
         state_names: Every state name any regime declares.
-        declared_axis_names: Every axis name any core program declares.
 
     Returns:
         The resolved facts.
 
     Raises:
-        ExecutionPlanningError: A state, axis, or device the model cannot serve.
+        ExecutionPlanningError: A state or device the model cannot serve.
 
     """
     for name in config.sharded_states:
@@ -61,13 +66,6 @@ def resolve_execution_config(
             msg = (
                 f"ExecutionConfig.sharded_states names {name!r}, which no regime "
                 f"declares as a state; declared states are {sorted(state_names)!r}."
-            )
-            raise ExecutionPlanningError(msg)
-    for name in config.axis_widths:
-        if name not in declared_axis_names:
-            msg = (
-                f"ExecutionConfig.axis_widths names {name!r}, which no core program "
-                f"declares; declared axes are {sorted(declared_axis_names)!r}."
             )
             raise ExecutionPlanningError(msg)
     device_ids = visible_device_ids if config.devices is None else config.devices
@@ -84,6 +82,45 @@ def resolve_execution_config(
         axis_widths=MappingProxyType(dict(config.axis_widths)),
         device_memory_bytes=config.device_memory_bytes,
     )
+
+
+def fail_if_axis_widths_name_undeclared_axes(
+    *,
+    axis_widths: Mapping[str, int],
+    program_collections: tuple[Iterable[CoreProgram], ...],
+) -> None:
+    """Reject an axis width for a name none of the model's programs declares.
+
+    The legal set is derived, never listed: it is the union of the axis names
+    over every program in every collection, so a solver that declares a new axis
+    is configurable the moment it declares it. Each phase contributes one
+    collection, which is why the collections arrive as a tuple rather than
+    already merged.
+
+    Args:
+        axis_widths: The widths the user declared, by axis name.
+        program_collections: One collection of core programs per phase whose
+            axes the widths may name.
+
+    Raises:
+        ExecutionPlanningError: A width names an axis no program declares.
+
+    """
+    if not axis_widths:
+        return
+    declared = frozenset(
+        name
+        for programs in program_collections
+        for program in programs
+        for name in program.requirements.axis_names
+    )
+    for name in axis_widths:
+        if name not in declared:
+            msg = (
+                f"ExecutionConfig.axis_widths names {name!r}, which no core program "
+                f"declares; declared axes are {sorted(declared)!r}."
+            )
+            raise ExecutionPlanningError(msg)
 
 
 def visible_devices() -> tuple[jax.Device, ...]:
@@ -106,5 +143,4 @@ def execution_over_visible_devices() -> ResolvedExecution:
         config=ExecutionConfig(),
         visible_device_ids=visible_device_ids(),
         state_names=frozenset(),
-        declared_axis_names=frozenset(),
     )

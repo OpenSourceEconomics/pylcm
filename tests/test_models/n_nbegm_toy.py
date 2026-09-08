@@ -26,6 +26,7 @@ import jax.numpy as jnp
 from _lcm.grids.base import Grid
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     Phased,
@@ -264,6 +265,7 @@ def build_model(
     second_passive_state: bool = False,
     carried_state: bool = False,
     terminal_active_from_start: bool = False,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -437,4 +439,5 @@ def build_model(
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        execution_config=execution_config,
     )
