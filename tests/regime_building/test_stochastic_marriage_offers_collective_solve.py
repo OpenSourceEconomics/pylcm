@@ -453,7 +453,7 @@ def _self_referential_offer_probs(Q_f: FloatND) -> FloatND:  # noqa: ARG001
     return jnp.array([0.5, 0.5])
 
 
-def test_endogenous_offer_distribution_is_rejected():
+def test_endogenous_offer_distribution_is_rejected() -> None:
     """A `Q_<s>`-conditioned (self-referential) offer distribution is unrepresentable.
 
     `Q_<s>` is injected only into `value_constraints` predicates; an
@@ -464,7 +464,7 @@ def test_endogenous_offer_distribution_is_rejected():
     build time: the DAG machinery falls back to treating the unresolved name
     as an ordinary flat regime PARAMETER (`married_terminal__next_spouse_type
     __Q_f`), so it surfaces only once `solve` actually invokes the closure and
-    finds no such parameter was supplied — a `ValueError` naming exactly the
+    finds no such parameter was supplied — a `KeyError` naming exactly the
     missing (and unsuppliable-as-a-live-value) argument. There is no way to
     bind it to the household's own in-solve `Q_f` array: the params dict can
     only ever hold a caller-supplied CONSTANT, never the solved value, so the
@@ -514,7 +514,7 @@ def test_endogenous_offer_distribution_is_rejected():
             "married_terminal": MappingProxyType({}),
         }
     )
-    with pytest.raises(ValueError, match="Q_f"):
+    with pytest.raises(KeyError) as error:
         solve(
             model_fingerprint="test_stochastic_marriage_offers_collective_solve",
             flat_params=flat_params,
@@ -523,3 +523,4 @@ def test_endogenous_offer_distribution_is_rejected():
             logger=get_logger(log_level="off"),
             enable_jit=False,
         )
+    assert error.value.args == ("married_terminal__next_spouse_type__Q_f",)
