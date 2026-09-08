@@ -1,4 +1,4 @@
-"""The five NBEGM partition sites use the shared EGM batching contract."""
+"""The four NBEGM partition sites use the shared EGM batching contract."""
 
 import ast
 from collections import Counter
@@ -39,7 +39,7 @@ def test_partition_request_reaches_the_shared_dispatcher(
     result = wrapper(
         func=_identity,
         xs=jnp.arange(5),
-        requested_block_size=requested,
+        width=requested,
     )
 
     assert result.shape == (5,)

@@ -266,9 +266,13 @@ def test_a_capture_records_the_tile_widths_the_solve_dispatched(
             "working_life"
         ]
     )
-    extent = math.prod(space.actions_grid_shapes)
+    action_extent = math.prod(space.actions_grid_shapes)
+    cell_extent = math.prod(nodes.size for nodes in space.states.values())
     assert payload["core_tile_widths"] == {
-        "main": {"action_product": bootstrap_width(extent=extent)}
+        "main": {
+            "action_product": bootstrap_width(extent=action_extent),
+            "cell": bootstrap_width(extent=cell_extent),
+        }
     }
 
 

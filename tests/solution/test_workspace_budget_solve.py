@@ -8,6 +8,7 @@ are observed through a period capture, which records exactly what the solve disp
 
 import math
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
 
@@ -45,7 +46,7 @@ def _model(
     *,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
-    """Build the two-period grid-search toy with a small streamed action product."""
+    """Hold the state-cell width at one to isolate action-width budget selection."""
     final_age_alive = START_AGE + _N_PERIODS - 2
     return Model(
         regimes={
@@ -64,7 +65,9 @@ def _model(
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
-        execution_config=execution_config,
+        execution_config=replace(
+            execution_config, axis_widths={"cell": 1, **execution_config.axis_widths}
+        ),
     )
 
 
@@ -118,7 +121,7 @@ def test_no_budget_uses_the_bootstrap_width(*, monkeypatch, tmp_path) -> None:
         device_memory_bytes=None,
     )
 
-    assert _captured_widths(tmp_path) == {"main": {"action_product": 4}}
+    assert _captured_widths(tmp_path) == {"main": {"action_product": 4, "cell": 1}}
 
 
 @pytest.mark.usefixtures("synthetic_peaks")
@@ -132,7 +135,7 @@ def test_budget_selects_the_widest_feasible_action_block(
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
 
-    assert _captured_widths(tmp_path) == {"main": {"action_product": 2}}
+    assert _captured_widths(tmp_path) == {"main": {"action_product": 2, "cell": 1}}
 
 
 @pytest.mark.usefixtures("synthetic_peaks")
@@ -145,7 +148,9 @@ def test_budget_above_every_candidate_keeps_the_full_action_product(
         device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
     )
 
-    assert _captured_widths(tmp_path) == {"main": {"action_product": _ACTION_EXTENT}}
+    assert _captured_widths(tmp_path) == {
+        "main": {"action_product": _ACTION_EXTENT, "cell": 1}
+    }
 
 
 def test_budget_above_every_candidate_lowers_only_the_full_action_product(
@@ -158,9 +163,11 @@ def test_budget_above_every_candidate_lowers_only_the_full_action_product(
         device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
     )
 
-    assert [widths["action_product"] for widths in synthetic_peaks if widths] == [
-        _ACTION_EXTENT
-    ]
+    assert [
+        widths["action_product"]
+        for widths in synthetic_peaks
+        if "action_product" in widths
+    ] == [_ACTION_EXTENT]
 
 
 def test_budget_lowers_widths_descending_until_one_fits(
@@ -173,7 +180,11 @@ def test_budget_lowers_widths_descending_until_one_fits(
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
 
-    assert [widths["action_product"] for widths in synthetic_peaks if widths] == [
+    assert [
+        widths["action_product"]
+        for widths in synthetic_peaks
+        if "action_product" in widths
+    ] == [
         6,
         4,
         2,
@@ -193,7 +204,7 @@ def test_budgeted_values_agree_with_the_unbudgeted_solve(
         tmp_path=tmp_path,
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
-    assert _captured_widths(tmp_path) == {"main": {"action_product": 2}}
+    assert _captured_widths(tmp_path) == {"main": {"action_product": 2, "cell": 1}}
 
     for period in range(_N_PERIODS - 1):
         assert_agrees_to_ulp(
@@ -225,7 +236,11 @@ def fixed_width_solve(*, synthetic_peaks, monkeypatch, tmp_path) -> dict[str, ob
         axis_widths={"action_product": 4},
     )
     return {
-        "compiled": {widths["action_product"] for widths in synthetic_peaks if widths},
+        "compiled": {
+            widths["action_product"]
+            for widths in synthetic_peaks
+            if "action_product" in widths
+        },
         "dispatched": _captured_widths(tmp_path),
     }
 
@@ -241,7 +256,7 @@ def test_a_fixed_width_is_the_width_the_core_is_dispatched_at(
     *, fixed_width_solve
 ) -> None:
     """The dispatched core runs at exactly the width the config fixed."""
-    assert fixed_width_solve["dispatched"] == {"main": {"action_product": 4}}
+    assert fixed_width_solve["dispatched"] == {"main": {"action_product": 4, "cell": 1}}
 
 
 def test_a_fixed_width_for_an_axis_no_program_declares_is_refused() -> None:

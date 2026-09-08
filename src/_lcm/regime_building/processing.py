@@ -441,6 +441,7 @@ def process_regimes(
     period_to_regime_v_interp = _build_period_v_interpolation_info(
         representative_user_regimes=representative_user_regimes,
         grid_schedule=grid_schedule,
+        sharded_state_names=resolved_execution.sharded_states,
     )
 
     # The canonical specs hold every law in target-granular form, resolved per
@@ -470,13 +471,19 @@ def process_regimes(
 
     regime_to_variables = MappingProxyType(
         {
-            regime_name: from_regime(user_regime)
+            regime_name: from_regime(
+                user_regime=user_regime,
+                sharded_state_names=resolved_execution.sharded_states,
+            )
             for regime_name, user_regime in representative_user_regimes.items()
         }
     )
     all_grids = MappingProxyType(
         {
-            regime_name: get_grids(user_regime)
+            regime_name: get_grids(
+                user_regime=user_regime,
+                sharded_state_names=resolved_execution.sharded_states,
+            )
             for regime_name, user_regime in representative_user_regimes.items()
         }
     )
@@ -500,11 +507,8 @@ def process_regimes(
 
     sharded_state_names_by_regime = MappingProxyType(
         {
-            regime_name: frozenset(
-                name
-                for name, grid in all_grids[regime_name].items()
-                if grid.distributed
-                and name in regime_to_variables[regime_name].state_names
+            regime_name: resolved_execution.sharded_states.intersection(
+                regime_to_variables[regime_name].state_names
             )
             for regime_name in user_regimes
         }
@@ -533,11 +537,12 @@ def process_regimes(
         device_ids=resolved_execution.device_ids,
     )
 
-    _fail_if_action_has_batch_size(user_regimes)
-
     regime_to_v_interpolation_info = MappingProxyType(
         {
-            regime_name: create_v_interpolation_info(user_regime)
+            regime_name: create_v_interpolation_info(
+                user_regime=user_regime,
+                sharded_state_names=sharded_state_names_by_regime[regime_name],
+            )
             for regime_name, user_regime in representative_user_regimes.items()
         }
     )
@@ -1012,7 +1017,7 @@ class _CanonicalRegimeBuilder:
                 regime_name=regime_name,
                 # Representative, not raw: these reach `SolverBuildContext`, and
                 # a solver reading a state grid off them wants a concrete
-                # `Grid`. Every such read is of a shape trait (`batch_size`,
+                # `Grid`. Every such read is of a shape trait (extent or
                 # the `ContinuousGrid` kind), which is invariant across ages,
                 # so the representative grid answers it exactly. Node *values*,
                 # which do vary by age, come from the period's own axes.
@@ -1069,7 +1074,10 @@ class _CanonicalRegimeBuilder:
                 granular_param_expansions=granular_param_expansions,
                 regime_names_to_ids=self.regime_names_to_ids,
                 variables=self.regime_to_variables[regime_name],
-                simulation_variables=simulate_variables_from_regime(user_regime),
+                simulation_variables=simulate_variables_from_regime(
+                    user_regime=user_regime,
+                    sharded_state_names=self.sharded_state_names_by_regime[regime_name],
+                ),
                 regimes_to_active_periods=self.regimes_to_active_periods,
                 regime_to_v_interpolation_info=self.regime_to_v_interpolation_info,
                 period_to_regime_v_interp=self.period_to_regime_v_interp,
@@ -2405,7 +2413,7 @@ def _fail_if_ref_invalid(
         # carried state is still visible as one.
         expected_states = set(
             simulate_variables_from_regime(
-                representative_user_regimes[ref.regime]
+                user_regime=representative_user_regimes[ref.regime]
             ).state_names
         )
         coverage = "state the reference regime carries in simulation"
@@ -2667,6 +2675,7 @@ def _build_period_v_interpolation_info(
     *,
     representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     grid_schedule: AgeGridSchedule | None,
+    sharded_state_names: frozenset[StateName],
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None:
     """Per-period continuation interpolation info, from cached concrete grids.
 
@@ -2683,7 +2692,7 @@ def _build_period_v_interpolation_info(
         result[period] = MappingProxyType(
             {
                 regime_name: create_v_interpolation_info(
-                    representative_user_regimes[regime_name].replace(
+                    user_regime=representative_user_regimes[regime_name].replace(
                         states={
                             **representative_user_regimes[regime_name].states,
                             **{
@@ -2691,7 +2700,8 @@ def _build_period_v_interpolation_info(
                                 for state_name, resolved in states.items()
                             },
                         }
-                    )
+                    ),
+                    sharded_state_names=sharded_state_names,
                 )
                 for regime_name, states in regimes_at_period.items()
             }
@@ -3257,7 +3267,7 @@ def _build_solution_phase(  # noqa: PLR0915
         )
         co_map_state_names = _co_map_state_names(
             state_names=state_action_space.state_names,
-            grids=all_grids[regime_name],
+            sharded_state_names=sharded_state_names,
             transitions=core.transitions,
         )
         # A co-mapped state's axis is sliced only off the leaves that carry it; a
@@ -3322,7 +3332,6 @@ def _build_solution_phase(  # noqa: PLR0915
                 # the NaN they were built to localize.
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
                 state_action_space=state_action_space,
-                grids=all_grids[regime_name],
                 enable_jit=enable_jit,
                 koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
                 certainty_equivalent=certainty_equivalent,
@@ -3351,6 +3360,7 @@ def _build_solution_phase(  # noqa: PLR0915
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
         submesh_device_ids=submesh_device_ids,
+        sharded_state_names=sharded_state_names,
         axis_widths=axis_widths,
         period_to_state_nodes=period_to_state_nodes,
         functions=core.functions,
@@ -3412,6 +3422,7 @@ def _build_solution_phase(  # noqa: PLR0915
         functions=core.functions,
         variables=variables,
         grids=all_grids[regime_name],
+        sharded_state_names=sharded_state_names,
         continuation_demanded=continuation_demanded,
         solver_produces_carry=solver_kernels.continuation_spec is not None,
         enable_jit=enable_jit,
@@ -3819,6 +3830,7 @@ def _build_egm_child_carry_producer(
     functions: EconFunctionsMapping,
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
+    sharded_state_names: frozenset[StateName],
     continuation_demanded: bool,
     solver_produces_carry: bool,
     enable_jit: bool,
@@ -3896,6 +3908,7 @@ def _build_egm_child_carry_producer(
                     leading_shape=leading_shape,
                 ),
                 grids=grids,
+                sharded_state_names=sharded_state_names,
                 leading_axis_names=discrete_state_names + passive_state_names,
                 devices=devices,
             )
@@ -3927,6 +3940,7 @@ def _build_egm_child_carry_producer(
                 leading_shape=leading_shape,
             ),
             grids=grids,
+            sharded_state_names=sharded_state_names,
             leading_axis_names=discrete_state_names + passive_state_names,
             devices=devices,
         )
@@ -7264,12 +7278,12 @@ def _get_vmap_params(
 def _co_map_state_names(
     *,
     state_names: tuple[StateName, ...],
-    grids: MappingProxyType[StateOrActionName, Grid],
+    sharded_state_names: frozenset[StateName],
     transitions: TransitionFunctionsMapping,
 ) -> tuple[StateName, ...]:
     """Return the distributed, never-transitioning states, in state-axis order.
 
-    A state qualifies when its grid is distributed and its law of motion is the
+    A state qualifies when it is explicitly sharded and its law of motion is the
     identity in every target bundle that carries it — so its next value equals its
     current value, and the continuation V can be read from the device-local slice
     rather than all-gathered. Distributed states sort first in `state_names`, so the
@@ -7277,8 +7291,7 @@ def _co_map_state_names(
     """
     co_map: list[StateName] = []
     for name in state_names:
-        grid = grids.get(name)
-        if grid is None or not grid.distributed:
+        if name not in sharded_state_names:
             continue
         next_key = f"next_{name}"
         carrying = [
@@ -8089,27 +8102,6 @@ def _describe_node_disagreement(*, solve_axis: Float1D, simulate_axis: Float1D) 
         f"{float(simulate_axis[first])!r} ({int(differing.size)} of "
         f"{int(solve_axis.size)} nodes differ)"
     )
-
-
-def _fail_if_action_has_batch_size(
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> None:
-    """Raise if any action grid has a non-zero batch_size.
-
-    Batching applies only to the outer state loop during solving, not to the
-    inner action optimization. A non-zero batch_size on an action grid would be
-    silently ignored, so we reject it early.
-
-    """
-    for regime_name, user_regime in user_regimes.items():
-        for action_name, grid in user_regime.actions.items():
-            if grid is not None and grid.batch_size != 0:
-                msg = (
-                    f"batch_size > 0 is not supported on action grids. Only state "
-                    f"grids can be batched. Found batch_size={grid.batch_size} on "
-                    f"action '{action_name}' in regime '{regime_name}'."
-                )
-                raise ValueError(msg)
 
 
 def _route_constraints(

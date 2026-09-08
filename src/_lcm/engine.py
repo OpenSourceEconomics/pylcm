@@ -623,6 +623,7 @@ class SolutionPhase:
         distributed_states = _distribute_states_to_devices(
             states=MappingProxyType(new_states),
             grids=self.grids,
+            sharded_state_names=self.sharded_state_names,
             devices=self.placed_devices(),
         )
         return self._base_state_action_space.replace(
@@ -1324,13 +1325,13 @@ def _fail_if_a_device_id_is_not_visible(
 def _build_regime_sharding(
     *,
     grids: MappingProxyType[StateOrActionName, Grid],
+    sharded_state_names: frozenset[StateName],
     devices: tuple[jax.Device, ...],
 ) -> _RegimeSharding | None:
     """Build a `_RegimeSharding` covering this regime's distributed grids.
 
-    Returns `None` when no grid is distributed. Action grids are rejected at
-    user-facing `Regime` construction (see `regime_building.validation`); the
-    helper assumes any grid with `distributed=True` is a state grid.
+    Returns `None` when no state is sharded. Model validation restricts the
+    explicit names to discrete states; grids provide only their extents.
 
     Sharding policy depends on the number of distributed grids:
     - exactly one: build a 1-axis mesh with shape `(n_devices,)`, axis name
@@ -1343,6 +1344,7 @@ def _build_regime_sharding(
 
     Args:
         grids: Immutable mapping of state and action names to their grids.
+        sharded_state_names: Explicit state names assigned a device axis.
         devices: Tuple of the devices the placement assigned to this regime;
             the mesh spans exactly them.
 
@@ -1350,7 +1352,9 @@ def _build_regime_sharding(
         The regime's sharding plan, or `None` if no grid is distributed.
 
     """
-    distributed_grids = {name: grid for name, grid in grids.items() if grid.distributed}
+    distributed_grids = {
+        name: grid for name, grid in grids.items() if name in sharded_state_names
+    }
     if not distributed_grids:
         return None
     n_devices = len(devices)
@@ -1420,13 +1424,16 @@ def place_template_on_regime_devices[Template](
     *,
     template: Template,
     grids: MappingProxyType[StateOrActionName, Grid],
+    sharded_state_names: frozenset[StateName],
     states: Mapping[StateName, FloatND | IntND],
     fold_state_names: tuple[StateName, ...],
     submesh_device_ids: tuple[int, ...],
 ) -> Template:
     """Place a continuation pytree using the regime's stored-value layout."""
     devices = placed_devices_for_ids(submesh_device_ids=submesh_device_ids)
-    plan = _build_regime_sharding(grids=grids, devices=devices)
+    plan = _build_regime_sharding(
+        grids=grids, sharded_state_names=sharded_state_names, devices=devices
+    )
     state_order = tuple(name for name in states if name not in fold_state_names)
     replicated = (
         jax.sharding.SingleDeviceSharding(devices[0])
@@ -1471,17 +1478,19 @@ def _distribute_states_to_devices(
     *,
     states: MappingProxyType[StateName, FloatND | IntND],
     grids: MappingProxyType[StateOrActionName, Grid],
+    sharded_state_names: frozenset[StateName],
     devices: tuple[jax.Device, ...],
 ) -> MappingProxyType[StateName, FloatND | IntND]:
     """Place each distributed state's array on its device mesh.
 
-    States whose grid carries `distributed=True` are placed via
+    States explicitly assigned a device axis are placed via
     `jax.device_put` onto the per-regime mesh; other states pass through
     unchanged. The input mapping is treated as immutable.
 
     Args:
         states: Immutable mapping of state names to their 1-D arrays.
         grids: Immutable mapping of state and action names to their grids.
+        sharded_state_names: Explicit state names assigned a device axis.
         devices: Tuple of the devices the placement assigned to this regime.
 
     Returns:
@@ -1489,7 +1498,9 @@ def _distribute_states_to_devices(
         every other state untouched.
 
     """
-    sharding_plan = _build_regime_sharding(grids=grids, devices=devices)
+    sharding_plan = _build_regime_sharding(
+        grids=grids, sharded_state_names=sharded_state_names, devices=devices
+    )
     if sharding_plan is None:
         return states
     placed = dict(states)

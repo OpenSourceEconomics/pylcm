@@ -19,8 +19,11 @@ import _lcm.solution.nnbegm as nnbegm_module
 from _lcm.execution.core_program import core_program_graph
 from lcm import ExecutionConfig
 from lcm.solvers import (
+    CELL_AXIS,
+    ENVELOPE_CELL_AXIS,
     NEGM,
     OUTER_CANDIDATE_AXIS,
+    SAVINGS_POINT_AXIS,
     AdaptiveOuterMesh,
     FiniteOuterGrid,
 )
@@ -61,12 +64,17 @@ def test_adaptive_outer_mesh_has_no_batch_size_field() -> None:
 
 
 def test_outer_sweep_declares_the_outer_candidate_axis() -> None:
-    """The NEGM outer sweep program declares `outer_candidate` as a reduced axis."""
+    """The sweep declares its outer reduction and the inner adjuster's real axes."""
     model = negm_kinked_toy.build_model()
     kernel = next(iter(model._regimes["alive"].solution.period_kernels.values()))
     program = core_program_graph(kernel=kernel)["outer_sweep"]
 
-    assert program.requirements.axis_names == (OUTER_CANDIDATE_AXIS,)
+    assert program.requirements.axis_names == (
+        OUTER_CANDIDATE_AXIS,
+        CELL_AXIS,
+        SAVINGS_POINT_AXIS,
+        ENVELOPE_CELL_AXIS,
+    )
 
 
 def test_outer_candidate_axis_spans_the_outer_grid() -> None:

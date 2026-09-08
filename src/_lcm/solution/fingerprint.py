@@ -41,7 +41,6 @@ import _lcm.utils.functools as functools_declarations
 import _lcm.zero_safe as zero_safe_declarations
 import lcm.exceptions as lcm_exceptions
 import lcm.koopmans_aggregation as koopmans_declarations
-import lcm.processes as process_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
@@ -87,14 +86,6 @@ _PYTHON_IMPLEMENTATION_SEAL = (
     tuple(sys.implementation.version),
     sys.implementation.cache_tag,
 )
-# These names are execution policy only for pylcm's own implementations, the
-# role-bound subclasses a regime stores included. The predicate below scopes them
-# by owner type and requires the type to be one a shipped pylcm module binds, so
-# a plugin or user callable stays free to give a mathematically meaningful field
-# the same name.
-_GRID_EXECUTION_FIELDS = frozenset({"batch_size", "distributed"})
-# Solver execution widths belong to ExecutionConfig.
-_BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ...] = ()
 _BUILTIN_TYPE_OBJECTS = frozenset(
     value for value in vars(builtins).values() if isinstance(value, type)
 )
@@ -121,12 +112,6 @@ _TRUSTED_GRID_TYPE_OBJECTS = frozenset(
     value
     for name in grid_declarations.__all__
     if isinstance(value := getattr(grid_declarations, name), type)
-    and issubclass(value, Grid)
-)
-_TRUSTED_GRID_EXECUTION_TYPE_OBJECTS = _TRUSTED_GRID_TYPE_OBJECTS | frozenset(
-    value
-    for name in process_declarations.__all__
-    if isinstance(value := getattr(process_declarations, name), type)
     and issubclass(value, Grid)
 )
 _TRUSTED_CONSTRAINT_TYPE_OBJECTS = frozenset(
@@ -458,7 +443,6 @@ def _walk_parameter_usage(  # noqa: PLR0911
                     seen=seen, current=getattr(current, declaration.name)
                 )
                 for declaration in dataclasses.fields(current)
-                if not _exclude_field(owner=current, field_name=declaration.name)
             )
             if not callable(current):
                 return field_names, field_unknown
@@ -990,7 +974,7 @@ class _SemanticHasher:
                 self.visit(value=value.func)
                 self.visit(value=value.args)
                 self.visit(value=value.keywords or {})
-                self._visit_named_state(owner=value, state=value.__dict__)
+                self._visit_named_state(state=value.__dict__)
                 self.frame(label="partial-end")
                 return
             if inspect.ismethod(value):
@@ -1031,8 +1015,8 @@ class _SemanticHasher:
                     label="object-state-start",
                     payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
                 )
-                self._visit_named_state(owner=value, state=state or {})
-                self._visit_named_state(owner=value, state=slots)
+                self._visit_named_state(state=state or {})
+                self._visit_named_state(state=slots)
                 self.frame(label="object-state-end")
                 return
             msg = (
@@ -1421,7 +1405,7 @@ class _SemanticHasher:
             for name, member in function.__dict__.items()
             if name not in redundant_metadata
         }
-        self._visit_named_state(owner=function, state=function_state)
+        self._visit_named_state(state=function_state)
         self.frame(label="function-end")
 
     @staticmethod
@@ -1651,8 +1635,6 @@ class _SemanticHasher:
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
         for declaration in dataclasses.fields(cast("Any", value)):
-            if _exclude_field(owner=value, field_name=declaration.name):
-                continue
             self.frame(label="field", payload=declaration.name.encode())
             self.visit(value=getattr(value, declaration.name))
         # Exact pylcm declarations have their implementation sealed by the
@@ -1689,8 +1671,8 @@ class _SemanticHasher:
             for name, member in (getattr(value, "__dict__", {}) or {}).items()
             if name not in {"__annotations__", "__signature__"}
         }
-        self._visit_named_state(owner=value, state=dictionary_state)
-        self._visit_named_state(owner=value, state=_slot_state(value))
+        self._visit_named_state(state=dictionary_state)
+        self._visit_named_state(state=_slot_state(value))
         call = inspect.getattr_static(type(value), "__call__", None)
         if not inspect.isfunction(call):
             self._raise_uninspectable_callable(value)
@@ -1728,15 +1710,11 @@ class _SemanticHasher:
         self.visit(value=identity)
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
             for declaration in dataclasses.fields(cast("Any", value)):
-                if _exclude_field(owner=value, field_name=declaration.name):
-                    continue
                 self.frame(label="solver-field", payload=declaration.name.encode())
                 self.visit(value=getattr(value, declaration.name))
         else:
-            self._visit_named_state(
-                owner=value, state=getattr(value, "__dict__", {}) or {}
-            )
-            self._visit_named_state(owner=value, state=_slot_state(value))
+            self._visit_named_state(state=getattr(value, "__dict__", {}) or {})
+            self._visit_named_state(state=_slot_state(value))
         self.frame(label="solver-end")
 
     def _visit_certainty_equivalent(self, value: object) -> bool:
@@ -1750,8 +1728,8 @@ class _SemanticHasher:
             label="certainty-equivalent-start",
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
-        self._visit_named_state(owner=value, state=getattr(value, "__dict__", {}) or {})
-        self._visit_named_state(owner=value, state=_slot_state(value))
+        self._visit_named_state(state=getattr(value, "__dict__", {}) or {})
+        self._visit_named_state(state=_slot_state(value))
 
         # Shipped implementations are sealed by the exact pylcm version checked
         # alongside every durable solution. User implementations have no package
@@ -1792,42 +1770,13 @@ class _SemanticHasher:
         self.frame(label="certainty-equivalent-end")
         return True
 
-    def _visit_named_state(self, *, owner: object, state: Mapping[str, object]) -> None:
-        entries = {
-            name: member
-            for name, member in state.items()
-            if not _exclude_field(owner=owner, field_name=name)
-        }
+    def _visit_named_state(self, *, state: Mapping[str, object]) -> None:
+        entries = state
         self.frame(label="state-start", payload=str(len(entries)).encode())
         for name in sorted(entries):
             self.frame(label="state-field", payload=name.encode())
             self.visit(value=entries[name])
         self.frame(label="state-end")
-
-
-def _exclude_field(*, owner: object, field_name: str) -> bool:
-    """Whether one field is execution policy rather than model structure.
-
-    A regime stores its solver as the role-bound subclass the solver binds
-    itself to, so a registered type answers for its shipped subclasses too;
-    a subclass a shipped pylcm module does not bind answers for none of them.
-    """
-    owner_type = type(owner)
-    if (
-        _has_exact_type(value=owner, candidates=_TRUSTED_GRID_EXECUTION_TYPE_OBJECTS)
-        and field_name in _GRID_EXECUTION_FIELDS
-    ):
-        return True
-    # The first matching row answers, which is exact because no registered
-    # solver derives from another: they all derive from `OneMarginSolver` or
-    # `TwoMarginSolver`, so a type matches at most one row's hierarchy.
-    for registered_type, fields in _BUILTIN_EXECUTION_FIELDS_BY_TYPE:
-        if owner_type is registered_type or (
-            issubclass(owner_type, registered_type)
-            and _is_shipped_pylcm_type(owner_type)
-        ):
-            return field_name in fields
-    return False
 
 
 def _is_shipped_pylcm_module_name(name: str) -> bool:

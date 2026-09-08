@@ -117,9 +117,14 @@ def _make_three_type_model(
         regimes={"working": working, "retired": retired},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_ThreeTypeRegimeId,
-        states={"type1": DiscreteGrid(category_class=_Type, distributed=distributed)},
+        states={"type1": DiscreteGrid(category_class=_Type)},
         state_transitions={"type1": fixed_transition("type1")},
-        execution_config=ExecutionConfig(sharded_states=sharded, devices=devices),
+        execution_config=ExecutionConfig(
+            sharded_states=tuple(
+                dict.fromkeys((*sharded, *(("type1",) if distributed else ())))
+            ),
+            devices=devices,
+        ),
     )
 
 
@@ -442,7 +447,8 @@ def _make_two_mesh_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_TwoMeshRegimeId,
-        states={"type1": DiscreteGrid(category_class=_Type, distributed=True)},
+        states={"type1": DiscreteGrid(category_class=_Type)},
+        execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
     )
 
@@ -615,12 +621,11 @@ def _make_two_block_model(*, distributed: bool) -> Model:
         regimes={"first": first, "second": second, "dead": dead},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_TwoBlockRegimeId,
-        states={
-            "type1": DiscreteGrid(
-                category_class=_TwoValuedType, distributed=distributed
-            )
-        },
+        states={"type1": DiscreteGrid(category_class=_TwoValuedType)},
         state_transitions={"type1": fixed_transition("type1")},
+        execution_config=ExecutionConfig(
+            sharded_states=("type1",) if distributed else ()
+        ),
     )
 
 

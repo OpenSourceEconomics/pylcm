@@ -375,6 +375,7 @@ def shard_carry_template(
     *,
     template: EGMCarry,
     grids: Mapping[StateOrActionName, Any],
+    sharded_state_names: frozenset[StateName],
     leading_axis_names: tuple[StateName, ...],
     devices: tuple[jax.Device, ...],
 ) -> EGMCarry:
@@ -408,7 +409,11 @@ def shard_carry_template(
     # `EGMCarry` from this module, so a module-level import cycles.
     from _lcm.engine import _build_regime_sharding  # noqa: PLC0415
 
-    plan = _build_regime_sharding(grids=MappingProxyType(dict(grids)), devices=devices)
+    plan = _build_regime_sharding(
+        grids=MappingProxyType(dict(grids)),
+        sharded_state_names=sharded_state_names,
+        devices=devices,
+    )
     if plan is None:
         return _place_carry_template_on_one_device(template=template, devices=devices)
     if not any(name in plan.distributed_state_names for name in leading_axis_names):

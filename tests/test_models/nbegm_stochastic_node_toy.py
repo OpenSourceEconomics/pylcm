@@ -12,6 +12,8 @@ The brute variant (`GridSearch`) productmaps over `(liquid, income, consumption)
 averages the action-aggregated next-period V over the income nodes — the dense oracle.
 """
 
+from dataclasses import replace
+
 import jax.numpy as jnp
 
 import lcm
@@ -175,9 +177,7 @@ def build_model(
     if with_kind:
         extra_state_transitions = {"kind": {"alive": lcm.fixed_transition("kind")}}
         if distributed_kind:
-            model_states = {
-                "kind": DiscreteGrid(category_class=ConsumerKind, distributed=True)
-            }
+            model_states = {"kind": DiscreteGrid(category_class=ConsumerKind)}
         else:
             extra_states = {
                 **extra_states,
@@ -185,7 +185,16 @@ def build_model(
             }
 
     return make_alive_dead_model(
-        execution_config=execution_config,
+        execution_config=(
+            replace(
+                execution_config,
+                sharded_states=tuple(
+                    dict.fromkeys((*execution_config.sharded_states, "kind"))
+                ),
+            )
+            if distributed_kind
+            else execution_config
+        ),
         n_periods=n_periods,
         n_liquid=n_liquid,
         liquid_max=liquid_max,

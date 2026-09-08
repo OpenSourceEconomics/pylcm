@@ -66,7 +66,12 @@ from _lcm.solution.period_replay import replay_period
 from _lcm.typing import FlatParams
 from lcm import ExecutionConfig
 from lcm.solver_api import EGM_CONTINUATION, KernelOutput
-from lcm.solvers import OUTER_CANDIDATE_AXIS
+from lcm.solvers import (
+    CELL_AXIS,
+    ENVELOPE_CELL_AXIS,
+    OUTER_CANDIDATE_AXIS,
+    SAVINGS_POINT_AXIS,
+)
 from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.test_models import negm_kinked_toy
@@ -246,7 +251,12 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
     assert sweep.disposition_reason is None
     assert keeper.scope is ProgramScope.VALUES_ONLY
     assert sweep.scope is ProgramScope.ANY
-    assert sweep.requirements.axis_names == (OUTER_CANDIDATE_AXIS,)
+    assert sweep.requirements.axis_names == (
+        OUTER_CANDIDATE_AXIS,
+        CELL_AXIS,
+        SAVINGS_POINT_AXIS,
+        ENVELOPE_CELL_AXIS,
+    )
     assert {read.source.core_key for read in sweep.requirements.value_reads} == {
         "outer_sweep"
     }

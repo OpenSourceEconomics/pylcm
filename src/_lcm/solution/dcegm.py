@@ -77,6 +77,7 @@ from _lcm.typing import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExactAffineKernelUnavailableError,
+    ModelInitializationError,
     RegimeInitializationError,
 )
 from lcm.solver_api import (
@@ -356,6 +357,13 @@ class DCEGM(OneMarginSolver):
         it meaningful to ask whether this installation can execute its selected
         backend.
         """
+        if context.sharded_state_names:
+            raise ModelInitializationError(
+                f"DCEGM regime {context.regime_name!r} cannot shard discrete "
+                f"state axes {sorted(context.sharded_state_names)!r}: its child "
+                "carry indexing requires whole discrete axes. Remove these "
+                "states from ExecutionConfig.sharded_states."
+            )
         if isinstance(self.envelope, ExactEnvelope):
             _fail_if_exact_affine_kernel_unavailable(
                 regime_name=context.regime_name,

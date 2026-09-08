@@ -948,6 +948,7 @@ class NBEGM(OneMarginSolver):
                     ),
                     grids=context.grids,
                     ride_along_state_names=schedule_spec.ride_along_state_names,
+                    sharded_state_names=context.sharded_state_names,
                     submesh_device_ids=context.submesh_device_ids,
                 ),
                 layout=replace(
@@ -8057,6 +8058,7 @@ def _shard_ride_carry_template(
     *,
     template: EGMCarry,
     grids: Mapping[StateOrActionName, Grid],
+    sharded_state_names: frozenset[StateName],
     ride_along_state_names: tuple[StateName, ...],
     submesh_device_ids: tuple[int, ...],
 ) -> EGMCarry:
@@ -8064,6 +8066,7 @@ def _shard_ride_carry_template(
     return shard_carry_template(
         template=template,
         grids=grids,
+        sharded_state_names=sharded_state_names,
         leading_axis_names=ride_along_state_names,
         devices=placed_devices_for_ids(submesh_device_ids=submesh_device_ids),
     )

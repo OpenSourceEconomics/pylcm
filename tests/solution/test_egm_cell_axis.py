@@ -31,7 +31,6 @@ from lcm import (
     fixed_transition,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
-from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import CELL_AXIS, DCEGM
 from lcm.typing import (
@@ -219,7 +218,7 @@ def _model_with_batched_health() -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
-            "health": DiscreteGrid(category_class=Health, batch_size=2),
+            "health": DiscreteGrid(category_class=Health, batch_size=2),  # ty: ignore[unknown-argument]
         },
         state_transitions={
             "wealth": next_wealth,
@@ -335,7 +334,7 @@ def _cell_axis(*, model: Model):
 
 def test_a_batched_grid_is_refused_in_a_dcegm_regime() -> None:
     """A `batch_size` a DC-EGM regime cannot read is refused, not ignored."""
-    with pytest.raises(ModelInitializationError, match="batch_size=2"):
+    with pytest.raises(TypeError, match="batch_size"):
         _model_with_batched_health()
 
 

@@ -42,6 +42,7 @@ _N_WEALTH = 64
 
 # Product extent of the streamed action axis: two work states times three.
 _ACTION_EXTENT = 6
+_FULL_WIDTH_PRODUCT = _N_WEALTH * _ACTION_EXTENT
 
 
 @categorical(ordered=False)
@@ -268,10 +269,10 @@ def test_the_position_holding_nothing_besides_its_argument_keeps_the_full_extent
 ) -> None:
     """A budget that exactly fits the widest peak is spent on it where it is free."""
     widths = _selected_width_products(
-        monkeypatch=monkeypatch, budget_bytes=_ACTION_EXTENT * _value_bytes()
+        monkeypatch=monkeypatch, budget_bytes=_FULL_WIDTH_PRODUCT * _value_bytes()
     )
 
-    assert widths[("acting", 2)] == _ACTION_EXTENT
+    assert widths[("acting", 2)] == _FULL_WIDTH_PRODUCT
 
 
 def test_a_large_budget_no_position_can_bind_keeps_every_period_at_full_extent(
@@ -279,12 +280,14 @@ def test_a_large_budget_no_position_can_bind_keeps_every_period_at_full_extent(
 ) -> None:
     """A budget far above every peak selects the full extent at every period."""
     widths = _selected_width_products(
-        monkeypatch=monkeypatch, budget_bytes=100 * _value_bytes()
+        monkeypatch=monkeypatch, budget_bytes=(_FULL_WIDTH_PRODUCT + 3) * _value_bytes()
     )
 
     assert {
         cell: width for cell, width in widths.items() if cell[0] == "acting"
-    } == dict.fromkeys((("acting", 0), ("acting", 1), ("acting", 2)), _ACTION_EXTENT)
+    } == dict.fromkeys(
+        (("acting", 0), ("acting", 1), ("acting", 2)), _FULL_WIDTH_PRODUCT
+    )
 
 
 def test_a_solve_without_a_budget_does_not_walk_the_schedule(

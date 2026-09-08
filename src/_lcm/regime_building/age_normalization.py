@@ -630,7 +630,7 @@ def _resolve_grid_marker(
     """Build one grid marker's concrete grids over its active periods, validated.
 
     Every active period's `build(age)` must return a `ContinuousGrid` of the same
-    class, batch_size, points mode, resolved node shape, dtype, and weak_type; only
+    class, points mode, resolved node shape, dtype, and weak_type; only
     node values may vary. Runtime-points grids are rejected outright.
     """
     concrete_by_period: dict[int, ResolvedAgeGrid] = {}
@@ -670,7 +670,7 @@ def _resolve_grid_marker(
                 f"{_describe_trait_mismatch(first=first_traits, other=traits)} "
                 f"The first active age is period {first_period}, the offending one is "
                 f"period {period}. Age-varying grids must keep the same class, "
-                f"batch_size, points mode and resolved node shape/dtype at every "
+                f"points mode and resolved node shape/dtype at every "
                 f"active age; only their bounds or node values may vary."
             )
             raise RegimeInitializationError(msg)

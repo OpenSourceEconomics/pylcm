@@ -28,7 +28,14 @@ from _lcm.grids import categorical
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
-from lcm import AgeGrid, MarkovTransition, Model, Regime, fixed_transition
+from lcm import (
+    AgeGrid,
+    ExecutionConfig,
+    MarkovTransition,
+    Model,
+    Regime,
+    fixed_transition,
+)
 from lcm.solver_api import ArtifactKey, ContinuationCapabilities, KernelOutput
 from lcm.solvers import (
     ContinuationSpec,
@@ -243,6 +250,7 @@ def _placed_zeros(
     zeros = jnp.zeros(shape)
     plan = _build_regime_sharding(
         grids=context.grids,
+        sharded_state_names=context.sharded_state_names,
         devices=placed_devices_for_ids(submesh_device_ids=context.submesh_device_ids),
     )
     if plan is None:
@@ -563,7 +571,8 @@ def _model(
         },
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
-        states={"type1": DiscreteGrid(category_class=_Type, distributed=True)},
+        states={"type1": DiscreteGrid(category_class=_Type)},
+        execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
     )
 

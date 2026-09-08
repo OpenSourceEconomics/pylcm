@@ -43,18 +43,23 @@ class VInterpolationInfo:
     """Immutable mapping of continuous state names to their grids."""
 
 
-def create_v_interpolation_info(user_regime: UserRegime) -> VInterpolationInfo:
+def create_v_interpolation_info(
+    *, user_regime: UserRegime, sharded_state_names: frozenset[StateName] = frozenset()
+) -> VInterpolationInfo:
     """Create state space info for V-function interpolation.
 
     Args:
         user_regime: User-form `Regime` instance.
+        sharded_state_names: States assigned a device axis by the model.
 
     Returns:
         State space information for the regime.
 
     """
-    variables = from_regime(user_regime)
-    grids = get_grids(user_regime)
+    variables = from_regime(
+        user_regime=user_regime, sharded_state_names=sharded_state_names
+    )
+    grids = get_grids(user_regime=user_regime, sharded_state_names=sharded_state_names)
 
     discrete_states = {name: grids[name] for name in variables.discrete_state_names}
     continuous_states = {name: grids[name] for name in variables.continuous_state_names}

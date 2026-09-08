@@ -65,7 +65,7 @@ def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
         functions={"utility": utility},
     )
 
-    got = from_regime(mock_regime)
+    got = from_regime(user_regime=mock_regime)
 
     assert isinstance(got, Variables)
     assert set(got) == {"a", "c"}
@@ -90,7 +90,7 @@ def test_get_grids(binary_category_class):
         functions={"utility": lambda _c: None},
     )
 
-    got = get_grids(mock_regime)
+    got = get_grids(user_regime=mock_regime)
     assert isinstance(got["a"], DiscreteGrid)
     assert got["a"].categories == ("cat0", "cat1")
     assert got["a"].codes == (0, 1)
@@ -110,9 +110,9 @@ def test_get_grids_reorder(binary_category_class):
         },
         states={
             "b": DiscreteGrid(category_class=binary_category_class),
-            "c": DiscreteGrid(category_class=binary_category_class, batch_size=1),
-            "d": LinSpacedGrid(start=0, stop=1, n_points=5, batch_size=3),
-            "e": LinSpacedGrid(start=0, stop=1, n_points=5, batch_size=1),
+            "c": DiscreteGrid(category_class=binary_category_class),
+            "d": LinSpacedGrid(start=0, stop=1, n_points=5),
+            "e": LinSpacedGrid(start=0, stop=1, n_points=5),
             "f": LinSpacedGrid(start=0, stop=1, n_points=5),
         },
         state_transitions={
@@ -125,8 +125,8 @@ def test_get_grids_reorder(binary_category_class):
         functions={"utility": lambda _c: None},
     )
 
-    got = get_grids(mock_regime)
-    assert list(got.keys()) == ["c", "b", "e", "d", "f", "a"]
+    got = get_grids(user_regime=mock_regime, sharded_state_names=frozenset({"c"}))
+    assert list(got.keys()) == ["c", "b", "d", "e", "f", "a"]
 
 
 def test_process_regimes():
@@ -209,7 +209,7 @@ def test_variables_excludes_constraint_names():
         | {"wealth_constraint": wealth_constraint}
     )
 
-    got = from_regime(working_copy)
+    got = from_regime(user_regime=working_copy)
     assert "wealth_constraint" not in got
 
 

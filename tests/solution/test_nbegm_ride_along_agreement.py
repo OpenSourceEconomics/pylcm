@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.interp import interp_on_prepared_grid, prepare_padded_grid
+from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_ride_along_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
@@ -55,10 +56,10 @@ def test_nbegm_matches_brute_in_every_ride_along_slice_every_age():
 def test_nbegm_solve_is_invariant_to_distributing_the_ride_state():
     """A model-level distributed ride state yields the same value as a plain one.
 
-    Marking the fixed ride-along `kind` as `distributed=True` shards it across the
+    Naming the fixed ride-along `kind` in `sharded_states` shards it across the
     mesh but changes no economics: the child's Euler state stays the continuous
     liquid state (never the int-coded `kind`), so the distributed solve reproduces
-    the non-distributed value exactly.
+    the non-distributed value within the placement contract's eight ULPs.
     """
     plain = (
         toy.build_model(variant="nbegm", n_periods=4, n_liquid=24, n_savings=32)
@@ -79,9 +80,10 @@ def test_nbegm_solve_is_invariant_to_distributing_the_ride_state():
     for period in plain:
         if "alive" not in plain[period]:
             continue
-        np.testing.assert_array_equal(
-            np.asarray(distributed[period]["alive"]),
-            np.asarray(plain[period]["alive"]),
+        assert_agrees_to_ulp(
+            got=distributed[period]["alive"],
+            expected=plain[period]["alive"],
+            n_ulp=8,
         )
 
 

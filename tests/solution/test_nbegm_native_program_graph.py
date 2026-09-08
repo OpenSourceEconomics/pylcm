@@ -26,6 +26,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from lcm.solver_api import SIMULATION_POLICY
+from lcm.solvers import CELL_AXIS
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.test_models import (
     nbegm_jump_ride_along_toy,
@@ -106,7 +107,7 @@ def test_the_graph_publishes_exactly_a_values_only_main_and_a_replay_program():
     for program in graph.values():
         assert program.disposition is CoreExecutionDisposition.PLANNED
         assert program.disposition_reason is None
-        assert program.requirements.axes == ()
+        assert program.requirements.axis_names == (CELL_AXIS,)
         # A planned program's declared read is resolved into a transfer, and
         # replacing a leaf inside a carry needs a pytree reconstruction the
         # transfer runtime does not perform. The carry rows this kernel reads

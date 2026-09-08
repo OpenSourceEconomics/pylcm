@@ -6,15 +6,12 @@ module is the factory side: turn a user-facing `Regime` into the canonical
 state-action space iteration is stable.
 
 Iteration order: discrete states, continuous states, then actions in
-declaration order. Within each state group the sort key is
-`(not distributed, batch_size)` — `distributed=True` states sort first
-(outermost productmap axis, so the cross-device collective wraps the inner
-per-device kernel); within each distributed / non-distributed slice, ties
-break by `batch_size` with 0 last (treated as +∞).
+declaration order. Within each state group explicitly sharded states sort first,
+so the device axis wraps the inner per-device kernel. Declaration order is
+preserved within the sharded and unsharded parts of each group.
 
 """
 
-import math
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
@@ -29,17 +26,18 @@ if TYPE_CHECKING:
     from lcm.regime import Regime as UserRegime
 
 
-def from_regime(user_regime: UserRegime) -> Variables:
+def from_regime(
+    *, user_regime: UserRegime, sharded_state_names: frozenset[StateName] = frozenset()
+) -> Variables:
     """Build `Variables` from a regime, ordering names canonically.
 
     Order: discrete states, continuous states, then actions in declaration
-    order. Within each state topology group, the sort key is
-    `(not distributed, batch_size)` — `distributed=True` states come first
-    (sharded axes outermost in productmap), and `batch_size == 0` sorts
-    last (treated as +∞).
+    order. Within each state topology group, explicitly sharded states come
+    first, preserving declaration order within each part.
 
     Args:
         user_regime: User-form `Regime` instance.
+        sharded_state_names: States assigned a device axis by the model.
 
     Returns:
         A `Variables` instance whose iteration order matches the canonical
@@ -47,19 +45,24 @@ def from_regime(user_regime: UserRegime) -> Variables:
 
     """
     raw_info = _raw_variable_info(user_regime)
-    ordered_names = _ordered_state_action_names(user_regime=user_regime, info=raw_info)
+    ordered_names = _ordered_state_action_names(
+        info=raw_info, sharded_state_names=sharded_state_names
+    )
     return Variables(
         info=MappingProxyType({name: raw_info[name] for name in ordered_names})
     )
 
 
 def get_grids(
+    *,
     user_regime: UserRegime,
+    sharded_state_names: frozenset[StateName] = frozenset(),
 ) -> MappingProxyType[StateOrActionName, Grid]:
     """Create a mapping of grid objects for each variable in the regime.
 
     Args:
         user_regime: User-form `Regime` instance.
+        sharded_state_names: States assigned a device axis by the model.
 
     Returns:
         Immutable mapping of state and action variable names to their grid objects,
@@ -67,21 +70,27 @@ def get_grids(
         continuous states, then actions).
 
     """
-    variables = from_regime(user_regime)
+    variables = from_regime(
+        user_regime=user_regime, sharded_state_names=sharded_state_names
+    )
     raw_variables = _grid_states(user_regime) | dict(user_regime.actions)
     return MappingProxyType(
         {name: grid for name in variables if (grid := raw_variables[name]) is not None}
     )
 
 
-def simulate_variables_from_regime(user_regime: UserRegime) -> Variables:
+def simulate_variables_from_regime(
+    *, user_regime: UserRegime, sharded_state_names: frozenset[StateName] = frozenset()
+) -> Variables:
     """Build the simulate-phase `Variables`: solve variables plus carried states.
 
     Each carried state is appended after the solve-ordered variables as a
     genuine state (its simulate role). The resulting order is NOT a productmap
     order — it only fixes column order in simulation output.
     """
-    solve_variables = from_regime(user_regime)
+    solve_variables = from_regime(
+        user_regime=user_regime, sharded_state_names=sharded_state_names
+    )
     carried_info = {
         name: VariableInfo(
             kind="state",
@@ -155,19 +164,18 @@ def _raw_variable_info(
 
 
 def _ordered_state_action_names(
-    *, user_regime: UserRegime, info: dict[StateOrActionName, VariableInfo]
+    *,
+    info: dict[StateOrActionName, VariableInfo],
+    sharded_state_names: frozenset[StateName],
 ) -> list[StateOrActionName]:
     """Order variables: discrete states, continuous states, actions.
 
-    Within each state topology group, the sort key is
-    `(not distributed, batch_size)`. `distributed=True` sorts first so the
-    sharded axis is the outermost productmap axis (the cross-device collective
-    wraps the inner per-device kernel). Ties break by `batch_size`, with
-    `batch_size == 0` last (treated as +inf). Actions keep declaration order.
+    Each state topology group puts explicitly sharded states first and keeps
+    declaration order within each part. Actions keep declaration order.
 
     """
 
-    state_sort_key = _StateSortKey(grid_states=_grid_states(user_regime))
+    state_sort_key = _StateSortKey(sharded_state_names=sharded_state_names)
 
     discrete_states = sorted(
         (
@@ -195,12 +203,10 @@ def _ordered_state_action_names(
 
 @dataclass(frozen=True, eq=False)
 class _StateSortKey:
-    """Sort key placing distributed states first and `batch_size == 0` last."""
+    """Stable sort key placing explicitly sharded states first."""
 
-    grid_states: dict[StateName, Grid]
-    """Mapping of state names to their grids, read for `distributed`/`batch_size`."""
+    sharded_state_names: frozenset[StateName]
+    """States assigned a device axis by the model."""
 
-    def __call__(self, name: StateOrActionName) -> tuple[bool, float]:
-        grid = self.grid_states[name]
-        batch_size = grid.batch_size
-        return (not grid.distributed, batch_size if batch_size != 0 else math.inf)
+    def __call__(self, name: StateOrActionName) -> bool:
+        return name not in self.sharded_state_names

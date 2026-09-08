@@ -258,10 +258,13 @@ class SolverBuildContext:
     """Immutable mapping of the regime's variable names to grid objects.
 
     Age-invariant: for an `AgeSpecializedGrid` state this holds the representative
-    age's grid. Read it for a grid's *shape traits* — kind, `n_points`, dtype,
-    `batch_size` — which are invariant across ages by contract. For a grid's *node
+    age's grid. Read it for a grid's *shape traits* — kind, `n_points`, dtype —
+    which are invariant across ages by contract. For a grid's *node
     values* in a particular period, read `period_to_state_nodes`.
     """
+
+    sharded_state_names: frozenset[StateName] = frozenset()
+    """State axes assigned to devices by the model's execution configuration."""
 
     axis_widths: MappingProxyType[str, int] = MappingProxyType({})
     """Immutable mapping of execution axis name to the width it is fixed at.
@@ -465,6 +468,7 @@ class SolverBuildContext:
         return place_template_on_regime_devices(
             template=template,
             grids=self.grids,
+            sharded_state_names=self.sharded_state_names,
             states=self.state_action_space.states,
             fold_state_names=self.fold_state_names,
             submesh_device_ids=self.submesh_device_ids,

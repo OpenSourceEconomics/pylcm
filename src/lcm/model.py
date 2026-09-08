@@ -1,6 +1,5 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
-import dataclasses
 import logging
 import operator
 import threading
@@ -521,7 +520,8 @@ class Model:
             constraints: Model-level constraints; same merge rule.
             states: Model-level states; same merge rule. Broadcast states are
                 pruned per regime by DAG reachability (see
-                `pruned_variables`). `distributed=True` is legal only here.
+                `pruned_variables`). Only states declared here may be named in
+                `ExecutionConfig.sharded_states`.
             state_transitions: Model-level laws of motion; same merge rule.
             actions: Model-level actions; same merge rule and pruning.
             koopmans_aggregator: How every non-terminal regime combines current
@@ -632,7 +632,8 @@ class Model:
         self._execution = resolve_execution_config(
             config=execution_config,
             visible_device_ids=visible_device_ids(),
-            state_names=frozenset(
+            state_names=frozenset(states)
+            | frozenset(
                 name for regime in self.user_regimes.values() for name in regime.states
             ),
         )
@@ -641,23 +642,20 @@ class Model:
             pruned_variables=self.pruned_variables,
             sharded_states=self._execution.sharded_states,
         )
-        # Every consumer downstream of here reads a state's device axis off its
-        # grid, so the declaration is resolved into the grids once, at the only
-        # point that knows both the model and the configuration. The public
-        # `user_regimes` keep the user's own declaration.
-        placed_regimes = _regimes_with_sharded_states(
+        _fail_if_sharded_states_are_not_model_discrete_states(
             user_regimes=self.user_regimes,
+            model_states=states,
             sharded_states=self._execution.sharded_states,
         )
         prepared_structure = prepare_model_structure(
-            user_regimes=placed_regimes,
+            user_regimes=self.user_regimes,
             ages=self.ages,
             active_periods_by_regime=active_periods_by_regime,
         )
         self.reachability = prepared_structure.reachability
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
-            user_regimes=placed_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
@@ -2543,60 +2541,30 @@ def _readable_template(value: object) -> object:
     return getattr(value, "__name__", str(value))
 
 
-def _regimes_with_sharded_states(
+def _fail_if_sharded_states_are_not_model_discrete_states(
     *,
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+    model_states: Mapping[str, object],
     sharded_states: frozenset[StateName],
-) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
-    """Mark every state named in `sharded_states` as carrying a device axis.
-
-    A regime that declares none of the named states is returned unchanged.
-
-    Args:
-        user_regimes: Immutable mapping of regime names to finalized regimes.
-        sharded_states: State names the configuration spreads over devices.
-
-    Returns:
-        Immutable mapping of regime names to regimes whose named state grids
-        carry a device axis.
-
-    Raises:
-        ExecutionPlanningError: A named state's grid cannot carry a device axis,
-            because it is not discrete or because it is batched.
-
-    """
-    if not sharded_states:
-        return user_regimes
-    placed: dict[RegimeName, FinalizedUserRegime] = {}
+) -> None:
+    """Require explicit device axes to name model-level, concrete discrete states."""
+    non_model_states = sorted(sharded_states - model_states.keys())
+    if non_model_states:
+        raise ExecutionPlanningError(
+            "ExecutionConfig.sharded_states must name model-level states declared "
+            f"in Model(states=...). Found regime-only states: {non_model_states}."
+        )
     for regime_name, regime in user_regimes.items():
-        touched = sorted(sharded_states & set(regime.states))
-        if not touched:
-            placed[regime_name] = regime
-            continue
-        states = dict(regime.states)
-        for name in touched:
-            grid = states[name]
+        for name in sorted(sharded_states & regime.states.keys()):
+            grid = regime.states[name]
             if not isinstance(grid, DiscreteGrid):
                 msg = (
                     f"ExecutionConfig.sharded_states names {name!r}, whose grid in "
                     f"regime {regime_name!r} is a {type(grid).__name__}; only a "
-                    "DiscreteGrid can carry a device axis."
+                    "concrete DiscreteGrid can carry a device axis. Continuous, "
+                    "carried, and parameter-supplied state grids cannot be sharded."
                 )
                 raise ExecutionPlanningError(msg)
-            if grid.batch_size:
-                msg = (
-                    f"ExecutionConfig.sharded_states names {name!r}, whose grid in "
-                    f"regime {regime_name!r} declares batch_size="
-                    f"{grid.batch_size}; an axis is either looped over in batches "
-                    "or spread over devices, not both. Drop the batch size, or "
-                    "batch a different axis."
-                )
-                raise ExecutionPlanningError(msg)
-            states[name] = grid._sharded()  # noqa: SLF001
-        placed[regime_name] = dataclasses.replace(
-            regime, states=MappingProxyType(states)
-        )
-    return MappingProxyType(placed)
 
 
 def _fail_if_a_sharded_state_is_pruned(

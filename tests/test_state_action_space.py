@@ -146,7 +146,7 @@ def test_create_v_interpolation_info():
         active=lambda age: age < 5,
     )
 
-    v_interpolation_info = create_v_interpolation_info(regime)
+    v_interpolation_info = create_v_interpolation_info(user_regime=regime)
 
     assert isinstance(v_interpolation_info, VInterpolationInfo)
     assert set(v_interpolation_info.state_names) == {"wealth", "health"}

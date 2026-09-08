@@ -31,7 +31,7 @@ _SCRIPT = textwrap.dedent(
     )
     from tests.test_models.nbegm_ride_along_toy import ConsumerKind
 
-    grids = {"kind": DiscreteGrid(category_class=ConsumerKind, distributed=True)}
+    grids = {"kind": DiscreteGrid(category_class=ConsumerKind)}
     liquid_grid = jnp.linspace(0.1, 30.0, 24)
     template = _build_ride_along_carry_template(
         liquid_grid=liquid_grid,
@@ -42,6 +42,7 @@ _SCRIPT = textwrap.dedent(
     sharded = _shard_ride_carry_template(
         template=template,
         grids=grids,
+        sharded_state_names=frozenset({"kind"}),
         ride_along_state_names=("kind",),
         submesh_device_ids=(),
     )
@@ -59,6 +60,7 @@ _SCRIPT = textwrap.dedent(
     plain = _shard_ride_carry_template(
         template=template,
         grids={"kind": DiscreteGrid(category_class=ConsumerKind)},
+        sharded_state_names=frozenset(),
         ride_along_state_names=("kind",),
         submesh_device_ids=(),
     )
@@ -77,6 +79,7 @@ _SCRIPT = textwrap.dedent(
     sharded_with_policy = _shard_ride_carry_template(
         template=with_policy,
         grids=grids,
+        sharded_state_names=frozenset({"kind"}),
         ride_along_state_names=("kind",),
         submesh_device_ids=(),
     )
@@ -92,11 +95,12 @@ _SCRIPT = textwrap.dedent(
     child = shard_carry_template(
         template=build_template_egm_carry(n_rows=24, leading_shape=(2, 7)),
         grids={
-            "kind": DiscreteGrid(category_class=ConsumerKind, distributed=True),
+            "kind": DiscreteGrid(category_class=ConsumerKind),
             "aime": LinSpacedGrid(start=0.0, stop=1.0, n_points=7),
             "liquid": LinSpacedGrid(start=0.1, stop=30.0, n_points=24),
         },
         leading_axis_names=("kind", "aime"),
+        sharded_state_names=frozenset({"kind"}),
         devices=tuple(jax.devices()),
     )
     assert child.value.sharding.spec == jax.P("kind", None), child.value.sharding

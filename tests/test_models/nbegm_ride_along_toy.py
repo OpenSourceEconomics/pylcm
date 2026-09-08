@@ -12,6 +12,7 @@ budget and continuation. The brute variant (`GridSearch`) productmaps over
 """
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 import jax.numpy as jnp
 
@@ -152,7 +153,16 @@ def build_model(
     constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     return make_alive_dead_model(
-        execution_config=execution_config,
+        execution_config=(
+            replace(
+                execution_config,
+                sharded_states=tuple(
+                    dict.fromkeys((*execution_config.sharded_states, "kind"))
+                ),
+            )
+            if distributed_kind
+            else execution_config
+        ),
         n_periods=n_periods,
         n_liquid=n_liquid,
         liquid_max=liquid_max,
@@ -168,7 +178,7 @@ def build_model(
         ),
         extra_state_transitions={"kind": {"alive": lcm.fixed_transition("kind")}},
         model_states=(
-            {"kind": DiscreteGrid(category_class=ConsumerKind, distributed=True)}
+            {"kind": DiscreteGrid(category_class=ConsumerKind)}
             if distributed_kind
             else None
         ),

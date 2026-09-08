@@ -1,10 +1,8 @@
-import copy
-
 import jax.numpy as jnp
 from beartype import beartype
 
 from _lcm.beartype_conf import GRID_CONF
-from _lcm.grids.base import Grid, _fail_if_batch_size_combined_with_distributed
+from _lcm.grids.base import Grid
 from _lcm.grids.categorical import _validate_discrete_grid
 from _lcm.utils.containers import get_field_names_and_values
 from lcm.typing import Int1D
@@ -17,8 +15,6 @@ class DiscreteGrid(Grid):
         category_class: The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values. The legacy
             single-positional-argument form remains supported for compatibility.
-        batch_size: Size of the batches that are looped over during the solution.
-        distributed: Whether to distribute the grid over available devices.
 
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
@@ -31,8 +27,6 @@ class DiscreteGrid(Grid):
         self,
         *legacy_category_class: type,
         category_class: type | None = None,
-        batch_size: int = 0,
-        distributed: bool = False,
     ) -> None:
         if len(legacy_category_class) > 1:
             msg = "DiscreteGrid accepts at most one positional argument."
@@ -46,9 +40,6 @@ class DiscreteGrid(Grid):
             msg = "DiscreteGrid missing required argument: 'category_class'."
             raise TypeError(msg)
 
-        _fail_if_batch_size_combined_with_distributed(
-            batch_size=batch_size, distributed=distributed
-        )
         _validate_discrete_grid(category_class)
         names_and_values = get_field_names_and_values(category_class)
         self.__categories = tuple(names_and_values.keys())
@@ -58,8 +49,6 @@ class DiscreteGrid(Grid):
         # representation comes from `to_jax()`.
         self.__codes = tuple(int(v) for v in names_and_values.values())
         self.__ordered: bool = getattr(category_class, "_ordered", False)
-        self.__batch_size: int = batch_size
-        self.__distributed: bool = distributed
 
     @property
     def categories(self) -> tuple[str, ...]:
@@ -75,29 +64,6 @@ class DiscreteGrid(Grid):
     def ordered(self) -> bool:
         """Return whether the categories have a meaningful ordering."""
         return self.__ordered
-
-    @property
-    def batch_size(self) -> int:
-        """Return batch size during solution."""
-        return self.__batch_size
-
-    @property
-    def distributed(self) -> bool:
-        """Return whether the grid is sharded across available devices."""
-        return self.__distributed
-
-    def _sharded(self) -> DiscreteGrid:
-        """Return a copy of this grid whose state axis carries a device axis.
-
-        The one place a model turns `ExecutionConfig.sharded_states` into the
-        grid property the placement planner and the mesh builder read, so a
-        state declared there and one declared on the grid are the same axis.
-        The caller has already refused a batched grid in the user's own
-        spelling, so no combination this rejects can reach here.
-        """
-        sharded = copy.copy(self)
-        sharded.__distributed = True  # noqa: SLF001
-        return sharded
 
     def to_jax(self) -> Int1D:
         """Convert the grid to a Jax array.

@@ -200,8 +200,8 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "e01b3de5cdad12804794a3ce83ff3a74424a9539caa70330e8792ca7878f1bc9",
-    PROCESSING_SOURCE: "c36f7919a097c2a54bcd96ae1e8636ca56049d9b7df68d5b1f6f2a39b971c602",
-    GRID_SEARCH_SOURCE: "f39ebf919b3d59ba7f2d2cd6c14607954d8a543a4d417a1accf93d6984774e26",
+    PROCESSING_SOURCE: "3aa08741042207d1dfd26e4bd8e6b65b1c20d80d5eb2b0825f3c5682d76a4ad9",
+    GRID_SEARCH_SOURCE: "2cdd965346c7a7c36786c89956d767b8c1060ce63a7fefc0e2459b80d66bf9a1",
     CORE_PROGRAM_SOURCE: "078df8c1d82cd31e9cfa1bfb7acd263154676ecbd13117ff7c446bab5130fdba",
     OUTPUT_LAYOUT_SOURCE: "b5e9c667a15dcb6a1393f54f4ba7d8fcea85d3e78104f6e9e4cbd16c60fd1bb5",
     VALUE_TRANSFER_SOURCE: "e5d2a689eb8414776ea1689958b20590ace29df0c83f7f403884b23c07865aa3",
@@ -216,14 +216,14 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "be0fa547eb5cefb56a92371e7fe30751057b996d3cdfc18ec5c59210b3882c37",
+    ENGINE_SOURCE: "400326d4fe75f7ee62daf88ca334c095f30689b37ef5cf16f0aacd61b9cb2b75",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
     SIMULATION_SOURCE: "3f71e13ab654a5bc3b0d2847291581585e4b214b9639a004e87624b9f42cba0b",
     SIMULATION_TRANSITIONS_SOURCE: "4d16328d966f6ee848e58f080b33efe272d2fef86c63058f138913f8c62ab164",
     SIMULATION_COMPILE_SOURCE: "a44e829da05b631f80f8780318b3263059301ec26ef54f5d42a77b5de32b9460",
-    MODEL_SOURCE: "2eb637ca0ec7a0d34a3fb5c1ab2b78a1b9e1e3a44e24e31ee48f53b47c716835",
+    MODEL_SOURCE: "771e68cf310ae197a5ddcf197b8fe7afdd17c6b714ec0233c2c50e0a93f1e129",
     SOLVER_API_SOURCE: "99ab6ccb9e42bc36cc339a98d0cc054570dacb938365e383bdebafefe51611af",
-    BACKWARD_INDUCTION_SOURCE: "48bb1a85e0a92365e2a35bfa54a57383b201964090b59eeab8bdcce7cac50ac4",
+    BACKWARD_INDUCTION_SOURCE: "356807f90b1a4eaeb558e6456de8ec1a04ab86166aba5b617b900c5cbfbf8ef8",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "16c40f2ec9626d9134b336ed3d61f911ed54cac7c86f17b5dd5a61dbe5fb134e",
     RESULT_SOURCE: "bfc4b1f19bf1852c86c4f5b87d40abed2521d0519af99ff613975fb8d3ab09f0",
@@ -232,18 +232,18 @@ _SOURCE_SEALS = {
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "0f7d81ab5c36343ab24363dca159451c0a44a399ab150abd2e52fea6715ff20e",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
-    SOLUTION_CONTRACT_SOURCE: "c0d40d734610c8768b5287bdefb2788040f2a8b1a92e18c262f3c67531864c08",
+    SOLUTION_CONTRACT_SOURCE: "ccf4b3215c9c390a189a39ece56537e7521443629c8036d297a41ccc76277111",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
-    GRID_BASE_SOURCE: "fd1064986abdbe1755383fb08758f74d40cad419c0da312f38b521c7d78ce59c",
+    GRID_BASE_SOURCE: "7b3fd1b01bad73e8fb08cff1155d6a556cc8a19301107c4e60d67c113740653c",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
-    DISCRETE_GRID_SOURCE: "53c816a2b861c6f0409b59bd0a040a93128a5055d365cfd7720d9165476f5867",
-    CONTINUOUS_GRID_SOURCE: "41243fac783c95e2a6a9a7f431e8b7fec31918ab6e2a41c23669fdfca0646e60",
-    PIECEWISE_GRID_SOURCE: "75077bbce519ebcfd00497102666e9470850019cb735101a626b9555114544fe",
+    DISCRETE_GRID_SOURCE: "ffea24a5a96c762a8aaad4a159c57951470ba9cee99c96dfb6e32c5b61dc6297",
+    CONTINUOUS_GRID_SOURCE: "c3dbec16a9a2ba3c1f24b768b4fbf8165f38f98b222f04e7d9f7a3e613f6f431",
+    PIECEWISE_GRID_SOURCE: "dd4f5444c3186c40973e4b2d9a283f240cf54ff2cda3ed14172b96d653dce5b5",
     PROCESSES_INIT_SOURCE: "db7892762ef1b5635b61b4e57ef97ae0becdd1fc7507ef8efd202323ced7671f",
-    PROCESS_BASE_SOURCE: "a058be1a20858d4208305114e86b8a2e0bb04c75182a92b610f32c1e08cb5e03",
+    PROCESS_BASE_SOURCE: "8d4add80b7c95f89a0671506dfaeb276cf9cc0afb1ad76305686b346f0e1dddb",
     PROCESS_IID_SOURCE: "4696d7356181bc07e2d661d9010c95f014a99a5110935ead56ff05ae1725d3bf",
     PROCESS_AR1_SOURCE: "05c03c7ac6f9b600a160be81851b8c868c7919daeeeadb817b201c87d7d9213e",
-    VARIABLES_SOURCE: "e3edc3eb026fddf4ff190a756de5625d69df1b59743c4141010d4a65d9af13f3",
+    VARIABLES_SOURCE: "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6",
     PARAMS_REGIME_TEMPLATE_SOURCE: "f8d856ab22f7308e27454e9f045ac0258e74c87f42b513840aa81a48d9cb5ae2",
     PARAMS_PROCESSING_SOURCE: "c9056369922b5f088355f7f404b6fa6377c6a2b587bbf5c804e9686f0dcab8e9",
     DTYPES_SOURCE: "0df3aa83d3d7d2f55438d91b9d4af2f25a17ea0ce836e923ab06a7458c59e73a",
@@ -902,7 +902,7 @@ def _grid_base_errors(tree: ast.Module) -> list[str]:
     )
     if has_docstring:
         body.pop(0)
-    expected_names = ("batch_size", "distributed", "to_jax")
+    expected_names = ("to_jax",)
     if (
         [ast.unparse(base) for base in cls.bases] != ["ABC"]
         or cls.keywords
@@ -913,13 +913,11 @@ def _grid_base_errors(tree: ast.Module) -> list[str]:
         != expected_names
     ):
         errors.append(
-            "grid base: Grid may contain only its docstring and the three abstract "
-            "coordinate-interface methods"
+            "grid base: Grid may contain only its docstring and the abstract "
+            "coordinate materializer"
         )
         return errors
     expected = {
-        "batch_size": (("property", "abstractmethod"), "int"),
-        "distributed": (("property", "abstractmethod"), "bool"),
         "to_jax": (("abstractmethod",), "Int1D | Float1D"),
     }
     for node in body:
@@ -2294,7 +2292,7 @@ def category(self) -> str:
                 "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
                 "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
                 "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
-                "GridSearch.build_period_kernels": "abad0b665135b25edfe0a1d7ca0e8e13bd039f7366a110e50f0e814def25c170",
+                "GridSearch.build_period_kernels": "4be9b67b9b257b966ff9585d02a744f307a0f2b9a37dadfee2732b29874aad42",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
@@ -2964,7 +2962,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "c94174134d1afca4dbefc4a94ebfc540d7cefb3ec60482dd3ad2e0ab0db2cc46",
+            "5d842f8de7ec0cc8d11012d4260622b647f089a33ead8acdce30d872ec5acc70",
             {
                 "Model._resolve_simulate_regimes": "5a11f26e52496d8210ae0ab2b9846d5ca234569764f82d47e871f26e33751ee2",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
@@ -2972,7 +2970,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         ENGINE_SOURCE: (
-            "e01ad3548a990bddebd784b984b4243a4339ddb1cd6939b6234f477b0cda8db5",
+            "f70c863c395af0876b56a9c201980bfb8421e7fc56322428e6ca235376449009",
             {},
         ),
     }
@@ -6532,8 +6530,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": GRID_BASE_SOURCE,
             "source": replace_once(
                 source=grid_base_source,
-                old='class Grid(ABC):\n    """LCM Grid base class."""',
-                new='class Grid(ABC):\n    """LCM Grid base class."""\n\n    def __getattribute__(self, name):\n        value = super().__getattribute__(name)\n        if name == "to_jax":\n            return lambda: value()[:-1]\n        return value',
+                old='class Grid(ABC):\n    """Outcome-space definition shared by all LCM grids."""',
+                new='class Grid(ABC):\n    """Outcome-space definition shared by all LCM grids."""\n\n    def __getattribute__(self, name):\n        value = super().__getattribute__(name)\n        if name == "to_jax":\n            return lambda: value()[:-1]\n        return value',
                 label="inherited grid coordinate interception",
             ),
         },

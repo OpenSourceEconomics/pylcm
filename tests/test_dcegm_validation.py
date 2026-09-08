@@ -150,7 +150,8 @@ def _build_with_model_level_sharded_pruned() -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     return Model(
         regimes={"retirement": VALID, "dead": dead},
-        states={"kind": DiscreteGrid(category_class=_ShardedKind, distributed=True)},
+        states={"kind": DiscreteGrid(category_class=_ShardedKind)},
+        execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
     )
@@ -168,7 +169,8 @@ def _build_with_model_level_sharded_used() -> Model:
     )
     return Model(
         regimes={"retirement": retirement, "dead": dead},
-        states={"kind": DiscreteGrid(category_class=_ShardedKind, distributed=True)},
+        states={"kind": DiscreteGrid(category_class=_ShardedKind)},
+        execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
     )
@@ -182,12 +184,15 @@ def _build_with_regime_level_sharded_terminal() -> Model:
             "retirement": VALID,
             "dead": dead.replace(
                 states={
-                    "kind": DiscreteGrid(category_class=_ShardedKind, distributed=True)
-                }
+                    **dict(dead.states),
+                    "kind": DiscreteGrid(category_class=_ShardedKind),
+                },
+                functions={"utility": lambda wealth, kind: wealth + 0.0 * kind},
             ),
         },
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        execution_config=ExecutionConfig(sharded_states=("kind",)),
     )
 
 
@@ -195,10 +200,10 @@ def _build_with_regime_level_sharded_terminal() -> Model:
     ("build", "match"),
     [
         (_build_with_model_level_sharded_pruned, "pruned from non-terminal"),
-        (_build_with_model_level_sharded_used, "must not be distributed in a DCEGM"),
+        (_build_with_model_level_sharded_used, "DCEGM.*cannot shard discrete"),
         (
             _build_with_regime_level_sharded_terminal,
-            "sharding is declared at the model level",
+            "must name model-level states",
         ),
     ],
 )
@@ -215,7 +220,7 @@ def test_sharded_state_cannot_feed_a_dcegm_carry(*, build, match):
     carry guard is needed. Relaxing any one rule must keep the carry case
     rejected (or add carry co-mapping).
     """
-    with pytest.raises(ModelInitializationError, match=match):
+    with pytest.raises((ModelInitializationError, ExecutionPlanningError), match=match):
         build()
 
 
@@ -455,18 +460,9 @@ def test_dcegm_phased_aggregator_with_custom_solve_variant_raises():
 
 
 def test_batched_euler_state_grid_is_refused():
-    """A `batch_size` a DC-EGM regime cannot read is refused, and names the grid.
-
-    Every loop the field could have sized is a declared execution axis whose
-    width the plan owns, so honoring it would be a promise nothing keeps.
-    """
-    regime = VALID.replace(
-        states={"wealth": LinSpacedGrid(start=1, stop=400, n_points=100, batch_size=50)}
-    )
-    with pytest.raises(
-        ModelInitializationError, match=r"state 'wealth'.*batch_size=50"
-    ):
-        _build_model(regime=regime)
+    """The retired grid keyword is refused before a solver is constructed."""
+    with pytest.raises(TypeError, match="batch_size"):
+        LinSpacedGrid(start=1, stop=400, n_points=100, batch_size=50)  # ty: ignore[unknown-argument]
 
 
 def test_the_node_loop_is_sized_by_the_execution_plan_instead():

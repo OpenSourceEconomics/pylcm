@@ -249,7 +249,7 @@ class GridSearch(Solver):
         untiled_state_names = tuple(
             name
             for name in context.state_action_space.state_names
-            if context.grids[name].distributed
+            if name in context.sharded_state_names
             and name not in context.co_map_state_names
         )
         inner_state_names = tuple(
@@ -270,11 +270,9 @@ class GridSearch(Solver):
             if q_id not in program_functions:
                 common_kwargs = {
                     "Q_and_F": Q_and_F,
-                    "batch_sizes": {
-                        name: grid.batch_size
-                        for name, grid in context.grids.items()
-                        if name in context.state_action_space.state_names
-                    },
+                    "batch_sizes": dict.fromkeys(
+                        context.state_action_space.state_names, 0
+                    ),
                     "action_names": action_names,
                     "state_names": context.state_action_space.state_names,
                     "cell_width_keyword": cell_width_keyword,

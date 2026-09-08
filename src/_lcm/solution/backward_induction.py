@@ -1792,7 +1792,9 @@ def _iter_edge_topologies(
                 )
                 target_shardings[target_name] = placed_V_sharding(
                     sharding_plan=_build_regime_sharding(
-                        grids=target.solution.grids, devices=devices
+                        grids=target.solution.grids,
+                        sharded_state_names=target.solution.sharded_state_names,
+                        devices=devices,
                     ),
                     state_order=tuple(target_states),
                     devices=devices,

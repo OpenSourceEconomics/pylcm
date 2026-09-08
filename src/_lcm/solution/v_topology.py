@@ -241,7 +241,9 @@ def _get_regime_V_shapes_and_shardings(
             shape=shape,
             sharding=placed_V_sharding(
                 sharding_plan=_build_regime_sharding(
-                    grids=regime.solution.grids, devices=devices
+                    grids=regime.solution.grids,
+                    sharded_state_names=regime.solution.sharded_state_names,
+                    devices=devices,
                 ),
                 state_order=state_order,
                 devices=devices,

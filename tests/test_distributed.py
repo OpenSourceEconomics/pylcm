@@ -39,7 +39,6 @@ from _lcm.execution.value_transfer import (
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
-from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.solution import backward_induction
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
@@ -49,12 +48,10 @@ from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm import (
     CollectiveUtility,
     ExecutionConfig,
-    LinearAggregator,
-    LinearExpectation,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import PyLCMError, RegimeInitializationError
+from lcm.exceptions import ExecutionPlanningError, PyLCMError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
@@ -188,13 +185,8 @@ def _make_correct_distributed_model(
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(category_class=Type, distributed=distributed),
-            "type2": DiscreteGrid(
-                category_class=Type,
-                distributed=(
-                    distributed if distribute_type2 is None else distribute_type2
-                ),
-            ),
+            "type1": DiscreteGrid(category_class=Type),
+            "type2": DiscreteGrid(category_class=Type),
         },
         state_transitions={
             "type1": fixed_transition("type1"),
@@ -204,7 +196,15 @@ def _make_correct_distributed_model(
         },
         n_subjects=n_subjects,
         execution_config=ExecutionConfig(
-            axis_widths={"cell": cell_width} if cell_width is not None else {}
+            axis_widths={"cell": cell_width} if cell_width is not None else {},
+            sharded_states=(
+                *(("type1",) if distributed else ()),
+                *(
+                    ("type2",)
+                    if (distributed if distribute_type2 is None else distribute_type2)
+                    else ()
+                ),
+            ),
         ),
     )
 
@@ -269,7 +269,10 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
-        states={"type1": DiscreteGrid(category_class=Type, distributed=distributed)},
+        states={"type1": DiscreteGrid(category_class=Type)},
+        execution_config=ExecutionConfig(
+            sharded_states=("type1",) if distributed else ()
+        ),
         state_transitions={"type1": fixed_transition("type1")},
     )
 
@@ -332,9 +335,10 @@ def _make_wrong_distributed_model() -> Model:
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(category_class=Type, distributed=True),
-            "type2": DiscreteGrid(category_class=Type, distributed=True),
+            "type1": DiscreteGrid(category_class=Type),
+            "type2": DiscreteGrid(category_class=Type),
         },
+        execution_config=ExecutionConfig(sharded_states=("type1", "type2")),
         state_transitions={
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
@@ -769,7 +773,8 @@ def _make_two_source_distributed_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
-        states={"type1": DiscreteGrid(category_class=Type, distributed=True)},
+        states={"type1": DiscreteGrid(category_class=Type)},
+        execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
     )
 
@@ -1196,9 +1201,12 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(category_class=Type, distributed=distributed),
-            "type2": DiscreteGrid(category_class=Type, distributed=distributed),
+            "type1": DiscreteGrid(category_class=Type),
+            "type2": DiscreteGrid(category_class=Type),
         },
+        execution_config=ExecutionConfig(
+            sharded_states=("type1", "type2") if distributed else ()
+        ),
         state_transitions={
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
@@ -1279,38 +1287,39 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
             np.testing.assert_array_equal(value, single[period][regime_name])
 
 
-def test_distributed_action_grid_raises_at_regime_init():
-    """Action grids cannot be distributed; regime finalization rejects one.
-
-    Distribution is a property of state axes (which form the V-array shape).
-    Marking an action grid as distributed has no consistent meaning under the
-    current sharding model, so it is rejected when the model finalizes its
-    regimes. (Continuous action grids never reach this check — they
-    are rejected at grid init by `_fail_if_continuous_grid_distributed`.)
-    """
+def test_execution_config_cannot_shard_an_action():
+    """The model rejects an action name as a requested state device axis."""
 
     @categorical(ordered=False)
     class Choice:
         a: ScalarInt
         b: ScalarInt
 
+    @categorical(ordered=False)
+    class RegimeId:
+        alive: ScalarInt
+        dead: ScalarInt
+
     regime = UserRegime(
-        functions={"utility": jnp.log},
+        functions={"utility": lambda wealth, choice: wealth + choice},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         state_transitions={
             "wealth": lambda wealth, choice: wealth - choice,
         },
         actions={
-            "choice": DiscreteGrid(category_class=Choice, distributed=True),
+            "choice": DiscreteGrid(category_class=Choice),
         },
-        transition=lambda age: age,
+        transition=lambda: RegimeId.dead,
     )
-    with pytest.raises(RegimeInitializationError, match="distributed=True"):
-        finalize_regimes(
-            user_regimes={"regime": regime},
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+    with pytest.raises(ExecutionPlanningError, match="choice"):
+        Model(
+            regimes={
+                "alive": regime,
+                "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+            },
+            ages=AgeGrid(start=0, stop=1, step="Y"),
+            regime_id_class=RegimeId,
+            execution_config=ExecutionConfig(sharded_states=("choice",)),
         )
 
 
@@ -1408,7 +1417,8 @@ def _make_two_source_partially_distributed_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
-        states={"type1": DiscreteGrid(category_class=Type, distributed=True)},
+        states={"type1": DiscreteGrid(category_class=Type)},
+        execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
     )
 

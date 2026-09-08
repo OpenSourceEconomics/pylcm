@@ -166,14 +166,14 @@ def test_from_regime_orders_discrete_states_continuous_states_actions(
         },
         functions={"utility": lambda c_action: 0},  # noqa: ARG005
     )
-    variables = from_regime(regime)
+    variables = from_regime(user_regime=regime)
     assert list(variables) == ["a_discrete", "b_continuous", "c_action"]
 
 
-def test_from_regime_within_states_orders_by_batch_size(
+def test_from_regime_preserves_declaration_order_within_state_groups(
     binary_category_class,
 ) -> None:
-    """Within a topology group, states are ordered by batch_size (0 sorts last)."""
+    """Execution-free grids preserve declaration order within each topology group."""
 
     def next_state(x):
         return x
@@ -181,8 +181,8 @@ def test_from_regime_within_states_orders_by_batch_size(
     regime = MockRegime(
         states={
             "third": DiscreteGrid(category_class=binary_category_class),
-            "first": DiscreteGrid(category_class=binary_category_class, batch_size=1),
-            "second": DiscreteGrid(category_class=binary_category_class, batch_size=2),
+            "first": DiscreteGrid(category_class=binary_category_class),
+            "second": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={
             "first": next_state,
@@ -192,18 +192,18 @@ def test_from_regime_within_states_orders_by_batch_size(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         functions={"utility": lambda a: 0},  # noqa: ARG005
     )
-    variables = from_regime(regime)
-    assert variables.discrete_state_names == ("first", "second", "third")
+    variables = from_regime(user_regime=regime)
+    assert variables.discrete_state_names == ("third", "first", "second")
 
 
 def test_from_regime_distributed_discrete_state_sorts_outermost(
     binary_category_class,
 ) -> None:
-    """`distributed=True` discrete states sort before non-distributed discrete states.
+    """Explicitly sharded discrete states sort before unsharded discrete states.
 
     Sharded axes belong at the outermost productmap position so the cross-device
     collective wraps the inner per-device kernel. Sharding lives only on discrete
-    state grids — continuous-grid sharding is rejected at construction.
+    state grids — model placement rejects continuous-state sharding.
     """
 
     def next_state(x):
@@ -212,9 +212,7 @@ def test_from_regime_distributed_discrete_state_sorts_outermost(
     regime = MockRegime(
         states={
             "first_discrete": DiscreteGrid(category_class=binary_category_class),
-            "sharded_discrete": DiscreteGrid(
-                category_class=binary_category_class, distributed=True
-            ),
+            "sharded_discrete": DiscreteGrid(category_class=binary_category_class),
             "third_discrete": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={
@@ -225,7 +223,9 @@ def test_from_regime_distributed_discrete_state_sorts_outermost(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         functions={"utility": lambda a: 0},  # noqa: ARG005
     )
-    variables = from_regime(regime)
+    variables = from_regime(
+        user_regime=regime, sharded_state_names=frozenset({"sharded_discrete"})
+    )
     assert variables.discrete_state_names == (
         "sharded_discrete",
         "first_discrete",

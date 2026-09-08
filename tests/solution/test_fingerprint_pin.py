@@ -21,7 +21,6 @@ import pytest
 if __name__ == "__main__":
     jax.config.update("jax_enable_x64", sys.argv[1] == "64")
 
-from _lcm.solution.fingerprint import _BUILTIN_EXECUTION_FIELDS_BY_TYPE
 from lcm import ExecutionConfig
 from lcm_examples.collective_regimes import get_dissolution_model
 from tests.test_models import (
@@ -55,11 +54,6 @@ def _precision_key() -> str:
 
 def _pinned() -> dict[str, str]:
     return json.loads(_FIXTURE.read_text())[_precision_key()]
-
-
-def test_builtin_solver_execution_fields_are_retired() -> None:
-    """No built-in solver still needs field-based execution-policy exclusions."""
-    assert _BUILTIN_EXECUTION_FIELDS_BY_TYPE == ()
 
 
 # Model-builder pairs differing only in a solver's declared execution width.

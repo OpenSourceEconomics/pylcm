@@ -36,6 +36,9 @@ class _MockSolutionPhase:
     submesh_device_ids: tuple[int, ...] = ()
     """No placement, so the mock target's nodes run on every visible device."""
 
+    sharded_state_names: frozenset[str] = frozenset()
+    """No state is assigned a device axis in this topology-reuse fixture."""
+
     def placed_devices(self) -> tuple[jax.Device, ...]:
         return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
 
@@ -102,9 +105,11 @@ def sharding_plan_calls(monkeypatch):
     calls: list[object] = []
     original = backward_induction._build_regime_sharding
 
-    def counting(*, grids, devices):
+    def counting(*, grids, sharded_state_names, devices):
         calls.append(grids)
-        return original(grids=grids, devices=devices)
+        return original(
+            grids=grids, sharded_state_names=sharded_state_names, devices=devices
+        )
 
     monkeypatch.setattr(backward_induction, "_build_regime_sharding", counting)
     return calls

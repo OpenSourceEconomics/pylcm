@@ -1,7 +1,7 @@
-"""A DC-EGM period publishes output-specialized dense core programs.
+"""A DC-EGM period publishes output-specialized planned core programs.
 
-The DC-EGM kernel owns its stochastic-node and grid batching, so both variants
-are deliberately dense and read continuation from child carries alone. `main`
+Both variants declare their real tiling axes and read continuation from child
+carries alone. `main`
 publishes only value and carry; `replay` additionally publishes the off-grid
 policy when its exact retention key is selected. The NEGM composite consumes the
 values variant through the public output rather than through a legacy result.
@@ -40,7 +40,7 @@ from lcm.solver_api import (
     OmissionReason,
     ResultRetention,
 )
-from lcm.solvers import SAVINGS_POINT_AXIS, MSSEnvelope
+from lcm.solvers import ENVELOPE_CELL_AXIS, SAVINGS_POINT_AXIS, MSSEnvelope
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.solution.test_egm_passive import _get_model as _passive_model
@@ -113,7 +113,10 @@ def test_the_graph_publishes_planned_values_and_replay_variants():
     for program in graph.values():
         assert program.disposition is CoreExecutionDisposition.PLANNED
         assert program.disposition_reason is None
-        assert program.requirements.axis_names == (SAVINGS_POINT_AXIS,)
+        assert program.requirements.axis_names == (
+            SAVINGS_POINT_AXIS,
+            ENVELOPE_CELL_AXIS,
+        )
         assert {read.source.path for read in program.requirements.value_reads} == {
             (target, leaf)
             for target in targets

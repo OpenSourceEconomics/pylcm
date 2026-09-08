@@ -47,6 +47,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     TauchenAR1Process,
@@ -317,7 +318,7 @@ def build_model(
     consumption_max: float = 50.0,
     n_consumption: int = 30,
     n_savings: int = 60,
-    liquid_batch_size: int = 0,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     _euler_couple_housing: bool = False,
 ) -> Model:
     """Build the DS App.2 housing NEGM model.
@@ -333,12 +334,8 @@ def build_model(
         consumption_max: Upper bound of the inner consumption action grid.
         n_consumption: Number of inner consumption-grid points.
         n_savings: Number of inner savings-grid points.
-        liquid_batch_size: Optional chunking of the liquid Euler-state grid. A
-            positive value splays the per-asset-node solve into
-            `ceil(n_grid / liquid_batch_size)` sequential chunks, bounding the
-            peak device memory of the outer durable argmax (whose tensor carries
-            the liquid axis) without changing the solved value function. `0`
-            (the default) solves every liquid node in one kernel.
+        execution_config: Planner widths and device placement. The `cell` axis
+            bounds state-cell work while preserving the canonical output axes.
         _euler_couple_housing: Test-only flag that wires the outer housing
             post-decision into the inner Euler-state law, so the NEGM contract
             rejects the model — confirming the accepted model is not accepted by
@@ -377,9 +374,7 @@ def build_model(
         """
         return (new_housing >= housing_min) & (new_housing <= housing_max)
 
-    liquid_grid = LinSpacedGrid(
-        start=0.0, stop=liquid_max, n_points=n_grid, batch_size=liquid_batch_size
-    )
+    liquid_grid = LinSpacedGrid(start=0.0, stop=liquid_max, n_points=n_grid)
     housing_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
     outer_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
     consumption_grid = LinSpacedGrid(
@@ -487,6 +482,7 @@ def build_model(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=HousingRegimeId,
+        execution_config=execution_config,
     )
 
 

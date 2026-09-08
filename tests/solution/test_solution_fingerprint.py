@@ -851,38 +851,23 @@ def test_discrete_grid_protocol_subclass_fails_closed() -> None:
         )
 
 
-def test_grid_execution_policy_does_not_change_semantic_fingerprint() -> None:
-    unbatched = DiscreteGrid(category_class=_LowHigh, batch_size=0)
-    batched = DiscreteGrid(category_class=_LowHigh, batch_size=1)
-
-    assert fingerprints._semantic_fingerprint(
-        unbatched
-    ) == fingerprints._semantic_fingerprint(batched)
-
-
-def test_builtin_execution_fields_are_excluded_only_on_their_owner_types() -> None:
-    assert fingerprints._semantic_fingerprint(
-        LinSpacedGrid(start=0, stop=1, n_points=3, batch_size=1)
-    ) == fingerprints._semantic_fingerprint(
-        LinSpacedGrid(start=0, stop=1, n_points=3, batch_size=2)
-    )
-
-
 def test_a_solver_module_neighbor_keeps_its_semantic_field() -> None:
     assert fingerprints._semantic_fingerprint(
         _SolverModuleNeighbor(batch_size=1)
     ) != fingerprints._semantic_fingerprint(_SolverModuleNeighbor(batch_size=2))
 
 
-def test_execution_field_exclusion_requires_exact_owner_type_identity() -> None:
+def test_nominal_grid_twin_keeps_its_semantic_field() -> None:
     left = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(1))
     right = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(2))
 
     assert left != right
 
 
-def test_execution_field_exclusion_ignores_module_rebinding(*, monkeypatch) -> None:
+def test_grid_module_rebinding_preserves_semantic_fields(*, monkeypatch) -> None:
     original_grid_type = grid_declarations.LinSpacedGrid
+    original = original_grid_type(start=0, stop=1, n_points=3)
+    original_fingerprint = fingerprints._semantic_fingerprint(original)
 
     monkeypatch.setattr(
         grid_declarations,
@@ -890,10 +875,7 @@ def test_execution_field_exclusion_ignores_module_rebinding(*, monkeypatch) -> N
         _LinSpacedGridNominalTwin,
     )
 
-    assert fingerprints._exclude_field(
-        owner=original_grid_type(start=0, stop=1, n_points=3),
-        field_name="batch_size",
-    )
+    assert fingerprints._semantic_fingerprint(original) == original_fingerprint
 
     left = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(1))
     right = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(2))
