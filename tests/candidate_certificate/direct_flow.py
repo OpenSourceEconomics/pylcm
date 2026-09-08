@@ -145,6 +145,8 @@ RETAINED_BUFFERS_SOURCE = "src/_lcm/solution/retained_buffers.py"
 SCHEDULER_SOURCE = "src/_lcm/execution/scheduler.py"
 LIVENESS_SOURCE = "src/_lcm/execution/liveness.py"
 CONTINUATION_READS_SOURCE = "src/_lcm/solution/continuation_reads.py"
+CONTINUATION_ARGUMENTS_SOURCE = "src/_lcm/solution/continuation_arguments.py"
+NBEGM_SOURCE = "src/_lcm/solution/nbegm.py"
 WORKSPACE_PLANNING_SOURCE = "src/_lcm/execution/workspace_planning.py"
 
 COMPILER_INPUTS_SOURCE = "src/_lcm/execution/compiler_inputs.py"
@@ -204,6 +206,8 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     SCHEDULER_SOURCE,
     LIVENESS_SOURCE,
     CONTINUATION_READS_SOURCE,
+    CONTINUATION_ARGUMENTS_SOURCE,
+    NBEGM_SOURCE,
     WORKSPACE_PLANNING_SOURCE,
     MODEL_SOURCE,
     SOLVER_API_SOURCE,
@@ -241,6 +245,8 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "85ee8ee4be05eb1e332221228478691ebb5da7922cb9d8092c575b78538eacae",
+    NBEGM_SOURCE: "32037ec1fc4e67cf7523d4a574e0172b91e1e600bfdacfbd2f8afa987319c0a4",
+    CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c28ac1ab4acab2166120867158dec5eb866c082cdd05f7cb7877f2dc3c52ef8a",
@@ -3562,6 +3568,43 @@ def _simulation_adapter_errors(*, tree: ast.Module, source: str) -> list[str]:
     return errors
 
 
+def _nbegm_donation_errors(tree: ast.Module) -> list[str]:
+    """Pin donation installation and eligibility, excluding NB-EGM method arithmetic."""
+    errors = _exact_callable_errors(
+        tree=tree,
+        label="NB-EGM donation declaration",
+        contracts={
+            "NBEGM.declare_continuation_reads": "d188ae1df197e1bc589c2766c32566a6170bfaa8247b513b3a39b173014aeb9f",
+            "_with_ride_marginal_reads": "818468585a9f3f317e6043af4008e8a5da77e274de0b8d4a641e22c230445033",
+        },
+    )
+    if (
+        _transport_module_surface(tree)
+        != "4155ff3bc53e0274ffdd1d7cabf904400ca672e6724f327795f5eee3990559dd"
+    ):
+        errors.append("NB-EGM donation declaration: module bindings changed")
+    return errors
+
+
+def _continuation_argument_errors(tree: ast.Module) -> list[str]:
+    """Pin the sole marginal operand, residual tree and exact carry reconstruction."""
+    errors = _exact_callable_errors(
+        tree=tree,
+        label="donation argument transport",
+        contracts={
+            "MarginalLeafArguments.__call__": "8a9b17300b9ac51e172e6a57e74c4f7c726a62fc941f63ca09c2f4d4cf96420b",
+            "MarginalLeafCore.__call__": "bcaae73b48e35ed6f8e672a23c93c74a189bea4545d2fb50475f86d5bed8d873",
+            "marginal_leaf_reads": "02ce2895a2ee099f1df276087ebc98d4e88c4bebc0fe841e4af2bab72a0af9e1",
+        },
+    )
+    if (
+        _transport_module_surface(tree)
+        != "eb4ceba17420732ef34f0bb894f61657626fba036a16ba3fd6d5eeecef0684a3"
+    ):
+        errors.append("donation argument transport: module bindings changed")
+    return errors
+
+
 def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     """Pin native graph resolution and V/D publication through solve execution."""
     errors = _exact_callable_errors(
@@ -4390,6 +4433,18 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
+    nbegm_tree = parsed.get(NBEGM_SOURCE)
+    if nbegm_tree is not None:
+        new_errors = _nbegm_donation_errors(nbegm_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(NBEGM_SOURCE)
+    continuation_arguments_tree = parsed.get(CONTINUATION_ARGUMENTS_SOURCE)
+    if continuation_arguments_tree is not None:
+        new_errors = _continuation_argument_errors(continuation_arguments_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(CONTINUATION_ARGUMENTS_SOURCE)
     backward_tree = parsed.get(BACKWARD_INDUCTION_SOURCE)
     if backward_tree is not None:
         new_errors = _backward_output_layout_errors(backward_tree)
@@ -5016,6 +5071,25 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
         SIMULATION_ENTRY_ALLOCATIONS_SOURCE,
         "budget_bytes=self.budget_bytes,\n            live_footprint=live,",
         "budget_bytes=None,\n            live_footprint=live,",
+    ),
+    "donation:unsupported_scope_admitted": (
+        NBEGM_SOURCE,
+        (
+            "context.sharded_state_names\n"
+            "        or kernel.statics.co_map_state_names\n"
+            "        or kernel.stateful_targets != frozenset({kernel.regime_name})"
+        ),
+        "False",
+    ),
+    "donation:replay_nomination_admitted": (
+        NBEGM_SOURCE,
+        'donation_candidates=(MARGINAL_ARGUMENT,) if name == "main" else (),',
+        "donation_candidates=(MARGINAL_ARGUMENT,),",
+    ),
+    "donation:residual_duplicates_marginal_operand": (
+        CONTINUATION_ARGUMENTS_SOURCE,
+        'if field.name != "marginal_utility"',
+        "if True",
     ),
     "donation:ordinary_fallback_filtered": (
         BACKWARD_INDUCTION_SOURCE,

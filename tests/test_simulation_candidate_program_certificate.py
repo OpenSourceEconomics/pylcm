@@ -341,6 +341,17 @@ def program_mutations() -> dict[str, dict[str, str]]:
     return mutations
 
 
+@pytest.mark.parametrize(
+    "source",
+    ["src/_lcm/solution/continuation_arguments.py", "src/_lcm/solution/nbegm.py"],
+)
+def test_donation_argument_adapter_is_in_the_reviewed_source_inventory(source: str):
+    """The sole-marginal adapter and its installation are independently sealed."""
+    result = verify_direct_candidate_flow(repo_root=Path(__file__).parents[1])
+
+    assert source in result["certified_corridor_sources"]
+
+
 def test_supplemental_sources_complete_the_pinned_registry_coverage():
     """Every added corridor has its own separate, nonoverlapping control."""
     root = Path(__file__).parents[1]
@@ -348,6 +359,9 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
 
     assert set(supplemental) == {
+        "donation:unsupported_scope_admitted",
+        "donation:replay_nomination_admitted",
+        "donation:residual_duplicates_marginal_operand",
         "donation:ordinary_fallback_filtered",
         "donation:physical_alias_protection_bypassed",
         "donation:paired_residency_omitted",

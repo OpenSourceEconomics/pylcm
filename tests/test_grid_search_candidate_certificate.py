@@ -567,6 +567,8 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations():
     assert isinstance(_parse("src/_lcm/execution/scheduler.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/execution/liveness.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/continuation_reads.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/continuation_arguments.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/nbegm.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/execution/workspace_planning.py"), ast.Module)
 
 
