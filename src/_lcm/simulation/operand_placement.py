@@ -48,15 +48,7 @@ def place_simulation_arguments(
     pass through unchanged. Placement is call-local; this module caches no arrays.
     An already-correct array passes through by identity, including subject states.
     """
-    if not devices:
-        raise ValueError("Simulation operands require explicit subject devices.")
-    if len(devices) == 1:
-        subject_sharding = jax.sharding.SingleDeviceSharding(devices[0])
-    else:
-        mesh = jax.make_mesh(
-            (len(devices),), ("X",), (jax.sharding.AxisType.Auto,), devices=devices
-        )
-        subject_sharding = jax.NamedSharding(mesh, jax.P("X"))
+    subject_sharding = subject_operand_sharding(devices=devices)
     shared_sharding = simulation_value_sharding(
         stored_sharding=subject_sharding, devices=devices
     )
@@ -150,6 +142,20 @@ def _require_operand_headroom(
         budget_bytes=budget_bytes,
         devices=budget_devices,
     )
+
+
+def subject_operand_sharding(
+    *, devices: tuple[jax.Device, ...]
+) -> jax.sharding.Sharding:
+    """Use one ordered leading-axis placement for subject inputs and outputs."""
+    if not devices:
+        raise ValueError("Simulation operands require explicit subject devices.")
+    if len(devices) == 1:
+        return jax.sharding.SingleDeviceSharding(devices[0])
+    mesh = jax.make_mesh(
+        (len(devices),), ("X",), (jax.sharding.AxisType.Auto,), devices=devices
+    )
+    return jax.NamedSharding(mesh, jax.P("X"))
 
 
 def _required_operand_bytes(*, leaf: object, sharding: jax.sharding.Sharding) -> int:

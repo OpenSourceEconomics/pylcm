@@ -270,7 +270,11 @@ class PeriodSimulationReads:
             ledger: PlannedInputLiveness[RegimeName, _CopyKey] = PlannedInputLiveness(
                 dispatch_accesses=dict.fromkeys(units, (key,))
             )
-            copied = jax.device_put(value, required, may_alias=False)
+            uploaded = jax.device_put(value, required, may_alias=False)
+            # Aligned NumPy storage can alias a CPU upload despite may_alias=False.
+            # Give each artifact its own ready device buffer before registration.
+            copied = uploaded.copy()
+            copied.block_until_ready()
             self._registry.register(array=copied, artifact=key)
             self._host_ledgers[key] = ledger
             self._copied_values[key] = copied

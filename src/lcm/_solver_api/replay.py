@@ -28,7 +28,12 @@ from lcm.typing import FloatND, IntND, RegimeName, StateName
 
 @dataclass(frozen=True, kw_only=True)
 class ReplayRouteSnapshot:
-    """One immutable, preflighted cell passed unchanged to a replay route."""
+    """One immutable cell passed unchanged from validation to reader construction.
+
+    Whole-result preflight validates stored-layout cells before forward execution.
+    Simulation places a cell's arrays on its subject devices, then validates that
+    exact placed snapshot and context again immediately before building its reader.
+    """
 
     artifacts: Mapping[ArtifactKey, object]
     """Materialized payloads of the cell, keyed by artifact key."""
@@ -264,7 +269,12 @@ class ExecutableReplayRoute(ReplayRoute, Protocol):
         snapshot: ReplayRouteSnapshot,
         context: SimulationBuildContext,
     ) -> None:
-        """Check solver-specific mathematical invariants before simulation."""
+        """Check invariants during whole-result preflight and period placement.
+
+        Validation may run more than once per cell. It must preserve the immutable
+        snapshot, authority metadata and context, and not depend on invocation count.
+        The period reader receives exactly the last validated snapshot and context.
+        """
         ...
 
     def build_reader(

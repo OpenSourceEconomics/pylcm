@@ -26,6 +26,7 @@ from _lcm.engine import (
     _build_regime_sharding,
     placed_devices_for_ids,
 )
+from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -53,9 +54,12 @@ from _lcm.execution.execution_plan import (
 )
 from _lcm.execution.footprint import (
     ArtifactFootprint,
+    ResidentInventory,
     ScheduledUnit,
+    concrete_device_bytes,
+    layout_footprint,
     per_device_footprint,
-    plan_resident_bytes,
+    plan_resident_inventory,
 )
 from _lcm.execution.internal_outputs import (
     ResolvedProducer,
@@ -305,6 +309,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         persistable_artifact_refs=persistable_artifact_refs,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
+        fixed_input_arrays=tuple(
+            (space.states, space.discrete_actions, space.continuous_actions)
+            for space in base_state_action_spaces.values()
+        ),
     )
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
@@ -2502,7 +2510,29 @@ def _resident_bytes_by_triple(
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
 ) -> MappingProxyType[_CoreTriple, int]:
-    """Predict, per core triple, the resident bytes at its scheduled position.
+    """Return the declared-read lower bound before candidates are compiled."""
+    inventory = _resident_inventory_by_triple(
+        regimes=regimes,
+        ledger=ledger,
+        templates=templates,
+        program_metadata=program_metadata,
+        device_ids=device_ids,
+    )
+    return MappingProxyType(
+        {triple: position.resident_bytes() for triple, position in inventory.items()}
+    )
+
+
+def _resident_inventory_by_triple(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    ledger: PlannedInputLiveness,
+    templates: SolveInputMappings,
+    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+    device_ids: tuple[int, ...],
+    fixed_bytes: Mapping[int, int] = MappingProxyType({}),
+) -> MappingProxyType[_CoreTriple, ResidentInventory]:
+    """Predict, per core triple, the live inventory at its scheduled position.
 
     The schedule walked is the one the loop will run: `plan_period_waves` over
     each period's active regimes at their placement's device sets, periods
@@ -2510,14 +2540,11 @@ def _resident_bytes_by_triple(
     a regime-period cell shares the cell's number, because a kernel dispatches
     its cores together as one unit.
 
-    The number leaves out what the cell's own executables are handed as device
-    arguments without a copy, under the argument convention
-    `plan_resident_bytes` states: the compiler report the budget compares
-    against is assumed to count them, as the XLA CPU backend's does, so adding
-    them here would charge one allocation twice. A value the plan copies or
-    reshards for the read stays charged, since the stored buffer and the copy
-    are both live. A program that declares no reads names no arguments, so what
-    the ledger pins for it is charged twice — the safe direction.
+    The snapshot retains every live alias group. Only a candidate's own aligned
+    reads surviving compiler pruning may later be excluded from its resident
+    bytes. Stored sources of copies remain charged. Concrete fixed owners and
+    whole-period shared-copy reservations add conservative per-device burdens;
+    they may overlap compiler storage and do not predict exact allocator peaks.
 
     Sizes come from the solve-lifetime templates, which are period-invariant,
     so an artifact of any period finds the template of what it names.
@@ -2532,7 +2559,7 @@ def _resident_bytes_by_triple(
             for regime_name, regime in regimes.items()
         }
     )
-    resident = plan_resident_bytes(
+    resident = plan_resident_inventory(
         waves_by_period=MappingProxyType(
             {
                 period: _scheduled_waves(
@@ -2552,13 +2579,91 @@ def _resident_bytes_by_triple(
             cast("dict[Hashable, ArtifactFootprint]", footprints)
         ),
     )
+    copies_by_period = {
+        period: _period_copy_reservations(period=period, metadata=program_metadata)
+        for period in range(_model_n_periods(regimes=regimes))
+    }
     return MappingProxyType(
         {
-            (regime_name, period, core_key): resident[(period, regime_name)]
+            (regime_name, period, core_key): dataclasses.replace(
+                resident[(period, regime_name)],
+                fixed_bytes=fixed_bytes,
+                shared_copies=copies_by_period[period],
+            )
             for (regime_name, period), core_keys in program_keys_by_cell.items()
             for core_key in core_keys
         }
     )
+
+
+def _period_copy_reservations(
+    *,
+    period: int,
+    metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+) -> Mapping[Hashable, ArtifactFootprint]:
+    """Reserve each shared destination throughout its period, including aliases.
+
+    Runtime caches a destination by artifact and required layout. Its release can
+    be delayed when a copy shares a source shard, so whole-period retention is a
+    conservative bound instead of a prediction of the allocator's release instant.
+    """
+    return MappingProxyType(
+        {
+            (transfer.target, transfer.source_sharding): ArtifactFootprint(
+                bytes_per_device=transfer.cost.per_device_bytes,
+                device_ids=tuple(
+                    sorted(device.id for device in transfer.source_sharding.device_set)
+                ),
+            )
+            for triple, program in metadata.items()
+            if triple[1] == period
+            for transfer in program.input_transfer_plan
+            if transfer.reused_by_several_consumers
+            and transfer.kind is not ValueTransferKind.ALIGNED_LOCAL
+        }
+    )
+
+
+def _internal_reservations_by_cell(
+    *,
+    programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    templates: Mapping[_CoreCandidate, Mapping[str, object]],
+) -> Mapping[tuple[RegimeName, int], int]:
+    """Reserve future producer subtrees across all cores of their runtime cell.
+
+    These are not allocations owned by abstract templates. The existing producer
+    validator establishes width-invariant subtrees; taking the maximum across
+    candidate templates also keeps this reservation conservative if that contract
+    is extended. A known abstract output sharding supplies its per-device payload;
+    otherwise the full logical payload is reserved on every cell device. Neither
+    fallback placement nor alias overlap is claimed to be exact allocator storage.
+    """
+    by_cell: dict[tuple[RegimeName, int], dict[tuple[str, str], int]] = {}
+    for candidate, program in programs.items():
+        cell = candidate[0][:2]
+        sizes = by_cell.setdefault(cell, {})
+        for name, reference in program.requirements.internal_inputs.items():
+            size = sum(
+                _internal_leaf_bytes(leaf=leaf)
+                for leaf in jax.tree.leaves(templates[candidate][name])
+                if isinstance(leaf, jax.ShapeDtypeStruct)
+            )
+            key = (reference.producer, reference.label)
+            sizes[key] = max(sizes.get(key, 0), size)
+    return MappingProxyType(
+        {cell: sum(sizes.values()) for cell, sizes in by_cell.items()}
+    )
+
+
+def _internal_leaf_bytes(*, leaf: jax.ShapeDtypeStruct) -> int:
+    """Use declared abstract output placement, or a full-device upper bound."""
+    if isinstance(leaf.sharding, jax.sharding.Sharding):
+        return layout_footprint(
+            sharding=leaf.sharding,
+            shape=leaf.shape,
+            item_bytes=leaf.dtype.itemsize,
+        ).bytes_per_device
+    return leaf.size * leaf.dtype.itemsize
 
 
 def _program_keys_by_cell(
@@ -2704,6 +2809,82 @@ def _aligned_input_artifacts(
     return tuple(read.target for read in metadata.requirements.value_reads)
 
 
+def _candidate_resident_bytes(
+    *,
+    compiled: jax.stages.Compiled,
+    program: ResolvedCoreProgram,
+    internal_arguments: Mapping[str, object],
+    inventory: ResidentInventory,
+) -> int:
+    """Exclude only this specialization's aligned, compiler-live read buffers.
+
+    Logical read occurrences identify scheduled storage. Template pointer aliases
+    are deliberately irrelevant: representatives need not share the identities of
+    the future runtime artifacts they size. Pruning changes neither declared reads
+    nor their release times; it changes only which buffers the raw peak includes.
+    """
+    arguments = {**program.arguments, **internal_arguments}
+    compiler_input_paths(compiled=compiled, arguments=arguments)
+    _, input_shardings = compiled.input_shardings
+    aligned_sources = (
+        frozenset(
+            transfer.source
+            for transfer in program.input_transfer_plan
+            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL
+        )
+        if program.input_transfer_plan
+        else frozenset(read.source for read in program.requirements.value_reads)
+    )
+    consumes = _unique_value_artifacts(
+        read.target
+        for read in program.requirements.value_reads
+        if read.source in aligned_sources
+        and _compiler_reads_source(shardings=input_shardings, source=read.source)
+    )
+    copied_inputs: set[Hashable] = set()
+    temporary_bytes: dict[int, int] = {}
+    for transfer in program.input_transfer_plan:
+        if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:
+            continue
+        kept = _compiler_reads_source(shardings=input_shardings, source=transfer.source)
+        if transfer.reused_by_several_consumers:
+            if kept:
+                copied_inputs.add((transfer.target, transfer.source_sharding))
+        elif not kept:
+            # Unshared occurrences are allocated separately, even if they name
+            # the same artifact. A pruned occurrence still reaches device_put.
+            size = transfer.cost.per_device_bytes
+            for device in transfer.source_sharding.device_set:
+                temporary_bytes[device.id] = temporary_bytes.get(device.id, 0) + size
+    return inventory.resident_bytes(
+        consumes=consumes,
+        consumed_copies=frozenset(copied_inputs),
+        temporary_bytes=temporary_bytes,
+    )
+
+
+def _compiler_reads_source(
+    *,
+    shardings: Mapping[str, object],
+    source: ValueConsumerAddress,
+) -> bool:
+    """Read one exact declared locator from the validated public input tree.
+
+    JAX reconstructs original mapping keys and container structure even when a
+    custom registration's flattened keys are positional. No pointer matching or
+    assumptions about registration order enter the logical read occurrence.
+    """
+    node = shardings[source.argument or source.channel.value]
+    for segment in source.path:
+        if isinstance(node, Mapping):
+            node = node[segment]
+        elif isinstance(node, tuple):
+            node = node[cast("int", segment)]
+        else:
+            node = getattr(node, str(segment))
+    return isinstance(node, jax.sharding.Sharding)
+
+
 def _triples_within_budget(
     *,
     candidates_by_triple: Mapping[_CoreTriple, Sequence[_CoreCandidate]],
@@ -2783,6 +2964,14 @@ def _selected_artifact_keys_for_cell(
     )
 
 
+def _retained_base_space_arrays(*, regime: Regime) -> object:
+    """Read owned base arrays without constructing another completed state space."""
+    # The canonical phase retains this original even when runtime params replace
+    # its placeholders. Accounting intentionally observes that owning field.
+    space = regime.solution._base_state_action_space  # noqa: SLF001
+    return space.states, space.discrete_actions, space.continuous_actions
+
+
 def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -2799,6 +2988,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     persistable_artifact_refs: frozenset[ArtifactRef],
     max_compilation_workers: int | None,
     logger: logging.Logger,
+    fixed_input_arrays: object = (),
 ) -> _CompiledPrograms:
     """Resolve every solve program and optionally compile unique lowerings.
 
@@ -2840,6 +3030,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
+        fixed_input_arrays: Already-built runtime space arrays retained by solve.
 
     Returns:
         Executable mappings by regime-period, the resolved metadata used by
@@ -2948,13 +3139,35 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     # by lowering key across triples, lowers sequentially (tracing is
     # single-threaded), and compiles in parallel.
     budget_bytes = execution.device_memory_bytes
+    fixed_bytes = (
+        MappingProxyType({})
+        if budget_bytes is None
+        else concrete_device_bytes(
+            tree=(
+                fixed_input_arrays,
+                flat_params,
+                ages.values,
+                next_regime_to_V_arr,
+                next_regime_to_continuation,
+                next_edge_to_V_arr,
+                tuple(
+                    (
+                        regime.solution.period_state_axes,
+                        regime.solution.resolved_fixed_params,
+                        _retained_base_space_arrays(regime=regime),
+                    )
+                    for regime in regimes.values()
+                ),
+            ),
+        )
+    )
     # A candidate competes with what the plan already keeps on its device at the
     # node's scheduled position. Without a budget no peak is consulted, so the
     # position is not walked either.
-    resident_bytes_by_triple = (
-        MappingProxyType(dict.fromkeys(candidates_by_triple, 0))
+    resident_inventory = (
+        MappingProxyType({})
         if budget_bytes is None
-        else _resident_bytes_by_triple(
+        else _resident_inventory_by_triple(
             regimes=regimes,
             ledger=input_liveness,
             templates=SolveInputMappings(
@@ -2964,7 +3177,30 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             ),
             program_metadata=representative_metadata,
             device_ids=execution.device_ids,
+            fixed_bytes=fixed_bytes,
         )
+    )
+    if budget_bytes is not None:
+        internal_bytes = _internal_reservations_by_cell(
+            programs=resolved_programs,
+            templates=internal_templates,
+        )
+        resident_inventory = MappingProxyType(
+            {
+                triple: dataclasses.replace(
+                    inventory,
+                    internal_bytes=internal_bytes[triple[:2]],
+                )
+                for triple, inventory in resident_inventory.items()
+            }
+        )
+    resident_bytes_by_triple = MappingProxyType(
+        {
+            triple: 0
+            if budget_bytes is None
+            else resident_inventory[triple].resident_bytes()
+            for triple in candidates_by_triple
+        }
     )
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
@@ -2972,6 +3208,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     compiled: dict[Hashable, jax.stages.Compiled] = {}
     labels: dict[Hashable, str] = {}
     peak_bytes_by_lowering_key: dict[Hashable, int] = {}
+    resident_bytes_by_candidate: dict[_CoreCandidate, int] = {}
     pending: dict[_CoreTriple, int] = dict.fromkeys(
         _triples_within_budget(
             candidates_by_triple=candidates_by_triple,
@@ -3036,18 +3273,27 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     logger=logger,
                     precomputed_peak_bytes=peak_bytes,
                 )
+            resident = _candidate_resident_bytes(
+                compiled=compiled[lowering_key],
+                program=resolved_programs[candidate],
+                internal_arguments=internal_templates[candidate],
+                inventory=resident_inventory[triple],
+            )
+            resident_bytes_by_candidate[candidate] = resident
             logger.debug(
                 "  resident at %r period %d core %r: %d bytes",
                 triple[0],
                 triple[1],
                 triple[2],
-                resident_bytes_by_triple[triple],
+                resident,
             )
-            if (
-                peak_bytes_by_lowering_key[lowering_key]
-                + resident_bytes_by_triple[triple]
-                <= budget_bytes
-            ):
+            logger.debug(
+                "  conservative fixed owners: %r; "
+                "cell internal output reservation: %d bytes/device",
+                dict(resident_inventory[triple].fixed_bytes),
+                resident_inventory[triple].internal_bytes,
+            )
+            if peak_bytes_by_lowering_key[lowering_key] + resident <= budget_bytes:
                 continue
             if position + 1 < len(candidates_by_triple[triple]):
                 next_pending[triple] = position + 1
@@ -3093,6 +3339,18 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     )
                 ),
                 resident_bytes=resident_bytes_by_triple[triple],
+                resident_bytes_for=(
+                    None
+                    if budget_bytes is None
+                    else _CandidateResidencyLookup(
+                        compiled_by_width=compiled_by_width,
+                        resident_bytes_by_width={
+                            candidate[1]: resident_bytes_by_candidate[candidate]
+                            for candidate in candidates
+                            if candidate in resident_bytes_by_candidate
+                        },
+                    )
+                ),
             )
         except ExecutionPlanningError as error:
             if budget_bytes is None:
@@ -3164,6 +3422,21 @@ class _PeakBytesLookup:
 
     def __call__(self, executable: jax.stages.Compiled) -> int:
         return self.peak_bytes_by_compiled_id[id(executable)]
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CandidateResidencyLookup:
+    """Use this triple's width-specific residency, never a shared executable cache."""
+
+    compiled_by_width: Mapping[_WidthKey, jax.stages.Compiled]
+    resident_bytes_by_width: Mapping[_WidthKey, int]
+
+    def __call__(self, executable: jax.stages.Compiled) -> int:
+        return max(
+            self.resident_bytes_by_width[width]
+            for width, candidate in self.compiled_by_width.items()
+            if candidate is executable and width in self.resident_bytes_by_width
+        )
 
 
 def _lower_and_compile_wave(

@@ -108,8 +108,9 @@ def _consumer_step(step: object) -> str | int:
 class PreparedReplayReader:
     """A preflighted external route whose concrete reader is built in its period.
 
-    Validation retains the original snapshot and model authority. No callable
-    closes over copied device payloads before the period owner acquires them.
+    Whole-result validation retains the original snapshot and model authority.
+    The exact placed period snapshot is validated again before reader construction.
+    No callable closes over copied payloads before the period owner acquires them.
     """
 
     route: ExecutableReplayRoute
@@ -159,11 +160,21 @@ class PreparedReplayReader:
             state_nodes=nodes["state_nodes"],
             action_nodes=nodes["action_nodes"],
         )
+        snapshot = dataclasses.replace(
+            self.snapshot, artifacts=MappingProxyType(payloads)
+        )
+        try:
+            self.route.validate(snapshot=snapshot, context=context)
+        except InvalidSimulationInputError:
+            raise
+        except Exception as error:
+            raise InvalidSimulationInputError(
+                "External replay route rejected placed artifacts at "
+                f"({context.period}, {context.regime_name!r}): {error}"
+            ) from error
         try:
             reader = self.route.build_reader(
-                snapshot=dataclasses.replace(
-                    self.snapshot, artifacts=MappingProxyType(payloads)
-                ),
+                snapshot=snapshot,
                 context=context,
             )
         except Exception as error:

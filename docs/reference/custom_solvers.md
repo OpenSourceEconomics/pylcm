@@ -594,10 +594,16 @@ tokens to compile a sealed construction plan. Later materialization copies numer
 leaves into private buffers and reconstructs fresh exact tuples or structurally closed
 dataclass records from that plan without calling either plugin callback.
 PyTree-represented static metadata is validated; callback-injected instance state is
-canonicalized to the declared plan. The resulting owned snapshot is supplied to the
-route's `validate` and `build_reader` methods. This ownership boundary does not sandbox
-installed plugin validation or reader code, and a route cannot authorize itself from a
-descriptor copied out of the result.
+canonicalized to the declared plan. The resulting owned snapshots all pass the route's
+`validate` before any forward execution. Simulation then places each period's payload
+and coordinate arrays on its actual subject devices and calls `validate` again with that
+exact rebuilt snapshot and context immediately before `build_reader`. Both calls receive
+the same objects; their authority and descriptive metadata are preserved from preflight.
+A validator must leave its immutable inputs unchanged and tolerate repeated validation
+of a cell. Copies belong only to the consuming period; preflight does not replicate all
+periods' payloads. This ownership boundary does not sandbox installed plugin validation
+or reader code, and a route cannot authorize itself from a descriptor copied out of the
+result.
 
 `ReplayModelContext` and `SimulationBuildContext` expose the same period-specific
 solve-grid view: `state_names` and `action_names` are the canonical solution axes, and

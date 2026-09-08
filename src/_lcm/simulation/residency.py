@@ -11,9 +11,10 @@ padding, reserved memory, executable storage or another process's allocations. A
 view can only establish the extent it exposes; retain the original's footprint too
 when its larger allocation remains live. Required non-addressable shards are refused.
 
-Executable arguments are subtracted only from these external resident bytes, under
-the solve planner's convention that compiler peaks already include their payload.
-This convention must be verified for the execution backend before budget use.
+Compiler-retained executable arguments are subtracted only from these external
+resident bytes, under the convention that compiler peaks already include their
+payload. Eliminated arguments stay resident while their callers own them. The
+compiler argument-byte convention must be verified for the execution backend.
 """
 
 from collections.abc import Mapping

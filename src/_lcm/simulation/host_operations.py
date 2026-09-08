@@ -17,7 +17,10 @@ from types import FunctionType, MappingProxyType
 import jax
 
 from _lcm.execution.workspace_planning import compiler_peak_bytes, plan_workspace
-from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.operand_placement import (
+    place_simulation_arguments,
+    subject_operand_sharding,
+)
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -62,8 +65,11 @@ class ProfiledSimulationOperations:
         budget_devices: tuple[jax.Device, ...],
         budget_bytes: int,
         static_arguments: Mapping[str, object] = MappingProxyType({}),
+        subject_outputs: bool = False,
     ) -> object:
         """Place once, inspect current residency, and execute the admitted code."""
+        if type(subject_outputs) is not bool:
+            raise ExecutionPlanningError("Subject-output metadata must be a bool.")
         original = inspect.unwrap(function)
         if not isinstance(original, FunctionType) or original.__closure__:
             raise ExecutionPlanningError(
@@ -123,7 +129,7 @@ class ProfiledSimulationOperations:
             program_identity=function,
             arguments=placed,
             specialization_key=static_key,
-            layout_key="simulation_host_operation",
+            layout_key=("simulation_host_operation", subject_outputs),
             placement_key=devices,
         )
         abstract = jax.tree.map(_abstract_operand, dict(placed))
@@ -135,6 +141,11 @@ class ProfiledSimulationOperations:
                 function=function,
                 arguments=abstract,
                 static_arguments=static,
+                output_sharding=(
+                    subject_operand_sharding(devices=devices)
+                    if subject_outputs
+                    else None
+                ),
             ),
             budget_bytes=budget_bytes,
             resident_bytes=max(external.values()),
@@ -151,6 +162,7 @@ class ProfiledSimulationOperations:
         function: Callable[..., object],
         arguments: Mapping[str, object],
         static_arguments: Mapping[str, object],
+        output_sharding: jax.sharding.Sharding | None = None,
     ) -> _ProfiledOperation:
         """Compile an abstract signature once, without holding the cache lock."""
         with self.lock:
@@ -168,7 +180,14 @@ class ProfiledSimulationOperations:
             # Bind only validated immutable metadata. A fresh callable also keeps
             # JAX's own static-argument cache from conflating signed float zeros.
             bound = partial(function, **static_arguments)
-            executable = jax.jit(bound).lower(**arguments).compile()
+            # Residency excludes arguments charged through the compiler's peak.
+            # Keep shape-only inputs in that report while their callers own them.
+            jitted = (
+                jax.jit(bound, keep_unused=True)
+                if output_sharding is None
+                else jax.jit(bound, keep_unused=True, out_shardings=output_sharding)
+            )
+            executable = jitted.lower(**arguments).compile()
             compiled = _ProfiledOperation(
                 executable=executable,
                 peak_bytes=compiler_peak_bytes(compiled=executable, widths={}),
@@ -194,6 +213,7 @@ class _OperationCompiler:
     function: Callable[..., object]
     arguments: Mapping[str, object]
     static_arguments: Mapping[str, object]
+    output_sharding: jax.sharding.Sharding | None
 
     def __call__(self, widths: Mapping[str, int]) -> _ProfiledOperation:
         """Compile the single, axis-free host operation."""
@@ -206,6 +226,7 @@ class _OperationCompiler:
             function=self.function,
             arguments=self.arguments,
             static_arguments=self.static_arguments,
+            output_sharding=self.output_sharding,
         )
 
 

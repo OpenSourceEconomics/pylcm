@@ -52,9 +52,12 @@ from _lcm.simulation.gated_routing import (
     simulation_gate_route,
 )
 from _lcm.simulation.initial_conditions import (
-    MISSING_CAT_CODE,
     build_initial_states,
     trim_pad_from_raw_results,
+)
+from _lcm.simulation.membership import (
+    activate_subject_membership,
+    initialize_subject_membership,
 )
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -68,7 +71,12 @@ from _lcm.simulation.period_inputs import (
     gate_reads,
     unit_value_reads,
 )
-from _lcm.simulation.random import draw_random_seed, generate_simulation_keys
+from _lcm.simulation.random import (
+    create_simulation_key,
+    draw_random_seed,
+    generate_simulation_keys,
+    split_simulation_key,
+)
 from _lcm.simulation.replay_inputs import PreparedReplayReader, place_replay_payload
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -403,6 +411,31 @@ def simulate(
     )
 
 
+def _initialize_chunk_state(
+    *,
+    initial_states: dict[StateOrActionName, Float1D | IntND],
+    initial_regime_ids: Int1D,
+    initial_own_stakeholder: Int1D,
+    regimes: MappingProxyType[RegimeName, Regime],
+    device_ids: tuple[int, ...],
+    seed: int,
+    memory: SimulationMemory | None,
+) -> tuple[StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
+    """Build a chunk's carriers, enrolling completed arrays before the next step."""
+    key = create_simulation_key(seed=seed, memory=memory)
+    states = build_initial_states(
+        initial_states=initial_states, regimes=regimes, device_ids=device_ids
+    )
+    if memory is not None:
+        memory.hold(tree=(states, key))
+    regime_ids, own_stakeholder = initialize_subject_membership(
+        initial_regime_ids=initial_regime_ids,
+        initial_own_stakeholder=initial_own_stakeholder,
+        memory=memory,
+    )
+    return states, regime_ids, own_stakeholder, key
+
+
 def _simulate_subject_chunk(
     *,
     initial_states: dict[StateOrActionName, Float1D | IntND],
@@ -463,14 +496,15 @@ def _simulate_subject_chunk(
     initial_own_stakeholder = chunk_inputs.initial_own_stakeholder
     starting_periods = chunk_inputs.starting_periods
     base_state_action_spaces = chunk_inputs.base_state_action_spaces
-    key = jax.random.key(seed=seed)
-    states = build_initial_states(
-        initial_states=initial_states, regimes=regimes, device_ids=device_ids
+    states, subject_regime_ids, own_stakeholder, key = _initialize_chunk_state(
+        initial_states=initial_states,
+        initial_regime_ids=initial_regime_ids,
+        initial_own_stakeholder=initial_own_stakeholder,
+        regimes=regimes,
+        device_ids=device_ids,
+        seed=seed,
+        memory=memory,
     )
-    subject_regime_ids = jnp.full_like(
-        initial_regime_ids, MISSING_CAT_CODE, dtype=jnp.int32
-    )
-    own_stakeholder = jnp.full_like(initial_own_stakeholder, NO_ROLE, dtype=jnp.int32)
 
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in regimes
@@ -492,18 +526,17 @@ def _simulate_subject_chunk(
                 budget_devices=() if memory is None else memory.devices,
             )["age"],
         )
+        if memory is not None:
+            memory.hold(tree=age)
 
-        # Activate subjects whose starting period matches the current period
-        subject_regime_ids = jnp.where(
-            starting_periods == period,
-            initial_regime_ids,
-            subject_regime_ids,
-        )
-
-        # A subject's seeded role arrives with it, in the same period its
-        # seeded regime does; before that it occupies none.
-        own_stakeholder = jnp.where(
-            starting_periods == period, initial_own_stakeholder, own_stakeholder
+        subject_regime_ids, own_stakeholder = activate_subject_membership(
+            period=period,
+            starting_periods=starting_periods,
+            initial_regime_ids=initial_regime_ids,
+            initial_own_stakeholder=initial_own_stakeholder,
+            regime_ids=subject_regime_ids,
+            own_stakeholder=own_stakeholder,
+            memory=memory,
         )
 
         prev_regime_ids = subject_regime_ids
@@ -1371,7 +1404,9 @@ def _simulate_regime_in_period(
 
     # Update states and regime membership for next period
     if not regime.terminal:
-        next_states_key, next_regime_key, key = jax.random.split(key=key, num=3)
+        next_states_key, next_regime_key, key = split_simulation_key(
+            key=key, memory=memory
+        )
         if memory is not None:
             memory.hold(tree=(simulation_result, next_states_key, next_regime_key, key))
 

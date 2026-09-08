@@ -9,6 +9,7 @@ from typing import cast
 
 import jax
 
+from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreProgram,
@@ -228,6 +229,7 @@ class SimulationRuntime:
     ) -> CompiledSimulationProgram:
         """Recheck live residency while reusing compiled candidates by width."""
         resident = 0
+        resident_lookup = None
         budget = self.execution.device_memory_bytes
         if budget is not None:
             if residency is None:
@@ -249,6 +251,9 @@ class SimulationRuntime:
                 live=live, arguments=arguments, devices=self.subject_devices
             )
             resident = max(external.values())
+            resident_lookup = _SimulationResidentBytes(
+                live=live, arguments=program.arguments, devices=self.subject_devices
+            )
         plan = plan_workspace(
             axes=program.requirements.axes,
             fixed_widths=self.execution.axis_widths,
@@ -257,6 +262,7 @@ class SimulationRuntime:
             ),
             budget_bytes=budget,
             resident_bytes=resident,
+            resident_bytes_for=resident_lookup,
             peak_bytes_for=_simulation_peak_bytes,
         )
         return plan.compiled
@@ -357,6 +363,31 @@ class _CachedSimulationCandidateCompiler:
 def _simulation_peak_bytes(compiled: CompiledSimulationProgram) -> int:
     """Read the genuine underlying executable's compiler-reported memory peak."""
     return compiler_peak_bytes(compiled=compiled.executable, widths=compiled.widths)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _SimulationResidentBytes:
+    """Call-owned inventory outside this candidate's compiler-counted operands."""
+
+    live: DeviceBufferFootprint
+    arguments: Mapping[str, object]
+    devices: tuple[jax.Device, ...]
+
+    def __call__(self, compiled: CompiledSimulationProgram) -> int:
+        """Retain eliminated operands and uncovered parts of overlapping owners."""
+        kept = compiler_input_paths(
+            compiled=cast("jax.stages.Compiled", compiled.executable),
+            arguments=self.arguments,
+        )
+        with_paths, _ = jax.tree_util.tree_flatten_with_path(dict(self.arguments))
+        arguments = measure_buffer_footprint(
+            tree=tuple(leaf for path, leaf in with_paths if path in kept)
+        )
+        return max(
+            resident_bytes_by_device(
+                live=self.live, arguments=arguments, devices=self.devices
+            ).values()
+        )
 
 
 def execute_simulation_program(

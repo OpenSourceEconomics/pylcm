@@ -115,6 +115,15 @@ def _value_bytes() -> int:
     return _N_WEALTH * jnp.zeros(()).dtype.itemsize
 
 
+def _fixed_fixture_bytes() -> int:
+    """Two state grids, two V placeholders, consumption, beta, work and ages.
+
+    The completed state spaces reuse the base arrays in this fixed-grid witness.
+    The two integer work codes and four integer ages each occupy four bytes.
+    """
+    return 4 * _value_bytes() + 4 * jnp.zeros(()).dtype.itemsize + 6 * 4
+
+
 def _fake_peak(*, compiled: object, widths: Mapping[str, int]) -> int:  # noqa: ARG001
     """Report a compiler peak proportional to the streamed width product."""
     return _value_bytes() * math.prod(widths.values())
@@ -258,7 +267,8 @@ def test_the_period_below_a_retained_value_streams_narrower(
 ) -> None:
     """Resident bytes grow backward, so an earlier period fits a narrower width."""
     widths = _selected_width_products(
-        monkeypatch=monkeypatch, budget_bytes=_ACTION_EXTENT * _value_bytes()
+        monkeypatch=monkeypatch,
+        budget_bytes=_fixed_fixture_bytes() + _ACTION_EXTENT * _value_bytes(),
     )
 
     assert widths[("acting", 1)] < widths[("acting", 2)]
@@ -269,7 +279,8 @@ def test_the_position_holding_nothing_besides_its_argument_keeps_the_full_extent
 ) -> None:
     """A budget that exactly fits the widest peak is spent on it where it is free."""
     widths = _selected_width_products(
-        monkeypatch=monkeypatch, budget_bytes=_FULL_WIDTH_PRODUCT * _value_bytes()
+        monkeypatch=monkeypatch,
+        budget_bytes=_fixed_fixture_bytes() + _FULL_WIDTH_PRODUCT * _value_bytes(),
     )
 
     assert widths[("acting", 2)] == _FULL_WIDTH_PRODUCT
@@ -280,7 +291,9 @@ def test_a_large_budget_no_position_can_bind_keeps_every_period_at_full_extent(
 ) -> None:
     """A budget far above every peak selects the full extent at every period."""
     widths = _selected_width_products(
-        monkeypatch=monkeypatch, budget_bytes=(_FULL_WIDTH_PRODUCT + 3) * _value_bytes()
+        monkeypatch=monkeypatch,
+        budget_bytes=_fixed_fixture_bytes()
+        + (_FULL_WIDTH_PRODUCT + 3) * _value_bytes(),
     )
 
     assert {
@@ -295,13 +308,13 @@ def test_a_solve_without_a_budget_does_not_walk_the_schedule(
 ) -> None:
     """No budget consults no peak, so no position is predicted for any core."""
     walks: list[object] = []
-    original = backward_induction.plan_resident_bytes
+    original = backward_induction.plan_resident_inventory
 
     def record(**kwargs: Any) -> object:
         walks.append(kwargs)
         return original(**kwargs)
 
-    monkeypatch.setattr(backward_induction, "plan_resident_bytes", record)
+    monkeypatch.setattr(backward_induction, "plan_resident_inventory", record)
     _solve_capturing_compilation(monkeypatch=monkeypatch, budget_bytes=None)
 
     assert walks == []
@@ -373,7 +386,9 @@ def test_the_refusal_names_the_cell_the_budget_and_the_resident_bytes(
 ) -> None:
     """A cell fitting at no width names where it failed and what it competed with."""
     budget = 2 * _value_bytes() + 1
-    pattern = template.format(resident=2 * _value_bytes(), budget=budget)
+    pattern = template.format(
+        resident=_fixed_fixture_bytes() + 2 * _value_bytes(), budget=budget
+    )
 
     with pytest.raises(ExecutionPlanningError, match=re.escape(pattern)):
         _selected_width_products(monkeypatch=monkeypatch, budget_bytes=budget)
@@ -384,13 +399,13 @@ def test_a_solve_with_a_budget_walks_the_schedule(
 ) -> None:
     """A budget is spent against a position, so every core's position is predicted."""
     walks: list[object] = []
-    original = backward_induction.plan_resident_bytes
+    original = backward_induction.plan_resident_inventory
 
     def record(**kwargs: Any) -> object:
         walks.append(kwargs)
         return original(**kwargs)
 
-    monkeypatch.setattr(backward_induction, "plan_resident_bytes", record)
+    monkeypatch.setattr(backward_induction, "plan_resident_inventory", record)
     _selected_width_products(monkeypatch=monkeypatch, budget_bytes=100 * _value_bytes())
 
     assert walks != []

@@ -7,10 +7,13 @@ values two placements of one model publish name the same real numbers, and a
 simulation reads them off the canonical layout either way.
 """
 
+import dataclasses
+import logging
 import subprocess
 import sys
-from collections.abc import Hashable
+from collections.abc import Hashable, Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -18,18 +21,40 @@ import numpy as np
 import pytest
 from jax import numpy as jnp
 
+from _lcm.execution import value_transfer as transfers_module
+from _lcm.execution.core_program import (
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    ResolvedCoreProgram,
+    ValueRead,
+)
+from _lcm.execution.footprint import (
+    ResidentInventory,
+    concrete_device_bytes,
+)
+from _lcm.execution.output_layout import VALUE, resolve_output_layout
 from _lcm.execution.scheduler import (
+    BufferRegistry,
     PeriodTransferCache,
     ReleaseRecord,
     shares_a_buffer,
 )
-from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueTransferKind
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+    ValueTransferKind,
+)
+from _lcm.execution.workspace_planning import compiler_peak_bytes, plan_workspace
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building import processing
 from _lcm.simulation.initial_conditions import build_initial_states
 from _lcm.solution import backward_induction
+from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.typing import RegimeName
 from lcm import fixed_transition
@@ -87,13 +112,14 @@ def _make_three_type_model(
 ) -> Model:
     """A working regime over a three-valued type beside a single-device terminal one.
 
-    Both regimes are active at every age and read nothing of each other within
-    a period, so on four devices the working regime runs on three and the
+    Both regimes are active before the final age and read nothing of each other
+    within a period, so on four devices the working regime runs on three and the
     terminal one on the fourth. `sharded` names the same axis through
     `ExecutionConfig`; either spelling places the regime the same way.
     `devices` restricts the model to a subset of the four.
     """
     working = UserRegime(
+        active=lambda age: age < 4,
         solver=GridSearch() if solver is None else solver,
         functions={
             "utility": lambda wealth, consumption, type1: (
@@ -276,7 +302,19 @@ def test_two_placements_of_one_model_publish_the_same_values(
         params=_PARAMS, log_level="off"
     )
 
-    for period in placed.values:
+    expected_roster = {
+        period: {"working", "retired"} if period < 4 else {"retired"}
+        for period in range(5)
+    }
+    assert {period: set(values) for period, values in placed.values.items()} == (
+        expected_roster
+    )
+    assert {period: set(values) for period, values in canonical.values.items()} == (
+        expected_roster
+    )
+    for period, active in expected_roster.items():
+        if regime not in active:
+            continue
         assert_agrees_to_ulp(
             got=np.asarray(placed.values[period][regime]),
             expected=np.asarray(canonical.values[period][regime]),
@@ -297,7 +335,7 @@ def test_independent_regimes_of_one_period_share_one_wave(
     monkeypatch.setattr(backward_induction, "plan_period_waves", recorder)
     _make_three_type_model(distributed=True).solve(params=_PARAMS, log_level="off")
 
-    assert set(units_by_period.values()) == {2}
+    assert units_by_period == {0: 2, 1: 2, 2: 2, 3: 2, 4: 1}
 
 
 class _WavePlanRecorder:
@@ -331,23 +369,33 @@ def test_a_model_with_one_regime_per_period_is_placed_on_device_zero() -> None:
 
 
 @_skip_pytest_parallel
-def test_simulating_a_submesh_placed_solution_is_refused() -> None:
-    """A value on a proper submesh cannot meet subjects spread over every device."""
+def test_simulating_a_submesh_placed_solution_uses_the_subject_devices() -> None:
+    """Subjects span four devices while the original three-device value survives."""
     model = _make_three_type_model(distributed=True)
     solution = model.solve(params=_PARAMS, log_level="off")
+    view = solution._engine_view
+    assert isinstance(view, OwnedSolutionView)
+    original = view.values[0]["working"]
+    original_values = np.asarray(original).copy()
+    assert original.sharding.device_set == set(jax.devices()[:3])
 
-    with pytest.raises(ExecutionPlanningError, match="submesh"):
-        model.simulate(
-            params=_PARAMS,
-            initial_conditions={
-                "wealth": jnp.array([10.0, 20.0, 30.0, 40.0]),
-                "type1": jnp.array([0, 1, 2, 1]),
-                "age": jnp.zeros(4),
-                "regime_id": jnp.array([0, 0, 0, 0]),
-            },
-            solution=solution,
-            log_level="off",
-        )
+    result = model.simulate(
+        params=_PARAMS,
+        initial_conditions={
+            "wealth": jnp.array([10.0, 20.0, 30.0, 40.0]),
+            "type1": jnp.array([0, 1, 2, 1]),
+            "age": jnp.zeros(4),
+            "regime_id": jnp.array([0, 0, 0, 0]),
+        },
+        solution=solution,
+        log_level="off",
+        seed=42,
+    )
+    assert result.n_subjects == 4
+    assert result.raw_results["working"][0].V_arr.sharding.device_set == (
+        set(jax.devices())
+    )
+    np.testing.assert_array_equal(np.asarray(original), original_values)
 
 
 @_skip_pytest_parallel
@@ -770,3 +818,175 @@ def test_simulation_topology_reads_a_proper_submesh_on_all_subject_devices() -> 
     assert {device.id for device in stored.sharding.device_set} == {0, 1, 2}
     assert {device.id for device in read.sharding.device_set} == {0, 1, 2, 3}
     assert read.sharding.is_fully_replicated
+
+
+def _shape_only_transfer_inputs(*, values: Mapping[str, jax.Array]) -> jax.Array:
+    """Both runtime copies are pruned; only the declared shape affects output."""
+    return jnp.arange(values["first"].size, dtype=values["first"].dtype)
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("shared", [False, True])
+def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
+    *, monkeypatch: pytest.MonkeyPatch, shared: bool
+) -> None:
+    """Device3 originals and distinct device2 copies survive compiler pruning."""
+    payload = 1024 * 1024
+    dtype = jnp.zeros(()).dtype
+    stored = jax.sharding.SingleDeviceSharding(jax.devices()[3])
+    required = jax.sharding.SingleDeviceSharding(jax.devices()[2])
+    source = jax.device_put(np.full(payload // dtype.itemsize, -3, dtype=dtype), stored)
+    lowering_value = jax.device_put(source, required)
+    address = ValueArtifactAddress(
+        kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="done"
+    )
+    transfers = tuple(
+        ResolvedValueTransfer(
+            target=address,
+            source=ValueConsumerAddress(
+                source_period=0,
+                source_regime="acting",
+                core_key="main",
+                channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                argument="values",
+                path=(name,),
+            ),
+            kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
+            stored_sharding=stored,
+            source_sharding=required,
+            expected_shape=source.shape,
+            expected_dtype=source.dtype,
+            reused_by_several_consumers=shared,
+        )
+        for name in ("first", "second")
+    )
+    program = ResolvedCoreProgram(
+        name="main",
+        function=_shape_only_transfer_inputs,
+        arguments={
+            "values": MappingProxyType(
+                {"first": lowering_value, "second": lowering_value}
+            )
+        },
+        static_kwargs={},
+        requirements=CoreExecutionRequirements(
+            value_reads=tuple(
+                ValueRead(target=address, source=transfer.source)
+                for transfer in transfers
+            )
+        ),
+        output_roles=VALUE,
+        disposition=CoreExecutionDisposition.PLANNED,
+        donation_candidates=(),
+        tile_widths={},
+        specialization_key=(),
+        input_transfer_plan=transfers,
+    )
+    metadata = backward_induction._ProgramExecutionMetadata(
+        requirements=program.requirements,
+        disposition=program.disposition,
+        scope=program.scope,
+        input_transfer_plan=transfers,
+    )
+    copies = backward_induction._period_copy_reservations(
+        period=0,
+        metadata={("acting", 0, "main"): metadata},
+    )
+    inventory = ResidentInventory(
+        device_ids=(2,),
+        live={},
+        peer_bytes={2: 0},
+        declared_inputs=(),
+        shared_copies=copies,
+    )
+    layout = resolve_output_layout(
+        core_key="main",
+        value_template=lowering_value,
+        state_order=("wealth",),
+        output_roles=VALUE,
+    )
+    triple = ("acting", 0, "main")
+    candidate = (triple, ())
+    compiled: dict[Hashable, jax.stages.Compiled] = {}
+    backward_induction._lower_and_compile_wave(
+        new_lowerings={"transferred": candidate},
+        resolved_programs={candidate: program},
+        all_layouts={triple: layout},
+        internal_templates={candidate: {}},
+        donations={candidate: ()},
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        n_triples_per_lowering={"transferred": 1},
+        log_kernel_memory=False,
+        n_workers=1,
+        logger=logging.getLogger(__name__),
+        compiled=compiled,
+        labels={},
+    )
+    executable = compiled["transferred"]
+    assert all(
+        value is None for value in executable.input_shardings[1]["values"].values()
+    )
+    peak = compiler_peak_bytes(compiled=executable, widths={})
+    copy_count = 1 if shared else 2
+
+    def resident(comp: jax.stages.Compiled) -> int:
+        return backward_induction._candidate_resident_bytes(
+            compiled=comp,
+            program=program,
+            internal_arguments={},
+            inventory=inventory,
+        )
+
+    assert resident(executable) == copy_count * payload
+    copies_made: list[jax.Array] = []
+    apply = transfers_module.apply_value_transfer
+
+    def observe(*, value: object, transfer: ResolvedValueTransfer) -> jax.Array:
+        result = apply(value=value, transfer=transfer)
+        copies_made.append(result)
+        return result
+
+    monkeypatch.setattr(transfers_module, "apply_value_transfer", observe)
+    with pytest.raises(ExecutionPlanningError, match="No workspace-width candidate"):
+        plan_workspace(
+            axes=(),
+            compile_candidate=lambda _widths: executable,
+            budget_bytes=peak + copy_count * payload - 1,
+            resident_bytes_for=resident,
+        )
+    assert copies_made == []
+    generous = plan_workspace(
+        axes=(),
+        compile_candidate=lambda _widths: executable,
+        budget_bytes=peak + copy_count * payload,
+        resident_bytes_for=resident,
+    )
+    core = backward_induction._attach_resolved_output_layout(
+        compiled=generous.compiled,
+        layout=layout,
+        tile_widths={},
+        input_transfer_plan=transfers,
+        name="main",
+    )
+    if shared:
+        core = dataclasses.replace(
+            core,
+            transfer_cache=PeriodTransferCache(
+                registry=BufferRegistry(),
+                consumer_counts={(address, required): 1},
+            ),
+        )
+    output = core(values={"first": source, "second": source})
+    assert isinstance(output, jax.Array)
+    jax.block_until_ready((output, copies_made))
+    assert len(copies_made) == copy_count
+    assert concrete_device_bytes(tree=copies_made)[2] == copy_count * payload
+    assert (
+        concrete_device_bytes(tree=(output, copies_made))[2]
+        == (copy_count + 1) * payload
+    )
+    assert output.devices() == {jax.devices()[2]}
+    assert source.devices() == {jax.devices()[3]}
+    assert not source.is_deleted()
+    np.testing.assert_array_equal(source, np.full(source.shape, -3))
+    np.testing.assert_array_equal(output, np.arange(source.size))

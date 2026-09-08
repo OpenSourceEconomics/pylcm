@@ -7,12 +7,12 @@ schedule knows which devices it runs on and which artifacts its outputs are
 registered under. A replicated array costs its full size on each of its
 devices; a sharded one costs a single shard.
 
-`plan_resident_bytes` walks that schedule the way the loop will run it and
-reports, per unit, what it already finds on its busiest device. Residency is
-per buffer rather than per key: the keys of one alias group name a single
-allocation and are charged once. What a unit is handed as a device argument is
-left out, under the convention `plan_resident_bytes` states about the compiler
-report this number is meant to be added to.
+`plan_resident_inventory` walks the schedule once and snapshots its live alias
+groups. Each candidate excludes only its own aligned compiler-retained reads;
+pruned inputs remain resident. `plan_resident_bytes` returns the earlier declared-
+read lower bound, which is insufficient for final candidate admission by itself.
+Actual fixed owners and predicted shared-copy/internal-output reservations add
+conservative per-device storage, allowing documented overlap with compiler peaks.
 """
 
 import dataclasses
@@ -80,6 +80,116 @@ class ScheduledUnit:
         _fail_if_not_a_device_set(device_ids=self.device_ids, label="A scheduled unit")
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class ResidentInventory:
+    """Array-free snapshot of the allocations present at one scheduled cell."""
+
+    device_ids: tuple[int, ...]
+    """Devices on which this cell's workspace must fit."""
+
+    live: Mapping[frozenset[Hashable], Mapping[Hashable, ArtifactFootprint]]
+    """Ledger alias groups and each live name's per-device size claim."""
+
+    peer_bytes: Mapping[int, int]
+    """Concurrent outputs charged on each device, excluding this cell's own."""
+
+    declared_inputs: tuple[Hashable, ...]
+    """All aligned input names, used only for the pre-compilation lower bound."""
+
+    fixed_bytes: Mapping[int, int] = dataclasses.field(default_factory=dict)
+    """Concrete solve-lifetime owners, conservatively additional to the peak."""
+
+    shared_copies: Mapping[Hashable, ArtifactFootprint] = dataclasses.field(
+        default_factory=dict
+    )
+    """Whole-period reservations for one destination per shared transfer key."""
+
+    internal_bytes: int = 0
+    """Conservative per-device runtime internal-output reservation for this cell."""
+
+    def __post_init__(self) -> None:
+        """Freeze additive fixed-owner and planned-copy reservation metadata."""
+        object.__setattr__(
+            self, "fixed_bytes", MappingProxyType(dict(self.fixed_bytes))
+        )
+        object.__setattr__(
+            self, "shared_copies", MappingProxyType(dict(self.shared_copies))
+        )
+
+    def resident_bytes(
+        self,
+        *,
+        consumes: tuple[Hashable, ...] | None = None,
+        consumed_copies: frozenset[Hashable] | None = None,
+        temporary_bytes: Mapping[int, int] = MappingProxyType({}),
+    ) -> int:
+        """Charge every live buffer except this candidate's compiled arguments.
+
+        Only compiler-live, aligned reads may be passed as ``consumes``. Omitting
+        it grants every declared exclusion and therefore returns a lower bound.
+        The immutable inventory can answer each width without walking the schedule
+        again, and never owns concrete arrays or executable-specific residency.
+        """
+        consumed = frozenset(self.declared_inputs if consumes is None else consumes)
+        copies = (
+            (frozenset(self.shared_copies) if consumes is None else frozenset())
+            if consumed_copies is None
+            else consumed_copies
+        )
+        return max(
+            _device_bytes(live=self.live, device=device, consumed=consumed)
+            + self.peer_bytes[device]
+            + self.fixed_bytes.get(device, 0)
+            + self.internal_bytes
+            + temporary_bytes.get(device, 0)
+            + sum(
+                footprint.bytes_per_device
+                for key, footprint in self.shared_copies.items()
+                if key not in copies and device in footprint.device_ids
+            )
+            for device in self.device_ids
+        )
+
+
+def concrete_device_bytes(*, tree: object) -> MappingProxyType[int, int]:
+    """Measure concrete fixed-owner payload, unioning actual shard intervals.
+
+    This low-level JAX measurement assumes contiguous logical shard payload from
+    ``unsafe_buffer_pointer``. It excludes allocator capacity and executable
+    storage. Abstract templates and host values own no device allocation. Caller
+    roots must include full originals, not just a smaller alias view. The result
+    holds no arrays, and is valid only while the measured owners remain alive.
+    """
+    spans: dict[jax.Device, list[tuple[int, int]]] = {}
+    for leaf in jax.tree.leaves(tree):
+        if not isinstance(leaf, jax.Array):
+            continue
+        if leaf.is_deleted() or not leaf.is_fully_addressable:
+            raise ExecutionPlanningError(
+                "Fixed solve owners must be live and addressable."
+            )
+        for shard in leaf.addressable_shards:
+            if shard.data.nbytes:
+                start = shard.data.unsafe_buffer_pointer()
+                spans.setdefault(shard.device, []).append(
+                    (start, start + shard.data.nbytes)
+                )
+    sizes: dict[int, int] = {}
+    # Logical schedule device ids refer to the selected JAX backend. Preserve
+    # actual device identity through physical union so CPU0 never aliases GPU0.
+    selected_devices = frozenset(jax.devices())
+    for device, intervals in spans.items():
+        if device not in selected_devices:
+            continue
+        total = 0
+        end = 0
+        for start, stop in sorted(intervals):
+            total += max(0, stop - max(start, end))
+            end = max(end, stop)
+        sizes[device.id] = total
+    return MappingProxyType(sizes)
+
+
 def plan_resident_bytes(
     *,
     waves_by_period: Mapping[int, tuple[tuple[ScheduledUnit, ...], ...]],
@@ -87,7 +197,7 @@ def plan_resident_bytes(
     ledger: PlannedInputLiveness,
     footprints: Mapping[Hashable, ArtifactFootprint],
 ) -> MappingProxyType[tuple[int, RegimeName], int]:
-    """Return, per unit, the busiest per-device resident bytes at its position.
+    """Return the declared-read residency lower bound at each scheduled position.
 
     The schedule is walked the way the loop will run it: periods descending,
     waves in order, and a period's gated-edge folds after its last wave. A
@@ -97,21 +207,16 @@ def plan_resident_bytes(
     decides them, and neither are the buffers it is handed as arguments — see
     the argument convention below.
 
-    **The argument convention.** This number is meant to be added to a
-    compiler-reported peak, and it assumes that report already counts the
-    buffers the executable receives as arguments. That is what the XLA CPU
-    backend does: `peak_memory_in_bytes` there equals `argument + output +
-    temp` and tracks the argument size one for one. So a unit's own arguments
-    are left out here, and each buffer is charged exactly once across the sum.
-    On a backend whose report excludes arguments the sum under-counts by
-    exactly those bytes, which is the direction that overruns a device; such a
-    backend needs the exclusion dropped rather than the budget widened, and the
-    convention re-measured before either.
+    **The argument convention.** Compiler peaks include only inputs surviving
+    compilation, while this pre-compilation bound excludes all declared aligned
+    inputs. Final admission must query ``ResidentInventory.resident_bytes`` with
+    the exact candidate's compiler-live reads and add its raw compiler peak.
+    Eliminated inputs remain owned and cannot inherit this lower bound's exclusion.
 
-    Two approximations sit inside that convention. A program declaring no reads
+    A program declaring no reads
     names no arguments, so the inputs the ledger pins on its behalf are charged
     both here and inside its peak — an over-count, the safe direction. And the
-    exclusion is per unit: a buffer another unit holds stays charged to that
+    lower-bound exclusion is per unit: a buffer another unit holds stays charged to that
     unit, since it is not in that unit's peak.
 
     `fold_dispatches` maps each fold dispatch id `(period, source, target)` to
@@ -132,10 +237,34 @@ def plan_resident_bytes(
     convention above assigns to the peak, so the buffer is charged once like
     any other — never twice, and never not at all.
     """
+    inventory = plan_resident_inventory(
+        waves_by_period=waves_by_period,
+        fold_dispatches=fold_dispatches,
+        ledger=ledger,
+        footprints=footprints,
+    )
+    return MappingProxyType(
+        {cell: position.resident_bytes() for cell, position in inventory.items()}
+    )
+
+
+def plan_resident_inventory(
+    *,
+    waves_by_period: Mapping[int, tuple[tuple[ScheduledUnit, ...], ...]],
+    fold_dispatches: Mapping[tuple[int, RegimeName, RegimeName], Hashable],
+    ledger: PlannedInputLiveness,
+    footprints: Mapping[Hashable, ArtifactFootprint],
+) -> MappingProxyType[tuple[int, RegimeName], ResidentInventory]:
+    """Walk the lifetime schedule once and retain immutable per-cell inventories.
+
+    Each snapshot precedes the cell's dispatch and includes its peers' outputs.
+    Candidate-specific compiler input exclusions are queried afterward; compilation
+    does not change the declared lifetime or the schedule's alias identities.
+    """
     _fail_if_footprint_is_unplanned(ledger=ledger, footprints=footprints)
     counts = dict(ledger.remaining_counts)
     live: dict[frozenset[Hashable], dict[Hashable, ArtifactFootprint]] = {}
-    resident: dict[tuple[int, RegimeName], int] = {}
+    resident: dict[tuple[int, RegimeName], ResidentInventory] = {}
     for period in sorted(waves_by_period, reverse=True):
         for wave in waves_by_period[period]:
             _walk_wave(
@@ -206,7 +335,7 @@ def _walk_wave(
     footprints: Mapping[Hashable, ArtifactFootprint],
     counts: dict[Hashable, int],
     live: dict[frozenset[Hashable], dict[Hashable, ArtifactFootprint]],
-    resident: dict[tuple[int, RegimeName], int],
+    resident: dict[tuple[int, RegimeName], ResidentInventory],
 ) -> None:
     """Record what one wave's units find resident, then commit the whole wave.
 
@@ -214,10 +343,13 @@ def _walk_wave(
     measured against the state it starts from, all outputs land together, and
     only then do the accesses of the wave commit.
     """
+    snapshot = MappingProxyType(
+        {group: MappingProxyType(dict(members)) for group, members in live.items()}
+    )
     for unit in wave:
         _fail_if_period_disagrees(unit=unit, period=period)
-        resident[(period, unit.regime)] = _busiest_device_bytes(
-            unit=unit, wave=wave, live=live
+        resident[(period, unit.regime)] = _resident_inventory(
+            unit=unit, wave=wave, live=snapshot
         )
     for unit in wave:
         _register_outputs(
@@ -268,22 +400,27 @@ def _register_outputs(
             live.setdefault(group, {})[artifact] = footprints[artifact]
 
 
-def _busiest_device_bytes(
+def _resident_inventory(
     *,
     unit: ScheduledUnit,
     wave: tuple[ScheduledUnit, ...],
     live: Mapping[frozenset[Hashable], Mapping[Hashable, ArtifactFootprint]],
-) -> int:
-    """Return the resident bytes on the unit's most occupied device."""
-    consumed = frozenset(unit.consumes)
-    return max(
-        _device_bytes(live=live, device=device, consumed=consumed)
-        + sum(
-            peer.output_bytes_per_device
-            for peer in wave
-            if peer is not unit and device in peer.device_ids
-        )
-        for device in unit.device_ids
+) -> ResidentInventory:
+    """Freeze the live alias groups before the wave changes their membership."""
+    return ResidentInventory(
+        device_ids=unit.device_ids,
+        live=live,
+        peer_bytes=MappingProxyType(
+            {
+                device: sum(
+                    peer.output_bytes_per_device
+                    for peer in wave
+                    if peer is not unit and device in peer.device_ids
+                )
+                for device in unit.device_ids
+            }
+        ),
+        declared_inputs=unit.consumes,
     )
 
 

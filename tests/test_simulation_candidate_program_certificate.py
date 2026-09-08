@@ -43,11 +43,159 @@ _PROGRAM_MUTATIONS = (
     "prewarm_failure_hidden",
 )
 
+# Local controls for newly profiled helpers supplement the historical registry.
+_RANDOM_HELPER_MUTATIONS = {
+    "simulation_random:default_implementation_ignored": (
+        '"impl": jax.config.jax_default_prng_impl,',
+        '"impl": "threefry2x32",',
+    ),
+    "simulation_random:offset_trace_guard_bypassed": (
+        "if seed_offset != jax.config.jax_random_seed_offset:",
+        "if False and seed_offset != jax.config.jax_random_seed_offset:",
+    ),
+    "simulation_random:partition_context_ignored": (
+        '{"partitionable": jax.config.jax_threefry_partitionable}',
+        '{"partitionable": False}',
+    ),
+    "simulation_random:declared_split_mode_ignored": (
+        "with jax.threefry_partitionable(partitionable):",
+        "with jax.threefry_partitionable(False):",
+    ),
+}
+
+_PROFILED_HELPER_MUTATIONS = {
+    "simulation_host:unused_input_omitted_from_peak": (
+        "src/_lcm/simulation/host_operations.py",
+        "jax.jit(bound, keep_unused=True)",
+        "jax.jit(bound, keep_unused=False)",
+    ),
+    "compiler_inputs:dynamic_tree_mismatch_accepted": (
+        "src/_lcm/execution/compiler_inputs.py",
+        "if actual_tree != sharding_tree:",
+        "if False and actual_tree != sharding_tree:",
+    ),
+    "workspace:per_candidate_residency_ignored": (
+        "src/_lcm/execution/workspace_planning.py",
+        "resident_bytes_for=resident_bytes_for,",
+        "resident_bytes_for=None,",
+    ),
+    "workspace:resident_lower_bound_bypassed": (
+        "src/_lcm/execution/workspace_planning.py",
+        "if resident < lower_bound:",
+        "if False and resident < lower_bound:",
+    ),
+    "simulation_runtime:per_candidate_residency_ignored": (
+        "src/_lcm/simulation/runtime.py",
+        "resident_bytes_for=resident_lookup,",
+        "resident_bytes_for=None,",
+    ),
+    "simulation_runtime:eliminated_argument_excluded": (
+        "src/_lcm/simulation/runtime.py",
+        "tree=tuple(leaf for path, leaf in with_paths if path in kept)",
+        "tree=tuple(leaf for path, leaf in with_paths)",
+    ),
+    "solution_runtime:fixed_owner_inventory_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        "\n            fixed_bytes=fixed_bytes,",
+        "\n            fixed_bytes={},",
+    ),
+    "solution_runtime:shared_copy_destinations_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        "                shared_copies=copies_by_period[period],",
+        "                shared_copies={},",
+    ),
+    "solution_runtime:unshared_eliminated_copy_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        "elif not kept:",
+        "elif False and not kept:",
+    ),
+    "solution_runtime:eliminated_aligned_read_excluded": (
+        "src/_lcm/solution/backward_induction.py",
+        "and _compiler_reads_source(shardings=input_shardings, source=read.source)",
+        "and True",
+    ),
+    "solution_runtime:fixed_source_owners_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        "for space in base_state_action_spaces.values()\n        ),",
+        "for space in ()\n        ),",
+    ),
+    "solution_runtime:internal_output_reservation_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        "internal_bytes=internal_bytes[triple[:2]],",
+        "internal_bytes=0,",
+    ),
+    "solution_runtime:wrong_internal_cell": (
+        "src/_lcm/solution/backward_induction.py",
+        "cell = candidate[0][:2]",
+        "cell = ('other_regime', 0)",
+    ),
+    "solution_inventory:fixed_owner_charge_omitted": (
+        "src/_lcm/execution/footprint.py",
+        "+ self.fixed_bytes.get(device, 0)",
+        "+ 0",
+    ),
+    "solution_inventory:shared_copy_charge_omitted": (
+        "src/_lcm/execution/footprint.py",
+        "if key not in copies and device in footprint.device_ids",
+        "if False and key not in copies and device in footprint.device_ids",
+    ),
+    "simulation_host:subject_output_layout_omitted": (
+        "src/_lcm/simulation/host_operations.py",
+        "else jax.jit(bound, keep_unused=True, out_shardings=output_sharding)",
+        "else jax.jit(bound, keep_unused=True)",
+    ),
+    "simulation_host:subject_output_cache_identity_omitted": (
+        "src/_lcm/simulation/host_operations.py",
+        'layout_key=("simulation_host_operation", subject_outputs),',
+        'layout_key=("simulation_host_operation", False),',
+    ),
+    "simulation_caller:initialized_state_ownership_omitted": (
+        "src/_lcm/simulation/simulate.py",
+        "memory.hold(tree=(states, key))",
+        "memory.hold(tree=key)",
+    ),
+    "simulation_caller:placed_age_ownership_omitted": (
+        "src/_lcm/simulation/simulate.py",
+        "memory.hold(tree=age)",
+        "memory.hold(tree=())",
+    ),
+}
+
 
 @pytest.fixture(scope="module")
 def program_mutations() -> dict[str, dict[str, str]]:
-    """Build the same seeded defects the full certificate control executes."""
-    return direct_flow_mutation_specs(repo_root=Path(__file__).parents[1])
+    """Build registry controls plus explicit random and profiling defects."""
+    root = Path(__file__).parents[1]
+    mutations = direct_flow_mutation_specs(repo_root=root)
+    mutations.update(
+        direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
+    )
+    relative = "src/_lcm/simulation/random.py"
+    source = (root / relative).read_text(encoding="utf-8")
+    for name, (old, new) in _RANDOM_HELPER_MUTATIONS.items():
+        assert source.count(old) == 1, name
+        mutations[name] = {"path": relative, "source": source.replace(old, new)}
+    for name, (relative, old, new) in _PROFILED_HELPER_MUTATIONS.items():
+        source = (root / relative).read_text(encoding="utf-8")
+        assert source.count(old) == 1, name
+        mutations[name] = {"path": relative, "source": source.replace(old, new)}
+    return mutations
+
+
+def test_supplemental_sources_complete_the_pinned_registry_coverage():
+    """Every added corridor has its own separate, nonoverlapping control."""
+    root = Path(__file__).parents[1]
+    registered = direct_flow_mutation_specs(repo_root=root)
+    supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
+
+    assert set(supplemental) == {
+        "compiler_inputs:eliminated_input_counted_by_compiler",
+        "simulation_membership:entry_period_changed",
+    }
+    assert not set(registered) & set(supplemental)
+    assert {spec["path"] for spec in (registered | supplemental).values()} == set(
+        direct_flow._CERTIFIED_CORRIDOR_SOURCES
+    )
 
 
 @pytest.mark.parametrize(
@@ -56,6 +204,9 @@ def program_mutations() -> dict[str, dict[str, str]]:
         "src/_lcm/simulation/programs.py",
         "src/_lcm/simulation/program_types.py",
         "src/_lcm/simulation/runtime.py",
+        "src/_lcm/execution/compiler_inputs.py",
+        "src/_lcm/execution/footprint.py",
+        "src/_lcm/simulation/membership.py",
     ],
 )
 def test_live_simulation_program_sources_are_certified(source: str):
@@ -79,7 +230,10 @@ def test_live_simulation_program_sources_are_certified(source: str):
         "aot_model:compiled_regime_filter",
         "simulation_index_consumer:next_candidate",
     ]
-    + list(direct_flow._SIMULATION_ADAPTER_MUTATIONS),
+    + list(direct_flow._SIMULATION_ADAPTER_MUTATIONS)
+    + list(_RANDOM_HELPER_MUTATIONS)
+    + list(_PROFILED_HELPER_MUTATIONS)
+    + list(direct_flow._SUPPLEMENTAL_SOURCE_MUTATIONS),
 )
 def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(
     *,

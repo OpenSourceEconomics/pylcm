@@ -511,7 +511,7 @@ def test_no_feasible_candidate_is_reported_after_the_entire_frontier() -> None:
 
     with pytest.raises(
         ExecutionPlanningError,
-        match="smallest reported peak is 12 bytes",
+        match=r"smallest total is 12 bytes \(12 compiler peak plus 0 resident bytes",
     ):
         plan_workspace(
             axes=(_axis(extent=8),),

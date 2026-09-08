@@ -347,6 +347,37 @@ everything that constructs the inputs (parameters, grids, transitions, compiled
 callables) lives in `regime_building/` and is read out of the canonical `Regime`
 instances.
 
+Workspace admission combines the compiler-reported peak with a conservative bound on
+resident storage. Profiled simulation operations place all dynamic arguments on the
+execution devices and compile with `keep_unused=True`, so their peak includes arguments
+used only for shape or dtype.
+
+Solve and simulation cores allow the compiler to eliminate unused arguments. Each
+candidate's public `Compiled.input_shardings` tree identifies the surviving dynamic
+input occurrences; eliminated arguments remain in external residency while their owners
+are live. Simulation subtracts only surviving inputs' actual buffer spans, preserving
+uncovered portions of larger aliased owners. Solve queries its schedule inventory for
+the exact regime, period, core, and widths, excluding only surviving declared reads on
+their stored layout. Logical artifact aliases determine solve residency; template arrays
+do not establish aliases between future outputs. These exclusions change neither the
+declared reads nor their consumer lifetimes, and do not require moving unused inputs to
+the core's devices.
+
+Solve also charges its concrete fixed owners throughout the solve, reserves shared
+transfer destinations for the whole period, and reserves internal producer outputs
+within their regime-period cell. Fixed-owner aliases are unioned on each actual device;
+abstract shape templates own no device storage. Known internal output shardings
+determine their per-device payload; missing layouts use a full-payload bound. These
+reservations can overlap compiler-counted inputs, intentionally over-counting storage.
+Width selection is widest under this declared bound, rather than an allocator-optimal
+choice.
+
+Compiler peaks remain the actual executable reports. The backend must include retained
+input payloads in those reports; unavailable or mismatched input metadata refuses
+budgeted core planning. Executable reuse still requires a fresh residency check. The
+remaining limits of whole-call simulation accounting are recorded in the
+[architecture transition ledger](../development/architecture_transition_ledger.md).
+
 ## The solver seam: keys and routes
 
 Two declarations connect a solver to the engine without either reading the other's
@@ -376,10 +407,13 @@ re-exported by `lcm.solvers`.
 
 `model_authority.py` builds authority from the canonical model and consuming route. A
 restored or caller-supplied result is canonicalized once; required lazy entries are
-materialized and checksum checked; then pylcm validation, plugin validation, reader
-construction, and the forward loop consume that same immutable snapshot. Descriptors
-transported in `SolutionMetadata` remain descriptive and cannot authenticate their own
-payloads.
+materialized and checksum checked; then pylcm and plugin validation preflight every
+required cell before forward execution. Each period acquires its own placed payload and
+coordinate copies. The plugin validates that exact immutable snapshot and context again
+immediately before reader construction; the reader receives those same objects.
+Authority and descriptive metadata retain their validated identities through placement.
+Descriptors transported in `SolutionMetadata` remain descriptive and cannot authenticate
+their own payloads.
 
 ## Solution identity and persistence
 

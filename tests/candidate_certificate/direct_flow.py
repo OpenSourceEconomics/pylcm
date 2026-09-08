@@ -147,7 +147,13 @@ LIVENESS_SOURCE = "src/_lcm/execution/liveness.py"
 CONTINUATION_READS_SOURCE = "src/_lcm/solution/continuation_reads.py"
 WORKSPACE_PLANNING_SOURCE = "src/_lcm/execution/workspace_planning.py"
 
+COMPILER_INPUTS_SOURCE = "src/_lcm/execution/compiler_inputs.py"
+
+SIMULATION_MEMBERSHIP_SOURCE = "src/_lcm/simulation/membership.py"
+
 _CERTIFIED_CORRIDOR_SOURCES = (
+    SIMULATION_MEMBERSHIP_SOURCE,
+    COMPILER_INPUTS_SOURCE,
     MAX_Q_SOURCE,
     ARGMAX_SOURCE,
     COLLECTIVE_SOURCE,
@@ -229,27 +235,29 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
-    SIMULATION_OPERANDS_SOURCE: "3a6c34c22ac74cf741b8228e3da613f5a4c3cb8116760f39802e8fb5deebe848",
+    SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
+    COMPILER_INPUTS_SOURCE: "c28ac1ab4acab2166120867158dec5eb866c082cdd05f7cb7877f2dc3c52ef8a",
+    SIMULATION_OPERANDS_SOURCE: "4c0333036fd861ace225a0a38c925fa2a694433e3eddcc47d9fe1c0eea2ee9f8",
     SIMULATION_UNIT_SOURCE: "c2c8b34310339ced638e67503251a398047b9c673146bd7d49f69670717c4d3b",
-    SIMULATION_HOST_SOURCE: "ff67f5d4e6e32206397e537cb8d7511c7c3e629c36ae12d522dd8cb254a078a5",
-    SIMULATION_MEMORY_SOURCE: "93a06ab04da4c9ba187b11458028f77ac3cbd83f7b3b1643c5ca642ad78af49e",
+    SIMULATION_HOST_SOURCE: "74bd0ccccd0b25968e502a42ab0a6c7ae19341eb946dcd1b1c21907a469786d3",
+    SIMULATION_MEMORY_SOURCE: "917677a73a623cc2c8d836957d7a86832403bb1f319ec5eeeb967abad9ec31a1",
     SIMULATION_PERIOD_INPUTS_SOURCE: "70a1dc14b09edf1101dea7dac7a82e18693f1a299c413b34c8cd955b0892bac0",
-    SIMULATION_REPLAY_INPUTS_SOURCE: "b1159e76edc9cabe61552d77a001431fdbb11f7f1adc9ab6ab7b424a5926331b",
-    SIMULATION_VALUE_READS_SOURCE: "2fc197b461b5e2dcae6a100a439e81a3f3c3497dc94ff095feb6b0be81588837",
+    SIMULATION_REPLAY_INPUTS_SOURCE: "6a8f9e1eafbebb264b11d7b6be5535c1e9cdf90e2ec1e17f2343eddc222b01b9",
+    SIMULATION_VALUE_READS_SOURCE: "b00b335634970802bc240962c6c7eeba99598924a00b4c0059b87663d4e928e4",
     SIMULATION_VALUE_PLACEMENT_SOURCE: "afd58b343d0385934c3add5552d7926dc3f9ba2700e5a40b26a65a62a75b1e68",
     SIMULATION_CHUNK_INPUTS_SOURCE: "cf82d14c75cd4826c27dba1f7ccd365f5c0d514b2c9dd4f5535ccf74335a637d",
     SIMULATION_ENTRY_INPUTS_SOURCE: "546ff0670f64c41fcfd3c3f629e783e30697b9de6164411150d8d69f40ec6e24",
-    SIMULATION_RESIDENCY_SOURCE: "b7cdde4de0d18ba1e116471296fa9ec72409629dd8e6ea727664544d846c71df",
+    SIMULATION_RESIDENCY_SOURCE: "78486d94eecdc7b7fcaacc4c24e3a7db6610f7d6bc83c1a18f835a10eb989594",
     SIMULATION_GATED_ROUTING_SOURCE: "9e16638f296169a876c37f0c18399a8ed894dc2f4e1cb54a3466f909ddffb85e",
     VALUE_TOPOLOGY_SOURCE: "80bf43a740c77b1ddb1675a2510859b521efc6fc0f60a6a8ab7319e0bc98a4f2",
     RETAINED_BUFFERS_SOURCE: "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870",
     SCHEDULER_SOURCE: "8071b900fa30fe5a9e38ee2133e320bf68cbe2f2e733fa3b4114adcd3bd9ad65",
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
-    WORKSPACE_PLANNING_SOURCE: "e80bc1472ce57907c4e54849faa3c29b176d8897f3ba06f15e8c841ec02c1f65",
+    WORKSPACE_PLANNING_SOURCE: "05972cd1ecf48b86c6a9ad4828e7b750ca62c130c1945118735ff002ac586f48",
     SIMULATION_PROGRAMS_SOURCE: "dc05c99c5b3e083e20e5b909ffe3a7910b94697cfb3d0fd9b9426d9cd80d5f1e",
     SIMULATION_PROGRAM_TYPES_SOURCE: "44b0bf3b343b6a0ad3659e78666c602bf4c64547ddc558c45337db1c2cafd19f",
-    SIMULATION_RUNTIME_SOURCE: "e32a423260843dc670917c22007a7f2ba5a97b08924520170c4e47c37ec257be",
+    SIMULATION_RUNTIME_SOURCE: "e629b4fad00474a3f638481b1c7d1591a041df7d44af8bfa7b9fc23595a01656",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
@@ -259,7 +267,7 @@ _SOURCE_SEALS = {
     CORE_PROGRAM_SOURCE: "078df8c1d82cd31e9cfa1bfb7acd263154676ecbd13117ff7c446bab5130fdba",
     OUTPUT_LAYOUT_SOURCE: "b5e9c667a15dcb6a1393f54f4ba7d8fcea85d3e78104f6e9e4cbd16c60fd1bb5",
     VALUE_TRANSFER_SOURCE: "d1b2c3282b8504346738257983266b298d46dced2d3f49212f23b729d5877f12",
-    FOOTPRINT_SOURCE: "8121835002b523e8508006e22dd33ce0696103c80c920ec729b45ee5f21770f4",
+    FOOTPRINT_SOURCE: "0dbaa3c673f053a51fa7bcab4e06d2080252dd84d827ed28123d085c4000fd0f",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
@@ -272,19 +280,19 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "400326d4fe75f7ee62daf88ca334c095f30689b37ef5cf16f0aacd61b9cb2b75",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "8821c69887175c5f18dd5c41fd74547935152a21ad75880fec631e4142906a6e",
+    SIMULATION_SOURCE: "a67cc97bb050b38b9274afbc4288db9582938671efbe4398b53d138ac0ddeab0",
     SIMULATION_TRANSITIONS_SOURCE: "18f53b35a8a11536f9e3df03cfc48cec357bbc2fa11308d04091620d02e179a6",
     SIMULATION_COMPILE_SOURCE: "3ca1959d612dbfbf323e523fee496a56390ddaa1f509f607803a111d728899d2",
     MODEL_SOURCE: "17fc3cce20f947e186f4a4b2a1eedf0c916032a13197756364049c1b2d5be169",
-    SOLVER_API_SOURCE: "99ab6ccb9e42bc36cc339a98d0cc054570dacb938365e383bdebafefe51611af",
-    BACKWARD_INDUCTION_SOURCE: "8e30e98fe217ee458af282a2cf4fdd0cc3431558b59be2e6f3082ab3c6ab5038",
+    SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
+    BACKWARD_INDUCTION_SOURCE: "320d88ecb4959c19274da453a5bacd7995b5e7d54a6da76d47d0fe24f583809d",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "16c40f2ec9626d9134b336ed3d61f911ed54cac7c86f17b5dd5a61dbe5fb134e",
     RESULT_SOURCE: "bfc4b1f19bf1852c86c4f5b87d40abed2521d0519af99ff613975fb8d3ab09f0",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
-    SIMULATION_RANDOM_SOURCE: "319b309c3ab8509ec9a6cd8969ddc9b490ab45e2ddc5e4d187d21362c3df07db",
+    SIMULATION_RANDOM_SOURCE: "601d0017e3f4fe26fd5edd169eb8cbe7dc3ce84811bf2c7a05cee70feb2d6cf0",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
     SOLUTION_CONTRACT_SOURCE: "ccf4b3215c9c390a189a39ece56537e7521443629c8036d297a41ccc76277111",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
@@ -2951,13 +2959,13 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_RUNTIME_SOURCE: (
-            "c26427d921587975657b2182ce9b80323b70c19bcf082523c6038934f4cc5655",
+            "ae82802787969da21e89856de64453944733967642a5696109e3c91403a135a8",
             {
                 "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
                 "SimulationRuntime.dispatch": "b936af2fdda53d89102dc39ee6846e1c53072222a216aeeca3e69f34df201165",
                 "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
                 "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
-                "SimulationRuntime._prepare_materialized": "728de1ce3ea2e6d2a85eba8c342802f5f7b144716c107a5c8472997be9e64014",
+                "SimulationRuntime._prepare_materialized": "e1660f9fe46061be1e96201b8e2b4f12bcbd3352805428925a9f1d0ae97c36ba",
                 "execute_simulation_program": "6248e86d6a967be348ab00114e7d036d6f40e233c80a71ad07dd4dab67d4667e",
                 "_SimulationCandidateCompiler.__call__": "34118b52721ac3374cc3b9744b5196428fbb603551f6d297e1b6ab7deea9e907",
                 "_with_subject_extent": "c48502d31e8f9fb29221122b0de6d10f38f3d6f740854a82512c2b964079e463",
@@ -2967,6 +2975,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
                 "SimulationRuntime.compile_candidate": "367181627553e0272f4fcc771adb900296d4c3409fda324ea45ac799e2803e0c",
                 "_CachedSimulationCandidateCompiler.__call__": "28dcd8f5efac82c89e21143112cf45402a5dde3585423bd912f4c7b455e62107",
                 "_simulation_peak_bytes": "d78167b86cd2b5e0c77fe41aa86ae64b66f4e372bb187f68f4893d323cdce78d",
+                "_SimulationResidentBytes.__call__": "1de7cce7b963299d2803cc325d95389fe99fad8282a3b9a707bdddbb3dccd450",
             },
         ),
         SIMULATION_COMPILE_SOURCE: (
@@ -3013,14 +3022,15 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     """
     contracts = {
         SIMULATION_SOURCE: (
-            "f26e0714d5f7056d684905ccc7e568a0301134f91a675787fb197436352efbd3",
+            "ab484ebad51cc61937a9b0ffc8bae60f03436edcaa8dbc209caca1ebd5bd26e6",
             {
-                "_simulate_regime_in_period": "74a8276e9cc24a69f5e804fc0846933ad6c0ae9a2eb72bd5bf9e3a9860620303",
+                "_simulate_regime_in_period": "bdb8a5a2bfba02c143c9e5fecf7f8c3aa960fba74114dea5a1fd05186bcd2dde",
                 "simulate": "9b4999c33ca03ee781486f7f427c0466b79d5cb3cc41a177ad4e0218da0ce8ae",
-                "_simulate_subject_chunk": "1943020b553ea76680a18311bf379de32d368005bae228f6168ac4ad929891ba",
+                "_simulate_subject_chunk": "b8d79c7fa36ece183e350fe730cfca06edfc2457a369df09335659118dd309d0",
                 "_bind_unit_executor": "8a2a8bc6a28f5d7c6a4a2c8d3bea6db86e79c211a8a9b2a409336126a7572a66",
                 "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
                 "_read_external_replay": "7972d2214dbda0c4173fedfabe12b9ae3b03ed099db9f950cd176ee082131c90",
+                "_initialize_chunk_state": "82b413fe657adbce560df50fae814cf80a268eabc0839cbb99a2242c4b2ab482",
             },
         ),
         SIMULATION_TRANSITIONS_SOURCE: (
@@ -3044,8 +3054,12 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         SIMULATION_RANDOM_SOURCE: (
-            "d9dfbb65fe3ac4a3f409d47990b6bd26a4d2f68db3a11d840d8230cb3576a1fb",
+            "ba7a3957502cab5582edb4146e9588c61cceee875d45434f5590692f47afe2a9",
             {
+                "create_simulation_key": "76fca4fbc2e18885d2ee67512e8207616fe8d17443954d9b36765a4bc52b3dd4",
+                "_create_simulation_key": "1ab7921d3e42ea7255fb8bbc60d1ed58e408e8818d0bac91ec132c276c62a05d",
+                "split_simulation_key": "9968b4530b74638b082b63c0160391573b8ae4c20a9dc3b733a9b424de259921",
+                "_split_simulation_key": "666d1e23f386815a8fd331cd543813fa2fcdb501f7672a82be9f48fe31c293b2",
                 "generate_simulation_keys": "5cb476eef31804207d3a94c467f4def05661442b325370ad4775023d3757138c",
                 "_generate_simulation_keys": "140d3e33d99bb3e865f17b2ea88a630eb4b1841809aa1b519468cee8369ec472",
                 "draw_random_seed": "42fb402a3282c789664d45fb988b3ed07b8cec706924d3e6e11e26b44c393502",
@@ -3068,17 +3082,62 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
 
 
 _SIMULATION_ADAPTER_CONTRACTS = {
+    COMPILER_INPUTS_SOURCE: (
+        "ab4df3a33f7b46329e2eb3a4ac7c6a96c75560172f7528e2874e06bed37dae4d",
+        {
+            "compiler_input_paths": "2e9389aca0e3ee57a2a79fe4ef17ba9f09f1fe8eca8711ccfb3e4f5f837d2413",
+            "_is_none": "70af7d997029f74d8784c981b5512e4e6e622af65c8d1ba75d0f55eebafc1a4e",
+        },
+    ),
+    SIMULATION_MEMBERSHIP_SOURCE: (
+        "a57a98eed95f797a3fe7a1a4337db52ecdf78785af4985be4118ae5a4b76a556",
+        {
+            "initialize_subject_membership": "3d9e4107e20e56414489ba06572036dc00f3f950581dcc239e9f1f43b4d3be6b",
+            "activate_subject_membership": "277a6e91b924ca50b5e4bdfc3b5e1d58a2131ddeab82c80838702f7183c2a960",
+            "_empty_subject_membership": "9176841676cd38a179ffecbfdd0b78aa8df87a385b4503dc199cfd7776389a1d",
+            "_activate_subject_membership": "f75db18f16aa2f67a76a5e88cc0b9ab683638e364e97f80685b3ef154f54cc71",
+        },
+    ),
+    FOOTPRINT_SOURCE: (
+        "3435d0f9b6f7f6f223374d5678f79343e509e480238bce3df2829f4e748c7726",
+        {
+            "ArtifactFootprint.__post_init__": "508bd37bbb30d5e0511ddb2de9d98f6c1c2318ab928635b73b413c942d72a4a7",
+            "ScheduledUnit.__post_init__": "2c144891456c3626aaf1b62591a35e6c004e5d182b1ceb12dab4ce10d0b4d7d5",
+            "ResidentInventory.__post_init__": "c3c42a4df472d8fab0ff8c1132f6e17cd7a1dbb578c7fc9f9898d8a4de553804",
+            "ResidentInventory.resident_bytes": "46aa63f56074ead0c13cebc130e4667dcb73744a1c0a2edfd478fb835a7b9b92",
+            "concrete_device_bytes": "14a88daf386078b838eacdf48a33e3c9894b3e958894e6973be7f823b6ffaab0",
+            "plan_resident_bytes": "e9c46841e6663fe1e7b33a952b2bd7c08335e87e70ca813cd0e3314068ab985f",
+            "plan_resident_inventory": "ad8c2a316cade31c67c6ee4ccfcb13d93334971bcac34a9bddb65b39473ece8a",
+            "per_device_footprint": "35c8fc0f90d8a9342d58a87f2286cf08426043a03b3dc5577f4e13adab75cfcd",
+            "layout_footprint": "6d4954af608d5c781e8ae3093a435d745e989333cfa9f3d62570ca366c6a33e6",
+            "sharding_device_ids": "c66e89e2760e52cbdda063cccb1e45e26f78a66be5f9bebb97b28a076261e049",
+            "_walk_wave": "00277db02d7a09bb58776c3b9da6cbab067c49e0079c97c6b563299f1fcea3d3",
+            "_walk_period_folds": "b24a1e035b26b6aada8169115aa7d2319f769e5e7ae7a4530c333b56eaf9c8b1",
+            "_register_outputs": "53c8b7518505e12ff7e2c670a90db42e7d61cf7dcda3591d0a9fb33ab3f2093e",
+            "_resident_inventory": "8f2d1cb122164804dfaeaa79821253732f556dcc65d1b0b82ad4b13a60556f9d",
+            "_device_bytes": "9a13b9a28cbd04171b79b314b94c4ca52c82b4cea75a508477aa59f2b1651a1e",
+            "_group_bytes": "d3921a94db53838b762ad28d47dbd821ccdd061c9b8a3111a531edd6dc5ace3c",
+            "_group_is_present": "0ca9e11967bb6f3677c2ae4f18b306a39d35ff58a15d96ff75d8bcb48d507ab0",
+            "_group_is_consumed": "be4f8158fb0972735e2a5609c453744a62bb5bbb8084de5ea2032f0723cc6539",
+            "_release_after_dispatch": "7c60f35772266db8d9a97c0793b5fb8f15aafa41570f8c24a9c7d12bb4180005",
+            "_fail_if_footprint_is_unplanned": "7e40a8e62d5394d451086773fd4bd9ac08ecde2f5b3ed244c2ad5a8c8826e511",
+            "_fail_if_period_disagrees": "238a0dde28594bfb1a48ac4eccba31453144c123bebe3c61d733ed1528a11c81",
+            "_fail_if_negative": "aee2b71bd25be15a27a70981c5c9f27b78f67a3b53622169be9512db47b300c1",
+            "_fail_if_not_a_device_set": "9d500f39fd8e6e8486888d403cc0c4a80c9c292f35a33644268656270b93d9b1",
+        },
+    ),
     SIMULATION_OPERANDS_SOURCE: (
-        "a71c7feb7d5b3aa0be40ab638a735bb7257adaa9f80cb7d62ee61335d90c59d9",
+        "413d8faddf9b69c2ee63be62f4da376c5b6d32b555c8940ee22b89fca2cddcd1",
         {
             "SubjectArgumentNames.subject_arg_names": "46cc9cd2b5af3c1a622819cf136f77ca33152cb4dbe6a00b2a111d50848d1f4e",
-            "place_simulation_arguments": "88259c62208193838ea91d0e6deefbd200a691dfb248e0cefd7825f654db5b55",
+            "place_simulation_arguments": "fd38dfdc116cc2afeb8bfb9f1e1db13951b4ef4038694a5b9548f1f8e2826b84",
             "_require_operand_headroom": "b5c9e594752891c3fe1c8a5356cf9232dbc3cc8611cd8435985c5e4813099c31",
             "_required_operand_bytes": "59fd695f16874fd63291f8e13dff55411252c5fa6ca72b90260737ac3abf78e6",
             "_operand_leaves": "16b5429e78fa8a8bd71b2f7b232fe2e276c567c40415c40623301b02c4137d06",
             "_paths_below": "b12d8a06f78558f8c618e6c5e3209bb42e0011190230e7a68e660589ad961d52",
             "_place_operand_tree": "4e5754d22e67058a3acf38d11f9e24a54dd7bd2e4a77b51692ca9dac9ca84fa4",
             "_place_operand_leaf": "2e245da8cd56498ca70f0f58c7f21d10964c820335842509cc426c65adc05dc2",
+            "subject_operand_sharding": "7f408b68a50569861eac3e980e9426df3140e27fa65791e98a1cd4e8385de7bb",
         },
     ),
     SIMULATION_UNIT_SOURCE: (
@@ -3090,18 +3149,18 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SIMULATION_HOST_SOURCE: (
-        "b15343ffd7c0426f4d1589b3c7663fcae8187b601361a17a11bb1068921c92bc",
+        "08056a9f79f36a104d8d2d922541650a1a682e0fbb646dca702e8b4ef66d7de1",
         {
-            "ProfiledSimulationOperations.dispatch": "c99e0ee812bb99f97ad5ff6e744a3883ae87964395f7b88a28e6dac15f77bf91",
-            "ProfiledSimulationOperations.compile_candidate": "cf97a3f5ebaaaeabf0cbab5819805da2a37468bb977c0170a61b04e3b72485a1",
-            "_OperationCompiler.__call__": "242680dce065533cb417a18adad10e3277ab2c7fdab8066f80154afa38aa39c0",
+            "ProfiledSimulationOperations.dispatch": "f9902fe6a00e363bb238abe3be592cd56e05037db500bcdd5d5c88e1ab5e4a11",
+            "ProfiledSimulationOperations.compile_candidate": "beec6504b97db1a6dd3456ea28534ad9b8dda2d05c7c1f32535a6e82b3534c45",
+            "_OperationCompiler.__call__": "4f2d9bccfcd9524fef520a64eef658fe2f88484ff7443700e0b987f62f0e9913",
             "_abstract_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
             "_static_identity": "23489d8dc1669d265b3206adce1b77cf1cd2d2162444a2431ec141f3b0ce317a",
             "_operation_peak": "e103a5109d610acb69e4b52428086d1f39e7be16cb72c818eb468aea9fb79b2e",
         },
     ),
     SIMULATION_MEMORY_SOURCE: (
-        "ff6b716efdb2483b284ba39365a65cdddd998078ef43f3984d20cf20e798e914",
+        "cbcc9d23b3d9bd9a2204eae258a039e79c2c27932e223430c94d5ef8990476f0",
         {
             "SimulationMemory.snapshot": "6c4a5f9c11f7540cfc6bdf495fc1a3b3dd1bbc1b2ddc14ef4a058733bf2c344f",
             "SimulationMemory.set_chunk_inputs": "1132e41412c470c63b70847dbaac4a22bb081fcbda2be1b7406b1857703270f7",
@@ -3111,9 +3170,9 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "SimulationMemory.hold": "bd646a4bf1856382dc29c6487c7f11b7a0df8475e13eaff559fa349ee33632b3",
             "SimulationMemory.before_transfer": "7dc46a79cb4f6d561edc90798900314266a3aebb09bc219896611b76d53f0912",
             "SimulationMemory.check_resident": "e0f2aae1b218f4c67ee1b3ead1bd7771ab7740e0bc83ba26fca648e7299e372d",
-            "SimulationMemory.run": "e61ebc91c00338e19ade077ac4b0c3f6d8c3ae0c793945bfd4161dff97ea340c",
+            "SimulationMemory.run": "d6d9cd5147fecc8eb6c31629826bfe562f5413b510590af04836b978bcbd07bc",
             "SimulationMemory.close_unit": "ad93e305391d4eea94af93d4561ff2ff0a699c691f24084f5f1bcb63ae589838",
-            "run_simulation_operation": "2f0976209681b673f016242f4c03566d1d166fa8a75d56bca846e922db3675e4",
+            "run_simulation_operation": "2c0982ac9b27ad92642cfc81da98c9cb4678c20cad7e130d281a0e43f2fdc1d3",
         },
     ),
     SIMULATION_PERIOD_INPUTS_SOURCE: (
@@ -3134,7 +3193,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "_payload_read": "e21661556db28a965ccb171eb9ee1f109992bd81a7c25fdc82066c550022e4a3",
             "_consumer_step": "2d11c2e3653d69682cc29d7f29d95525f81749f3911869baf8ae68d178c23ef1",
             "PreparedReplayReader.reads": "3a9de61be4467a66b9cd87633adaa6be14787697bcb60816796972ad066d0dc5",
-            "PreparedReplayReader.build": "5dc640ef05bd21468e670ab1eb064de2a04bdd0aaab9640b73846590c8ab78ee",
+            "PreparedReplayReader.build": "81f1567656c679ca538b5fca9230befbd96bd189db9f2a07d4cf12823353ea6b",
         },
     ),
     SIMULATION_VALUE_READS_SOURCE: (
@@ -3146,7 +3205,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "PeriodSimulationReads.commit": "160a8585ecc850b713e70422c7124725e3ad3045812ec167eea8ea2271209bca",
             "PeriodSimulationReads.live_values": "14324293d4a4ed4e3853ee801aa47bdba89b38fbb91559daf7aeaac2779a5c32",
             "PeriodSimulationReads.finish": "8097897dff0922356d53736d4c84c2f814bdd64aeca9791d12d4e10ebfc43c95",
-            "PeriodSimulationReads._read_host": "ab2332c40ae3e7668fe3b9f470329c1ea116bebe3ec46c6cf1f92c7dca92e97d",
+            "PeriodSimulationReads._read_host": "414fef3fd580133bf176b4a260185084322127be9f4e6517b9c714b5fd1f67a1",
             "PeriodSimulationReads._check_open_unit": "057505de76b8bc662e1d69a1ba83e5021cca56afb01ab67423c659cff4a3f640",
             "_host_replay_sharding": "aa665562686325f36892f458794d1efa178492c4611e72e11817e52e2a60c739",
         },
@@ -3284,12 +3343,12 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     WORKSPACE_PLANNING_SOURCE: (
-        "b160b500d63661c90e49169b84626e46ca04b149f1e92e03441eccad4f0a07b0",
+        "9e1cd92d569a21fb7c55a4184e6598fadcfe0a9ea4d8b75d1ea6720c29970245",
         {
             "_MemoryAnalyzable.memory_analysis": "28c38165b967325e04356285a49a7f1abab248c1d61cf92c8dffa33408d9637f",
             "WorkspacePlan.__post_init__": "d5aac605f11a499bf65418187c83f288a9e6302e341aac6334a697ebf514982e",
             "workspace_width_candidates": "22699fdc99a437deb660d94cb7849edd184c9a14c5eb05d0b4580afe21cabc5d",
-            "plan_workspace": "bf2c7ad031ade11ecf4aca0711a018e313db6573270639b2a381eca370900654",
+            "plan_workspace": "035374113c39bd1c55b0c97c84602d45c237c9136ea704c28e46f6f3b05e564c",
             "_validate_axes": "0df42ff02f11f7f4e5460fe7c518c300621718ae27f95408ad0aa1696d7ccb5e",
             "_validate_axis": "05e956236b961d3872faf3ab84245b3651f169a912890465a02e43784db1cf6d",
             "_validate_coordinates": "5453bf694d34197a0496b8af31085a2c6cf57bd46e866f0981ec932b8dfe9e53",
@@ -3311,6 +3370,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "_peak_field": "05c48f60a52e95836191e153adfb1afa3efbdf6617dd7ade2f50f801cbb9e341",
             "_normalize_peak_field": "017c42bd9ac7a4d410032ff677952d73a2999657554295c1dce234b45d92502d",
             "_non_negative_bytes": "fffd8515cfa416aea879c3725b903b4a0ba7773bef20f7344cae8997905de008",
+            "_resident_bytes_for_candidate": "365e0864a5ae864c0594a64c5d6877623f6dfc9a50b5c696b50ffe904ff593c3",
         },
     ),
 }
@@ -3432,11 +3492,12 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         label="backward output-layout transport",
         contracts={
             "_evaluate_edge_fold": "346ea377233105a19140e0d310c7f5af071ab3ddfa774df618c7245784f3036a",
+            "_lower_and_compile_wave": "5861fc4d596eafe76732a20b20a831e2abe1b55a24b3d1c19968b5bc89e821ff",
             "_run_period_kernel": "7507b0912580b34a2e83b9d82d5cf7e5c2f2e0606b2f3e8e8bcf5718a169ffd6",
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "dc80f36f769b66162afd10a243b1e056b4fc40fa3931dd9ea58c251924f83902",
+            "_compile_all_functions": "5d2f6e4201b212fa51b909caa184d89bfde3a7263ca11be6a3cb1a09bcd7f45e",
             "_resolve_output_layouts_and_lowering_keys": "231acc7b714916f20dd60dc8c7545f7c1f2baab67cd1f5babd6cd0ff99e4b77d",
             "_mark_reused_transfers": "2b11ec8152b081ae0e2666a46c79b46ef5062ce2738717da0c93bcc502280c56",
             "_consumer_key": "44f91b9312a058528a7f7d34b843eb23efaae21783e834cc5fa06389f4006c73",
@@ -3451,13 +3512,42 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_assert_lowered_output_roles": "62fcff4b0e2d8566017c980c72046445639aba034da0be42480dd52a9e499871",
             "_attach_resolved_output_layout": "f707999431091164dc9aaa784b89560044f95c11c9cf3fe9631cb094952f9944",
             "_publish_kernel_value": "df201c75574aab5280bc841d51cfb143c6a2939a65cc5e8bdee8884760d3e2d2",
+            "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
+            "_resident_inventory_by_triple": "cc8ea878525c089c25f56be1bf858394c142a8d47536d3f27ff144d1d9562649",
+            "_candidate_resident_bytes": "e0c819f129b362a5490302b8e758bce8c655df753bcb3476f2a511bcd2fc517d",
+            "_compiler_reads_source": "20c00aa592517ee03fba67359c951a15152129e96f3d7ccbf38415506f2fa60e",
+            "_period_copy_reservations": "b5ffa438a989ee6e746686b0553ffb90708d4be519dcf19235cddd8cd4623651",
+            "_internal_reservations_by_cell": "f124d4d1a32d92a70f139138f66108ee97ca4ffc13e7f3260ea2469a9890abcb",
+            "_internal_leaf_bytes": "ece84ac1a1905891efcec6e59693074f62da35ca50e9185f0fae55c2829f1206",
+            "_retained_base_space_arrays": "b1c98e73406bfce36a00dd3a398da0ecd893d2e52e6c3911de59962126800c7c",
+            "_CandidateResidencyLookup.__call__": "7090dee9635f84f107ac4758fd21811925a264e73738341224298b43859f082e",
         },
     )
+    if (
+        _transport_module_surface(tree)
+        != "982b65192ef304e806073420bb48927dcb38844b6d7f14ca5409ebf0f7bc35f4"
+    ):
+        errors.append("backward output-layout transport: module bindings changed")
     try:
         solve = _definition(tree=tree, name="solve")
     except ValueError as error:
         errors.append(f"backward output-layout transport: {error}")
     else:
+        fixed_inputs = [
+            keyword.value
+            for call in ast.walk(solve)
+            if isinstance(call, ast.Call)
+            and _call_name(call) == "_compile_all_functions"
+            for keyword in call.keywords
+            if keyword.arg == "fixed_input_arrays"
+        ]
+        if len(fixed_inputs) != 1 or not _expression_matches(
+            node=fixed_inputs[0],
+            source="tuple((space.states, space.discrete_actions, space.continuous_actions) for space in base_state_action_spaces.values())",
+        ):
+            errors.append(
+                "backward output-layout transport: fixed owner inputs changed"
+            )
 
         def _is_kernel_output(statement: ast.stmt) -> bool:
             return (
@@ -4842,8 +4932,37 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
     return mutations
 
 
+_SUPPLEMENTAL_SOURCE_MUTATIONS = {
+    "compiler_inputs:eliminated_input_counted_by_compiler": (
+        COMPILER_INPUTS_SOURCE,
+        "return frozenset(path for path, sharding in with_paths if sharding is not None)",
+        "return frozenset(path for path, sharding in with_paths)",
+    ),
+    "simulation_membership:entry_period_changed": (
+        SIMULATION_MEMBERSHIP_SOURCE,
+        "entering = starting_periods == period",
+        "entering = starting_periods < period",
+    ),
+}
+
+
+def supplemental_direct_flow_mutation_specs(
+    *, repo_root: Path
+) -> dict[str, dict[str, str]]:
+    """Build explicit source controls outside the pinned compatibility registry."""
+    specs = {}
+    for name, (relative, old, new) in _SUPPLEMENTAL_SOURCE_MUTATIONS.items():
+        original = (repo_root / relative).read_text(encoding="utf-8")
+        if original.count(old) != 1 or old == new:
+            raise ValueError(f"{name}: supplemental mutation anchor is not unique")
+        mutated = original.replace(old, new)
+        ast.parse(mutated, filename=relative)
+        specs[name] = {"path": relative, "source": mutated}
+    return specs
+
+
 def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
-    """Return semantic mutations across every certified corridor source."""
+    """Return the pinned candidate-transport mutation registry."""
     root = repo_root.resolve()
     max_source = (root / MAX_Q_SOURCE).read_text(encoding="utf-8")
     argmax_source = (root / ARGMAX_SOURCE).read_text(encoding="utf-8")
@@ -7666,7 +7785,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": relative,
             "source": replace_once(source=original, old=old, new=new, label=name),
         }
-    mutated_paths = {spec["path"] for spec in specs.values()}
+    supplemental = supplemental_direct_flow_mutation_specs(repo_root=root)
+    if set(specs) & set(supplemental):
+        raise ValueError("Supplemental mutation names overlap the pinned registry")
+    mutated_paths = {spec["path"] for spec in (*specs.values(), *supplemental.values())}
     certified_paths = set(_CERTIFIED_CORRIDOR_SOURCES)
     if mutated_paths != certified_paths:
         raise ValueError(
@@ -7699,6 +7821,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         relative: (root / relative).read_text(encoding="utf-8")
         for relative in _CERTIFIED_CORRIDOR_SOURCES
     }
+    registered = direct_flow_mutation_specs(repo_root=root)
+    supplemental = supplemental_direct_flow_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -7706,7 +7830,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             target = temp_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(source, encoding="utf-8")
-        for name, spec in direct_flow_mutation_specs(repo_root=root).items():
+        for name, spec in (registered | supplemental).items():
             relative = spec["path"]
             target = temp_root / relative
             target.write_text(spec["source"], encoding="utf-8")
@@ -7718,6 +7842,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+    supplemental_cases = {name: cases.pop(name) for name in supplemental}
+    supplemental_admitted = sorted(
+        name for name, result in supplemental_cases.items() if not result["rejected"]
+    )
     admitted = sorted(name for name, result in cases.items() if not result["rejected"])
     count_matches_expected = len(cases) == EXPECTED_DIRECT_FLOW_MUTATION_COUNT
     mutation_names_sha256 = _mutation_name_digest(tuple(cases))
@@ -7734,9 +7862,13 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "expected_mutation_names_sha256": (EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256),
         "mutation_names_match_expected": names_match_expected,
         "admitted_mutations": admitted,
+        "supplemental_mutations": supplemental_cases,
+        "supplemental_mutation_count": len(supplemental_cases),
+        "admitted_supplemental_mutations": supplemental_admitted,
         "all_rejected": (
             clean["ok"]
             and not admitted
+            and not supplemental_admitted
             and count_matches_expected
             and names_match_expected
         ),

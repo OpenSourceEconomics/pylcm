@@ -412,12 +412,50 @@ class _ReferenceReader:
         )
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _SnapshotObservation:
+    """Host-only evidence of immutable authority and exact transported values."""
+
+    metadata_identity: int
+    authority_identities: tuple[tuple[ArtifactKey, int], ...]
+    payload_type: type
+    values: np.ndarray
+    device_ids: tuple[int, ...]
+
+
+def _observe_snapshot(snapshot: ReplayRouteSnapshot) -> _SnapshotObservation:
+    """Read the reference route's one policy without retaining device copies."""
+    policy = cast("Policy", snapshot.artifacts[POLICY_KEY])
+    return _SnapshotObservation(
+        metadata_identity=id(snapshot.metadata),
+        authority_identities=tuple(
+            (key, id(authority)) for key, authority in snapshot.authorities.items()
+        ),
+        payload_type=type(policy),
+        values=np.array(policy.values, copy=True),
+        device_ids=(
+            tuple(device.id for device in policy.values.sharding.mesh.devices.flat)
+            if isinstance(policy.values, jax.Array)
+            and isinstance(policy.values.sharding, jax.NamedSharding)
+            else tuple(device.id for device in policy.values.devices())
+            if isinstance(policy.values, jax.Array)
+            else ()
+        ),
+    )
+
+
 @dataclasses.dataclass(kw_only=True)
 class _RouteAudit:
     """Record object identities without participating in compiled execution."""
 
     validated_snapshots: list[int] = dataclasses.field(default_factory=list)
     reader_snapshots: list[int] = dataclasses.field(default_factory=list)
+    validated_contents: list[_SnapshotObservation] = dataclasses.field(
+        default_factory=list
+    )
+    reader_contents: list[_SnapshotObservation] = dataclasses.field(
+        default_factory=list
+    )
     requirement_contexts: list[ReplayModelContext] = dataclasses.field(
         default_factory=list
     )
@@ -498,6 +536,7 @@ class ReferenceReplayRoute(ExecutableReplayRoute):
         if context.state_names != ("wealth", "productivity"):
             raise ValueError("The replay validation context has wrong state roles.")
         self.audit.validated_snapshots.append(id(snapshot))
+        self.audit.validated_contents.append(_observe_snapshot(snapshot))
         self.audit.validation_contexts.append(context)
         self.audit.validation_artifact_keys.append(tuple(snapshot.artifacts))
         policy = cast("Policy", snapshot.artifacts[POLICY_KEY])
@@ -522,6 +561,7 @@ class ReferenceReplayRoute(ExecutableReplayRoute):
                 "The reference route requires exactly the consumption action."
             )
         self.audit.reader_snapshots.append(id(snapshot))
+        self.audit.reader_contents.append(_observe_snapshot(snapshot))
         self.audit.reader_contexts.append(context)
         self.audit.reader_artifact_keys.append(tuple(snapshot.artifacts))
         return _ReferenceReader(

@@ -117,6 +117,7 @@ class SimulationMemory:
         arguments: Mapping[str, object],
         subject_arg_names: tuple[str, ...] = (),
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
+        subject_outputs: bool = False,
     ) -> T:
         """Profile one pure host operation and own its ready result for this unit."""
         result = cast(
@@ -126,6 +127,7 @@ class SimulationMemory:
                 arguments=arguments,
                 subject_arg_names=subject_arg_names,
                 static_arguments=static_arguments,
+                subject_outputs=subject_outputs,
                 devices=self.subject_devices,
                 live_footprint=self.snapshot,
                 budget_devices=self.devices,
@@ -148,6 +150,7 @@ def run_simulation_operation[T](
     arguments: Mapping[str, object],
     subject_arg_names: tuple[str, ...] = (),
     static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
+    subject_outputs: bool = False,
 ) -> T:
     """Execute a pure operation under the current optional workspace budget."""
     if memory is None:
@@ -157,4 +160,5 @@ def run_simulation_operation[T](
         arguments=arguments,
         subject_arg_names=subject_arg_names,
         static_arguments=static_arguments,
+        subject_outputs=subject_outputs,
     )

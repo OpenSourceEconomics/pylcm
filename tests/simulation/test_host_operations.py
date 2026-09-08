@@ -7,15 +7,19 @@ import dataclasses
 import gc
 import weakref
 from collections.abc import Callable, Mapping
+from functools import partialmethod
 from types import MappingProxyType
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.workspace_planning import compiler_peak_bytes
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.membership import initialize_subject_membership
+from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
 from _lcm.simulation.simulate import _lookup_values_from_indices
 from _lcm.simulation.transitions import (
@@ -251,3 +255,120 @@ def test_static_float_bindings_preserve_signed_zero() -> None:
         )
         np.testing.assert_array_equal(result, np.full(4, np.signbit(selector)))
     assert len(dispatcher.cache) == 2
+
+
+def test_constant_membership_outputs_keep_the_actual_ordered_subject_layout() -> None:
+    """Constant-output initialization cannot widen to excluded or replicated devices."""
+    devices = jax.devices()
+    operations = ProfiledSimulationOperations()
+    for ordered in (
+        (devices[3], devices[1], devices[2]),
+        (devices[2], devices[3], devices[1]),
+    ):
+        mesh = jax.make_mesh(
+            (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=ordered
+        )
+        sharding = jax.NamedSharding(mesh, jax.P("X"))
+        regimes = jax.device_put(np.arange(6, dtype=np.int32), sharding)
+        roles = jax.device_put(np.arange(10, 16, dtype=np.int32), sharding)
+        expected = initialize_subject_membership(
+            initial_regime_ids=regimes,
+            initial_own_stakeholder=roles,
+        )
+        memory = SimulationMemory(
+            budget_bytes=2**24,
+            devices=tuple(devices),
+            subject_devices=ordered,
+            operations=operations,
+            inputs=measure_buffer_footprint(tree=(regimes, roles, expected)),
+        )
+        actual = initialize_subject_membership(
+            initial_regime_ids=regimes,
+            initial_own_stakeholder=roles,
+            memory=memory,
+        )
+        for output, direct in zip(actual, expected, strict=True):
+            assert isinstance(output.sharding, jax.NamedSharding)
+            assert tuple(output.sharding.mesh.devices.flat) == ordered
+            assert output.sharding.spec == jax.P("X")
+            assert output.sharding.device_set == set(ordered)
+            np.testing.assert_array_equal(output, direct)
+        np.testing.assert_array_equal(actual[0], np.full(6, -(2**31), dtype=np.int32))
+        np.testing.assert_array_equal(actual[1], np.full(6, -1, dtype=np.int32))
+        np.testing.assert_array_equal(regimes, np.arange(6, dtype=np.int32))
+        np.testing.assert_array_equal(roles, np.arange(10, 16, dtype=np.int32))
+        memory.close_unit()
+    assert len(operations.cache) == 2
+
+
+# keyword-only-exempt: library-callback=functools.partialmethod
+def _record_compiled_output(
+    self: jax.stages.Compiled,
+    *,
+    original: Callable[..., object],
+    calls: list[tuple[jax.stages.Compiled, object]],
+    **kwargs: Any,
+) -> object:
+    result = original(self, **kwargs)
+    calls.append((self, result))
+    return result
+
+
+def test_subject_output_contract_selects_its_own_profile_and_executable(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Identical arguments keep distinct replicated and subject-output profiles."""
+    all_devices = jax.devices()
+    ordered = (all_devices[3], all_devices[1], all_devices[2])
+    mesh = jax.make_mesh((3,), ("X",), (jax.sharding.AxisType.Auto,), devices=ordered)
+    state = jax.device_put(
+        np.arange(6, dtype=np.int32), jax.NamedSharding(mesh, jax.P("X"))
+    )
+    owner = _OwnedInputs(arrays=[state])
+    operations = ProfiledSimulationOperations()
+    calls: list[tuple[jax.stages.Compiled, object]] = []
+    monkeypatch.setattr(
+        jax.stages.Compiled,
+        "__call__",
+        partialmethod(
+            _record_compiled_output,
+            original=jax.stages.Compiled.__call__,
+            calls=calls,
+        ),
+    )
+    profiles = []
+    for subject_outputs in (False, True, False):
+        result = operations.dispatch(
+            function=_static_zero_sign,
+            arguments={"state": state},
+            static_arguments={"selector": -0.0},
+            subject_arg_names=("state",),
+            subject_outputs=subject_outputs,
+            devices=ordered,
+            live_footprint=owner,
+            budget_devices=tuple(all_devices),
+            budget_bytes=2**24,
+        )
+        assert len(calls) == len(profiles) + 1
+        executable, dispatched = calls[-1]
+        assert result is dispatched  # No placement after the profiled dispatch.
+        profile = next(
+            item for item in operations.cache.values() if item.executable is executable
+        )
+        profiles.append(profile)
+        assert profile.peak_bytes == compiler_peak_bytes(compiled=executable, widths={})
+        assert isinstance(result, jax.Array)
+        assert isinstance(result.sharding, jax.NamedSharding)
+        assert tuple(result.sharding.mesh.devices.flat) == ordered
+        assert result.sharding.spec == (jax.P("X") if subject_outputs else jax.P())
+        assert result.sharding.is_equivalent_to(executable.output_shardings, ndim=1)
+        assert {shard.device for shard in result.addressable_shards} == set(ordered)
+        assert all(
+            shard.data.nbytes == (2 if subject_outputs else 6) * result.dtype.itemsize
+            for shard in result.addressable_shards
+        )
+        np.testing.assert_array_equal(result, np.ones(6, dtype=np.bool_))
+    assert len(operations.cache) == 2
+    assert profiles[0] is profiles[2]
+    assert profiles[0] is not profiles[1]
+    np.testing.assert_array_equal(state, np.arange(6, dtype=np.int32))

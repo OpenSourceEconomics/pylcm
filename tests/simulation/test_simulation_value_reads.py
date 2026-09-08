@@ -733,3 +733,35 @@ def test_host_replay_preserves_distinct_artifact_keys_for_one_numpy_original() -
     assert copied_flags.is_deleted()
     np.testing.assert_array_equal(copied_policy, [True, False, True])
     np.testing.assert_array_equal(original, [True, False, True])
+
+
+@pytest.mark.parametrize("dtype", [np.bool_, np.int32])
+@pytest.mark.parametrize("offset", [0, 16])
+def test_host_replay_copy_lifetimes_are_independent_of_numpy_alignment(
+    *, dtype: type, offset: int
+) -> None:
+    """Aligned host storage cannot join otherwise independent artifact lifetimes."""
+    storage = np.empty(128, dtype=np.uint8)
+    start = (-storage.ctypes.data % 64) + offset
+    original = storage[start : start + 3 * np.dtype(dtype).itemsize].view(dtype)
+    original[:] = [1, 0, 1]
+    assert original.ctypes.data % 64 == offset
+    policy = _host_replay_read(unit="alive")
+    flags = replace(
+        policy, target=replace(policy.target, artifact_key=DISSOLUTION_FLAG)
+    )
+    owner = PeriodSimulationReads(
+        period=0,
+        devices=(jax.devices()[0],),
+        reads_by_unit={"alive": (policy, flags)},
+        release_enabled=True,
+    )
+    first = owner.read(unit="alive", read=policy, value=original)
+    second = owner.read(unit="alive", read=flags, value=original)
+    assert not np.shares_memory(np.asarray(first), original)
+    assert not shares_a_buffer(first=first, second=second)
+    owner.commit(unit="alive", outputs={"flags": second})
+    owner.finish()
+    assert first.is_deleted()
+    np.testing.assert_array_equal(original, [1, 0, 1])
+    np.testing.assert_array_equal(second, [1, 0, 1])

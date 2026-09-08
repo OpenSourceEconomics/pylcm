@@ -41,6 +41,8 @@ except RuntimeError:
 
 # This fixture defines categoricals and arrays at import, after topology setup.
 from benchmarks.asv._simulation_witnesses import dissolution
+from tests.conformance_solver import ReferenceReplayRoute, ReferenceSolver
+from tests.test_external_solver_conformance import _PARAMS, _model, _solve
 
 pytestmark = pytest.mark.skipif(
     _TOPOLOGY_UNAVAILABLE, reason="Four-device topology requires an isolated process"
@@ -107,11 +109,71 @@ def test_host_replay_has_no_allocation_on_an_excluded_default_device(
     )
     request.node.user_properties.append(("allocation_stages", repr(allocations)))
     assert allocations == [subject_ids]
+    if isinstance(placed.sharding, jax.NamedSharding):
+        assert tuple(device.id for device in placed.sharding.mesh.devices.flat) == (
+            subject_ids
+        )
+    else:
+        assert tuple(device.id for device in placed.devices()) == subject_ids
     np.testing.assert_array_equal(placed, [2.0, 5.0, 9.0])
     owner.commit(unit="alive", outputs=placed + 1)
     owner.finish()
     assert placed.is_deleted()
     np.testing.assert_array_equal(original, [2.0, 5.0, 9.0])
+
+
+@pytest.mark.parametrize("subject_ids", [(3,), (3, 1)])
+def test_external_reader_consumes_the_exact_validated_placed_cell(
+    *, subject_ids: tuple[int, ...]
+) -> None:
+    """Keep authority while payload and node copies use the reader's device order."""
+    model = _model(solver=ReferenceSolver())
+    solution = _solve(model=model)
+    prepared = model._resolve_solution_result(
+        solution=solution, flat_params=model._process_params(_PARAMS)
+    )[3][0]["active"]
+    devices = tuple(jax.devices()[index] for index in subject_ids)
+    owner = PeriodSimulationReads(
+        period=0,
+        devices=devices,
+        reads_by_unit={"active": prepared.reads()},
+        release_enabled=True,
+    )
+    reader = prepared.build(owner=owner, devices=devices)
+    assert callable(reader)
+    route = prepared.route
+    assert isinstance(route, ReferenceReplayRoute)
+    audit = route.audit
+    assert audit.validated_snapshots[-1] == audit.reader_snapshots[-1]
+    assert audit.validation_contexts[-1] is audit.reader_contexts[-1]
+    original = audit.validated_contents[0]
+    placed = audit.validated_contents[-1]
+    consumed = audit.reader_contents[-1]
+    assert original.metadata_identity == placed.metadata_identity
+    assert placed.metadata_identity == consumed.metadata_identity
+    assert original.authority_identities == placed.authority_identities
+    assert placed.authority_identities == consumed.authority_identities
+    assert placed.device_ids == consumed.device_ids == subject_ids
+    assert original.values.dtype == placed.values.dtype == consumed.values.dtype
+    np.testing.assert_array_equal(original.values, placed.values)
+    np.testing.assert_array_equal(placed.values, consumed.values)
+    context = audit.reader_contexts[-1]
+    for old_nodes, new_nodes in (
+        (prepared.context.state_nodes, context.state_nodes),
+        (prepared.context.action_nodes, context.action_nodes),
+    ):
+        assert tuple(old_nodes) == tuple(new_nodes)
+        for name, value in new_nodes.items():
+            np.testing.assert_array_equal(value, old_nodes[name])
+            assert value.dtype == old_nodes[name].dtype
+            actual = (
+                tuple(device.id for device in value.sharding.mesh.devices.flat)
+                if isinstance(value.sharding, jax.NamedSharding)
+                else tuple(device.id for device in value.devices())
+            )
+            assert actual == subject_ids
+    owner.commit(unit="active", outputs=())
+    owner.finish()
 
 
 def test_repeated_host_replay_occurrences_reuse_the_same_addressed_copy() -> None:

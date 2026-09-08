@@ -81,6 +81,7 @@ def plan_workspace[Compiled](
     budget_bytes: int | None = None,
     peak_bytes_for: Callable[[Compiled], int] | None = None,
     resident_bytes: int = 0,
+    resident_bytes_for: Callable[[Compiled], int] | None = None,
 ) -> WorkspacePlan[Compiled]:
     """Compile the width frontier widest-first and return the first candidate that fits.
 
@@ -98,6 +99,11 @@ def plan_workspace[Compiled](
     reach the budget is refused before any candidate is compiled, since no width
     could serve it.
 
+    ``resident_bytes_for`` may refine that lower bound for each executable, for
+    example when compilation removes an argument whose owner stays live. It
+    returns total external residency, never a replacement compiler peak. This
+    lookup belongs to the current invocation, not to an executable cache.
+
     The returned executable is the exact object compiled for the selected candidate;
     the planner neither executes it nor recompiles the winner.
     """
@@ -111,6 +117,8 @@ def plan_workspace[Compiled](
     if peak_bytes_for is not None and not callable(peak_bytes_for):
         msg = "The workspace peak lookup must be callable or None."
         raise TypeError(msg)
+    if resident_bytes_for is not None and not callable(resident_bytes_for):
+        raise TypeError("The workspace residency lookup must be callable or None.")
 
     candidates = _workspace_width_candidates(
         axes=declared_axes,
@@ -130,14 +138,26 @@ def plan_workspace[Compiled](
         )
         raise ExecutionPlanningError(msg)
 
+    least_total: int | None = None
     least_peak: int | None = None
+    least_resident = resident
     for widths in candidates:
         compiled = compile_candidate(widths)
         peak_bytes = _peak_bytes_for_candidate(
             compiled=compiled, widths=widths, peak_bytes_for=peak_bytes_for
         )
-        least_peak = peak_bytes if least_peak is None else min(least_peak, peak_bytes)
-        if peak_bytes + resident <= budget:
+        candidate_resident = _resident_bytes_for_candidate(
+            compiled=compiled,
+            widths=widths,
+            lower_bound=resident,
+            resident_bytes_for=resident_bytes_for,
+        )
+        total = peak_bytes + candidate_resident
+        if least_total is None or total < least_total:
+            least_total = total
+            least_peak = peak_bytes
+            least_resident = candidate_resident
+        if total <= budget:
             return WorkspacePlan(
                 widths=widths, peak_bytes=peak_bytes, compiled=compiled
             )
@@ -146,13 +166,14 @@ def plan_workspace[Compiled](
         msg = (
             "The explicitly requested workspace widths require "
             f"{least_peak} peak bytes, exceeding the {budget}-byte budget "
-            f"with {resident} resident bytes at the node's position."
+            f"with {least_resident} resident bytes at the node's position."
         )
     else:
         msg = (
             "No workspace-width candidate fits the "
-            f"{budget}-byte budget with {resident} resident bytes at the node's "
-            f"position; the smallest reported peak is {least_peak} bytes."
+            f"{budget}-byte budget; the smallest total is {least_total} bytes "
+            f"({least_peak} compiler peak plus {least_resident} resident bytes "
+            "at the node's position)."
         )
     raise ExecutionPlanningError(msg)
 
@@ -377,6 +398,30 @@ def _peak_bytes_for_candidate[Compiled](
             f"{dict(widths)!r}."
         )
         raise ExecutionPlanningError(msg) from exc
+
+
+def _resident_bytes_for_candidate[Compiled](
+    *,
+    compiled: Compiled,
+    widths: Mapping[str, int],
+    lower_bound: int,
+    resident_bytes_for: Callable[[Compiled], int] | None,
+) -> int:
+    """Validate a candidate-specific inventory without changing its raw peak."""
+    if resident_bytes_for is None:
+        return lower_bound
+    try:
+        resident = _validate_resident_bytes(resident_bytes=resident_bytes_for(compiled))
+    except Exception as error:
+        raise ExecutionPlanningError(
+            f"Workspace residency lookup failed for widths {dict(widths)!r}."
+        ) from error
+    if resident < lower_bound:
+        raise ExecutionPlanningError(
+            "Workspace residency lookup returned fewer bytes than the declared "
+            f"lower bound for widths {dict(widths)!r}."
+        )
+    return resident
 
 
 def compiler_peak_bytes[Compiled](

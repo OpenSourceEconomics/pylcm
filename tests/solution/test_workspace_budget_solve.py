@@ -13,6 +13,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 import cloudpickle
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -40,6 +41,11 @@ _ACTION_EXTENT = (
 _CAPTURE_TARGET = "working_life@0"
 # Synthetic compiler peak per unit of width product.
 _BYTES_PER_ACTION = 1000
+
+
+def _fixed_owner_bytes() -> int:
+    """Three wealth/consumption nodes, three params, four V cells, five int32s."""
+    return 13 * jnp.zeros(()).dtype.itemsize + 5 * 4
 
 
 def _model(
@@ -132,7 +138,7 @@ def test_budget_selects_the_widest_feasible_action_block(
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        device_memory_bytes=2 * _BYTES_PER_ACTION,
+        device_memory_bytes=_fixed_owner_bytes() + 2 * _BYTES_PER_ACTION,
     )
 
     assert _captured_widths(tmp_path) == {"main": {"action_product": 2, "cell": 1}}
@@ -145,7 +151,7 @@ def test_budget_above_every_candidate_keeps_the_full_action_product(
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
+        device_memory_bytes=_fixed_owner_bytes() + _ACTION_EXTENT * _BYTES_PER_ACTION,
     )
 
     assert _captured_widths(tmp_path) == {
@@ -160,7 +166,7 @@ def test_budget_above_every_candidate_lowers_only_the_full_action_product(
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
+        device_memory_bytes=_fixed_owner_bytes() + _ACTION_EXTENT * _BYTES_PER_ACTION,
     )
 
     assert [
@@ -177,7 +183,7 @@ def test_budget_lowers_widths_descending_until_one_fits(
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        device_memory_bytes=2 * _BYTES_PER_ACTION,
+        device_memory_bytes=_fixed_owner_bytes() + 2 * _BYTES_PER_ACTION,
     )
 
     assert [
@@ -202,7 +208,7 @@ def test_budgeted_values_agree_with_the_unbudgeted_solve(
     budgeted = _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        device_memory_bytes=2 * _BYTES_PER_ACTION,
+        device_memory_bytes=_fixed_owner_bytes() + 2 * _BYTES_PER_ACTION,
     )
     assert _captured_widths(tmp_path) == {"main": {"action_product": 2, "cell": 1}}
 
@@ -216,7 +222,7 @@ def test_budgeted_values_agree_with_the_unbudgeted_solve(
 
 def test_budget_below_every_candidate_fails_closed(*, monkeypatch, tmp_path) -> None:
     """One byte fits no compiled core, so planning refuses before backward induction."""
-    with pytest.raises(ExecutionPlanningError, match="No workspace-width candidate"):
+    with pytest.raises(ExecutionPlanningError, match="leaving nothing"):
         _solve_capturing(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
@@ -232,7 +238,7 @@ def fixed_width_solve(*, synthetic_peaks, monkeypatch, tmp_path) -> dict[str, ob
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
+        device_memory_bytes=_fixed_owner_bytes() + _ACTION_EXTENT * _BYTES_PER_ACTION,
         axis_widths={"action_product": 4},
     )
     return {
@@ -274,7 +280,7 @@ def test_fixed_action_product_width_over_budget_names_the_request(
         _solve_capturing(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
-            device_memory_bytes=4 * _BYTES_PER_ACTION - 1,
+            device_memory_bytes=_fixed_owner_bytes() + 4 * _BYTES_PER_ACTION - 1,
             axis_widths={"action_product": 4},
         )
 
