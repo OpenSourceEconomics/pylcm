@@ -29,6 +29,7 @@ inspect grids, signatures, and Python source) are a separate concern.
 
 import inspect
 import logging
+import struct
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
@@ -65,14 +66,27 @@ class _SerialValidationRequired(Exception):  # noqa: N818
     """Select the original diagnostic route before publishing any warning."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class _StateProbabilitySummary:
+    """A call-owned reduced result; never retain the probability grid itself."""
+
+    shape: tuple[int, ...]
+    flag: jax.Array
+    bound_inputs: tuple[object, ...] = field(repr=False)
+    """Keep identity-keyed immutable operands alive until the summary closes."""
+
+
 @dataclass(kw_only=True)
 class _ValidationSummary:
-    """Call-owned reduced flags, never parameters or cached validity."""
+    """Call-owned flags and bindings, never validity retained across calls."""
 
     memory: SimulationMemory | None = None
     flags: list[jax.Array] = field(default_factory=list)
     spaces: dict[tuple[RegimeName, tuple[tuple[str, int], ...]], StateActionSpace] = (
         field(default_factory=dict, repr=False)
+    )
+    state_probabilities: dict[tuple[object, ...], _StateProbabilitySummary] = field(
+        default_factory=dict, repr=False
     )
 
     def state_action_space(
@@ -123,6 +137,7 @@ class _ValidationSummary:
         jax.block_until_ready(self.flags)
         self.flags.clear()
         self.spaces.clear()
+        self.state_probabilities.clear()
         if self.memory is not None:
             self.memory.close_unit()
 
@@ -1108,6 +1123,28 @@ def _validate_state_transition_single(
     func = transition.func
     sig_params = tuple(inspect.signature(func).parameters)
 
+    binding = (
+        _state_probability_binding(
+            transition=transition,
+            signature_names=sig_params,
+            state_action_space=state_action_space,
+            regime_params=regime_params,
+            regime_name=regime_name,
+            age=age,
+            period=period,
+        )
+        if summary is not None and summary.memory is None
+        else None
+    )
+    if _append_cached_state_probability(
+        summary=summary,
+        binding=binding,
+        transition=transition,
+        regime_name=regime_name,
+        age=age,
+    ):
+        return
+
     grid_args: dict[StateOrActionName, FloatND | IntND] = {}
     scalar_kwargs: dict[str, object] = {}
     period_int32 = jnp.int32(period)
@@ -1167,6 +1204,101 @@ def _validate_state_transition_single(
         age=age,
         summary=summary,
     )
+    _remember_state_probability(summary=summary, binding=binding, shape=probs.shape)
+
+
+def _append_cached_state_probability(
+    *,
+    summary: _ValidationSummary | None,
+    binding: tuple[tuple[object, ...], tuple[object, ...]] | None,
+    transition: _StochasticStateTransition,
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+) -> bool:
+    """Append a call-owned flag only after checking this occurrence's shape."""
+    if summary is None or binding is None:
+        return False
+    cached = summary.state_probabilities.get(binding[0])
+    if cached is None:
+        return False
+    _check_state_outcome_axis(
+        shape=cached.shape,
+        transition=transition,
+        regime_name=regime_name,
+        age=age,
+        summary=summary,
+    )
+    summary.flags.append(cached.flag)
+    return True
+
+
+def _remember_state_probability(
+    *,
+    summary: _ValidationSummary | None,
+    binding: tuple[tuple[object, ...], tuple[object, ...]] | None,
+    shape: tuple[int, ...],
+) -> None:
+    """Retain the completed reduction and immutable bindings, not probabilities."""
+    if summary is None or binding is None:
+        return
+    key, bound_inputs = binding
+    summary.state_probabilities[key] = _StateProbabilitySummary(
+        shape=shape, flag=summary.flags[-1], bound_inputs=bound_inputs
+    )
+
+
+def _state_probability_binding(
+    *,
+    transition: _StochasticStateTransition,
+    signature_names: tuple[str, ...],
+    state_action_space: StateActionSpace,
+    regime_params: FlatRegimeParams,
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+    period: int,
+) -> tuple[tuple[object, ...], tuple[object, ...]] | None:
+    """Identify this pure law's exact immutable inputs inside one preflight.
+
+    Model numerical functions obey JAX's purity contract. Mutable or opaque
+    explicit operands decline reuse; a callable identity alone never suffices.
+    Age and period enter the key whenever consumed. Outcome count is checked
+    separately for every occurrence, including when the numerical inputs repeat.
+    """
+    arguments: list[tuple[str, object]] = []
+    bound_inputs: list[object] = [transition.func]
+    actions = state_action_space.actions
+    for name in signature_names:
+        if name == "period":
+            value: object = period
+        elif name == "age":
+            value = age
+        elif name in state_action_space.states:
+            value = state_action_space.states[name]
+        elif name in actions:
+            value = actions[name]
+        elif name in regime_params:
+            value = regime_params[name]
+        else:
+            return None
+        if isinstance(value, jax.Array):
+            token: object = (jax.Array, id(value))
+        elif type(value) in (bool, int, str, type(None)):
+            token = (type(value), value)
+        elif type(value) is float:
+            token = (float, struct.pack("!d", value))
+        else:
+            return None
+        arguments.append((name, token))
+        bound_inputs.append(value)
+    key = (
+        regime_name,
+        transition.state_name,
+        transition.target_regime_name,
+        transition.phase,
+        id(transition.func),
+        tuple(arguments),
+    )
+    return key, tuple(bound_inputs)
 
 
 def _check_state_probs(
@@ -1178,26 +1310,13 @@ def _check_state_probs(
     summary: _ValidationSummary | None = None,
 ) -> None:
     """Assert outcome-axis size, [0, 1] range, and sum-to-1 on a probs array."""
-    qualifiers = []
-    if transition.target_regime_name is not None:
-        qualifiers.append(f"target regime '{transition.target_regime_name}'")
-    if transition.phase is not None:
-        # A `Phased` law has two variants under one state name; without the phase the
-        # message would not say which of them is malformed.
-        qualifiers.append(f"{transition.phase} phase")
-    state_label = f"state '{transition.state_name}'"
-    if qualifiers:
-        state_label += f" ({', '.join(qualifiers)})"
-
-    if probs.shape[-1] != transition.n_outcomes:
-        if summary is not None:
-            raise _SerialValidationRequired
-        raise InvalidStateTransitionProbabilitiesError(
-            f"MarkovTransition for {state_label} in regime '{regime_name}' "
-            f"at age {age} returned an outcome axis of size "
-            f"{probs.shape[-1]}; expected {transition.n_outcomes} from the "
-            f"state's DiscreteGrid."
-        )
+    state_label = _check_state_outcome_axis(
+        shape=probs.shape,
+        transition=transition,
+        regime_name=regime_name,
+        age=age,
+        summary=summary,
+    )
 
     if summary is not None:
         summary.append(
@@ -1218,6 +1337,39 @@ def _check_state_probs(
             f"at age {age} returned rows that do not sum to 1 along the "
             f"outcome axis."
         )
+
+
+def _check_state_outcome_axis(
+    *,
+    shape: tuple[int, ...],
+    transition: _StochasticStateTransition,
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+    summary: _ValidationSummary | None,
+) -> str:
+    """Check each occurrence's declared shape and preserve its diagnostic label."""
+    qualifiers = []
+    if transition.target_regime_name is not None:
+        qualifiers.append(f"target regime '{transition.target_regime_name}'")
+    if transition.phase is not None:
+        # A `Phased` law has two variants under one state name; without the phase the
+        # message would not say which of them is malformed.
+        qualifiers.append(f"{transition.phase} phase")
+    state_label = f"state '{transition.state_name}'"
+    if qualifiers:
+        state_label += f" ({', '.join(qualifiers)})"
+
+    if shape[-1] != transition.n_outcomes:
+        if summary is not None:
+            raise _SerialValidationRequired
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} returned an outcome axis of size "
+            f"{shape[-1]}; expected {transition.n_outcomes} from the "
+            f"state's DiscreteGrid."
+        )
+
+    return state_label
 
 
 def _unit_mass_violations(sum_all: FloatND) -> BoolND:
