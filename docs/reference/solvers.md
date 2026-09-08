@@ -188,7 +188,8 @@ solver = DCEGM(
 )
 ```
 
-`DCEGM` does not require a nontrivial discrete choice: it is also the supported route
+`DCEGM` supports a genuine resources node and optional discrete choice.
+It does not require a nontrivial discrete choice: it is also the supported route
 for a smooth liquid problem whose genuine resources node, passive states, or stochastic
 processes make plain `EGM` ineligible.
 

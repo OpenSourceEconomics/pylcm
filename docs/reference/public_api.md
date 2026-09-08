@@ -93,61 +93,62 @@ and the correctness of destinations require page-specific documentation and test
 Most user-facing names are re-exported from `lcm`. These deliberately public submodule
 surfaces remain outside that top-level namespace:
 
-| Public name                                                                                   | Canonical documentation             |
-| --------------------------------------------------------------------------------------------- | ----------------------------------- |
-| [`lcm.params.MappingLeaf`](../user_guide/parameters.md)                                       | Mapping parameter leaf              |
-| [`lcm.params.SequenceLeaf`](../user_guide/parameters.md)                                      | Sequence parameter leaf             |
-| [`lcm.params.UserMappingLeaf`](../user_guide/parameters.md)                                   | User mapping parameter leaf         |
-| [`lcm.params.UserSequenceLeaf`](../user_guide/parameters.md)                                  | Sequence parameter leaf             |
-| [`lcm.params.as_leaf`](../user_guide/parameters.md)                                           | Explicit parameter-leaf wrapper     |
-| [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md)                    | Koopmans-form base contract         |
-| [`lcm.solver_api.ResultRetention`](runtime_and_results.md#api-solution-result)                | Solution result retention           |
-| [`lcm.solver_api.LoadState`](runtime_and_results.md#api-solution-result)                      | Per-entry materialization state     |
-| [`lcm.solver_api.ValueStore`](runtime_and_results.md#api-solution-result)                     | Lazy addressed value store          |
-| [`lcm.solver_api.ArtifactKey`](runtime_and_results.md#api-solution-result)                    | Versioned artifact identity         |
-| [`lcm.solver_api.ArtifactRef`](runtime_and_results.md#api-solution-result)                    | Period/regime artifact address      |
-| [`lcm.solver_api.ArtifactStore`](runtime_and_results.md#api-solution-result)                  | Immutable artifact store            |
-| [`lcm.solver_api.ArtifactChannel`](custom_solvers.md)                                         | Artifact semantic channel           |
-| [`lcm.solver_api.ArtifactDescriptor`](custom_solvers.md)                                      | Descriptive persisted schema        |
-| [`lcm.solver_api.ArtifactAuthority`](custom_solvers.md)                                       | Model-built artifact authority      |
-| [`lcm.solver_api.TreePath`](custom_solvers.md)                                                | Stable PyTree leaf/container path   |
-| [`lcm.solver_api.AxisRole`](custom_solvers.md)                                                | Mathematical artifact-axis role     |
-| [`lcm.solver_api.AxisDescriptor`](custom_solvers.md)                                          | Descriptive named artifact axis     |
-| [`lcm.solver_api.AxisAuthority`](custom_solvers.md)                                           | Model-owned axis and coordinates    |
-| [`lcm.solver_api.LeafDescriptor`](custom_solvers.md)                                          | Descriptive numerical leaf schema   |
-| [`lcm.solver_api.LeafAuthority`](custom_solvers.md)                                           | Model-owned numerical leaf schema   |
-| [`lcm.solver_api.CategoryDomain`](custom_solvers.md)                                          | Exact categorical labels and codes  |
-| [`lcm.solver_api.PersistencePolicy`](custom_solvers.md)                                       | Per-artifact persistence policy     |
-| [`lcm.solver_api.KernelOutput`](custom_solvers.md)                                            | What a period kernel returns        |
-| [`lcm.solver_api.OmissionReason`](runtime_and_results.md#api-solution-result)                 | Recorded reason for absence         |
-| [`lcm.solver_api.SolutionMetadata`](runtime_and_results.md#api-solution-result)               | Labelled-solution metadata          |
-| [`lcm.solver_api.SolutionResult`](runtime_and_results.md#api-solution-result)                 | Labelled solution result            |
-| [`lcm.solver_api.SolutionSource`](runtime_and_results.md#api-solution-result)                 | In-memory or persisted origin       |
-| [`lcm.solver_api.ValueArraySchema`](runtime_and_results.md#api-solution-result)               | Named value-array shape/dtype       |
-| [`lcm.solver_api.SIMULATION_POLICY`](runtime_and_results.md#api-solution-result)              | Replay-policy schema key            |
-| [`lcm.solver_api.DISSOLUTION_FLAG`](runtime_and_results.md#api-solution-result)               | Dissolution-flag schema key         |
-| [`lcm.solver_api.EGM_CONTINUATION`](runtime_and_results.md#api-solution-result)               | Continuation schema key             |
-| [`lcm.solver_api.SOLVER_DIAGNOSTICS`](runtime_and_results.md#api-solution-result)             | Diagnostics schema key              |
-| [`lcm.solver_api.ContinuationArtifact`](custom_solvers.md)                                    | Keyed rolling-continuation protocol |
-| [`lcm.solver_api.ContinuationReader`](custom_solvers.md#publishing-a-continuation)            | What a parent may ask a payload     |
-| [`lcm.solver_api.ContinuationCapabilities`](custom_solvers.md#publishing-a-continuation)      | What a payload can answer           |
-| [`lcm.solver_api.EGM_ENDOGENOUS_COORDINATE`](custom_solvers.md#publishing-a-continuation)     | Coordinate EGM rows are read on     |
-| [`lcm.solver_api.ReplayMode`](custom_solvers.md)                                              | How a regime's decision is obtained |
-| [`lcm.solver_api.ReplayRoute`](custom_solvers.md)                                             | A regime's declared replay route    |
-| [`lcm.solver_api.ExecutableReplayRoute`](custom_solvers.md)                                   | External replay implementation      |
-| [`lcm.solver_api.DeclaredReplay`](custom_solvers.md)                                          | Replay declared without a route     |
-| [`lcm.solver_api.ReplayReader`](custom_solvers.md)                                            | JAX-transformable replay reader     |
-| [`lcm.solver_api.ReplayRouteSnapshot`](custom_solvers.md)                                     | Validated immutable replay snapshot |
-| [`lcm.solver_api.ReplayModelContext`](custom_solvers.md)                                      | Period-specific route model view    |
-| [`lcm.solver_api.ReplayRouteRequirements`](custom_solvers.md)                                 | Exact replay artifact dependencies  |
-| [`lcm.solver_api.SimulationBuildContext`](custom_solvers.md)                                  | Model-owned replay build context    |
-| [`lcm.solver_api.ActionOutput`](custom_solvers.md)                                            | Named replayed action arrays        |
-| [`lcm.solver_api.SolverIdentity`](custom_solvers.md)                                          | Exact plugin compatibility identity |
-| [`lcm.solver_api.ReplayRouteIdentity`](custom_solvers.md)                                     | Exact replay compatibility identity |
-| [`lcm.solver_api.PYLCM_VERSION`](runtime_and_results.md#api-standalone-persistence)           | Exact pylcm compatibility version   |
-| [`lcm.solver_api.SOLVER_API_VERSION`](custom_solvers.md)                                      | Public solver-interface version     |
-| [`lcm.solver_api.SOLUTION_SCHEMA_VERSION`](runtime_and_results.md#api-standalone-persistence) | Labelled-result schema version      |
-| [`lcm.solver_api.SOLUTION_FORMAT_VERSION`](runtime_and_results.md#api-standalone-persistence) | Durable archive format version      |
+| Public name                                                                                   | Canonical documentation                           |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| [`lcm.params.MappingLeaf`](../user_guide/parameters.md)                                       | Mapping parameter leaf                            |
+| [`lcm.params.SequenceLeaf`](../user_guide/parameters.md)                                      | Sequence parameter leaf                           |
+| [`lcm.params.UserMappingLeaf`](../user_guide/parameters.md)                                   | User mapping parameter leaf                       |
+| [`lcm.params.UserSequenceLeaf`](../user_guide/parameters.md)                                  | Sequence parameter leaf                           |
+| [`lcm.params.as_leaf`](../user_guide/parameters.md)                                           | Explicit parameter-leaf wrapper                   |
+| [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md)                    | Koopmans-form base contract                       |
+| [`lcm.solver_api.ResultRetention`](runtime_and_results.md#api-solution-result)                | Solution result retention                         |
+| [`lcm.solver_api.LoadState`](runtime_and_results.md#api-solution-result)                      | Per-entry materialization state                   |
+| [`lcm.solver_api.ValueStore`](runtime_and_results.md#api-solution-result)                     | Lazy addressed value store                        |
+| [`lcm.solver_api.ArtifactKey`](runtime_and_results.md#api-solution-result)                    | Versioned artifact identity                       |
+| [`lcm.solver_api.ArtifactRef`](runtime_and_results.md#api-solution-result)                    | Period/regime artifact address                    |
+| [`lcm.solver_api.ArtifactStore`](runtime_and_results.md#api-solution-result)                  | Immutable artifact store                          |
+| [`lcm.solver_api.ArtifactChannel`](custom_solvers.md)                                         | Artifact semantic channel                         |
+| [`lcm.solver_api.ArtifactDescriptor`](custom_solvers.md)                                      | Descriptive persisted schema                      |
+| [`lcm.solver_api.ArtifactAuthority`](custom_solvers.md)                                       | Model-built artifact authority                    |
+| [`lcm.solver_api.TreePath`](custom_solvers.md)                                                | Stable PyTree leaf/container path                 |
+| [`lcm.solver_api.AxisRole`](custom_solvers.md)                                                | Mathematical artifact-axis role                   |
+| [`lcm.solver_api.AxisDescriptor`](custom_solvers.md)                                          | Descriptive named artifact axis                   |
+| [`lcm.solver_api.AxisAuthority`](custom_solvers.md)                                           | Model-owned axis and coordinates                  |
+| [`lcm.solver_api.LeafDescriptor`](custom_solvers.md)                                          | Descriptive numerical leaf schema                 |
+| [`lcm.solver_api.LeafAuthority`](custom_solvers.md)                                           | Model-owned numerical leaf schema                 |
+| [`lcm.solver_api.CategoryDomain`](custom_solvers.md)                                          | Exact categorical labels and codes                |
+| [`lcm.solver_api.PersistencePolicy`](custom_solvers.md)                                       | Per-artifact persistence policy                   |
+| [`lcm.solver_api.KernelOutput`](custom_solvers.md)                                            | What a period kernel returns                      |
+| [`lcm.solver_api.OmissionReason`](runtime_and_results.md#api-solution-result)                 | Recorded reason for absence                       |
+| [`lcm.solver_api.SolutionMetadata`](runtime_and_results.md#api-solution-result)               | Labelled-solution metadata                        |
+| [`lcm.solver_api.SolutionResult`](runtime_and_results.md#api-solution-result)                 | Labelled solution result                          |
+| [`lcm.solver_api.SolutionSource`](runtime_and_results.md#api-solution-result)                 | In-memory or persisted origin                     |
+| [`lcm.solver_api.ValueArraySchema`](runtime_and_results.md#api-solution-result)               | Named value-array shape/dtype                     |
+| [`lcm.solver_api.SIMULATION_POLICY`](runtime_and_results.md#api-solution-result)              | Replay-policy schema key                          |
+| [`lcm.solver_api.DISSOLUTION_FLAG`](runtime_and_results.md#api-solution-result)               | Dissolution-flag schema key                       |
+| [`lcm.solver_api.EGM_CONTINUATION`](runtime_and_results.md#api-solution-result)               | Continuation schema key                           |
+| [`lcm.solver_api.SOLVER_DIAGNOSTICS`](runtime_and_results.md#api-solution-result)             | Diagnostics schema key                            |
+| [`lcm.solver_api.ContinuationArtifact`](custom_solvers.md)                                    | Keyed rolling-continuation protocol               |
+| [`lcm.solver_api.ContinuationReader`](custom_solvers.md#publishing-a-continuation)            | What a parent may ask a payload                   |
+| [`lcm.solver_api.ContinuationCapabilities`](custom_solvers.md#publishing-a-continuation)      | What a payload can answer                         |
+| [`lcm.solver_api.EGM_ENDOGENOUS_COORDINATE`](custom_solvers.md#publishing-a-continuation)     | Coordinate EGM rows are read on                   |
+| [`lcm.solver_api.ReplayMode`](custom_solvers.md)                                              | How a regime's decision is obtained               |
+| [`lcm.solver_api.ReplayRoute`](custom_solvers.md)                                             | A regime's declared replay route                  |
+| [`lcm.solver_api.ExecutableReplayRoute`](custom_solvers.md)                                   | External replay implementation                    |
+| [`lcm.solver_api.DeclaredReplay`](custom_solvers.md)                                          | Replay declared without a route                   |
+| [`lcm.solver_api.ReplayReader`](custom_solvers.md)                                            | JAX-transformable replay reader                   |
+| [`lcm.solver_api.ReplayRouteSnapshot`](custom_solvers.md)                                     | Validated immutable replay snapshot               |
+| [`lcm.solver_api.ReplayModelContext`](custom_solvers.md)                                      | Period-specific route model view                  |
+| [`lcm.solver_api.ReplayRouteRequirements`](custom_solvers.md)                                 | Exact replay artifact dependencies                |
+| [`lcm.solver_api.SimulationBuildContext`](custom_solvers.md)                                  | Model-owned replay build context                  |
+| [`lcm.solver_api.ActionOutput`](custom_solvers.md)                                            | Named replayed action arrays                      |
+| [`lcm.solver_api.SolverIdentity`](custom_solvers.md)                                          | Exact plugin compatibility identity               |
+| [`lcm.solver_api.SolverExecutionCapabilities`](custom_solvers.md)                             | Solver prerequisites and potential execution axes |
+| [`lcm.solver_api.ReplayRouteIdentity`](custom_solvers.md)                                     | Exact replay compatibility identity               |
+| [`lcm.solver_api.PYLCM_VERSION`](runtime_and_results.md#api-standalone-persistence)           | Exact pylcm compatibility version                 |
+| [`lcm.solver_api.SOLVER_API_VERSION`](custom_solvers.md)                                      | Public solver-interface version                   |
+| [`lcm.solver_api.SOLUTION_SCHEMA_VERSION`](runtime_and_results.md#api-standalone-persistence) | Labelled-result schema version                    |
+| [`lcm.solver_api.SOLUTION_FORMAT_VERSION`](runtime_and_results.md#api-standalone-persistence) | Durable archive format version                    |
 
 ## Collective regimes and value-dependent choice
 
@@ -189,101 +190,102 @@ can be written against these names without importing anything private. Persisten
 durable identity, executable replay, and the exact-version conformance contract are
 documented in [Custom solvers](custom_solvers.md).
 
-| Public name                                                                                | Canonical documentation               |
-| ------------------------------------------------------------------------------------------ | ------------------------------------- |
-| [`lcm.solvers.Solver`](custom_solvers.md)                                                  | Solver base contract                  |
-| [`lcm.solvers.OneMarginSolver`](custom_solvers.md)                                         | One-liquid-margin marker              |
-| [`lcm.solvers.TwoMarginSolver`](custom_solvers.md)                                         | Nested-margin marker                  |
-| [`lcm.solvers.SolverBuildContext`](custom_solvers.md)                                      | Per-regime build context              |
-| [`lcm.solvers.SolutionKernels`](custom_solvers.md)                                         | Per-period kernel bundle              |
-| [`lcm.solvers.PeriodKernel`](custom_solvers.md)                                            | One period's execution protocol       |
-| [`lcm.solvers.CoreProgram`](custom_solvers.md)                                             | One declared compiled program         |
-| [`lcm.solvers.CoreBuildContext`](custom_solvers.md)                                        | Argument-builder input                |
-| [`lcm.solvers.CoreExecutionRequirements`](custom_solvers.md)                               | Declared execution requirements       |
-| [`lcm.solvers.CoreExecutionDisposition`](custom_solvers.md)                                | Planned, dense, or host-driven        |
-| [`lcm.solvers.InternalOutputSpec`](custom_solvers.md#internal-outputs)                     | Output published within one graph     |
-| [`lcm.solvers.InternalInputRef`](custom_solvers.md#internal-outputs)                       | Argument read from another program    |
-| [`lcm.solvers.ValueRead`](custom_solvers.md#reading-a-stored-value)                        | Declared read of a stored value       |
-| [`lcm.solvers.ValueArtifactAddress`](custom_solvers.md#reading-a-stored-value)             | Stored value being read               |
-| [`lcm.solvers.ValueConsumerAddress`](custom_solvers.md#reading-a-stored-value)             | Program input receiving a value       |
-| [`lcm.solvers.ValueArtifactKind`](custom_solvers.md#reading-a-stored-value)                | Kind of stored value artifact         |
-| [`lcm.solvers.ValueInputChannel`](custom_solvers.md#reading-a-stored-value)                | Input channel of a value consumer     |
-| [`lcm.solvers.ValueTransferKind`](custom_solvers.md#reading-a-stored-value)                | Operator one planned transfer runs    |
-| [`lcm.solvers.TransferOperationClass`](custom_solvers.md#reading-a-stored-value)           | Local, device copy, or collective     |
-| [`lcm.solvers.TransferCost`](custom_solvers.md#reading-a-stored-value)                     | What one planned transfer occupies    |
-| [`lcm.solvers.ProgramScope`](custom_solvers.md)                                            | Retention scope of a program          |
-| [`lcm.solvers.ReducedAxis`](custom_solvers.md)                                             | Declared axis folded by a reduction   |
-| [`lcm.solvers.TiledOutputAxis`](custom_solvers.md)                                         | Declared axis whose tiles concatenate |
-| [`lcm.solvers.ACTION_PRODUCT_AXIS`](custom_solvers.md)                                     | Name of the action-product axis       |
-| [`lcm.solvers.STOCHASTIC_NODE_AXIS`](custom_solvers.md)                                    | Name of the stochastic-node axis      |
-| [`lcm.solvers.CELL_AXIS`](custom_solvers.md)                                               | Name of the output state-cell axis    |
-| [`lcm.solvers.SAVINGS_POINT_AXIS`](custom_solvers.md)                                      | Name of the savings-node axis         |
-| [`lcm.solvers.EULER_POINT_AXIS`](custom_solvers.md)                                        | Name of the Euler-node axis           |
-| [`lcm.solvers.ENVELOPE_CELL_AXIS`](envelopes.md)                                           | Name of the envelope-cell axis        |
-| [`lcm.solvers.OUTER_CANDIDATE_AXIS`](custom_solvers.md)                                    | Name of the outer-candidate axis      |
-| [`lcm.solvers.INTERVAL_AXIS`](solvers.md#api-nbegm)                                        | Name of the liquid-interval axis      |
-| [`lcm.solvers.BRANCH_AXIS`](solvers.md#api-nbegm)                                          | Name of the discrete-branch axis      |
-| [`lcm.solvers.ReductionDeclaration`](custom_solvers.md)                                    | Contract a reduced axis names         |
-| [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Declaration carrying its own fold     |
-| [`lcm.solvers.EXACTNESS_VALUES`](custom_solvers.md)                                        | The two published exactness values    |
-| [`lcm.solvers.WeightedExpectationReduction`](custom_solvers.md)                            | Weighted sum over stochastic nodes    |
-| [`lcm.solvers.HardMaxWithCarryReduction`](custom_solvers.md)                               | Hard max carrying the winner payload  |
-| [`lcm.solvers.IntervalEnvelopeReduction`](custom_solvers.md)                               | Upper envelope over intervals         |
-| [`lcm.solvers.INTERVAL_ENVELOPE_REDUCTION`](solvers.md#api-nbegm)                          | Shared interval-envelope declaration  |
-| [`lcm.solvers.OutputRole`](custom_solvers.md)                                              | Value and dissolution-flag roles      |
-| [`lcm.solvers.StateAxesLeading`](custom_solvers.md)                                        | Parametrized output-placement role    |
-| [`lcm.solvers.StateActionSpace`](custom_solvers.md)                                        | Per-period state and action arrays    |
-| [`lcm.solvers.KernelOutput`](custom_solvers.md)                                            | What a period kernel returns          |
-| [`lcm.solvers.ArtifactKey`](custom_solvers.md)                                             | Versioned artifact identity           |
-| [`lcm.solvers.ArtifactRef`](custom_solvers.md)                                             | Period/regime artifact address        |
-| [`lcm.solvers.ArtifactStore`](custom_solvers.md)                                           | Addressed artifact store              |
-| [`lcm.solvers.ArtifactChannel`](custom_solvers.md)                                         | Artifact semantic channel             |
-| [`lcm.solvers.ArtifactDescriptor`](custom_solvers.md)                                      | Descriptive persisted schema          |
-| [`lcm.solvers.ArtifactAuthority`](custom_solvers.md)                                       | Model-built artifact authority        |
-| [`lcm.solvers.TreePath`](custom_solvers.md)                                                | Stable PyTree leaf/container path     |
-| [`lcm.solvers.AxisRole`](custom_solvers.md)                                                | Mathematical artifact-axis role       |
-| [`lcm.solvers.AxisDescriptor`](custom_solvers.md)                                          | Descriptive named artifact axis       |
-| [`lcm.solvers.AxisAuthority`](custom_solvers.md)                                           | Model-owned axis and coordinates      |
-| [`lcm.solvers.LeafDescriptor`](custom_solvers.md)                                          | Descriptive numerical leaf schema     |
-| [`lcm.solvers.LeafAuthority`](custom_solvers.md)                                           | Model-owned numerical leaf schema     |
-| [`lcm.solvers.CategoryDomain`](custom_solvers.md)                                          | Exact categorical labels and codes    |
-| [`lcm.solvers.PersistencePolicy`](custom_solvers.md)                                       | Per-artifact persistence policy       |
-| [`lcm.solvers.EGM_CONTINUATION`](custom_solvers.md)                                        | Continuation schema key               |
-| [`lcm.solvers.SIMULATION_POLICY`](custom_solvers.md)                                       | Replay-policy schema key              |
-| [`lcm.solvers.DISSOLUTION_FLAG`](custom_solvers.md)                                        | Dissolution-flag schema key           |
-| [`lcm.solvers.SOLVER_DIAGNOSTICS`](custom_solvers.md)                                      | Diagnostics schema key                |
-| [`lcm.solvers.ContinuationArtifact`](custom_solvers.md)                                    | Keyed rolling-continuation protocol   |
-| [`lcm.solvers.ContinuationReader`](custom_solvers.md#publishing-a-continuation)            | What a parent may ask a payload       |
-| [`lcm.solvers.ContinuationCapabilities`](custom_solvers.md#publishing-a-continuation)      | What a payload can answer             |
-| [`lcm.solvers.EGM_ENDOGENOUS_COORDINATE`](custom_solvers.md#publishing-a-continuation)     | Coordinate EGM rows are read on       |
-| [`lcm.solvers.ContinuationSpec`](custom_solvers.md)                                        | Template and key of a continuation    |
-| [`lcm.solvers.EGMContinuationSpec`](custom_solvers.md)                                     | EGM carry template and layout         |
-| [`lcm.solvers.EGMContinuationLayout`](custom_solvers.md)                                   | How a reading parent interprets rows  |
-| [`lcm.solvers.ReplayMode`](custom_solvers.md)                                              | How a regime's decision is obtained   |
-| [`lcm.solvers.ReplayRoute`](custom_solvers.md)                                             | A regime's declared replay route      |
-| [`lcm.solvers.ExecutableReplayRoute`](custom_solvers.md)                                   | External replay implementation        |
-| [`lcm.solvers.DeclaredReplay`](custom_solvers.md)                                          | Replay declared without a route       |
-| [`lcm.solvers.ReplayReader`](custom_solvers.md)                                            | JAX-transformable replay reader       |
-| [`lcm.solvers.ReplayRouteSnapshot`](custom_solvers.md)                                     | Validated immutable replay snapshot   |
-| [`lcm.solvers.ReplayModelContext`](custom_solvers.md)                                      | Period-specific route model view      |
-| [`lcm.solvers.ReplayRouteRequirements`](custom_solvers.md)                                 | Exact replay artifact dependencies    |
-| [`lcm.solvers.SimulationBuildContext`](custom_solvers.md)                                  | Model-owned replay build context      |
-| [`lcm.solvers.ActionOutput`](custom_solvers.md)                                            | Named replayed action arrays          |
-| [`lcm.solvers.SolverIdentity`](custom_solvers.md)                                          | Exact plugin compatibility identity   |
-| [`lcm.solvers.ReplayRouteIdentity`](custom_solvers.md)                                     | Exact replay compatibility identity   |
-| [`lcm.solvers.PYLCM_VERSION`](runtime_and_results.md#api-standalone-persistence)           | Exact pylcm compatibility version     |
-| [`lcm.solvers.SOLVER_API_VERSION`](custom_solvers.md)                                      | Public solver-interface version       |
-| [`lcm.solvers.SOLUTION_SCHEMA_VERSION`](runtime_and_results.md#api-standalone-persistence) | Labelled-result schema version        |
-| [`lcm.solvers.SOLUTION_FORMAT_VERSION`](runtime_and_results.md#api-standalone-persistence) | Durable archive format version        |
-| [`lcm.solvers.LoadState`](runtime_and_results.md#api-solution-result)                      | Per-entry materialization state       |
-| [`lcm.solvers.ValueStore`](runtime_and_results.md#api-solution-result)                     | Lazy addressed value store            |
-| [`lcm.solvers.ResultRetention`](runtime_and_results.md#api-solution-result)                | Solution result retention             |
-| [`lcm.solvers.OmissionReason`](runtime_and_results.md#api-solution-result)                 | Recorded reason for absence           |
-| [`lcm.solvers.SolutionMetadata`](runtime_and_results.md#api-solution-result)               | Labelled-solution metadata            |
-| [`lcm.solvers.SolutionResult`](runtime_and_results.md#api-solution-result)                 | Complete labelled solution            |
-| [`lcm.solvers.SolutionSource`](runtime_and_results.md#api-solution-result)                 | In-memory or persisted origin         |
-| [`lcm.solvers.ValueArraySchema`](runtime_and_results.md#api-solution-result)               | Named value-array shape/dtype         |
-| [`lcm.solvers.period_to_continuation_target`](custom_solvers.md)                           | Target a period carries into          |
-| [`lcm.solvers.target_period_grid`](custom_solvers.md)                                      | A target's grid in one period         |
-| [`lcm.solvers.union_free_params`](custom_solvers.md)                                       | Free params of a regime and targets   |
-| [`lcm.solvers.union_fixed_params`](custom_solvers.md)                                      | Fixed params of a regime and targets  |
+| Public name                                                                                | Canonical documentation                           |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| [`lcm.solvers.Solver`](custom_solvers.md)                                                  | Solver base contract                              |
+| [`lcm.solvers.SolverExecutionCapabilities`](custom_solvers.md)                             | Solver prerequisites and potential execution axes |
+| [`lcm.solvers.OneMarginSolver`](custom_solvers.md)                                         | One-liquid-margin marker                          |
+| [`lcm.solvers.TwoMarginSolver`](custom_solvers.md)                                         | Nested-margin marker                              |
+| [`lcm.solvers.SolverBuildContext`](custom_solvers.md)                                      | Per-regime build context                          |
+| [`lcm.solvers.SolutionKernels`](custom_solvers.md)                                         | Per-period kernel bundle                          |
+| [`lcm.solvers.PeriodKernel`](custom_solvers.md)                                            | One period's execution protocol                   |
+| [`lcm.solvers.CoreProgram`](custom_solvers.md)                                             | One declared compiled program                     |
+| [`lcm.solvers.CoreBuildContext`](custom_solvers.md)                                        | Argument-builder input                            |
+| [`lcm.solvers.CoreExecutionRequirements`](custom_solvers.md)                               | Declared execution requirements                   |
+| [`lcm.solvers.CoreExecutionDisposition`](custom_solvers.md)                                | Planned, dense, or host-driven                    |
+| [`lcm.solvers.InternalOutputSpec`](custom_solvers.md#internal-outputs)                     | Output published within one graph                 |
+| [`lcm.solvers.InternalInputRef`](custom_solvers.md#internal-outputs)                       | Argument read from another program                |
+| [`lcm.solvers.ValueRead`](custom_solvers.md#reading-a-stored-value)                        | Declared read of a stored value                   |
+| [`lcm.solvers.ValueArtifactAddress`](custom_solvers.md#reading-a-stored-value)             | Stored value being read                           |
+| [`lcm.solvers.ValueConsumerAddress`](custom_solvers.md#reading-a-stored-value)             | Program input receiving a value                   |
+| [`lcm.solvers.ValueArtifactKind`](custom_solvers.md#reading-a-stored-value)                | Kind of stored value artifact                     |
+| [`lcm.solvers.ValueInputChannel`](custom_solvers.md#reading-a-stored-value)                | Input channel of a value consumer                 |
+| [`lcm.solvers.ValueTransferKind`](custom_solvers.md#reading-a-stored-value)                | Operator one planned transfer runs                |
+| [`lcm.solvers.TransferOperationClass`](custom_solvers.md#reading-a-stored-value)           | Local, device copy, or collective                 |
+| [`lcm.solvers.TransferCost`](custom_solvers.md#reading-a-stored-value)                     | What one planned transfer occupies                |
+| [`lcm.solvers.ProgramScope`](custom_solvers.md)                                            | Retention scope of a program                      |
+| [`lcm.solvers.ReducedAxis`](custom_solvers.md)                                             | Declared axis folded by a reduction               |
+| [`lcm.solvers.TiledOutputAxis`](custom_solvers.md)                                         | Declared axis whose tiles concatenate             |
+| [`lcm.solvers.ACTION_PRODUCT_AXIS`](custom_solvers.md)                                     | Name of the action-product axis                   |
+| [`lcm.solvers.STOCHASTIC_NODE_AXIS`](custom_solvers.md)                                    | Name of the stochastic-node axis                  |
+| [`lcm.solvers.CELL_AXIS`](custom_solvers.md)                                               | Name of the output state-cell axis                |
+| [`lcm.solvers.SAVINGS_POINT_AXIS`](custom_solvers.md)                                      | Name of the savings-node axis                     |
+| [`lcm.solvers.EULER_POINT_AXIS`](custom_solvers.md)                                        | Name of the Euler-node axis                       |
+| [`lcm.solvers.ENVELOPE_CELL_AXIS`](envelopes.md)                                           | Name of the envelope-cell axis                    |
+| [`lcm.solvers.OUTER_CANDIDATE_AXIS`](custom_solvers.md)                                    | Name of the outer-candidate axis                  |
+| [`lcm.solvers.INTERVAL_AXIS`](solvers.md#api-nbegm)                                        | Name of the liquid-interval axis                  |
+| [`lcm.solvers.BRANCH_AXIS`](solvers.md#api-nbegm)                                          | Name of the discrete-branch axis                  |
+| [`lcm.solvers.ReductionDeclaration`](custom_solvers.md)                                    | Contract a reduced axis names                     |
+| [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Declaration carrying its own fold                 |
+| [`lcm.solvers.EXACTNESS_VALUES`](custom_solvers.md)                                        | The two published exactness values                |
+| [`lcm.solvers.WeightedExpectationReduction`](custom_solvers.md)                            | Weighted sum over stochastic nodes                |
+| [`lcm.solvers.HardMaxWithCarryReduction`](custom_solvers.md)                               | Hard max carrying the winner payload              |
+| [`lcm.solvers.IntervalEnvelopeReduction`](custom_solvers.md)                               | Upper envelope over intervals                     |
+| [`lcm.solvers.INTERVAL_ENVELOPE_REDUCTION`](solvers.md#api-nbegm)                          | Shared interval-envelope declaration              |
+| [`lcm.solvers.OutputRole`](custom_solvers.md)                                              | Value and dissolution-flag roles                  |
+| [`lcm.solvers.StateAxesLeading`](custom_solvers.md)                                        | Parametrized output-placement role                |
+| [`lcm.solvers.StateActionSpace`](custom_solvers.md)                                        | Per-period state and action arrays                |
+| [`lcm.solvers.KernelOutput`](custom_solvers.md)                                            | What a period kernel returns                      |
+| [`lcm.solvers.ArtifactKey`](custom_solvers.md)                                             | Versioned artifact identity                       |
+| [`lcm.solvers.ArtifactRef`](custom_solvers.md)                                             | Period/regime artifact address                    |
+| [`lcm.solvers.ArtifactStore`](custom_solvers.md)                                           | Addressed artifact store                          |
+| [`lcm.solvers.ArtifactChannel`](custom_solvers.md)                                         | Artifact semantic channel                         |
+| [`lcm.solvers.ArtifactDescriptor`](custom_solvers.md)                                      | Descriptive persisted schema                      |
+| [`lcm.solvers.ArtifactAuthority`](custom_solvers.md)                                       | Model-built artifact authority                    |
+| [`lcm.solvers.TreePath`](custom_solvers.md)                                                | Stable PyTree leaf/container path                 |
+| [`lcm.solvers.AxisRole`](custom_solvers.md)                                                | Mathematical artifact-axis role                   |
+| [`lcm.solvers.AxisDescriptor`](custom_solvers.md)                                          | Descriptive named artifact axis                   |
+| [`lcm.solvers.AxisAuthority`](custom_solvers.md)                                           | Model-owned axis and coordinates                  |
+| [`lcm.solvers.LeafDescriptor`](custom_solvers.md)                                          | Descriptive numerical leaf schema                 |
+| [`lcm.solvers.LeafAuthority`](custom_solvers.md)                                           | Model-owned numerical leaf schema                 |
+| [`lcm.solvers.CategoryDomain`](custom_solvers.md)                                          | Exact categorical labels and codes                |
+| [`lcm.solvers.PersistencePolicy`](custom_solvers.md)                                       | Per-artifact persistence policy                   |
+| [`lcm.solvers.EGM_CONTINUATION`](custom_solvers.md)                                        | Continuation schema key                           |
+| [`lcm.solvers.SIMULATION_POLICY`](custom_solvers.md)                                       | Replay-policy schema key                          |
+| [`lcm.solvers.DISSOLUTION_FLAG`](custom_solvers.md)                                        | Dissolution-flag schema key                       |
+| [`lcm.solvers.SOLVER_DIAGNOSTICS`](custom_solvers.md)                                      | Diagnostics schema key                            |
+| [`lcm.solvers.ContinuationArtifact`](custom_solvers.md)                                    | Keyed rolling-continuation protocol               |
+| [`lcm.solvers.ContinuationReader`](custom_solvers.md#publishing-a-continuation)            | What a parent may ask a payload                   |
+| [`lcm.solvers.ContinuationCapabilities`](custom_solvers.md#publishing-a-continuation)      | What a payload can answer                         |
+| [`lcm.solvers.EGM_ENDOGENOUS_COORDINATE`](custom_solvers.md#publishing-a-continuation)     | Coordinate EGM rows are read on                   |
+| [`lcm.solvers.ContinuationSpec`](custom_solvers.md)                                        | Template and key of a continuation                |
+| [`lcm.solvers.EGMContinuationSpec`](custom_solvers.md)                                     | EGM carry template and layout                     |
+| [`lcm.solvers.EGMContinuationLayout`](custom_solvers.md)                                   | How a reading parent interprets rows              |
+| [`lcm.solvers.ReplayMode`](custom_solvers.md)                                              | How a regime's decision is obtained               |
+| [`lcm.solvers.ReplayRoute`](custom_solvers.md)                                             | A regime's declared replay route                  |
+| [`lcm.solvers.ExecutableReplayRoute`](custom_solvers.md)                                   | External replay implementation                    |
+| [`lcm.solvers.DeclaredReplay`](custom_solvers.md)                                          | Replay declared without a route                   |
+| [`lcm.solvers.ReplayReader`](custom_solvers.md)                                            | JAX-transformable replay reader                   |
+| [`lcm.solvers.ReplayRouteSnapshot`](custom_solvers.md)                                     | Validated immutable replay snapshot               |
+| [`lcm.solvers.ReplayModelContext`](custom_solvers.md)                                      | Period-specific route model view                  |
+| [`lcm.solvers.ReplayRouteRequirements`](custom_solvers.md)                                 | Exact replay artifact dependencies                |
+| [`lcm.solvers.SimulationBuildContext`](custom_solvers.md)                                  | Model-owned replay build context                  |
+| [`lcm.solvers.ActionOutput`](custom_solvers.md)                                            | Named replayed action arrays                      |
+| [`lcm.solvers.SolverIdentity`](custom_solvers.md)                                          | Exact plugin compatibility identity               |
+| [`lcm.solvers.ReplayRouteIdentity`](custom_solvers.md)                                     | Exact replay compatibility identity               |
+| [`lcm.solvers.PYLCM_VERSION`](runtime_and_results.md#api-standalone-persistence)           | Exact pylcm compatibility version                 |
+| [`lcm.solvers.SOLVER_API_VERSION`](custom_solvers.md)                                      | Public solver-interface version                   |
+| [`lcm.solvers.SOLUTION_SCHEMA_VERSION`](runtime_and_results.md#api-standalone-persistence) | Labelled-result schema version                    |
+| [`lcm.solvers.SOLUTION_FORMAT_VERSION`](runtime_and_results.md#api-standalone-persistence) | Durable archive format version                    |
+| [`lcm.solvers.LoadState`](runtime_and_results.md#api-solution-result)                      | Per-entry materialization state                   |
+| [`lcm.solvers.ValueStore`](runtime_and_results.md#api-solution-result)                     | Lazy addressed value store                        |
+| [`lcm.solvers.ResultRetention`](runtime_and_results.md#api-solution-result)                | Solution result retention                         |
+| [`lcm.solvers.OmissionReason`](runtime_and_results.md#api-solution-result)                 | Recorded reason for absence                       |
+| [`lcm.solvers.SolutionMetadata`](runtime_and_results.md#api-solution-result)               | Labelled-solution metadata                        |
+| [`lcm.solvers.SolutionResult`](runtime_and_results.md#api-solution-result)                 | Complete labelled solution                        |
+| [`lcm.solvers.SolutionSource`](runtime_and_results.md#api-solution-result)                 | In-memory or persisted origin                     |
+| [`lcm.solvers.ValueArraySchema`](runtime_and_results.md#api-solution-result)               | Named value-array shape/dtype                     |
+| [`lcm.solvers.period_to_continuation_target`](custom_solvers.md)                           | Target a period carries into                      |
+| [`lcm.solvers.target_period_grid`](custom_solvers.md)                                      | A target's grid in one period                     |
+| [`lcm.solvers.union_free_params`](custom_solvers.md)                                       | Free params of a regime and targets               |
+| [`lcm.solvers.union_fixed_params`](custom_solvers.md)                                      | Fixed params of a regime and targets              |
