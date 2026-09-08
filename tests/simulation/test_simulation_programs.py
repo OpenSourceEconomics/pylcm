@@ -26,6 +26,7 @@ from _lcm.simulation.programs import (
     _SubjectTiled,
 )
 from _lcm.typing import ArgmaxQOverAFunction, QAndFFunction
+from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime as UserRegime
@@ -39,7 +40,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import assert_agrees_to_ulp
-from tests.simulation.test_dispatch_counts import WITNESSES
 from tests.test_models import taste_shocks_toy
 
 # A regime whose solve kernel streams its action product, and one whose
