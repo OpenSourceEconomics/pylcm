@@ -16,15 +16,16 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
+from _lcm.simulation import programs as simulation_programs
 from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.simulation.programs import (
     SUBJECT_AXIS,
     SUBJECT_WIDTH_KEYWORD,
     _ArgumentsBoundAtDispatch,
-    _fail_if_the_streamed_reduction_is_wrong,
     _StreamedArgmaxQOverA,
     _SubjectTiled,
 )
+from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import ArgmaxQOverAFunction, QAndFFunction
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
@@ -300,30 +301,31 @@ def test_decision_program_declares_one_role_per_published_array() -> None:
     assert program.output_roles == ("action_index", "decision_value")
 
 
-@pytest.mark.parametrize(
-    ("has_taste_shocks", "stakeholders"),
-    [(True, None), (False, ("f", "m")), (True, ("f", "m"))],
-)
+@pytest.mark.parametrize("route", ["ev1", "collective"])
 def test_a_streamed_decision_is_refused_where_the_hard_max_is_not_the_reduction(
-    *, has_taste_shocks: bool, stakeholders: tuple[str, ...] | None
+    *, route: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A regime whose reduction is not the hard max cannot stream its decision."""
-    with pytest.raises(ExecutionPlanningError, match="'couple'"):
-        _fail_if_the_streamed_reduction_is_wrong(
-            regime_name="couple",
-            has_taste_shocks=has_taste_shocks,
-            stakeholders=stakeholders,
-        )
+    """A public model build catches a classifier selecting the wrong reduction."""
+    original = simulation_programs._supports_action_streaming
+    regime_name = "alive" if route == "ev1" else "married"
+
+    def force_wrong_reduction(*, context: SolverBuildContext) -> bool:
+        return context.regime_name == regime_name or original(context=context)
+
+    monkeypatch.setattr(
+        simulation_programs, "_supports_action_streaming", force_wrong_reduction
+    )
+    build_model = (
+        taste_shocks_toy.get_model if route == "ev1" else WITNESSES["dissolution"]
+    )
+    with pytest.raises(ExecutionPlanningError, match=repr(regime_name)):
+        build_model()
 
 
 def test_a_streamed_decision_is_admitted_for_a_plain_hard_max_regime() -> None:
-    """A regime with neither taste shocks nor stakeholders streams its decision."""
-    assert (
-        _fail_if_the_streamed_reduction_is_wrong(
-            regime_name="work", has_taste_shocks=False, stakeholders=None
-        )
-        is None
-    )
+    """The guard admits the streamed decision of a public singleton model."""
+    program = _program(witness=_STREAMED[0], regime=_STREAMED[1], family="decision")
+    assert program.requirements.axis_names == (ACTION_PRODUCT_AXIS, SUBJECT_AXIS)
 
 
 def _tiled_cell(*, position: FloatND, offset: FloatND) -> dict[str, FloatND | IntND]:
