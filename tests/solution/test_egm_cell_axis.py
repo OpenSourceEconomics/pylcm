@@ -48,6 +48,8 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 # Tiling the cell axis only reschedules the `lax.map`, leaving every operation and
 # its operand order untouched; the two solves differ only by the vectorized kernel
 # XLA emits for each tile width — a gap of a few ULP, not of an economic magnitude.
+# Over widths 1 and 2, with and without a discrete action, that gap tops out at 2 ULP
+# at float64 and 2 ULP at float32.
 _INVARIANCE_ULP = 16
 
 N_PERIODS = 4
@@ -130,13 +132,25 @@ def bequest(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth + 1.0)
 
 
+def _cell_width_config(width: int | None) -> ExecutionConfig:
+    """Return the plan that fixes the cell axis at `width`, or leaves it open."""
+    if width is None:
+        return ExecutionConfig()
+    return ExecutionConfig(axis_widths={CELL_AXIS: width})
+
+
 def _ages() -> AgeGrid:
     return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
 @functools.cache
-def _model() -> Model:
-    """Asset-row DC-EGM with a Markov health state the cell axis tiles over."""
+def _model(width: int | None = None) -> Model:
+    """Asset-row DC-EGM with a Markov health state the cell axis tiles over.
+
+    A `width` fixes the cell axis in the model's execution plan; `None` leaves
+    the width to the plan.
+    """
+    config = _cell_width_config(width)
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
@@ -179,6 +193,7 @@ def _model() -> Model:
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        execution_config=config,
     )
 
 
@@ -188,15 +203,7 @@ def _params() -> dict:
 
 def _solve(width: int) -> Mapping[int, Mapping[str, FloatND]]:
     """Solve the one-state model with the cell axis tiled at `width`."""
-    return (
-        _model()
-        .solve(
-            params=_params(),
-            log_level="debug",
-            execution_config=ExecutionConfig(axis_widths={CELL_AXIS: width}),
-        )
-        .values
-    )
+    return _model(width).solve(params=_params(), log_level="debug").values
 
 
 def _model_with_batched_health() -> Model:
@@ -243,6 +250,77 @@ def _model_with_batched_health() -> Model:
     )
 
 
+@categorical(ordered=False)
+class Work:
+    stays_home: ScalarInt
+    works: ScalarInt
+
+
+def utility_with_action(
+    *, consumption: ContinuousAction, health: DiscreteState, works: DiscreteState
+) -> FloatND:
+    penalty = jnp.where(
+        health == Health.bad, 0.2, jnp.where(health == Health.fair, 0.1, 0.0)
+    )
+    effort = jnp.where(works == Work.works, 0.15, 0.0)
+    return jnp.log(consumption) - penalty - effort
+
+
+@functools.cache
+def _action_model(width: int | None = None) -> Model:
+    """Asset-row DC-EGM with a health state cell axis and a discrete action."""
+    config = _cell_width_config(width)
+    ages = _ages()
+    last_age = ages.exact_values[-1]
+    working = ConsumptionSavingsRegime(
+        transition={
+            "working": MarkovTransition(stay_prob),
+            "dead": MarkovTransition(death_prob),
+        },
+        active=lambda age, la=last_age: age < la,
+        actions={
+            "consumption": CONSUMPTION_GRID,
+            "works": DiscreteGrid(category_class=Work),
+        },
+        states={
+            "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
+            "health": DiscreteGrid(category_class=Health),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "health": MarkovTransition(health_transition),
+        },
+        functions={
+            "utility": utility_with_action,
+            "savings": savings,
+            "inverse_marginal_utility": inverse_marginal_utility,
+        },
+        solver=DCEGM(savings_grid=SAVINGS_GRID, n_constrained_points=32),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="wealth",
+            post_decision_state="savings",
+        ),
+    )
+    dead = UserRegime(
+        transition=None,
+        states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
+        functions={"utility": bequest},
+    )
+    return Model(
+        regimes={"working": working, "dead": dead},
+        ages=ages,
+        regime_id_class=RegimeId,
+        execution_config=config,
+    )
+
+
+def _solve_action_model(width: int) -> Mapping[int, Mapping[str, FloatND]]:
+    """Solve the discrete-action model with the cell axis tiled at `width`."""
+    return _action_model(width).solve(params=_params(), log_level="debug").values
+
+
 def _cell_axis(*, model: Model):
     """Return the `cell` axis `model`'s working value program declares."""
     kernels = model._regimes["working"].solution.period_kernels
@@ -275,8 +353,38 @@ def test_cell_axis_spans_the_regimes_output_state_cells() -> None:
 
 
 def test_cell_axis_excludes_the_discrete_action_axes() -> None:
-    """Actions are not output states, so they are outside the tiled axis."""
-    assert "consumption" not in _cell_axis(model=_model()).state_names
+    """A discrete action is not an output state, so it is outside the tiled axis.
+
+    The action aggregation needs every action's value at once, so the action
+    axis stays vmapped inside each tile rather than being tiled with the cells.
+    """
+    assert "works" not in _cell_axis(model=_action_model()).state_names
+
+
+def test_cell_axis_spans_only_the_states_when_an_action_is_present() -> None:
+    """With a discrete action the axis still runs over the state cells alone."""
+    assert _cell_axis(model=_action_model()).extent == N_HEALTH
+
+
+@pytest.mark.parametrize("width", [1, 2])
+def test_value_agrees_across_cell_widths_with_a_discrete_action(*, width: int) -> None:
+    """A narrow cell width reproduces the untiled value with an action present.
+
+    This is the tiled leg with a non-empty vmapped remainder: the state cells
+    are flattened into one `lax.map` while the discrete-action axis is vmapped
+    within each tile, and the tiles are transposed back into the canonical combo
+    order — which the published value would show if it were wrong.
+    """
+    reference = _solve_action_model(N_HEALTH)
+    tiled = _solve_action_model(width)
+    for period in sorted(reference):
+        for regime_name in reference[period]:
+            assert_agrees_to_ulp(
+                got=np.asarray(tiled[period][regime_name]),
+                expected=np.asarray(reference[period][regime_name]),
+                n_ulp=_INVARIANCE_ULP,
+                err_msg=f"period={period}, regime={regime_name}",
+            )
 
 
 def test_cell_axis_names_the_cores_width_keyword() -> None:
@@ -338,8 +446,9 @@ def utility_two_combos(
 
 
 @functools.cache
-def _two_combo_model() -> Model:
+def _two_combo_model(width: int | None = None) -> Model:
     """Asset-row DC-EGM with TWO discrete state axes (health + married)."""
+    config = _cell_width_config(width)
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
@@ -384,6 +493,7 @@ def _two_combo_model() -> Model:
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        execution_config=config,
     )
 
 
@@ -399,13 +509,7 @@ def test_value_agrees_across_cell_widths_over_two_state_axes(*, width: int) -> N
 
     def solve(at_width: int) -> Mapping[int, Mapping[str, FloatND]]:
         return (
-            _two_combo_model()
-            .solve(
-                params=_params(),
-                log_level="debug",
-                execution_config=ExecutionConfig(axis_widths={CELL_AXIS: at_width}),
-            )
-            .values
+            _two_combo_model(at_width).solve(params=_params(), log_level="debug").values
         )
 
     reference = solve(extent)

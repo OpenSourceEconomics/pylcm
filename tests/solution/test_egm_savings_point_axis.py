@@ -22,7 +22,7 @@ from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargi
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, SAVINGS_POINT_AXIS
 from lcm.typing import FloatND
-from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 from tests.solution.test_egm_euler_point_axis import (
     CONSUMPTION_GRID,
     N_WEALTH,
@@ -43,12 +43,27 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 # Prime, so every tile width but 1 leaves a ragged final tile. Sized for the
 # cheapest solve that still shows that; invariance under the partition does not
 # depend on resolution.
+# Tiling the savings-node loop keeps every operation and operand order, so the two
+# solves differ only by the vectorized kernel XLA emits for each tile width. The gap
+# over widths 1 and 7 tops out at 1 ULP at float64 and 2 ULP at float32, so this
+# bound leaves two binades of headroom.
+_INVARIANCE_ULP = 8
+
 N_SAVINGS = 17
 
 
 @functools.cache
-def _model() -> Model:
-    """Asset-row DC-EGM model whose per-savings-node loop the plan tiles."""
+def _model(width: int | None = None) -> Model:
+    """Asset-row DC-EGM model whose per-savings-node loop the plan tiles.
+
+    A `width` fixes the savings-node axis in the model's execution plan; `None`
+    leaves the width to the plan.
+    """
+    config = (
+        ExecutionConfig()
+        if width is None
+        else ExecutionConfig(axis_widths={SAVINGS_POINT_AXIS: width})
+    )
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
@@ -85,20 +100,13 @@ def _model() -> Model:
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        execution_config=config,
     )
 
 
 def _solve(width: int) -> Mapping[int, Mapping[str, FloatND]]:
     """Solve with the savings-node axis tiled at `width`."""
-    return (
-        _model()
-        .solve(
-            params=_params(),
-            log_level="debug",
-            execution_config=ExecutionConfig(axis_widths={SAVINGS_POINT_AXIS: width}),
-        )
-        .values
-    )
+    return _model(width).solve(params=_params(), log_level="debug").values
 
 
 def _savings_point_axis():
@@ -156,10 +164,9 @@ def test_value_agrees_across_savings_point_widths(*, width: int) -> None:
     tiled = _solve(width)
     for period in sorted(reference):
         for regime_name in reference[period]:
-            np.testing.assert_allclose(
-                np.asarray(tiled[period][regime_name]),
-                np.asarray(reference[period][regime_name]),
-                rtol=10.0**-DECIMAL_PRECISION,
-                atol=10.0**-DECIMAL_PRECISION,
+            assert_agrees_to_ulp(
+                got=np.asarray(tiled[period][regime_name]),
+                expected=np.asarray(reference[period][regime_name]),
+                n_ulp=_INVARIANCE_ULP,
                 err_msg=f"period={period}, regime={regime_name}",
             )

@@ -144,7 +144,11 @@ class WeightedExpectationResult(NamedTuple):
 class BoundWeightedExpectationReduction:
     """A weighted expectation whose subnormal-weight statement is fixed.
 
-    Blocks occupy the last axis of `values`; `weights` broadcasts to that shape.
+    A block's nodes occupy the **last** axis of `values`, and `weights`
+    broadcasts to that shape; `add` rejects a `values` whose rank the weights
+    cannot broadcast against, so a caller whose block axis leads has to move it
+    rather than silently reduce the wrong one.
+
     A block contributes its own weighted sum and its own weight mass, and the
     merge adds both, so any partition of the axis — including a shorter last
     block, or a block padded with exactly-zero weights — reaches a state that
@@ -174,7 +178,14 @@ class BoundWeightedExpectationReduction:
         values: FloatND,
         weights: FloatND,
     ) -> WeightedExpectationAccumulator:
-        """Reduce one block of weighted nodes and merge it into `accumulator`."""
+        """Reduce one block of weighted nodes and merge it into `accumulator`.
+
+        Raises:
+            ValueError: `weights` does not broadcast against `values`, which is
+                what a caller whose block axis is not last runs into.
+
+        """
+        _fail_if_block_axis_is_not_last(values=values, weights=weights)
         block = WeightedExpectationAccumulator(
             weighted_sum=jnp.sum(
                 zero_safe_weighted_term(
@@ -224,6 +235,21 @@ class BoundWeightedExpectationReduction:
         )
 
 
+def _fail_if_block_axis_is_not_last(*, values: FloatND, weights: FloatND) -> None:
+    """Require the weights to broadcast against the block's trailing node axis."""
+    value_shape = jnp.asarray(values).shape
+    weight_shape = jnp.asarray(weights).shape
+    if not value_shape or (
+        weight_shape and weight_shape[-1] not in (1, value_shape[-1])
+    ):
+        msg = (
+            "A weighted-expectation block reduces its last axis, so the node "
+            f"weights of shape {weight_shape} must broadcast against values of "
+            f"shape {value_shape}."
+        )
+        raise ValueError(msg)
+
+
 @dataclass(frozen=True)
 class WeightedExpectationReduction:
     """Weighted expectation over stochastic nodes; blocks contribute partial sums.
@@ -254,9 +280,7 @@ class WeightedExpectationReduction:
 
     def initialize(self, *, value_template: FloatND) -> WeightedExpectationAccumulator:
         """Create an empty accumulator; the subnormal statement does not enter."""
-        return BoundWeightedExpectationReduction(
-            subnormal_is_accounted_for=False
-        ).initialize(value_template=value_template)
+        return _STATEMENT_FREE_STEPS.initialize(value_template=value_template)
 
     def add(
         self,
@@ -278,17 +302,13 @@ class WeightedExpectationReduction:
         right: WeightedExpectationAccumulator,
     ) -> WeightedExpectationAccumulator:
         """Add two partial states; the subnormal statement does not enter."""
-        return BoundWeightedExpectationReduction(
-            subnormal_is_accounted_for=False
-        ).merge(left=left, right=right)
+        return _STATEMENT_FREE_STEPS.merge(left=left, right=right)
 
     def finalize(
         self, *, accumulator: WeightedExpectationAccumulator
     ) -> WeightedExpectationResult:
         """Publish the expectation; the subnormal statement does not enter."""
-        return BoundWeightedExpectationReduction(
-            subnormal_is_accounted_for=False
-        ).finalize(accumulator=accumulator)
+        return _STATEMENT_FREE_STEPS.finalize(accumulator=accumulator)
 
 
 @dataclass(frozen=True)
@@ -332,6 +352,13 @@ class IntervalEnvelopeReduction:
         """Return `"exact"`: ownership decisions are order independent."""
         return "exact"
 
+
+# `initialize`, `merge` and `finalize` never form a weighted term, so the
+# subnormal statement cannot reach them; this binding carries the three of them
+# rather than each asserting a rule it does not use.
+_STATEMENT_FREE_STEPS = BoundWeightedExpectationReduction(
+    subnormal_is_accounted_for=False
+)
 
 WEIGHTED_EXPECTATION_REDUCTION = WeightedExpectationReduction()
 # Shared weighted-expectation reduction specification.

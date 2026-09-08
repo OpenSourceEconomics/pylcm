@@ -39,10 +39,25 @@ from tests.solution.test_egm_process_states import (
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
+# Folding the expectation in blocks keeps every operation and operand order, so the
+# only difference between two widths is the vectorized kernel XLA emits for each.
+# The gap over widths 1, 2, 3, 5 and the default plan tops out at 3 ULP at float64
+# and 3 ULP at float32, so this bound leaves a little over one binade of headroom.
+_INVARIANCE_ULP = 8
+
 
 @functools.cache
-def _model() -> Model:
-    """DC-EGM model whose child carries an IID income process."""
+def _model(width: int | None = None) -> Model:
+    """DC-EGM model whose child carries an IID income process.
+
+    A `width` fixes the node axis in the model's execution plan; `None` leaves
+    the width to the plan.
+    """
+    config = (
+        ExecutionConfig()
+        if width is None
+        else ExecutionConfig(axis_widths={STOCHASTIC_NODE_AXIS: width})
+    )
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
     working = ConsumptionSavingsRegime(
@@ -68,22 +83,14 @@ def _model() -> Model:
         regimes={"alive": working, "dead": dead},
         ages=ages,
         regime_id_class=ProcessRegimeId,
+        execution_config=config,
     )
 
 
 @functools.cache
 def _solve(width: int | None) -> Mapping[int, Mapping[str, FloatND]]:
     """Solve with the node axis fixed at `width`, or at the plan's own choice."""
-    config = (
-        ExecutionConfig()
-        if width is None
-        else ExecutionConfig(axis_widths={STOCHASTIC_NODE_AXIS: width})
-    )
-    return (
-        _model()
-        .solve(params=_get_params("iid"), log_level="off", execution_config=config)
-        .values
-    )
+    return _model(width).solve(params=_get_params("iid"), log_level="off").values
 
 
 def test_dcegm_has_no_stochastic_node_batch_size_field() -> None:
@@ -139,7 +146,7 @@ def test_value_agrees_across_stochastic_node_widths(*, width: int) -> None:
             assert_agrees_to_ulp(
                 got=np.asarray(streamed[period][regime_name]),
                 expected=np.asarray(reference[period][regime_name]),
-                n_ulp=64,
+                n_ulp=_INVARIANCE_ULP,
                 err_msg=f"period={period}, regime={regime_name}",
             )
 
@@ -160,7 +167,7 @@ def test_the_default_plan_agrees_with_the_whole_mesh_fold() -> None:
             assert_agrees_to_ulp(
                 got=np.asarray(default[period][regime_name]),
                 expected=np.asarray(reference[period][regime_name]),
-                n_ulp=64,
+                n_ulp=_INVARIANCE_ULP,
                 err_msg=f"period={period}, regime={regime_name}",
             )
 

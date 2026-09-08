@@ -102,8 +102,17 @@ def _ages() -> AgeGrid:
 
 
 @functools.cache
-def _model() -> Model:
-    """Asset-row DC-EGM model whose per-node solve the plan tiles."""
+def _model(width: int | None = None) -> Model:
+    """Asset-row DC-EGM model whose per-node solve the plan tiles.
+
+    A `width` fixes the node axis in the model's execution plan; `None` leaves
+    the width to the plan.
+    """
+    config = (
+        ExecutionConfig()
+        if width is None
+        else ExecutionConfig(axis_widths={EULER_POINT_AXIS: width})
+    )
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
@@ -140,6 +149,7 @@ def _model() -> Model:
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        execution_config=config,
     )
 
 
@@ -149,16 +159,7 @@ def _params() -> dict:
 
 def _solve(width: int | None) -> Mapping[int, Mapping[str, FloatND]]:
     """Solve with the node axis tiled at `width`, or at the plan's own choice."""
-    config = (
-        ExecutionConfig()
-        if width is None
-        else ExecutionConfig(axis_widths={EULER_POINT_AXIS: width})
-    )
-    return (
-        _model()
-        .solve(params=_params(), log_level="debug", execution_config=config)
-        .values
-    )
+    return _model(width).solve(params=_params(), log_level="debug").values
 
 
 def _euler_point_axis():

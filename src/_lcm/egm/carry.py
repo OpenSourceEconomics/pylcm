@@ -404,6 +404,8 @@ def shard_carry_template(
     rule its value array follows. Where that device is the one a single-device
     solve would have used anyway, the template keeps the default placement.
     """
+    # Function-local: `_lcm.engine` imports `_lcm.continuation`, which imports
+    # `EGMCarry` from this module, so a module-level import cycles.
     from _lcm.engine import _build_regime_sharding  # noqa: PLC0415
 
     plan = _build_regime_sharding(grids=MappingProxyType(dict(grids)), devices=devices)
@@ -438,6 +440,9 @@ def _place_carry_template_on_one_device(
     the template there anyway, which is what `placed_V_sharding` does for the
     same regime's value array.
     """
+    # Function-local: `_lcm.execution.execution_plan` reaches `_lcm.typing`,
+    # which imports `EGMCarry` from this module, so a module-level import
+    # cycles.
     from _lcm.execution.execution_plan import visible_devices  # noqa: PLC0415
 
     visible = visible_devices()

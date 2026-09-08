@@ -11,7 +11,7 @@ offending piece. The rules, in the order they are checked:
   with a transition whose DAG ancestors include neither the continuous
   action, the resources function, nor the post-decision function (the
   current Euler state is allowed — see the savings-node-stage rule below),
-  and a grid that is not distributed (`batch_size` is honored)
+  and a grid that is not distributed
 - the post-decision function and the resources function exist in
   `Regime.functions` (`inverse_marginal_utility` is optional — when omitted,
   the iEGM path derives a numerical inverse from `utility`)
@@ -39,8 +39,9 @@ offending piece. The rules, in the order they are checked:
   candidate families, while a jump in the other savings-stage functions
   breaks the smoothness-at-node-resolution assumption the per-node solve
   relies on)
-- grid hygiene: the Euler grid is not distributed (`batch_size` is honored),
-  and the savings grid covers the Euler grid's upper region
+- grid hygiene: no grid carries a `batch_size` (every loop it could size is a
+  declared execution axis), the Euler grid is not distributed, and the savings
+  grid covers the Euler grid's upper region
 - every non-terminal target retained in the canonical solution graph also
   uses DC-EGM with the same Euler state (brute-force regimes may target DC-EGM
   regimes)
@@ -624,9 +625,8 @@ def _fail_if_passive_state_invalid(
       allowed ancestor: the kernel then solves per exogenous asset node,
       where the state's value is known (the read must be continuous at node
       resolution — checked by the savings-stage continuity spot check),
-    - a grid that is not distributed; `batch_size` is honored (it splays the
-      passive state's combo axis via productmap to shed memory), while a
-      continuous axis cannot be sharded.
+    - a grid that is not distributed, since a continuous axis cannot be
+      sharded.
     """
     passive_names = [
         name
@@ -682,9 +682,7 @@ def _fail_if_passive_state_invalid(
                 )
                 raise ModelInitializationError(msg)
         grid = cast("ContinuousGrid", user_regime.states[state_name])
-        # `batch_size` on a passive state splays its combo axis (via productmap)
-        # to shed memory; `distributed` stays rejected (a continuous axis
-        # cannot be sharded).
+        # `distributed` is rejected: a continuous axis cannot be sharded.
         if grid.distributed:
             msg = (
                 f"The grid of the passive continuous state '{state_name}' in "
@@ -917,12 +915,12 @@ def _fail_if_grid_hygiene_violated(
     user_regime: UserRegime,
     solver: _BoundDCEGM,
 ) -> None:
-    """Reject runtime-supplied points and distributed grids; savings grid covers
-    the Euler grid.
+    """Reject batched, runtime-supplied and distributed grids; savings grid
+    covers the Euler grid.
 
-    `batch_size` is honored on the Euler, savings, and discrete-state grids (it
-    only splays combo/node axes to shed memory); it is rejected on discrete
-    actions, whose logsum aggregation needs every action value at once.
+    A `batch_size` on any grid the regime uses is rejected: every loop it could
+    have sized is a declared execution axis whose width the plan owns, so the
+    field would be read by nothing.
     """
     # Rule 1 has already established that the Euler state's grid is a
     # (non-process) continuous grid.
@@ -956,27 +954,19 @@ def _fail_if_grid_hygiene_violated(
                 f"(got distributed={grid.distributed})."
             )
             raise ModelInitializationError(msg)
-    for role, grid in (
-        *(
-            (f"state '{name}'", cast("Grid", grid))
-            for name, grid in user_regime.states.items()
-        ),
-        *(
-            (f"action '{name}'", cast("Grid", grid))
-            for name, grid in user_regime.actions.items()
-        ),
-        ("DCEGM savings grid", solver.savings_grid),
-    ):
-        if grid.batch_size != 0:
+    # A discrete action's axis is never split: the action aggregation needs
+    # every action's value at once, so it is neither tiled nor sharded.
+    for name, grid in user_regime.actions.items():
+        if isinstance(grid, DiscreteGrid) and grid.distributed:
             msg = (
-                f"The grid of the {role} in regime '{regime_name}' carries "
-                f"batch_size={grid.batch_size}, which a DCEGM regime does not "
-                "read: each of its loops is an execution axis the value and "
-                "replay programs declare. Fix a width with "
-                "`ExecutionConfig(axis_widths=...)`, which lists the declared "
-                "axis names when it is given one it does not know."
+                f"The grid of the discrete action '{name}' in regime "
+                f"'{regime_name}' must not be distributed in a DCEGM regime "
+                f"(got distributed={grid.distributed})."
             )
             raise ModelInitializationError(msg)
+    _fail_if_a_grid_carries_a_batch_size(
+        regime_name=regime_name, user_regime=user_regime, solver=solver
+    )
     # `distributed` remains disallowed on the Euler grid — a continuous axis
     # cannot be sharded (rejected at grid construction).
     if euler_grid.distributed:
@@ -1005,6 +995,37 @@ def _fail_if_grid_hygiene_violated(
             f"'{solver.continuous_state}'; extend `savings_grid`."
         )
         raise ModelInitializationError(msg)
+
+
+def _fail_if_a_grid_carries_a_batch_size(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    solver: _BoundDCEGM,
+) -> None:
+    """Reject a `batch_size` on any grid a DC-EGM regime uses.
+
+    Every loop the field could size is a declared execution axis whose width the
+    execution plan owns, so the field would be read by nothing; it is refused
+    rather than silently ignored. A slot holding a `Phased` carried state or a
+    plain callable has no grid to carry the field, so only genuine grids are
+    inspected.
+    """
+    for role, grid in (
+        *((f"state '{name}'", grid) for name, grid in user_regime.states.items()),
+        *((f"action '{name}'", grid) for name, grid in user_regime.actions.items()),
+        ("DCEGM savings grid", solver.savings_grid),
+    ):
+        if isinstance(grid, Grid) and grid.batch_size != 0:
+            msg = (
+                f"The grid of the {role} in regime '{regime_name}' carries "
+                f"batch_size={grid.batch_size}, which a DCEGM regime does not "
+                "read: each of its loops is an execution axis the value and "
+                "replay programs declare. Fix a width with "
+                "`ExecutionConfig(axis_widths=...)`, which lists the declared "
+                "axis names when it is given one it does not know."
+            )
+            raise ModelInitializationError(msg)
 
 
 def _fail_if_target_regime_incompatible(

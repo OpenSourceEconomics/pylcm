@@ -1128,7 +1128,10 @@ def _expect_over_stochastic_nodes(
     )
     # The mesh normalizes by the exact power of two its weights were lifted by,
     # not by the mass the fold accumulated, so the published quantity is the
-    # weighted sum rather than the fold's mass-normalized mean.
+    # weighted sum rather than the fold's mass-normalized mean. The mass rides
+    # along in the scan carry unread and is dead code for this caller; the
+    # accumulator is one shared state so every driver of the reduction merges
+    # the same way, and XLA drops the unused half of it.
     return (
         _on_node_scale(
             values=reduction.finalize(accumulator=value_state).weighted_sum,

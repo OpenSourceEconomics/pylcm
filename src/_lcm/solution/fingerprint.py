@@ -1839,6 +1839,9 @@ def _exclude_field(*, owner: object, field_name: str) -> bool:
         and field_name in _GRID_EXECUTION_FIELDS
     ):
         return True
+    # The first matching row answers, which is exact because no registered
+    # solver derives from another: they all derive from `OneMarginSolver` or
+    # `TwoMarginSolver`, so a type matches at most one row's hierarchy.
     for registered_type, fields in _BUILTIN_EXECUTION_FIELDS_BY_TYPE:
         if owner_type is registered_type or (
             issubclass(owner_type, registered_type)

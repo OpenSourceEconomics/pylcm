@@ -26,6 +26,7 @@ from _lcm.egm.carry import EGMCarry
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -36,7 +37,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import SolutionResult
-from lcm.solvers import DCEGM, GridSearch
+from lcm.solvers import CELL_AXIS, DCEGM, GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -192,8 +193,17 @@ def _shared_functions() -> dict:
 
 
 @functools.cache
-def _model(solver: str) -> Model:
-    """Euler `wealth` + passive `aime` + process `income`, asset-row mode."""
+def _model(*, solver: str, cell_width: int | None = None) -> Model:
+    """Euler `wealth` + passive `aime` + process `income`, asset-row mode.
+
+    A `cell_width` fixes the output state-cell axis in the model's execution
+    plan; `None` leaves the width to the plan.
+    """
+    config = (
+        ExecutionConfig()
+        if cell_width is None
+        else ExecutionConfig(axis_widths={CELL_AXIS: cell_width})
+    )
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     states = {
@@ -244,6 +254,7 @@ def _model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=PassiveAssetRowRegimeId,
+        execution_config=config,
     )
 
 
@@ -272,10 +283,10 @@ def test_passive_aime_through_asset_row_matches_brute_force():
     """
     params = _params()
     dcegm_solution: Mapping[int, Mapping[str, FloatND]] = (
-        _model("dcegm").solve(params=params, log_level="debug").values
+        _model(solver="dcegm").solve(params=params, log_level="debug").values
     )
     brute_solution: Mapping[int, Mapping[str, FloatND]] = (
-        _model("brute_force").solve(params=params, log_level="debug").values
+        _model(solver="brute_force").solve(params=params, log_level="debug").values
     )
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
@@ -308,7 +319,9 @@ def test_asset_row_carry_rows_are_the_euler_grid_not_the_envelope_workspace():
     size, not the larger savings/envelope candidate length — the difference is
     pure storage the parent never reads (the NaN tail is masked on interpolation).
     """
-    template = _model("dcegm")._regimes["working_life"].solution.continuation_template
+    template = (
+        _model(solver="dcegm")._regimes["working_life"].solution.continuation_template
+    )
     assert isinstance(template, EGMCarry)
     n_euler = int(WEALTH_GRID.to_jax().shape[0])
     # The envelope workspace would have been ceil(1.2 * (n_savings + n_constrained))
@@ -510,69 +523,33 @@ def test_means_tested_prob_through_param_intermediate_matches_brute_force(
         )
 
 
-@functools.cache
-def _model_with_aime_batch(aime_batch_size: int) -> Model:
-    """The asset-row passive-AIME DC-EGM model with `aime` splayed by batch_size."""
-    working = ConsumptionSavingsRegime(
-        transition={
-            "working_life": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=_active,
-        actions={
-            "labor_supply": DiscreteGrid(category_class=LaborChoice),
-            "consumption": CONSUMPTION_GRID,
-        },
-        states={
-            "wealth": WEALTH_GRID,
-            "aime": LinSpacedGrid(
-                start=0.0, stop=AIME_MAX, n_points=6, batch_size=aime_batch_size
-            ),
-            "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
-        },
-        state_transitions={"wealth": next_wealth_dcegm, "aime": next_aime},
-        constraints={},
-        functions={
-            **_shared_functions(),
-            "savings": savings,
-            "inverse_marginal_utility": inverse_marginal_utility,
-        },
-        solver=DCEGM_SOLVER,
-        liquid=LiquidMargin(
-            state="wealth",
-            action="consumption",
-            resources="wealth",
-            post_decision_state="savings",
-        ),
-    )
-    return Model(
-        regimes={"working_life": working, "dead": dead},
-        ages=_ages(),
-        regime_id_class=PassiveAssetRowRegimeId,
+def _solve_at_cell_width(width: int) -> Mapping[int, Mapping[str, FloatND]]:
+    """Solve the asset-row passive-AIME model with the cell axis tiled at `width`."""
+    return (
+        _model(solver="dcegm", cell_width=width)
+        .solve(params=_params(), log_level="debug")
+        .values
     )
 
 
 def _euler_last_flat(value_array: np.ndarray) -> np.ndarray:
     """Move the Euler (wealth) axis last and flatten the leading combo axes.
 
-    `batch_size` on a continuous state reorders the canonical continuous-axis
-    layout (a batched axis is placed ahead of an unbatched one — the same
-    reordering the brute solver applies). Moving the Euler axis last collapses
-    that difference: `(income, wealth, aime)` and `(income, aime, wealth)` both
-    become `(income, aime, wealth)`, so the solved values are directly
-    comparable regardless of the splay.
+    The comparison then reads the same way whatever order the canonical layout
+    puts the continuous axes in: `(income, wealth, aime)` and
+    `(income, aime, wealth)` both become `(income, aime, wealth)`.
     """
     moved = np.moveaxis(value_array, _euler_axis(value_array), -1)
     return moved.reshape(-1, moved.shape[-1])
 
 
-# Splaying the combo axis repartitions the compiled reduction, so the value
-# array is owed agreement to the working precision rather than bit identity.
-# Measured over this file's grids, across batch sizes 1, 2 and 4 and every
-# non-terminal period, the worst relative departure from the unsplayed solve is
-# 2.72 eps at float32 and 1.99 eps at float64. Eight eps is that measurement
-# with headroom, and is dtype-derived, so it tightens automatically at float64
-# instead of degrading into a bit-identity claim the way a fixed `1e-12` does.
+# Tiling the cell axis repartitions the compiled reduction, so the value array
+# is owed agreement to the working precision rather than bit identity. Measured
+# over this file's grids, across widths 1, 2 and 4 and every non-terminal
+# period, the worst relative departure from the untiled solve is 2.72 eps at
+# float32 and 1.99 eps at float64. Eight eps is that measurement with headroom,
+# and is dtype-derived, so it tightens automatically at float64 instead of
+# degrading into a bit-identity claim the way a fixed `1e-12` does.
 _INVARIANCE_EPS_MULTIPLE = 8.0
 
 
@@ -614,24 +591,19 @@ def _simulated_choices(*, model: Model, solution: SolutionResult):
     return simulated.set_index(["subject_id", "period"]).sort_index()
 
 
-@pytest.mark.parametrize("aime_batch_size", [1, 2, 4])
-def test_passive_aime_batch_size_leaves_value_function_unchanged(aime_batch_size: int):
-    """Splaying the passive AIME combo axis moves the values by at most a few ULP.
+@pytest.mark.parametrize("cell_width", [1, 2, 4])
+def test_passive_aime_cell_width_leaves_value_function_unchanged(cell_width: int):
+    """Tiling the cell axis moves the values by at most a few ULP.
 
-    `batch_size` on the passive `aime` grid only changes how the combo product
-    is scheduled (per-axis `productmap` blocks instead of one fused vmap). The
-    canonical layout reorders the continuous axes (batched ahead of unbatched,
-    matching the brute solver), so the comparison moves the Euler axis last. The
-    reduction is repartitioned, not redefined: which cells are feasible is
-    unchanged, and the surviving values agree to the working precision at every
-    period, including a block size that does not divide the AIME grid.
+    A width on the `cell` axis only changes how the output state cells — the
+    income process by the passive `aime` grid — are scheduled: `lax.map` tiles
+    instead of one fused vmap. The reduction is repartitioned, not redefined:
+    which cells are feasible is unchanged, and the surviving values agree to
+    the working precision at every period, including a width that does not
+    divide the cell product.
     """
-    reference = _model("dcegm").solve(params=_params(), log_level="debug").values
-    splayed = (
-        _model_with_aime_batch(aime_batch_size)
-        .solve(params=_params(), log_level="debug")
-        .values
-    )
+    reference = _model(solver="dcegm").solve(params=_params(), log_level="debug").values
+    splayed = _solve_at_cell_width(cell_width)
     # `working_life` is the asset-row regime carrying the splayed AIME axis;
     # it is inactive in the terminal period, so exclude that period.
     for period in sorted(reference)[:-1]:
@@ -642,7 +614,7 @@ def test_passive_aime_batch_size_leaves_value_function_unchanged(aime_batch_size
         np.testing.assert_array_equal(
             np.isfinite(got),
             np.isfinite(want),
-            err_msg=f"feasibility differs: period={period}, bs={aime_batch_size}",
+            err_msg=f"feasibility differs: period={period}, width={cell_width}",
         )
         rtol, atol = _invariance_tolerances(want)
         np.testing.assert_allclose(
@@ -650,39 +622,39 @@ def test_passive_aime_batch_size_leaves_value_function_unchanged(aime_batch_size
             want,
             rtol=rtol,
             atol=atol,
-            err_msg=f"period={period}, bs={aime_batch_size}",
+            err_msg=f"period={period}, width={cell_width}",
         )
 
 
-@pytest.mark.parametrize("aime_batch_size", [1, 2, 4])
-def test_passive_aime_batch_size_leaves_the_discrete_choices_unchanged(
-    aime_batch_size: int,
+@pytest.mark.parametrize("cell_width", [1, 2, 4])
+def test_passive_aime_cell_width_leaves_the_discrete_choices_unchanged(
+    cell_width: int,
 ):
-    """Splaying the passive AIME combo axis does not move a single discrete choice.
+    """Tiling the cell axis does not move a single discrete choice.
 
-    Batch size partitions a computation whose result does not depend on the
+    A tile width partitions a computation whose result does not depend on the
     partition, so the discrete objects are owed exact equality rather than a
     tolerance: a labor-supply choice or a regime that flips is a defect, not
     rounding. Simulating the same subject panel under both schedules with the
     same seed reproduces the same choice for every subject in every period.
     """
-    reference_model = _model("dcegm")
+    model = _model(solver="dcegm")
     reference = _simulated_choices(
-        model=reference_model,
-        solution=reference_model.solve(params=_params(), log_level="debug"),
+        model=model,
+        solution=model.solve(params=_params(), log_level="debug"),
     )
-    splayed_model = _model_with_aime_batch(aime_batch_size)
-    splayed = _simulated_choices(
-        model=splayed_model,
-        solution=splayed_model.solve(params=_params(), log_level="debug"),
+    tiled_model = _model(solver="dcegm", cell_width=cell_width)
+    tiled = _simulated_choices(
+        model=tiled_model,
+        solution=tiled_model.solve(params=_params(), log_level="debug"),
     )
 
-    assert list(splayed.index) == list(reference.index), (
-        f"subject/period panel differs, bs={aime_batch_size}"
+    assert list(tiled.index) == list(reference.index), (
+        f"subject/period panel differs, width={cell_width}"
     )
     for column in ("labor_supply", "regime_name"):
         np.testing.assert_array_equal(
-            splayed[column].to_numpy(),
+            tiled[column].to_numpy(),
             reference[column].to_numpy(),
-            err_msg=f"{column} differs, bs={aime_batch_size}",
+            err_msg=f"{column} differs, width={cell_width}",
         )

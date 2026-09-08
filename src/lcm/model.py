@@ -81,6 +81,12 @@ from _lcm.solution.backward_induction import (
     solve,
 )
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.dcegm import (
+    CELL_AXIS,
+    EULER_POINT_AXIS,
+    SAVINGS_POINT_AXIS,
+    STOCHASTIC_NODE_AXIS,
+)
 from _lcm.solution.fingerprint import (
     SolutionParamProjection,
     fingerprint_model,
@@ -242,7 +248,15 @@ _DECLARED_AUTHORITY_CACHE_SIZE = 4
 # Planner axis names the shipped solvers declare. An `ExecutionConfig.axis_width`
 # for any other name is a misspelling, and naming the legal set is the only way a
 # hardware-local name can be checked at all.
-_DECLARED_AXIS_NAMES = frozenset({ACTION_PRODUCT_AXIS})
+_DECLARED_AXIS_NAMES = frozenset(
+    {
+        ACTION_PRODUCT_AXIS,
+        STOCHASTIC_NODE_AXIS,
+        CELL_AXIS,
+        SAVINGS_POINT_AXIS,
+        EULER_POINT_AXIS,
+    }
+)
 
 
 def _built_in_policy_payload_defect(  # noqa: PLR0911
