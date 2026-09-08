@@ -46,7 +46,6 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
-from _lcm.solution.nbegm import NBEGM
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
 from lcm.case_piece import (
@@ -94,20 +93,8 @@ _PYTHON_IMPLEMENTATION_SEAL = (
 # a plugin or user callable stays free to give a mathematically meaningful field
 # the same name.
 _GRID_EXECUTION_FIELDS = frozenset({"batch_size", "distributed"})
-_BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ...] = (
-    (
-        NBEGM,
-        frozenset(
-            {
-                "branch_batch_size",
-                "cell_block_size",
-                "envelope_segment_block_size",
-                "interval_batch_size",
-                "stochastic_node_batch_size",
-            }
-        ),
-    ),
-)
+# Solver execution widths belong to ExecutionConfig.
+_BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ...] = ()
 _BUILTIN_TYPE_OBJECTS = frozenset(
     value for value in vars(builtins).values() if isinstance(value, type)
 )

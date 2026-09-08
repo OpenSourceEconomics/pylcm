@@ -1,38 +1,21 @@
-"""NBEGM batching controls are validated where they are declared.
-
-Zero selects either a dense one-shot path for true streaming controls or the
-largest admitted stride for fixed-window controls. Every control rejects negative
-values before they can reach numerical lowering.
-"""
-
-from typing import Any
+"""NBEGM execution widths are validated by their public planner configuration."""
 
 import pytest
 
-from lcm.exceptions import RegimeInitializationError
-from lcm.grids import LinSpacedGrid
-from lcm.solvers import NBEGM
-
-SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=5)
+from lcm import ExecutionConfig
+from lcm.solvers import BRANCH_AXIS, CELL_AXIS, INTERVAL_AXIS, STOCHASTIC_NODE_AXIS
 
 
 @pytest.mark.parametrize(
-    "knob",
-    [
-        "stochastic_node_batch_size",
-        "envelope_segment_block_size",
-        "interval_batch_size",
-        "cell_block_size",
-        "branch_batch_size",
-    ],
+    "axis", [STOCHASTIC_NODE_AXIS, INTERVAL_AXIS, BRANCH_AXIS, CELL_AXIS]
 )
-def test_a_negative_nbegm_batching_control_is_named_and_rejected(knob: str) -> None:
-    """Each NBEGM batching control names itself when given a negative size."""
-    negative: dict[str, Any] = {knob: -1}
-    with pytest.raises(RegimeInitializationError, match=rf"NBEGM\.{knob}"):
-        NBEGM(savings_grid=SAVINGS_GRID, **negative)
+@pytest.mark.parametrize("width", [-1, 0])
+def test_nbegm_planner_width_must_be_positive(*, axis: str, width: int) -> None:
+    """Explicit zero and negative widths are refused at the execution boundary."""
+    with pytest.raises(ValueError, match=axis):
+        ExecutionConfig(axis_widths={axis: width})
 
 
-def test_zero_is_the_accepted_default_batching_setting() -> None:
-    """`0` selects the documented default for either batching contract."""
-    assert NBEGM(savings_grid=SAVINGS_GRID, branch_batch_size=0).branch_batch_size == 0
+def test_omitting_a_width_selects_the_planner_default() -> None:
+    """Omission leaves widths to planning without a solver-specific sentinel."""
+    assert not ExecutionConfig().axis_widths

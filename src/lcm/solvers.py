@@ -93,6 +93,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import OutputRole, StateAxesLeading
 from _lcm.execution.reductions import (
     EXACTNESS_VALUES,
+    INTERVAL_ENVELOPE_REDUCTION,
     HardMaxWithCarryReduction,
     IntervalEnvelopeReduction,
     ReductionDeclaration,
@@ -138,7 +139,7 @@ from _lcm.solution.dcegm import (
 )
 from _lcm.solution.egm import EGM
 from _lcm.solution.grid_search import ACTION_PRODUCT_AXIS, GridSearch
-from _lcm.solution.nbegm import NBEGM
+from _lcm.solution.nbegm import BRANCH_AXIS, INTERVAL_AXIS, NBEGM
 from _lcm.solution.negm import NEGM, OUTER_CANDIDATE_AXIS
 from _lcm.solution.nnbegm import NNBEGM
 from lcm.branch_aggregation import (
@@ -204,6 +205,7 @@ from lcm.solver_api import (
 
 __all__ = [
     "ACTION_PRODUCT_AXIS",
+    "BRANCH_AXIS",
     "CELL_AXIS",
     "DCEGM",
     "DISSOLUTION_FLAG",
@@ -213,6 +215,8 @@ __all__ = [
     "ENVELOPE_CELL_AXIS",
     "EULER_POINT_AXIS",
     "EXACTNESS_VALUES",
+    "INTERVAL_AXIS",
+    "INTERVAL_ENVELOPE_REDUCTION",
     "NBEGM",
     "NEGM",
     "NNBEGM",

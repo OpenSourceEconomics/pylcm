@@ -221,12 +221,15 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.EULER_POINT_AXIS`](custom_solvers.md)                                        | Name of the Euler-node axis           |
 | [`lcm.solvers.ENVELOPE_CELL_AXIS`](envelopes.md)                                           | Name of the envelope-cell axis        |
 | [`lcm.solvers.OUTER_CANDIDATE_AXIS`](custom_solvers.md)                                    | Name of the outer-candidate axis      |
+| [`lcm.solvers.INTERVAL_AXIS`](solvers.md#api-nbegm)                                        | Name of the liquid-interval axis      |
+| [`lcm.solvers.BRANCH_AXIS`](solvers.md#api-nbegm)                                          | Name of the discrete-branch axis      |
 | [`lcm.solvers.ReductionDeclaration`](custom_solvers.md)                                    | Contract a reduced axis names         |
 | [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Declaration carrying its own fold     |
 | [`lcm.solvers.EXACTNESS_VALUES`](custom_solvers.md)                                        | The two published exactness values    |
 | [`lcm.solvers.WeightedExpectationReduction`](custom_solvers.md)                            | Weighted sum over stochastic nodes    |
 | [`lcm.solvers.HardMaxWithCarryReduction`](custom_solvers.md)                               | Hard max carrying the winner payload  |
 | [`lcm.solvers.IntervalEnvelopeReduction`](custom_solvers.md)                               | Upper envelope over intervals         |
+| [`lcm.solvers.INTERVAL_ENVELOPE_REDUCTION`](solvers.md#api-nbegm)                          | Shared interval-envelope declaration  |
 | [`lcm.solvers.OutputRole`](custom_solvers.md)                                              | Value and dissolution-flag roles      |
 | [`lcm.solvers.StateAxesLeading`](custom_solvers.md)                                        | Parametrized output-placement role    |
 | [`lcm.solvers.StateActionSpace`](custom_solvers.md)                                        | Per-period state and action arrays    |

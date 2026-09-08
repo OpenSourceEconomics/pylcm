@@ -10,6 +10,7 @@ program) the policy. Agreement with the direct scalar oracle is
 
 import inspect
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 import jax
@@ -21,6 +22,7 @@ from _lcm.execution.core_program import (
     CoreBuildContext,
     core_program_graph,
     materialize_core_program,
+    resolve_core_program,
 )
 from tests.conftest import invariance_tolerances
 from tests.solution._nbegm_direct_oracle import ride_along_kernel as _ride_along_kernel
@@ -61,9 +63,28 @@ def _materialize(*, kernel: Any, context: Mapping[str, Any], name: str) -> Any:
     )
 
 
-def _run(*, kernel: Any, context: Mapping[str, Any], name: str) -> tuple:
+def _run(
+    *,
+    kernel: Any,
+    context: Mapping[str, Any],
+    name: str,
+    cell_width: int | None = None,
+) -> tuple:
     materialized = _materialize(kernel=kernel, context=context, name=name)
-    return tuple(jax.jit(materialized.function)(**materialized.arguments))
+    resolved = resolve_core_program(
+        program=materialized,
+        tile_widths={
+            axis.name: min(cell_width, axis.extent)
+            if axis.name == "cell" and cell_width is not None
+            else axis.extent
+            for axis in materialized.requirements.axes
+        },
+    )
+    return tuple(
+        jax.jit(partial(resolved.function, **resolved.static_kwargs))(
+            **resolved.arguments
+        )
+    )
 
 
 @pytest.mark.parametrize("name", ["main", "replay"])
@@ -84,19 +105,15 @@ def test_tile_local_core_signature_has_no_materialized_continuation_stacks(
     assert "cliff_savings_stack" not in names
 
 
-@pytest.mark.parametrize("cell_block_size", [1, 3])
-def test_tile_local_core_is_invariant_to_the_cell_block_size(
-    *, cell_block_size: int
-) -> None:
+@pytest.mark.parametrize("cell_width", [1, 3])
+def test_tile_local_core_is_invariant_to_the_cell_width(*, cell_width: int) -> None:
     """The cell block is a memory window: which cells share a pass changes nothing."""
     params = nbegm_ride_along_toy.build_params()
     whole_kernel, whole_context = _ride_along_kernel(model=_ride_model(), params=params)
-    blocked_kernel, blocked_context = _ride_along_kernel(
-        model=_ride_model(nbegm_overrides={"cell_block_size": cell_block_size}),
-        params=params,
-    )
     whole = _run(kernel=whole_kernel, context=whole_context, name="replay")
-    blocked = _run(kernel=blocked_kernel, context=blocked_context, name="replay")
+    blocked = _run(
+        kernel=whole_kernel, context=whole_context, name="replay", cell_width=cell_width
+    )
     _assert_same_result(actual=blocked, expected=whole)
 
 

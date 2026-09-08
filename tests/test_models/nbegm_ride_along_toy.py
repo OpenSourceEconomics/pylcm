@@ -107,6 +107,7 @@ def build_model(
     savings_max: float = 28.0,
     nbegm_overrides: Mapping[str, object] | None = None,
     distributed_kind: bool = False,
+    execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Create the (alive, dead) tax toy with a deterministic ride-along `kind`.
 
@@ -151,6 +152,7 @@ def build_model(
     constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     return make_alive_dead_model(
+        execution_config=execution_config,
         n_periods=n_periods,
         n_liquid=n_liquid,
         liquid_max=liquid_max,

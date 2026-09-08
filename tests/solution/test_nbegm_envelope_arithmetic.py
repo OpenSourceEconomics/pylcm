@@ -78,7 +78,7 @@ def test_the_ordinary_envelope_reproduces_the_certified_value_function():
 
 
 def _step_jaxpr(
-    *, arithmetic: ComparisonArithmetic, envelope_segment_block_size: int = 0
+    *, arithmetic: ComparisonArithmetic, envelope_segment_width: int = 0
 ) -> str:
     """The program one per-interval step stages out, as text."""
     inputs = _per_interval_inputs(n_intervals=6)
@@ -86,7 +86,7 @@ def _step_jaxpr(
         jax.make_jaxpr(
             lambda: nbegm_per_interval_continuation_step_savings(
                 **inputs,
-                envelope_segment_block_size=envelope_segment_block_size,
+                envelope_segment_width=envelope_segment_width,
                 arithmetic=arithmetic,
             )
         )()
@@ -123,10 +123,10 @@ def test_blocking_the_ordinary_read_publishes_what_the_unblocked_read_does():
     """
     inputs = _per_interval_inputs(n_intervals=6)
     unblocked = nbegm_per_interval_continuation_step_savings(
-        **inputs, envelope_segment_block_size=0, arithmetic="ordinary"
+        **inputs, envelope_segment_width=0, arithmetic="ordinary"
     )
     blocked = nbegm_per_interval_continuation_step_savings(
-        **inputs, envelope_segment_block_size=7, arithmetic="ordinary"
+        **inputs, envelope_segment_width=7, arithmetic="ordinary"
     )
 
     for one, other in zip(unblocked, blocked, strict=True):

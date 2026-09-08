@@ -407,7 +407,7 @@ def build_model(  # noqa: C901, PLR0912
     transition_smooth: bool = False,
     action_in_discount: bool = False,
     nonlinear_budget_above_ten: bool = False,
-    branch_batch_size: int = 0,
+    execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
     include_income: bool = True,
     probe_failure: str = "reject",
     probe_schedule: str = "every_solve",
@@ -505,8 +505,6 @@ def build_model(  # noqa: C901, PLR0912
         solver_kwargs["probe_failure"] = probe_failure
     if probe_schedule != "every_solve":
         solver_kwargs["probe_schedule"] = probe_schedule
-    if branch_batch_size:
-        solver_kwargs["branch_batch_size"] = branch_batch_size
     alive_solver = resolve_solver(
         variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -540,6 +538,7 @@ def build_model(  # noqa: C901, PLR0912
     else:
         survival_transition = None
     return make_alive_dead_model(
+        execution_config=execution_config,
         n_periods=n_periods,
         n_liquid=n_liquid,
         liquid_max=liquid_max,

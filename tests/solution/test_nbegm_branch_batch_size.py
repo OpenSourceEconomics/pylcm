@@ -1,15 +1,17 @@
 """NBEGM's branch axis streams in blocks without changing the solution.
 
-`branch_batch_size` bounds how many discrete-action branches the two ride-along
-cores hold in flight at once: `0` runs the whole branch axis in one vectorized
-pass, `1` runs branch-by-branch (memory-minimal). The knob trades peak memory
-against sequential execution and changes no arithmetic.
+`ExecutionConfig.axis_widths[BRANCH_AXIS]` bounds how many discrete-action
+branches the two ride-along cores hold in flight at once. This model has two
+branches, so widths two and one compare a whole-axis pass with branch-by-branch
+execution while preserving the arithmetic.
 """
 
 from collections.abc import Mapping
 
 import numpy as np
 
+from lcm import ExecutionConfig
+from lcm.solvers import BRANCH_AXIS
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_ride_discrete_toy as toy
 
@@ -23,7 +25,7 @@ from tests.test_models import nbegm_ride_discrete_toy as toy
 _PARTITION_ULP = 64
 
 
-def _solve(*, branch_batch_size: int) -> Mapping[int, Mapping]:
+def _solve(*, branch_width: int) -> Mapping[int, Mapping]:
     model = toy.build_model(
         variant="nbegm",
         n_liquid=40,
@@ -34,16 +36,16 @@ def _solve(*, branch_batch_size: int) -> Mapping[int, Mapping]:
         action_in_costate=True,
         action_in_utility=True,
         action_in_regime_transition=True,
-        branch_batch_size=branch_batch_size,
+        execution_config=ExecutionConfig(axis_widths={BRANCH_AXIS: branch_width}),
     )
     return model.solve(params=toy.build_params(), log_level="debug").values
 
 
-def test_branch_batch_size_one_matches_whole_axis() -> None:
+def test_branch_width_one_matches_whole_axis() -> None:
     """Streaming the branch axis one branch at a time yields the same `V` as the
     whole-axis pass, with the action feeding co-state, utility, and transition."""
-    whole = _solve(branch_batch_size=0)
-    streamed = _solve(branch_batch_size=1)
+    whole = _solve(branch_width=2)
+    streamed = _solve(branch_width=1)
     assert whole.keys() == streamed.keys()
     for period in whole:
         for regime in whole[period]:

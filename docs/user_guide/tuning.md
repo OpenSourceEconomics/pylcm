@@ -70,14 +70,16 @@ total device memory.
 Which axis names exist depends on which solver a regime uses; each solver's section in
 [Solvers and capabilities](../reference/solvers.md) names the axes it declares.
 
-| axis              | declared by                                                             |
-| ----------------- | ----------------------------------------------------------------------- |
-| `action_product`  | the flattened Cartesian action product of a streamed `GridSearch` core  |
-| `stochastic_node` | the child stochastic-node mesh a `DCEGM` continuation expectation folds |
-| `cell`            | the output state cells a `DCEGM` per-combo solve is tiled over          |
-| `savings_point`   | the exogenous savings nodes a `DCEGM` continuation is tiled over        |
-| `euler_point`     | the exogenous Euler nodes a `DCEGM` asset-row solve is tiled over       |
-| `outer_candidate` | the exogenous outer post-decision nodes of a nested outer search        |
+| axis              | declared by                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `action_product`  | the flattened Cartesian action product of a streamed `GridSearch` core                    |
+| `stochastic_node` | the declared child stochastic-node mesh a `DCEGM` or ride-along `NBEGM` expectation folds |
+| `cell`            | the independent output cells a `DCEGM` or ride-along `NBEGM` solve tiles                  |
+| `interval`        | liquid intervals a ride-along `NBEGM` continuation reads and folds                        |
+| `branch`          | the discrete-action product a ride-along `NBEGM` solves before its maximum                |
+| `savings_point`   | the exogenous savings nodes a `DCEGM` continuation is tiled over                          |
+| `euler_point`     | the exogenous Euler nodes a `DCEGM` asset-row solve is tiled over                         |
+| `outer_candidate` | the exogenous outer post-decision nodes of a nested outer search                          |
 
 Choose the largest width that meets the measured memory target, then verify values and
 runtime against the whole-axis setting on the model and backend you will use. Leaving an
@@ -87,22 +89,24 @@ asks it to do.
 ## Stream work with solver-owned batch widths
 
 Some controls a solver owns itself reduce live intermediates. Grid `batch_size`,
-`envelope_segment_block_size`, `subject_batch_size`, and any solver field whose
-Reference contract explicitly says it streams an evaluation axis can lower temporary
-workspace. The exact effect still depends on retained banks and downstream folds; for
-example, the `outer_candidate` width can lower a nested solver's temporary evaluation
-memory without capping the retained candidate bank.
+`subject_batch_size`, and any solver field whose Reference contract explicitly says it
+streams an evaluation axis can lower temporary workspace. The exact effect still depends
+on retained banks and downstream folds; for example, the `outer_candidate` width can
+lower a nested solver's temporary evaluation memory without capping the retained
+candidate bank.
 
 A `DCEGM` regime owns none of these: each loop it could stream is one of the axes in the
 table above, so a `batch_size` on one of its grids is refused at model build and the
 width is fixed with `ExecutionConfig(axis_widths=...)` instead.
 
-NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
-batch widths for the corresponding `lax.map` axes. A positive value smaller than the
-axis bounds how many entries are evaluated together; `0`, or a value covering the axis,
-uses one vectorized pass. Lower values can reduce live intermediates inside that mapped
-core at the cost of more sequential execution. They do not cap surrounding arrays,
-retained candidate banks, compilation memory, or total device memory.
+NBEGM also owns no compiled-width fields. Use its applicable axes in the table above:
+`interval` streams the continuation read together with the stable-identity candidate
+fold, `branch` maps the discrete subproblems before their maximum, and `cell` tiles
+independent ride cells inside each co-mapped carry slice. A route declares only the
+nontrivial meshes it consumes. The interval stream has no separate segment-width loop.
+Smaller widths can reduce live intermediates at the cost of sequential execution; they
+do not cap surrounding arrays, retained candidate banks, compilation memory, or total
+device memory.
 
 Choose the largest batch that meets the measured memory target, then verify values and
 runtime against the whole-axis setting on the model and backend you will use.

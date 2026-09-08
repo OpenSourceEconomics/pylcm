@@ -239,12 +239,7 @@ or remove the taste shocks when the NEGM structure is required.
 NBEGM(
     savings_grid=...,
     jump_read="one_sided",
-    stochastic_node_batch_size=0,
-    envelope_segment_block_size=0,
     envelope_arithmetic="certified",
-    interval_batch_size=0,
-    cell_block_size=0,
-    branch_batch_size=0,
     probe_failure="reject",
 )
 ```
@@ -269,11 +264,13 @@ certified result. Select `envelope_arithmetic="ordinary"` only when working-form
 ownership is acceptable under model-specific crossing checks. The same requirement
 applies when this NBEGM is the inner solver of `NNBEGM`.
 
-The memory controls do not all mean “compiled batch width”:
+Compiled widths belong to the model's `ExecutionConfig`, with constants imported from
+`lcm.solvers`. Only axes a program actually uses are declared:
 
-- `stochastic_node_batch_size` and `envelope_segment_block_size` stream their named
-  intermediate axes;
-- `interval_batch_size` streams the continuation read and the candidate-envelope fold
+- `stochastic_node` (`STOCHASTIC_NODE_AXIS`) folds the child stochastic-node expectation
+  where the child mesh is also present in the program's state grids. Absent, singleton,
+  and cross-grid meshes keep a complete expectation and declare no such axis.
+- `interval` (`INTERVAL_AXIS`) streams the continuation read and the candidate-envelope fold
   together. A positive width reads only that many interval rows, folds their candidates
   into one standing winner per query, then requests the next block. The standing winner
   retains its global stored-link index, so given the candidate records every partition
@@ -288,17 +285,33 @@ The memory controls do not all mean “compiled batch width”:
   place this is visible on a regular grid is a node where a savings-node point candidate
   coincides with an interior candidate: the two are the same point, and which of them
   is named the owner can differ between widths while the published level does not.
-  `interval_batch_size=0` keeps the one-shot continuation matrix and envelope reduction;
-- `cell_block_size` and `branch_batch_size` are compiled `lax.map` batch widths for the
-  ride-cell and discrete-branch axes. The continuation read behind the branch axis runs
+  This axis exists only when continuation reads the liquid state across multiple
+  declared intervals. Omitting a width lets the planner choose the streamed width.
+- `cell` (`CELL_AXIS`) tiles independent ride cells inside each co-mapped carry slice;
+  it excludes the distributed states the carry is co-mapped over.
+- `branch` (`BRANCH_AXIS`) batches discrete branches before their maximum, retaining
+  the conditional banks needed for replay. The continuation read behind the branch axis runs
   once per class of branches that agree on every discrete action reaching the
   continuation (the regime transition, a law of motion, stochastic-state transition
   weights, a child's resources, the discount factor, or a schedule variable), so a
   budget-only action costs one read per cell however many branches it declares;
-- lower positive values bound the named streamed or mapped width. For the map-width
-  controls, `0` or a value covering the axis selects one vectorized pass.
+- Singleton meshes and routes without the corresponding computation omit its axis.
 
-These fields bound only their named mapped work, not surrounding arrays or total memory.
+For a model that declares continuation intervals, the execution setting is:
+
+```python
+from lcm import ExecutionConfig
+from lcm.solvers import INTERVAL_AXIS
+
+execution_config = ExecutionConfig(axis_widths={INTERVAL_AXIS: 2})
+```
+
+Widths must be positive; values above an axis's extent clamp to that extent. The
+canonical interval stream has no separate segment-width loop, and certified envelope
+queries own their internal partition, so NBEGM exposes no envelope-segment axis.
+These widths bound their named work, not surrounding arrays, retained branch banks,
+compilation memory, or total device memory. The interval reduction remains a declaration
+of the existing stable-identity fold (`INTERVAL_ENVELOPE_REDUCTION`).
 
 (api-nnbegm)=
 ### `NNBEGM`
@@ -314,10 +327,10 @@ use a bridged carry compatible with the outer fold. See
 The nested period kernel publishes no traced body of its own: its core-program graph
 republishes the inner NB-EGM programs as `keeper:main`, `keeper:replay`,
 `adjuster:main`, and `adjuster:replay`, each with the inner program's output roles and
-scope. The keeper programs keep the inner planned disposition; under
-`AdaptiveOuterMesh` the adjuster programs are host-driven, because the mesh decides
-from the solves it has already seen how many more nodes to request, and they declare
-the continuation leaves that host loop reads. Both roles declare the leaves they read,
+scope. Both roles retain the inner planned disposition, including under
+`AdaptiveOuterMesh`: the host decides which outer nodes to request, and each request
+dispatches a compiled inner program with its planner axes and continuation transfers.
+Both roles declare the leaves they read,
 so the nested dispatch node has no undeclared reader. The keeper programs are built from
 the period's own inputs; the adjuster programs bind the outer post-decision at the first
 outer node, the same shape every per-node call rebinds. A values-only solve dispatches
@@ -329,9 +342,8 @@ Both outer-search routes declare `outer_candidate` as a host-dispatch axis. Set 
 width when building the model with
 `execution_config=ExecutionConfig(axis_widths={"outer_candidate": k})`. The host loop
 dispatches at most `k` pending nodes per step, preserving their order; without a fixed
-width it dispatches all pending nodes in one step. The finite adjuster keeps its
-planned inner core and continuation transfers; the adaptive adjuster remains
-host-driven. A finite values-only solve releases each completed chunk's per-node
+width it dispatches all pending nodes in one step. A finite values-only solve
+releases each completed chunk's per-node
 value temporaries before dispatching the next chunk. It still retains every
 continuation carry, and a replay-retaining solve also keeps all node results.
 The adaptive search retains its exact-node bank. The width therefore limits
