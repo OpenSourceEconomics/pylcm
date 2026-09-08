@@ -198,7 +198,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import productmap
-from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, MSSEnvelope
 from lcm.typing import (
@@ -403,7 +403,7 @@ def build_egm_step_functions(
         ).append(period)
 
     built: dict[_EGMGroupKey, EGMStepFunction] = {}
-    node_axes: dict[StateName, int] = {}
+    node_axes_by_group: dict[_EGMGroupKey, tuple[tuple[StateName, int], ...]] = {}
     for group_key, group_periods in configs.items():
         stateful_targets, scalar_targets, _ = group_key
         # Every period in the group shares a continuation-grid signature and the
@@ -467,23 +467,15 @@ def build_egm_step_functions(
             asset_row_mode=asset_row_mode,
         )
         built[group_key] = kernel
-        # The streamed stochastic-node axis is one declaration for the regime,
-        # so it is the union over the period groups' continuation plans; a
-        # state carries one node count across all of them.
-        for name, count in stochastic_node_axes(
+        # Each group owns a distinct numerical core and its child mesh. A
+        # target active at another age may carry the same state name on a
+        # different domain; that does not change this group's expectation.
+        node_axes_by_group[group_key] = stochastic_node_axes(
             plan=cast("_EGMStep", kernel).pieces.continuation_plan
-        ):
-            if node_axes.setdefault(name, count) != count:
-                msg = (
-                    f"Child stochastic state {name!r} carries {node_axes[name]} "
-                    f"nodes in one period group of regime {regime_name!r} and "
-                    f"{count} in another; the streamed stochastic-node axis "
-                    "admits one node count per state."
-                )
-                raise ExecutionPlanningError(msg)
+        )
 
     result: dict[int, EGMStepFunction] = {}
-    group_keys: dict[int, Hashable] = {}
+    group_keys: dict[int, _EGMGroupKey] = {}
     for key, periods in configs.items():
         for period in periods:
             result[period] = built[key]
@@ -497,7 +489,9 @@ def build_egm_step_functions(
         row_discrete_state_names=own_discrete_state_names,
         row_passive_state_names=own_passive_state_names,
         row_discrete_action_names=tuple(own_discrete_action_values),
-        stochastic_node_axes=tuple(node_axes.items()),
+        stochastic_node_axes_by_period=MappingProxyType(
+            {period: node_axes_by_group[key] for period, key in group_keys.items()}
+        ),
         cell_extent=math.prod(leading_shape[:n_cell_axes]),
         savings_point_extent=n_savings_nodes,
         euler_point_extent=n_euler_nodes if asset_row_mode else 0,

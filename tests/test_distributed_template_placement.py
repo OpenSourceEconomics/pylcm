@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lcm import ExecutionConfig
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.solvers import (
@@ -25,6 +26,7 @@ from lcm.solvers import (
     SolverBuildContext,
 )
 from lcm.typing import FloatND
+from tests.solution.test_dcegm_axis_width_policy import _model as _dcegm_model
 from tests.test_distributed_placement import _make_three_type_model
 
 pytestmark = pytest.mark.skipif(
@@ -91,6 +93,15 @@ def _template(*, sharded: bool) -> _Template:
 
 def test_four_devices_are_visible() -> None:
     assert len(jax.devices()) == 4
+
+
+@pytest.mark.parametrize("device", [0, 1, 3])
+def test_dcegm_template_follows_selected_single_device(*, device: int) -> None:
+    model = _dcegm_model(execution_config=ExecutionConfig(devices=(device,)))
+    template = model._regimes["working"].solution.continuation_template
+    leaves = jax.tree.leaves(template)
+    assert any(leaf.ndim == 0 for leaf in leaves)
+    assert all({d.id for d in leaf.devices()} == {device} for leaf in leaves)
 
 
 @pytest.mark.parametrize("leaf", ["state_values", "scalar", "auxiliary"])

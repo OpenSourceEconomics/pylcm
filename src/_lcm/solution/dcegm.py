@@ -493,7 +493,8 @@ class DCEGM(OneMarginSolver):
                     replay_core = jax.jit(replay_core, static_argnames=_WIDTH_KEYWORDS)
                 requirements = CoreExecutionRequirements(
                     reduced_axes=_stochastic_node_axis(
-                        build=build, state_action_space=context.state_action_space
+                        node_axes=build.stochastic_node_axes_by_period[period],
+                        state_action_space=context.state_action_space,
                     ),
                     tiled_axes=_tiled_axes(build=build),
                 )
@@ -551,7 +552,7 @@ class DCEGM(OneMarginSolver):
             period_kernels=MappingProxyType(period_kernels),
             period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=EGMContinuationSpec(
-                template=build.carry_template,
+                template=context.place_on_regime_devices(template=build.carry_template),
                 layout=self.egm_continuation_layout,
             ),
         )
@@ -654,7 +655,9 @@ _WIDTH_KEYWORDS = (
 
 
 def _stochastic_node_axis(
-    *, build: EGMStepBuild, state_action_space: StateActionSpace
+    *,
+    node_axes: tuple[tuple[StateName, int], ...],
+    state_action_space: StateActionSpace,
 ) -> tuple[ReducedAxis, ...]:
     """Declare the child stochastic-node mesh the continuation folds, where it is one.
 
@@ -672,16 +675,16 @@ def _stochastic_node_axis(
     grids = state_action_space.states
     declarable = all(
         name in grids and int(jnp.asarray(grids[name]).shape[0]) == count
-        for name, count in build.stochastic_node_axes
+        for name, count in node_axes
     )
-    extent = math.prod(count for _, count in build.stochastic_node_axes)
-    if not build.stochastic_node_axes or not declarable or extent <= 1:
+    extent = math.prod(count for _, count in node_axes)
+    if not node_axes or not declarable or extent <= 1:
         return ()
     return (
         ReducedAxis(
             name=STOCHASTIC_NODE_AXIS,
-            coordinate_names=tuple(name for name, _ in build.stochastic_node_axes),
-            coordinate_extents=tuple(count for _, count in build.stochastic_node_axes),
+            coordinate_names=tuple(name for name, _ in node_axes),
+            coordinate_extents=tuple(count for _, count in node_axes),
             canonical_order="c",
             reduction=WEIGHTED_EXPECTATION_REDUCTION,
             width_keyword=_STOCHASTIC_NODE_WIDTH_KEYWORD,
@@ -714,8 +717,10 @@ class EGMStepBuild:
     row_discrete_state_names: tuple[StateName, ...]
     """Discrete states leading every carry and policy row, in row order."""
 
-    stochastic_node_axes: tuple[tuple[StateName, int], ...]
-    """Child stochastic-node axes of the streamed expectation: name and count."""
+    stochastic_node_axes_by_period: MappingProxyType[
+        int, tuple[tuple[StateName, int], ...]
+    ]
+    """Each period core's actual child stochastic mesh, as state names and counts."""
 
     row_passive_state_names: tuple[StateName, ...]
     """Passive continuous states following the discrete states on every row."""
