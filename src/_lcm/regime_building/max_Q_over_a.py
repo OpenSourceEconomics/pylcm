@@ -32,7 +32,7 @@ from _lcm.typing import (
     StateName,
     _ParamsLeaf,
 )
-from _lcm.utils.dispatchers import productmap, vmap_1d
+from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d
 from _lcm.utils.functools import allow_args, allow_only_kwargs
 from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
 
@@ -72,6 +72,8 @@ def get_max_Q_over_a(
     fold_state_names: tuple[StateName, ...] = (),
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
+    cell_width_keyword: str | None = None,
+    untiled_state_names: tuple[StateName, ...] = (),
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -97,7 +99,12 @@ def get_max_Q_over_a(
             value of that combination and whether the state-action combination is
             feasible.
         batch_sizes: Mapping of state variable names to batch sizes for the outer
-            productmap over states. A batch size of 0 means no batching.
+            productmap over states when no cell-width keyword is supplied. A batch
+            size of 0 means no batching.
+        cell_width_keyword: Optional static keyword sizing the flattened inner
+            state product. The execution planner binds it before lowering.
+        untiled_state_names: Non-co-mapped states evaluated by ordinary outer
+            vmaps, keeping sharded coordinate axes outside the cell loop.
         action_names: Tuple of action variable names (discrete first, continuous
             last — the `StateActionSpace.action_names` order).
         state_names: Tuple of state names.
@@ -216,10 +223,19 @@ def get_max_Q_over_a(
     inner_state_names = tuple(
         name for name in state_names if name not in co_map_state_names
     )
-    mapped = productmap(
-        func=max_Q_over_a,
-        variables=inner_state_names,
-        batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+    mapped = (
+        tiled_productmap(
+            func=max_Q_over_a,
+            variables=inner_state_names,
+            width_keyword=cell_width_keyword,
+            untiled_variables=untiled_state_names,
+        )
+        if cell_width_keyword is not None
+        else productmap(
+            func=max_Q_over_a,
+            variables=inner_state_names,
+            batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+        )
     )
 
     if fold_state_names:
@@ -234,7 +250,10 @@ def get_max_Q_over_a(
             inner_state_names=inner_state_names,
             action_names=action_names,
             state_names=state_names,
-            extra_param_names=extra_param_names,
+            extra_param_names=[
+                *extra_param_names,
+                *((cell_width_keyword,) if cell_width_keyword is not None else ()),
+            ],
         )
 
     if not co_map_state_names:
@@ -385,6 +404,8 @@ def get_streaming_max_Q_over_a(
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
     action_width_keyword: str = "_lcm_action_block_width",
+    cell_width_keyword: str | None = None,
+    untiled_state_names: tuple[StateName, ...] = (),
 ) -> MaxQOverAFunction:
     """Build a singleton or collective V kernel that streams the action product.
 
@@ -466,10 +487,19 @@ def get_streaming_max_Q_over_a(
     inner_state_names = tuple(
         name for name in state_names if name not in co_map_state_names
     )
-    mapped = productmap(
-        func=streamed_max_Q_over_a,
-        variables=inner_state_names,
-        batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+    mapped = (
+        tiled_productmap(
+            func=streamed_max_Q_over_a,
+            variables=inner_state_names,
+            width_keyword=cell_width_keyword,
+            untiled_variables=untiled_state_names,
+        )
+        if cell_width_keyword is not None
+        else productmap(
+            func=streamed_max_Q_over_a,
+            variables=inner_state_names,
+            batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+        )
     )
     if fold_state_names:
         _fail_if_collective(
@@ -483,7 +513,11 @@ def get_streaming_max_Q_over_a(
             inner_state_names=inner_state_names,
             action_names=action_names,
             state_names=state_names,
-            extra_param_names=[*extra_param_names, action_width_keyword],
+            extra_param_names=[
+                *extra_param_names,
+                action_width_keyword,
+                *((cell_width_keyword,) if cell_width_keyword is not None else ()),
+            ],
         )
     if not co_map_state_names:
         return cast("MaxQOverAFunction", mapped)

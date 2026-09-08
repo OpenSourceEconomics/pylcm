@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import numpy as np
@@ -45,7 +46,13 @@ from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
 )
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
-from lcm import CollectiveUtility, LinearAggregator, LinearExpectation, fixed_transition
+from lcm import (
+    CollectiveUtility,
+    ExecutionConfig,
+    LinearAggregator,
+    LinearExpectation,
+    fixed_transition,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
@@ -53,6 +60,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.typing import ScalarInt
+from tests.conftest import assert_agrees_to_ulp
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized (a serial run importing
@@ -107,6 +115,8 @@ def _make_correct_distributed_model(
     distributed: bool = True,
     distribute_type2: bool | None = None,
     retirement_reads_type2: bool = True,
+    move_type2: bool = False,
+    cell_width: int | None = None,
 ) -> Model:
     @categorical(ordered=False)
     class RegimeId:
@@ -188,9 +198,14 @@ def _make_correct_distributed_model(
         },
         state_transitions={
             "type1": fixed_transition("type1"),
-            "type2": fixed_transition("type2"),
+            "type2": (lambda type2: 1 - type2)
+            if move_type2
+            else fixed_transition("type2"),
         },
         n_subjects=n_subjects,
+        execution_config=ExecutionConfig(
+            axis_widths={"cell": cell_width} if cell_width is not None else {}
+        ),
     )
 
 
@@ -368,7 +383,9 @@ def test_distributed_solve_matches_single_device_per_type():
             )
 
 
-def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -> str:
+def _compiled_solve_kernel_hlo(
+    *, model: Model, regime_name: str, period: int, cell_width: int | None = None
+) -> str:
     """Lower and compile a regime's period kernel exactly as backward induction does.
 
     Reproduces the AOT lowering args (sharded states, sharded continuation-V
@@ -406,7 +423,10 @@ def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -
         resolved = backward_induction._resolve_program_for_execution(
             program=materialized,
             tile_widths={
-                axis.name: axis.extent for axis in materialized.requirements.axes
+                axis.name: (
+                    cell_width if axis.name == "cell" and cell_width else axis.extent
+                )
+                for axis in materialized.requirements.axes
             },
             source_value_template=next_regime_to_V_arr[regime_name],
             source=(regime_name, period, core_key),
@@ -428,7 +448,8 @@ def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -
 
 
 @_skip_pytest_parallel
-def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
+@pytest.mark.parametrize("cell_width", [1, 3])
+def test_distributed_solve_kernel_does_not_all_gather_continuation_v(*, cell_width):
     """The backward-induction kernel reads only its device-local continuation V.
 
     `type1`/`type2` never transition, so a regime's continuation depends only on
@@ -437,8 +458,69 @@ def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
     `all-gather` collective assembling the full continuation V on every device.
     """
     model = _make_correct_distributed_model(distributed=True)
-    hlo = _compiled_solve_kernel_hlo(model=model, regime_name="working_life", period=0)
+    hlo = _compiled_solve_kernel_hlo(
+        model=model, regime_name="working_life", period=0, cell_width=cell_width
+    )
     assert "all-gather" not in hlo
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("regime_name", ["working_life", "retirement"])
+def test_sharded_coordinates_are_outside_the_cell_product(*, regime_name):
+    """Both terminal and mixed fixed/moving state axes keep native placement."""
+    model = _make_correct_distributed_model(move_type2=True, cell_width=3)
+    kernel = next(iter(model._regimes[regime_name].solution.period_kernels.values()))
+    program = core_program_graph(kernel=kernel)["main"]
+    assert tuple(
+        (axis.state_names, axis.extent) for axis in program.requirements.tiled_axes
+    ) == ((("wealth",), 10),)
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("cell_width", [1, 3, None])
+def test_terminal_cell_tiling_does_not_gather_coordinates_or_outputs(
+    *, cell_width, monkeypatch
+):
+    model = _make_correct_distributed_model(
+        distribute_type2=False, cell_width=cell_width
+    )
+    observed = []
+    original_attach = backward_induction._attach_resolved_output_layout
+
+    def capture_terminal(**kwargs):
+        core = original_attach(**kwargs)
+        if "action_product" not in core.tile_widths:
+            hlo = cast("jax.stages.Compiled", core.compiled).as_text()
+            if hlo is None:
+                raise AssertionError("Compiled terminal program has no HLO.")
+            observed.append(hlo.lower())
+        return core
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_terminal
+    )
+    model.solve(log_level="off", params={"discount_factor": 0.95})
+    assert (bool(observed), all("all-gather" not in hlo for hlo in observed)) == (
+        True,
+        True,
+    )
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("cell_width", [1, 3])
+def test_mixed_outer_state_axes_preserve_values(*, cell_width):
+    """A moving sharded axis and a co-mapped fixed axis retain their state order."""
+    candidate = _make_correct_distributed_model(
+        move_type2=True, cell_width=cell_width
+    ).solve(log_level="off", params={"discount_factor": 0.95})
+    reference = _make_correct_distributed_model(
+        distributed=False, move_type2=True, cell_width=cell_width
+    ).solve(log_level="off", params={"discount_factor": 0.95})
+    assert_agrees_to_ulp(
+        got=np.asarray(candidate.values[0]["working_life"]),
+        expected=np.asarray(reference.values[0]["working_life"]),
+        n_ulp=4,
+    )
 
 
 @_skip_pytest_parallel
@@ -778,12 +860,11 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
     assert working_kernels
     assert all(
         core_program_graph(kernel=kernel)["main"].disposition
-        is CoreExecutionDisposition.DENSE
+        is CoreExecutionDisposition.PLANNED
         for kernel in working_kernels.values()
     )
     assert all(
-        core_program_graph(kernel=kernel)["main"].disposition_reason
-        == "deliberately_dense:collective_resource_regression"
+        core_program_graph(kernel=kernel)["main"].disposition_reason is None
         for kernel in working_kernels.values()
     )
     single_model = _make_one_axis_collective_model(distributed=False)

@@ -78,9 +78,17 @@ largest power of two below the action product, capped at 64. With an
 [`ExecutionConfig`](runtime_and_results.md#compiler-workspace-budgets) budget, the
 planner instead walks a deterministic width frontier widest-first and dispatches the
 first candidate whose compiler-reported peak fits. Supplying both makes the fixed width
-the only candidate, which must fit the budget. A route that is deliberately dense,
-unsupported, or has no nontrivial action product declares no axis, so no width applies
-to it.
+the only candidate, which must fit the budget. A route whose action reduction is
+deliberately dense, unsupported, or trivial declares no `action_product` axis.
+
+The separate `cell` axis tiles the flattened Cartesian product of inner states.
+`ExecutionConfig(axis_widths={"cell": n})` bounds the number of state cells evaluated
+together, including any folded quadrature nodes. Each output leaf recovers its state
+axes before folding; collective values also retain their trailing stakeholder axis.
+Sharded states stay outside this loop; fixed states also retain their co-mapping with
+continuation values, preserving device-local reads. Empty and singleton state products
+declare no `cell` axis. A core
+with this axis is planned even when its action reduction remains deliberately dense.
 
 This matrix uses exactly three disposition labels:
 

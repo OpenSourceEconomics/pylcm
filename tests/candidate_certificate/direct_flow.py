@@ -187,9 +187,9 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "0f7d4e51d780f4ba839844d42c0847742c17ac28ec0eeb026eb5cf38fcc6ce4d",
+    MAX_Q_SOURCE: "e01b3de5cdad12804794a3ce83ff3a74424a9539caa70330e8792ca7878f1bc9",
     PROCESSING_SOURCE: "7f1157b26bf857c1a22d385576a4e48f517f3ee6bd0ff92ece52ca99d180108a",
-    GRID_SEARCH_SOURCE: "22c5d57df14c89833d24d84530b2f557114937453aa40addb4d58e6d5d93f224",
+    GRID_SEARCH_SOURCE: "f39ebf919b3d59ba7f2d2cd6c14607954d8a543a4d417a1accf93d6984774e26",
     CORE_PROGRAM_SOURCE: "078df8c1d82cd31e9cfa1bfb7acd263154676ecbd13117ff7c446bab5130fdba",
     OUTPUT_LAYOUT_SOURCE: "b5e9c667a15dcb6a1393f54f4ba7d8fcea85d3e78104f6e9e4cbd16c60fd1bb5",
     VALUE_TRANSFER_SOURCE: "e5d2a689eb8414776ea1689958b20590ace29df0c83f7f403884b23c07865aa3",
@@ -198,7 +198,7 @@ _SOURCE_SEALS = {
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
-    DISPATCHERS_SOURCE: "9f01e203b712662b4e4f83e928ad8853988c978b594de15d2685b187851eefb6",
+    DISPATCHERS_SOURCE: "2b7efd1df0a3b8fdf0d90d6ea38b95456ca74b180cc617ebe63266a9f5dca03d",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "0838079e35ba498009d8af7e6ed717f870a96a2fdc628d25e80310cd630174a9",
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
@@ -240,9 +240,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "caec615d9c6084db649eabdf9f90e408e210d0a01220d9c4df2e64596cd239e7",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 360
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 362
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "ec2c81bc8f8d194ce8d283b29e4b31c8f864d2b800c1c25472f852f49853633a"
+    "c374edd768b75b142d86b275d6baad1e530763ccdd21dfc6b49830bccaedbc6d"
 )
 
 
@@ -1389,10 +1389,19 @@ Q_and_F = productmap(
     solve_suffix = r"""inner_state_names = tuple(
     name for name in state_names if name not in co_map_state_names
 )
-mapped = productmap(
-    func=max_Q_over_a,
-    variables=inner_state_names,
-    batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+mapped = (
+    tiled_productmap(
+        func=max_Q_over_a,
+        variables=inner_state_names,
+        width_keyword=cell_width_keyword,
+        untiled_variables=untiled_state_names,
+    )
+    if cell_width_keyword is not None
+    else productmap(
+        func=max_Q_over_a,
+        variables=inner_state_names,
+        batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+    )
 )
 if fold_state_names:
     _fail_if_collective(
@@ -1406,7 +1415,10 @@ if fold_state_names:
         inner_state_names=inner_state_names,
         action_names=action_names,
         state_names=state_names,
-        extra_param_names=extra_param_names,
+        extra_param_names=[
+            *extra_param_names,
+            *((cell_width_keyword,) if cell_width_keyword is not None else ()),
+        ],
     )
 if not co_map_state_names:
     return mapped
@@ -1463,6 +1475,8 @@ Q_and_F = productmap(
                 "fold_state_names",
                 "fold_weights",
                 "fold_conditioning",
+                "cell_width_keyword",
+                "untiled_state_names",
             ),
             (
                 None,
@@ -1478,6 +1492,8 @@ Q_and_F = productmap(
                 "()",
                 "MappingProxyType({})",
                 "MappingProxyType({})",
+                "None",
+                "()",
             ),
         ),
         "get_argmax_and_max_Q_over_a": (
@@ -1556,6 +1572,7 @@ Q_and_F = productmap(
                 "logsum_and_softmax",
                 "math",
                 "productmap",
+                "tiled_productmap",
                 "vmap_1d",
                 "with_signature",
                 "ScalarFloat",
@@ -1573,7 +1590,7 @@ Q_and_F = productmap(
                 "from _lcm.regime_building.argmax import argmax_and_max",
                 "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout",
                 "from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a",
-                "from _lcm.utils.dispatchers import productmap, vmap_1d",
+                "from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d",
                 "from _lcm.utils.functools import allow_args, allow_only_kwargs",
                 "from lcm.typing import BoolND, FloatND, IntND, ScalarFloat",
             ],
@@ -1612,6 +1629,7 @@ Q_and_F = productmap(
                 "logsum_and_softmax": 1,
                 "math": 1,
                 "productmap": 1,
+                "tiled_productmap": 1,
                 "range": 0,
                 "reversed": 0,
                 "tuple": 0,
@@ -1631,7 +1649,7 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="streamed max-Q builder",
         contracts={
-            "get_streaming_max_Q_over_a": "df00f84d9c8d42a551cb69eca12d7967f2726faec770a65a0e6664c6388284bf",
+            "get_streaming_max_Q_over_a": "cfdef947f803d14dd8299471295492ba69f2f91f96a79bd56df24e47d4646ce6",
             "_fail_if_action_width_keyword_collides": (
                 "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4"
             ),
@@ -2261,8 +2279,10 @@ def category(self) -> str:
             tree=tree,
             label="solve caller live streamed provider",
             contracts={
-                "_select_action_width_keyword": "d5c0751bf2eb4a98a08b1641e41cfea9f46230af044a1c666e49f6f444cadb68",
-                "GridSearch.build_period_kernels": "2ec33e6721d7093fb1fc44cc2fb28d0eb7f48c2f658559838be656f2ec88cc81",
+                "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
+                "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
+                "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
+                "GridSearch.build_period_kernels": "abad0b665135b25edfe0a1d7ca0e8e13bd039f7366a110e50f0e814def25c170",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
@@ -4115,8 +4135,8 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
         occurrence=2,
     )
     mutations["solve:dormant_certified_reducer"] = source.replace(
-        "        func=max_Q_over_a,\n        variables=inner_state_names,",
-        "        func=Q_and_F,\n        variables=inner_state_names,",
+        "            func=max_Q_over_a,\n            variables=inner_state_names,",
+        "            func=Q_and_F,\n            variables=inner_state_names,",
         1,
     )
     mutations["simulate:return_bypasses_certified_reducer"] = source.replace(
@@ -4125,8 +4145,8 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
         1,
     )
     mutations["shared_max:productmap_module_shadow"] = source.replace(
-        "from _lcm.utils.dispatchers import productmap, vmap_1d",
-        "from _lcm.utils.dispatchers import productmap, vmap_1d\n"
+        "from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d",
+        "from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d\n"
         "productmap = candidate_filter",
         1,
     )
@@ -4380,19 +4400,21 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             source=grid_source,
             old=(
                 "                    CoreExecutionDisposition.PLANNED\n"
-                "                    if stream_actions"
+                "                    if requirements.axes"
             ),
             new=(
                 "                    CoreExecutionDisposition.DENSE\n"
-                "                    if stream_actions"
+                "                    if requirements.axes"
             ),
             label="native graph disposition authority",
         ),
         "native_graph:dense_reason_erased": replace_once(
             source=grid_source,
             old=(
-                "                disposition_reason=(None if stream_actions else "
-                "action_streaming.value),"
+                "                disposition_reason=(\n"
+                "                    None if requirements.axes else "
+                "action_streaming.value\n"
+                "                ),"
             ),
             new="                disposition_reason=None,",
             label="native graph disposition-reason authority",
@@ -4861,18 +4883,19 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": MAX_Q_SOURCE,
         "source": replace_once(
             source=max_source,
-            old=(
-                "            extra_param_names=[*extra_param_names, action_width_keyword],"
-            ),
-            new=(
-                "            extra_param_names=[\n"
-                '                *extra_param_names, f"{action_width_keyword}_renamed"\n'
-                "            ],"
-            ),
+            old="                action_width_keyword,\n",
+            new='                f"{action_width_keyword}_renamed",\n',
             label="streamed fold selected-width keyword",
         ),
     }
 
+    streaming_fold_extra_params = (
+        "            extra_param_names=[\n"
+        "                *extra_param_names,\n"
+        "                action_width_keyword,\n"
+        "                *((cell_width_keyword,) if cell_width_keyword is not None else ()),\n"
+        "            ],\n"
+    )
     streaming_fold_block = (
         "    if fold_state_names:\n"
         "        _fail_if_collective(\n"
@@ -4886,8 +4909,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "            inner_state_names=inner_state_names,\n"
         "            action_names=action_names,\n"
         "            state_names=state_names,\n"
-        "            extra_param_names=[*extra_param_names, action_width_keyword],\n"
-        "        )\n"
+        + streaming_fold_extra_params
+        + "        )\n"
     )
     streaming_fold_after_co_map = replace_once(
         source=max_source,
@@ -4945,10 +4968,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": MAX_Q_SOURCE,
         "source": replace_once(
             source=max_source,
-            old=(
-                "            extra_param_names=[*extra_param_names, action_width_keyword],"
-            ),
-            new="            extra_param_names=extra_param_names,",
+            old=streaming_fold_extra_params,
+            new="            extra_param_names=extra_param_names,\n",
             label="streamed fold width signature",
         ),
     }
@@ -6033,6 +6054,24 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     )
 
     dependency_cases = {
+        "shared_tiled_productmap:reverse_cell_coordinates": {
+            "path": DISPATCHERS_SOURCE,
+            "source": replace_once(
+                source=dispatchers_source,
+                old="for name in self.variables)",
+                new="for name in reversed(self.variables))",
+                label="tiled product coordinate order",
+            ),
+        },
+        "shared_tiled_productmap:ignore_planned_width": {
+            "path": DISPATCHERS_SOURCE,
+            "source": replace_once(
+                source=dispatchers_source,
+                old="xs=jnp.arange(n_cells, dtype=jnp.int32), batch_size=width",
+                new="xs=jnp.arange(n_cells, dtype=jnp.int32), batch_size=n_cells",
+                label="tiled product planned width",
+            ),
+        },
         "shared_productmap:drop_last_axis": {
             "path": DISPATCHERS_SOURCE,
             "source": replace_once(

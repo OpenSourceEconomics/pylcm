@@ -150,8 +150,8 @@ def _consent_case() -> Model:
                 "single_f_terminal": {},
             },
             (("single_f",), (), ()),
-            CoreExecutionDisposition.DENSE,
-            "deliberately_dense:collective_resource_regression",
+            CoreExecutionDisposition.PLANNED,
+            None,
             id="same-period-reference",
         ),
         pytest.param(

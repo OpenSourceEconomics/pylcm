@@ -39,7 +39,7 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 # against the constants next to each solver's program. The scan test below pins
 # this table to what the programs actually declare.
 _DECLARED_AXIS_NAMES = {
-    "grid_search": (ACTION_PRODUCT_AXIS,),
+    "grid_search": (ACTION_PRODUCT_AXIS, CELL_AXIS),
     "dcegm": (
         CELL_AXIS,
         ENVELOPE_CELL_AXIS,
@@ -48,7 +48,7 @@ _DECLARED_AXIS_NAMES = {
         STOCHASTIC_NODE_AXIS,
     ),
     "negm": (CELL_AXIS, ENVELOPE_CELL_AXIS, OUTER_CANDIDATE_AXIS, SAVINGS_POINT_AXIS),
-    "nnbegm": (),
+    "nnbegm": (CELL_AXIS,),
 }
 _HOST_AXIS_NAMES = {"nnbegm": (OUTER_CANDIDATE_AXIS,)}
 
@@ -204,9 +204,9 @@ def test_a_refusal_names_the_subject_axis_among_the_declared_ones(
 def test_an_axis_another_solver_declares_is_refused() -> None:
     """A DC-EGM axis name is not legal on a model that runs no DC-EGM regime."""
     with pytest.raises(
-        ExecutionPlanningError, match=f"axis_widths names {CELL_AXIS!r}"
+        ExecutionPlanningError, match=f"axis_widths names {ENVELOPE_CELL_AXIS!r}"
     ):
         _build(
             family="grid_search",
-            execution_config=ExecutionConfig(axis_widths={CELL_AXIS: 4}),
+            execution_config=ExecutionConfig(axis_widths={ENVELOPE_CELL_AXIS: 4}),
         )

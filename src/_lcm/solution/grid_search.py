@@ -44,6 +44,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     ReducedAxis,
+    TiledOutputAxis,
     ValueRead,
 )
 from _lcm.execution.output_layout import (
@@ -67,6 +68,7 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     simulation_route,
 )
+from _lcm.solution.dcegm import CELL_AXIS
 from _lcm.typing import (
     FlatParams,
     MaxQOverAFunction,
@@ -84,6 +86,7 @@ from lcm.typing import (
 ACTION_PRODUCT_AXIS = "action_product"
 
 _ACTION_WIDTH_KEYWORD = "_lcm_action_block_width"
+_CELL_WIDTH_KEYWORD = "_lcm_cell_width"
 _CORE_RUNTIME_ARG_NAMES = frozenset(
     {
         "next_regime_to_V_arr",
@@ -120,6 +123,16 @@ class _ActionStreamingDisposition(StrEnum):
 
 def _select_action_width_keyword(*, context: SolverBuildContext) -> str:
     """Choose a deterministic planner keyword outside the model namespace."""
+    return _select_width_keyword(context=context, prefix=_ACTION_WIDTH_KEYWORD)
+
+
+def _select_cell_width_keyword(*, context: SolverBuildContext) -> str:
+    """Choose the state-cell width keyword outside every model input namespace."""
+    return _select_width_keyword(context=context, prefix=_CELL_WIDTH_KEYWORD)
+
+
+def _select_width_keyword(*, context: SolverBuildContext, prefix: str) -> str:
+    """Select an unoccupied deterministic suffix for a planner-owned width."""
     occupied = set(_CORE_RUNTIME_ARG_NAMES)
     occupied.update(context.flat_param_names)
     occupied.update(context.state_action_space.action_names)
@@ -129,11 +142,11 @@ def _select_action_width_keyword(*, context: SolverBuildContext) -> str:
     if context.pareto_weights is not None:
         occupied.update(context.pareto_weights.param_names)
 
-    candidate = _ACTION_WIDTH_KEYWORD
+    candidate = prefix
     suffix = 0
     while candidate in occupied:
         suffix += 1
-        candidate = f"{_ACTION_WIDTH_KEYWORD}_{suffix}"
+        candidate = f"{prefix}_{suffix}"
     return candidate
 
 
@@ -233,6 +246,25 @@ class GridSearch(Solver):
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
+        untiled_state_names = tuple(
+            name
+            for name in context.state_action_space.state_names
+            if context.grids[name].distributed
+            and name not in context.co_map_state_names
+        )
+        inner_state_names = tuple(
+            name
+            for name in context.state_action_space.state_names
+            if name not in context.co_map_state_names
+            and name not in untiled_state_names
+        )
+        cell_extent = math.prod(
+            context.state_action_space.states[name].shape[0]
+            for name in inner_state_names
+        )
+        cell_width_keyword = (
+            _select_cell_width_keyword(context=context) if cell_extent > 1 else None
+        )
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
             if q_id not in program_functions:
@@ -245,6 +277,8 @@ class GridSearch(Solver):
                     },
                     "action_names": action_names,
                     "state_names": context.state_action_space.state_names,
+                    "cell_width_keyword": cell_width_keyword,
+                    "untiled_state_names": untiled_state_names,
                     "n_discrete_action_axes": len(
                         context.state_action_space.discrete_actions
                     ),
@@ -298,6 +332,18 @@ class GridSearch(Solver):
                     if stream_actions
                     else ()
                 ),
+                tiled_axes=(
+                    (
+                        TiledOutputAxis(
+                            name=CELL_AXIS,
+                            state_names=inner_state_names,
+                            extent=cell_extent,
+                            width_keyword=cell_width_keyword,
+                        ),
+                    )
+                    if cell_width_keyword is not None
+                    else ()
+                ),
                 value_reads=_value_reads(
                     regime_name=context.regime_name,
                     period=period,
@@ -319,10 +365,12 @@ class GridSearch(Solver):
                 ),
                 disposition=(
                     CoreExecutionDisposition.PLANNED
-                    if stream_actions
+                    if requirements.axes
                     else CoreExecutionDisposition.DENSE
                 ),
-                disposition_reason=(None if stream_actions else action_streaming.value),
+                disposition_reason=(
+                    None if requirements.axes else action_streaming.value
+                ),
                 donation_candidates=(),
             )
             result[period] = _GridSearchPeriodKernel(

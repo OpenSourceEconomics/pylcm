@@ -38,9 +38,13 @@ from _lcm.solution.undeclared_reads import (
     undeclared_read_pins,
 )
 from _lcm.typing import RegimeName
-from lcm import Model
+from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm.solver_api import EGM_CONTINUATION, ArtifactRef
 from lcm.solvers import EGM, NNBEGM
+from tests.regime_building.test_gated_edges_collective_solve import (
+    EKLRegimeId,
+    _make_full_topology_regimes,
+)
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH
 from tests.solution.test_egm_solver import _SAVINGS_GRID
 from tests.solution.test_egm_solver import _model as _egm_model
@@ -177,14 +181,23 @@ def _declared_read_consumer_counts(
 def test_a_dense_program_s_declared_leaf_read_is_a_counted_consumer() -> None:
     """A dense program's continuation-leaf read counts, so it can close.
 
-    The gated collective model keeps a dense program that declares its reads,
+    A one-cell gated collective model keeps a dense program that declares its reads,
     which is what pins the rule that counting follows the declaration rather
     than the disposition. Several of its programs read one leaf, so a leaf
     carries as many consumers as read it; what matters is that none carries
     zero. `min` on an empty set raises, so a model that declared no dense read
     would fail this rather than pass it vacuously.
     """
-    model = _gated_model()
+    model = Model(
+        regimes={
+            name: regime.replace(
+                states={"wage": LinSpacedGrid(start=1.0, stop=3.0, n_points=1)}
+            )
+            for name, regime in _make_full_topology_regimes().items()
+        },
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=EKLRegimeId,
+    )
 
     assert (
         min(

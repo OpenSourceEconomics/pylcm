@@ -556,7 +556,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         "age",
     )
     assert program.output_roles is VALUE
-    assert program.requirements.axes == (
+    assert program.requirements.reduced_axes == (
         ReducedAxis(
             name="action_product",
             coordinate_names=("consumption",),
@@ -571,7 +571,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
 
     resolved = resolve_core_program(
         program=materialized,
-        tile_widths={"action_product": 3},
+        tile_widths={"action_product": 3, "cell": 3},
         input_transfer_plan=_resolve_value_input_transfer_plan(
             program=materialized,
             source_value_template=next_V["alive"],
@@ -585,8 +585,8 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
     assert output.shape == next_V["alive"].shape
 
 
-def test_collective_grid_search_declares_explicit_dense_core_program() -> None:
-    """Collective execution stays dense after adverse paired resource evidence."""
+def test_collective_grid_search_plans_cells_with_canonical_action_reduction() -> None:
+    """Collective state tiling preserves the canonical dense action reduction."""
     model = _build_collective_model()
     flat_params = model._process_params({"discount_factor": 0.95})
     next_V, next_continuation, _next_edges = _build_continuation_templates(
@@ -610,17 +610,19 @@ def test_collective_grid_search_declares_explicit_dense_core_program() -> None:
     program = core_program_graph(kernel=kernel)["main"]
     materialized = materialize_core_program(program=program, context=context)
 
-    assert program.disposition is CoreExecutionDisposition.DENSE
-    assert (
-        program.disposition_reason
-        == "deliberately_dense:collective_resource_regression"
-    )
+    assert program.disposition is CoreExecutionDisposition.PLANNED
+    assert program.disposition_reason is None
     assert program.output_roles == (VALUE, DISSOLUTION_FLAG)
-    assert program.requirements.axes == ()
+    assert program.requirements.reduced_axes == ()
 
     resolved = resolve_core_program(
         program=materialized,
-        tile_widths={},
+        tile_widths={axis.name: axis.extent for axis in program.requirements.axes},
+        input_transfer_plan=_resolve_value_input_transfer_plan(
+            program=materialized,
+            source_value_template=next_V["couple"],
+            source=("couple", 0, "main"),
+        ),
     )
     output = _eval_resolved_shape(resolved)
 
@@ -633,8 +635,8 @@ def test_collective_grid_search_declares_explicit_dense_core_program() -> None:
     assert output[1].dtype == jnp.bool_
 
 
-def test_ev1_grid_search_declares_explicit_dense_core_program() -> None:
-    """EV1 execution stays dense after the streamed winner-reversal witness."""
+def test_ev1_grid_search_plans_cells_with_canonical_action_reduction() -> None:
+    """EV1 state tiling preserves the canonical dense action reduction."""
     model = taste_shocks_toy.get_model()
     flat_params = model._process_params(
         taste_shocks_toy.get_params(scale=0.2, discount_factor=0.95)
@@ -660,16 +662,19 @@ def test_ev1_grid_search_declares_explicit_dense_core_program() -> None:
     program = core_program_graph(kernel=kernel)["main"]
     materialized = materialize_core_program(program=program, context=context)
 
-    assert program.disposition is CoreExecutionDisposition.DENSE
-    assert (
-        program.disposition_reason == "deliberately_dense:ev1_canonical_reduction_order"
-    )
+    assert program.disposition is CoreExecutionDisposition.PLANNED
+    assert program.disposition_reason is None
     assert program.output_roles is VALUE
-    assert program.requirements.axes == ()
+    assert program.requirements.reduced_axes == ()
 
     resolved = resolve_core_program(
         program=materialized,
-        tile_widths={},
+        tile_widths={axis.name: axis.extent for axis in program.requirements.axes},
+        input_transfer_plan=_resolve_value_input_transfer_plan(
+            program=materialized,
+            source_value_template=next_V["alive"],
+            source=("alive", 0, "main"),
+        ),
     )
     output = _eval_resolved_shape(resolved)
 

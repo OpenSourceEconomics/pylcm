@@ -592,6 +592,8 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "solve:dormant_certified_reducer",
         "simulate:return_bypasses_certified_reducer",
         "shared_max:productmap_module_shadow",
+        "shared_tiled_productmap:reverse_cell_coordinates",
+        "shared_tiled_productmap:ignore_planned_width",
         "caller_solve:action_names_slice",
         "caller_solve:wrong_discrete_axis_count",
         "caller_solve:taste_flag_disabled",
@@ -837,10 +839,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 360
+    assert len(names) == 362
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "ec2c81bc8f8d194ce8d283b29e4b31c8f864d2b800c1c25472f852f49853633a"
+        == "c374edd768b75b142d86b275d6baad1e530763ccdd21dfc6b49830bccaedbc6d"
     )
 
 
