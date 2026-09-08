@@ -38,7 +38,9 @@ state and merged by the branch-aware upper envelope; the boundary's
 strict/non-strict comparison split.
 """
 
+import functools
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple, overload
 
 import jax
@@ -653,17 +655,24 @@ def _savings_reaching(
     reached_nudged = _law_at_savings(
         savings=nudged, savings_grid=savings_grid, next_liquid=next_liquid
     )
-
-    def reaches_requested_side(value: FloatND) -> BoolND:
-        return value <= target if side == "below" else value >= target
-
-    use_candidate = reaches_requested_side(reached)
+    use_candidate = _reaches_requested_side(value=reached, target=target, side=side)
     savings = jnp.where(use_candidate, candidate, nudged)
     landed = jnp.where(use_candidate, reached, reached_nudged)
     target_reachable = (target >= next_liquid[0]) & (target <= next_liquid[-1])
     savings_in_domain = (savings >= savings_grid[0]) & (savings <= savings_grid[-1])
-    valid = target_reachable & savings_in_domain & reaches_requested_side(landed)
+    valid = (
+        target_reachable
+        & savings_in_domain
+        & _reaches_requested_side(value=landed, target=target, side=side)
+    )
     return jnp.where(valid, savings, jnp.nan)
+
+
+def _reaches_requested_side(
+    *, value: FloatND, target: FloatND, side: Literal["below", "above"]
+) -> BoolND:
+    """Whether a landing point lies on the requested side of the target."""
+    return value <= target if side == "below" else value >= target
 
 
 def _invert_euler_over_savings(
@@ -679,15 +688,38 @@ def _invert_euler_over_savings(
     at the discounted expected marginal continuation — `invert_euler` applies the
     degenerate-inversion clamp before calling `inverse_marginal_utility`.
     """
-
-    def invert_one(node_marginal: ScalarFloat) -> ScalarFloat:
-        return invert_euler(
-            expected_marginal_continuation=node_marginal,
+    return jax.vmap(
+        functools.partial(
+            _invert_euler_at_node,
             discount_factor=discount_factor,
             inverse_marginal_utility=preferences.inverse_marginal_utility,
         )
+    )(cont_marginal)
 
-    return jax.vmap(invert_one)(cont_marginal)
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _invert_euler_at_node(
+    node_marginal: ScalarFloat,
+    *,
+    discount_factor: ScalarFloat,
+    inverse_marginal_utility: Callable[[FloatND], FloatND],
+) -> ScalarFloat:
+    """Euler-invert one savings node's expected marginal continuation."""
+    return invert_euler(
+        expected_marginal_continuation=node_marginal,
+        discount_factor=discount_factor,
+        inverse_marginal_utility=inverse_marginal_utility,
+    )
+
+
+def _as_pairs(entries: FloatND) -> Float1D:
+    """Interleave every entry with itself and flatten: zero-width candidate pairs."""
+    return jnp.stack([entries, entries], axis=-1).reshape(-1)
+
+
+def _stack_flat(*parts: FloatND) -> Float1D:
+    """Concatenate candidate families, each flattened, into one column."""
+    return jnp.concatenate([part.reshape(-1) for part in parts])
 
 
 def _ez_flow_power_structure(
@@ -903,14 +935,11 @@ def nbegm_multi_interval_step_savings(
         node_consumption.size, dtype=liquid_grid.dtype
     ).reshape(node_consumption.shape)
 
-    def as_pairs(entries: Float1D) -> Float1D:
-        return jnp.stack([entries, entries], axis=-1).reshape(-1)
-
-    endog_parts = [liquid_endog, as_pairs(node_endog.ravel())]
-    value_parts = [value_endog, as_pairs(node_value.ravel())]
-    policy_parts = [consumption, as_pairs(node_consumption_safe.ravel())]
-    marginal_parts = [marginal_endog, as_pairs(node_marginal.ravel())]
-    segment_parts = [interior_segment, as_pairs(node_segment.ravel())]
+    endog_parts = [liquid_endog, _as_pairs(node_endog.ravel())]
+    value_parts = [value_endog, _as_pairs(node_value.ravel())]
+    policy_parts = [consumption, _as_pairs(node_consumption_safe.ravel())]
+    marginal_parts = [marginal_endog, _as_pairs(node_marginal.ravel())]
+    segment_parts = [interior_segment, _as_pairs(node_segment.ravel())]
 
     value, policy, marginal = envelope_at_query(
         endog_grid=jnp.concatenate(endog_parts),
@@ -1199,98 +1228,14 @@ def nbegm_per_interval_continuation_step_savings(
     lowers = jnp.concatenate([-edge, breakpoints])
     uppers = jnp.concatenate([breakpoints, edge])
 
-    def solve_interval(
-        *,
-        interval_index: ScalarInt,
-        interval_value: Float1D,
-        interval_marginal: Float1D,
-        coh_slope: ScalarFloat,
-        coh_intercept: ScalarFloat,
-        lower: ScalarFloat,
-        upper: ScalarFloat,
-    ) -> tuple[Float1D, ...]:
-        """Solve one interval EGM case and its savings-boundary corners.
-
-        Returns the interior candidate (endog grid, value, policy, marginal,
-        segment id) followed by the lower- and upper-savings corner candidates.
-        The segment ids are offset by `interval_index * interval_stride` so the
-        per-interval folds stay disjoint when the cases merge under one envelope.
-        """
-        base = interval_index.astype(jnp.result_type(float)) * interval_stride
-        consumption = _invert_euler_over_savings(
-            cont_marginal=interval_marginal,
-            discount_factor=discount_factor,
-            preferences=preferences,
-        )
-        coh_endog = consumption + savings_grid
-        interp_value = (
-            preferences.utility(consumption) + discount_factor * interval_value
-        )
-        value_at_lower_bound = interval_value[0]
-        degenerate = _degenerate_inversion(
-            marginal=interval_marginal, consumption=consumption
-        )
-
-        coh_case_grid = coh_slope * liquid_grid + coh_intercept
-        coh_scale = jnp.maximum(1.0, jnp.max(jnp.abs(coh_case_grid)))
-        flat = (
-            jnp.max(coh_case_grid) - jnp.min(coh_case_grid)
-        ) <= _FLAT_SPAN_REL_TOL * coh_scale
-
-        # A flat interval's `coh_case_grid` is constant, and `jnp.interp` needs a
-        # strictly increasing `xp`; guard the recovered liquid to a finite in-interval
-        # value there so no NaN endog leaks into the envelope (interior killed below).
-        liquid_endog = jnp.where(
-            flat,
-            jnp.full_like(coh_endog, lower),
-            _invert_coh_with_linear_extension(
-                coh_endog=coh_endog,
-                coh_case_grid=coh_case_grid,
-                liquid_grid=liquid_grid,
-            ),
-        )
-        marginal_endog = coh_slope * preferences.marginal_utility(consumption)
-        in_case = (
-            (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate) & (~flat)
-        )
-        interior = mask_dead_candidates(
-            endog_grid=liquid_endog,
-            value=interp_value,
-            policy=consumption,
-            marginal=marginal_endog,
-            valid=in_case,
-        )
-        segment = segment_ids_from_folds(endog_grid=interior[0])
-        next_segment = _next_segment_id(segment=segment)
-
-        # Corners use true cash-on-hand when supplied, so lower- and upper-savings
-        # actions remain feasible where the affine interval budget extrapolates
-        # below zero.
-        corner_coh_grid = coh_case_grid if coh_grid is None else coh_grid
-        corners = _interval_corner_candidates(
-            corner_coh_grid=corner_coh_grid,
-            liquid_grid=liquid_grid,
-            savings_grid=savings_grid,
-            lower=lower,
-            upper=upper,
-            flat=flat,
-            value_at_lower_bound=value_at_lower_bound,
-            interval_value=interval_value,
-            coh_slope=coh_slope,
-            coh_intercept=coh_intercept,
-            discount_factor=discount_factor,
-            preferences=preferences,
-            base=base,
-            next_segment=next_segment,
-        )
-        return (
-            interior[0],
-            interior[1],
-            interior[2],
-            interior[3],
-            segment + base,
-            *corners,
-        )
+    solve_interval = _IntervalCaseSolver(
+        interval_stride=interval_stride,
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        coh_grid=coh_grid,
+    )
 
     if interval_block_reader is not None:
         streamed = _streamed_interval_continuation_envelope(
@@ -1341,18 +1286,9 @@ def nbegm_per_interval_continuation_step_savings(
     n_padded = n_chunks * _CHUNK_SIZE
 
     interval_indices = jnp.arange(n_intervals, dtype=jnp.int32)
-
-    def solve_packed(packed: tuple[IntND | FloatND, ...]) -> tuple[FloatND, ...]:
-        """Solve the one interval carried by a mapped item."""
-        return solve_interval(
-            interval_index=packed[0],
-            interval_value=packed[1],
-            interval_marginal=packed[2],
-            coh_slope=packed[3],
-            coh_intercept=packed[4],
-            lower=packed[5],
-            upper=packed[6],
-        )
+    solve_packed = functools.partial(
+        _solve_packed_interval, solve_interval=solve_interval
+    )
 
     (
         int_endog,
@@ -1424,17 +1360,18 @@ def nbegm_per_interval_continuation_step_savings(
     else:
         cliff_parts = (jnp.empty(0),) * 5
 
-    def stack(*parts: FloatND) -> Float1D:
-        return jnp.concatenate([part.reshape(-1) for part in parts])
-
     value, policy, marginal, owner = envelope_at_query(
-        endog_grid=stack(int_endog, s0_endog, smax_endog, node_endog, cliff_parts[0]),
-        policy=stack(int_policy, s0_policy, smax_policy, node_policy, cliff_parts[2]),
-        value=stack(int_value, s0_value, smax_value, node_value, cliff_parts[1]),
-        marginal=stack(
+        endog_grid=_stack_flat(
+            int_endog, s0_endog, smax_endog, node_endog, cliff_parts[0]
+        ),
+        policy=_stack_flat(
+            int_policy, s0_policy, smax_policy, node_policy, cliff_parts[2]
+        ),
+        value=_stack_flat(int_value, s0_value, smax_value, node_value, cliff_parts[1]),
+        marginal=_stack_flat(
             int_marginal, s0_marginal, smax_marginal, node_marginal, cliff_parts[3]
         ),
-        segment_id=stack(
+        segment_id=_stack_flat(
             int_segment, s0_segment, smax_segment, node_segment, cliff_parts[4]
         ),
         x_query=liquid_grid,
@@ -1447,6 +1384,145 @@ def nbegm_per_interval_continuation_step_savings(
     if return_owner:
         return value, marginal, policy, owner
     return value, marginal, policy
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _IntervalCaseSolver:
+    """Solve one interval EGM case and its savings-boundary corners.
+
+    Returns the interior candidate (endog grid, value, policy, marginal,
+    segment id) followed by the lower- and upper-savings corner candidates.
+    The segment ids are offset by `interval_index * interval_stride` so the
+    per-interval folds stay disjoint when the cases merge under one envelope.
+    """
+
+    interval_stride: int
+    """Segment-id space reserved per interval."""
+
+    liquid_grid: Float1D
+    """Regular liquid-state grid (ascending)."""
+
+    savings_grid: Float1D
+    """Post-decision savings grid."""
+
+    discount_factor: ScalarFloat
+    """Discount factor."""
+
+    preferences: Preferences
+    """The regime's felicity, marginal, and inverse marginal, cell bound."""
+
+    coh_grid: Float1D | None
+    """True cash-on-hand at each liquid grid point, or `None` for the affine
+    per-interval budget."""
+
+    def __call__(
+        self,
+        *,
+        interval_index: ScalarInt,
+        interval_value: Float1D,
+        interval_marginal: Float1D,
+        coh_slope: ScalarFloat,
+        coh_intercept: ScalarFloat,
+        lower: ScalarFloat,
+        upper: ScalarFloat,
+    ) -> tuple[Float1D, ...]:
+        liquid_grid = self.liquid_grid
+        savings_grid = self.savings_grid
+        discount_factor = self.discount_factor
+        preferences = self.preferences
+        base = interval_index.astype(jnp.result_type(float)) * self.interval_stride
+        consumption = _invert_euler_over_savings(
+            cont_marginal=interval_marginal,
+            discount_factor=discount_factor,
+            preferences=preferences,
+        )
+        coh_endog = consumption + savings_grid
+        interp_value = (
+            preferences.utility(consumption) + discount_factor * interval_value
+        )
+        value_at_lower_bound = interval_value[0]
+        degenerate = _degenerate_inversion(
+            marginal=interval_marginal, consumption=consumption
+        )
+
+        coh_case_grid = coh_slope * liquid_grid + coh_intercept
+        coh_scale = jnp.maximum(1.0, jnp.max(jnp.abs(coh_case_grid)))
+        flat = (
+            jnp.max(coh_case_grid) - jnp.min(coh_case_grid)
+        ) <= _FLAT_SPAN_REL_TOL * coh_scale
+
+        # A flat interval's `coh_case_grid` is constant, and `jnp.interp` needs a
+        # strictly increasing `xp`; guard the recovered liquid to a finite in-interval
+        # value there so no NaN endog leaks into the envelope (interior killed below).
+        liquid_endog = jnp.where(
+            flat,
+            jnp.full_like(coh_endog, lower),
+            _invert_coh_with_linear_extension(
+                coh_endog=coh_endog,
+                coh_case_grid=coh_case_grid,
+                liquid_grid=liquid_grid,
+            ),
+        )
+        marginal_endog = coh_slope * preferences.marginal_utility(consumption)
+        in_case = (
+            (liquid_endog >= lower) & (liquid_endog < upper) & (~degenerate) & (~flat)
+        )
+        interior = mask_dead_candidates(
+            endog_grid=liquid_endog,
+            value=interp_value,
+            policy=consumption,
+            marginal=marginal_endog,
+            valid=in_case,
+        )
+        segment = segment_ids_from_folds(endog_grid=interior[0])
+        next_segment = _next_segment_id(segment=segment)
+
+        # Corners use true cash-on-hand when supplied, so lower- and upper-savings
+        # actions remain feasible where the affine interval budget extrapolates
+        # below zero.
+        corner_coh_grid = coh_case_grid if self.coh_grid is None else self.coh_grid
+        corners = _interval_corner_candidates(
+            corner_coh_grid=corner_coh_grid,
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            lower=lower,
+            upper=upper,
+            flat=flat,
+            value_at_lower_bound=value_at_lower_bound,
+            interval_value=interval_value,
+            coh_slope=coh_slope,
+            coh_intercept=coh_intercept,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            base=base,
+            next_segment=next_segment,
+        )
+        return (
+            interior[0],
+            interior[1],
+            interior[2],
+            interior[3],
+            segment + base,
+            *corners,
+        )
+
+
+# keyword-only-exempt: library-callback=jax.lax.map
+def _solve_packed_interval(
+    packed: tuple[IntND | FloatND, ...],
+    *,
+    solve_interval: Callable[..., tuple[Float1D, ...]],
+) -> tuple[FloatND, ...]:
+    """Solve the one interval carried by a mapped item."""
+    return solve_interval(
+        interval_index=packed[0],
+        interval_value=packed[1],
+        interval_marginal=packed[2],
+        coh_slope=packed[3],
+        coh_intercept=packed[4],
+        lower=packed[5],
+        upper=packed[6],
+    )
 
 
 # A block reader returns continuation value and marginal, and optionally the
@@ -1633,22 +1709,111 @@ def _streamed_interval_continuation_envelope(
         n_liquid=liquid_grid.shape[0],
         n_savings=savings_grid.shape[0],
     )
-    safe_indices = layout.safe_indices
-    interval_live_blocks = layout.live
-    node_segment_base = layout.node_segment_base
-    cliff_segment_base = layout.cliff_segment_base
-    n_savings = layout.n_savings
+    interval_winner_step = _IntervalWinnerStep(
+        layout=layout,
+        solve_interval=solve_interval,
+        interval_block_reader=interval_block_reader,
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        discount_factor=discount_factor,
+        preferences=preferences,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        lowers=lowers,
+        uppers=uppers,
+        coh_grid=coh_grid,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    winner, _ = jax.lax.scan(
+        interval_winner_step,
+        empty_envelope_winner(query=liquid_grid),
+        (layout.safe_indices, layout.live),
+    )
+    value, policy, marginal = finish_envelope_winner(
+        winner=winner,
+        query=liquid_grid,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    return (
+        value,
+        marginal,
+        policy,
+        published_owner(value=value, stable_index=winner.stable_index),
+    )
 
-    def stack(*parts: FloatND) -> Float1D:
-        return jnp.concatenate([part.reshape(-1) for part in parts])
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _IntervalWinnerStep:
+    """One `lax.scan` step of the streamed interval envelope.
+
+    Reads one block of intervals through the block reader, solves them,
+    stacks their candidate families with the block's point candidates, and
+    folds them against the standing winner.
+    """
+
+    layout: _StreamedIntervalLayout
+    """The fixed-shape block schedule and candidate-family offsets."""
+
+    solve_interval: Callable[..., tuple[Float1D, ...]]
+    """The per-interval case solver."""
+
+    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]]
+    """Callback yielding one block's continuation rows (and cliff targets)."""
+
+    liquid_grid: Float1D
+    """Regular liquid-state grid (ascending)."""
+
+    savings_grid: Float1D
+    """Post-decision savings grid."""
+
+    discount_factor: ScalarFloat
+    """Discount factor."""
+
+    preferences: Preferences
+    """The regime's felicity, marginal, and inverse marginal, cell bound."""
+
+    coh_slopes: Float1D
+    """Per-interval cash-on-hand slope in liquid."""
+
+    coh_intercepts: Float1D
+    """Per-interval cash-on-hand intercept."""
+
+    breakpoints: Float1D
+    """Sorted ascending liquid breakpoints."""
+
+    lowers: Float1D
+    """Each interval's lower liquid bound (`-inf` at the open end)."""
+
+    uppers: Float1D
+    """Each interval's upper liquid bound (`+inf` at the open end)."""
+
+    coh_grid: Float1D | None
+    """True cash-on-hand at each liquid grid point, or `None`."""
+
+    arithmetic: ComparisonArithmetic
+    """Which arithmetic decides envelope ownership."""
+
+    feasibility_partition: ResolvedAxisPartition | None
+    """The liquid axis's feasibility partition, if any."""
+
+    feasible_interval_mask: BoolND | None
+    """Per-interval feasibility mask, if any."""
 
     # keyword-only-exempt: library-callback=jax.lax.scan
-    def interval_winner_step(
+    def __call__(
+        self,
         held: EnvelopeWinner,
         block_inputs: tuple[IntND, BoolND],
     ) -> tuple[EnvelopeWinner, None]:
+        layout = self.layout
+        n_savings = layout.n_savings
         indices, interval_live = block_inputs
-        rows = interval_block_reader(indices)
+        rows = self.interval_block_reader(indices)
         if len(rows) == _ROWS_WITHOUT_CLIFFS:
             block_value, block_marginal = rows
             block_cliff_savings = None
@@ -1664,28 +1829,19 @@ def _streamed_interval_continuation_envelope(
                 "optionally cliff savings."
             )
 
-        def solve_packed(
-            packed: tuple[IntND | FloatND, ...],
-        ) -> tuple[FloatND, ...]:
-            return solve_interval(
-                interval_index=packed[0],
-                interval_value=packed[1],
-                interval_marginal=packed[2],
-                coh_slope=packed[3],
-                coh_intercept=packed[4],
-                lower=packed[5],
-                upper=packed[6],
+        solved = jax.vmap(
+            functools.partial(
+                _solve_packed_interval, solve_interval=self.solve_interval
             )
-
-        solved = jax.vmap(solve_packed)(
+        )(
             (
                 indices,
                 block_value,
                 block_marginal,
-                coh_slopes[indices],
-                coh_intercepts[indices],
-                lowers[indices],
-                uppers[indices],
+                self.coh_slopes[indices],
+                self.coh_intercepts[indices],
+                self.lowers[indices],
+                self.uppers[indices],
             )
         )
         (
@@ -1706,69 +1862,70 @@ def _streamed_interval_continuation_envelope(
             smax_segment,
         ) = solved
 
-        def kill_padding(channel: FloatND) -> FloatND:
-            return jnp.where(interval_live[:, None], channel, jnp.nan)
-
         int_endog, int_value, int_policy, int_marginal = (
-            kill_padding(channel)
+            _kill_padding(channel=channel, interval_live=interval_live)
             for channel in (int_endog, int_value, int_policy, int_marginal)
         )
         s0_endog, s0_value, s0_policy, s0_marginal = (
-            kill_padding(channel)
+            _kill_padding(channel=channel, interval_live=interval_live)
             for channel in (s0_endog, s0_value, s0_policy, s0_marginal)
         )
         smax_endog, smax_value, smax_policy, smax_marginal = (
-            kill_padding(channel)
+            _kill_padding(channel=channel, interval_live=interval_live)
             for channel in (smax_endog, smax_value, smax_policy, smax_marginal)
         )
 
         node_parts = _savings_node_point_candidates_for_interval_block(
-            liquid_grid=liquid_grid,
-            savings_grid=savings_grid,
+            liquid_grid=self.liquid_grid,
+            savings_grid=self.savings_grid,
             cont_value=block_value,
             interval_indices=indices,
             interval_live=interval_live,
-            discount_factor=discount_factor,
-            preferences=preferences,
-            coh_slopes=coh_slopes,
-            coh_intercepts=coh_intercepts,
-            breakpoints=breakpoints,
-            coh_grid=coh_grid,
-            segment_base=float(node_segment_base),
+            discount_factor=self.discount_factor,
+            preferences=self.preferences,
+            coh_slopes=self.coh_slopes,
+            coh_intercepts=self.coh_intercepts,
+            breakpoints=self.breakpoints,
+            coh_grid=self.coh_grid,
+            segment_base=float(layout.node_segment_base),
         )
         if block_cliff_savings is not None and block_extra_value is not None:
             cliff_parts = _savings_node_point_candidates_for_interval_block(
-                liquid_grid=liquid_grid,
+                liquid_grid=self.liquid_grid,
                 savings_grid=block_cliff_savings,
                 cont_value=block_extra_value,
                 interval_indices=indices,
                 interval_live=interval_live,
-                discount_factor=discount_factor,
-                preferences=preferences,
-                coh_slopes=coh_slopes,
-                coh_intercepts=coh_intercepts,
-                breakpoints=breakpoints,
-                coh_grid=coh_grid,
-                segment_base=float(cliff_segment_base),
+                discount_factor=self.discount_factor,
+                preferences=self.preferences,
+                coh_slopes=self.coh_slopes,
+                coh_intercepts=self.coh_intercepts,
+                breakpoints=self.breakpoints,
+                coh_grid=self.coh_grid,
+                segment_base=float(layout.cliff_segment_base),
             )
             n_extra = block_cliff_savings.shape[-1]
         else:
-            cliff_parts = (jnp.empty((0,), dtype=liquid_grid.dtype),) * 5
+            cliff_parts = (jnp.empty((0,), dtype=self.liquid_grid.dtype),) * 5
             n_extra = 0
 
-        endog = stack(int_endog, s0_endog, smax_endog, node_parts[0], cliff_parts[0])
-        values = stack(int_value, s0_value, smax_value, node_parts[1], cliff_parts[1])
-        policies = stack(
+        endog = _stack_flat(
+            int_endog, s0_endog, smax_endog, node_parts[0], cliff_parts[0]
+        )
+        values = _stack_flat(
+            int_value, s0_value, smax_value, node_parts[1], cliff_parts[1]
+        )
+        policies = _stack_flat(
             int_policy, s0_policy, smax_policy, node_parts[2], cliff_parts[2]
         )
-        marginals = stack(
+        marginals = _stack_flat(
             int_marginal,
             s0_marginal,
             smax_marginal,
             node_parts[3],
             cliff_parts[3],
         )
-        segments = stack(
+        segments = _stack_flat(
             int_segment,
             s0_segment,
             smax_segment,
@@ -1791,32 +1948,18 @@ def _streamed_interval_continuation_envelope(
                 marginal=marginals,
                 segment_id=segments,
                 stable_index=stable_links,
-                query=liquid_grid,
-                arithmetic=arithmetic,
-                feasibility_partition=feasibility_partition,
-                feasible_interval_mask=feasible_interval_mask,
+                query=self.liquid_grid,
+                arithmetic=self.arithmetic,
+                feasibility_partition=self.feasibility_partition,
+                feasible_interval_mask=self.feasible_interval_mask,
             ),
             None,
         )
 
-    winner, _ = jax.lax.scan(
-        interval_winner_step,
-        empty_envelope_winner(query=liquid_grid),
-        (safe_indices, interval_live_blocks),
-    )
-    value, policy, marginal = finish_envelope_winner(
-        winner=winner,
-        query=liquid_grid,
-        arithmetic=arithmetic,
-        feasibility_partition=feasibility_partition,
-        feasible_interval_mask=feasible_interval_mask,
-    )
-    return (
-        value,
-        marginal,
-        policy,
-        published_owner(value=value, stable_index=winner.stable_index),
-    )
+
+def _kill_padding(*, channel: FloatND, interval_live: BoolND) -> FloatND:
+    """NaN-dead a block channel's padding lanes so they can seed no winner."""
+    return jnp.where(interval_live[:, None], channel, jnp.nan)
 
 
 def _point_candidate_segment_bases(
@@ -1902,16 +2045,12 @@ def _savings_node_point_candidates_for_interval_block(
     node_segment = segment_base + jnp.arange(
         consumption.size, dtype=jnp.result_type(float)
     ).reshape(consumption.shape)
-
-    def as_pairs(entries: FloatND) -> Float1D:
-        return jnp.stack([entries, entries], axis=-1).reshape(-1)
-
     return (
-        as_pairs(node_endog),
-        as_pairs(node_value),
-        as_pairs(node_policy),
-        as_pairs(node_marginal),
-        as_pairs(node_segment),
+        _as_pairs(node_endog),
+        _as_pairs(node_value),
+        _as_pairs(node_policy),
+        _as_pairs(node_marginal),
+        _as_pairs(node_segment),
     )
 
 
@@ -1979,16 +2118,12 @@ def _savings_node_point_candidates(
     node_segment = segment_base + jnp.arange(
         node_consumption.size, dtype=jnp.result_type(float)
     ).reshape(node_consumption.shape)
-
-    def as_pairs(entries: FloatND) -> Float1D:
-        return jnp.stack([entries, entries], axis=-1).reshape(-1)
-
     return (
-        as_pairs(node_endog),
-        as_pairs(node_value),
-        as_pairs(node_consumption_safe),
-        as_pairs(node_marginal),
-        as_pairs(node_segment),
+        _as_pairs(node_endog),
+        _as_pairs(node_value),
+        _as_pairs(node_consumption_safe),
+        _as_pairs(node_marginal),
+        _as_pairs(node_segment),
     )
 
 

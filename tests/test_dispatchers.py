@@ -363,3 +363,31 @@ def test_vmap_1d_callable_with_invalid():
 
     with pytest.raises(BeartypeCallHintViolation):
         vmap_1d(func=func, variables=("a",), callable_with="invalid")  # ty: ignore[invalid-argument-type]
+
+
+def _identity_utility(consumption):
+    return consumption
+
+
+def test_productmap_publishes_the_name_of_the_mapped_function():
+    """The product map carries the mapped function's name, as `wraps` would."""
+    mapped = productmap(
+        func=_identity_utility,
+        variables=("consumption",),
+        batch_sizes={"consumption": 0},
+    )
+
+    assert mapped.__name__ == "_identity_utility"
+
+
+def test_productmap_accepts_jax_instrumentation_that_reads_the_name():
+    """`jax.named_call` reads the callable's name and then runs the product map."""
+    mapped = productmap(
+        func=_identity_utility,
+        variables=("consumption",),
+        batch_sizes={"consumption": 0},
+    )
+
+    got = jax.named_call(mapped)(consumption=jnp.array([1.0, 2.0]))
+
+    aaae(got, jnp.array([1.0, 2.0]))

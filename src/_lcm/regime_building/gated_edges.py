@@ -34,18 +34,19 @@ simulation, which evaluates the projection at the realized point, would route on
 the other number.
 """
 
+import inspect
 from collections.abc import Callable, Container, Iterable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Literal, NoReturn, cast
+from typing import Literal, NoReturn, cast, no_type_check
 
 import jax.numpy as jnp
 from dags import (
     concatenate_functions,
     get_ancestors,
     rename_arguments,
-    with_signature,
 )
+from dags.exceptions import InvalidFunctionArgumentsError
 from dags.tree import qname_from_tree_path
 
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
@@ -1594,44 +1595,26 @@ def get_edge_fold(
         for leg in edge.legs
     ]
 
-    def _landing_reader(
-        *, name: str, ref: ResolvedProjectedRegimeValue
-    ) -> ProjectedLandingReader:
-        """Build one projected reference, to be read at the source's landing.
-
-        The reader is left un-mapped. Product-mapping it over the target's grid
-        would tabulate `V_ref o projection` and leave the source interpolating
-        THAT surface, which equals `V_ref(projection(landing))` only where the
-        projection is affine — so a curved projection would price a branch at a
-        value it does not pay, and forward simulation, which evaluates the
-        projection at the realized point, would route on the other number.
-        """
-        reader = _build_same_period_ref_reader(
-            ref=ref,
-            v_interpolation_info=reference_v_info[ref.regime],
-            functions=target_functions,
-            deterministic_transitions=target_deterministic_transitions,
-            # The value belongs to the period the source LANDS in, which
-            # backward induction has already solved and rolled forward, so it
-            # arrives on the edge-reference channel rather than the
-            # same-period one the value constraints read.
-            v_mapping_arg=EDGE_REF_V_ARG,
-            params_mapping_arg=EDGE_REF_PARAMS_ARG,
-        )
-        args = tuple(get_union_of_args([reader]))
-        return ProjectedLandingReader(
-            name=name,
-            reader=reader,
-            state_args=tuple(arg for arg in args if arg in state_names),
-            other_args=tuple(arg for arg in args if arg not in state_names),
-        )
-
     gate_ref_landing_readers = {
-        ref_name: _landing_reader(name=ref_name, ref=ref)
+        ref_name: _build_landing_reader(
+            name=ref_name,
+            ref=ref,
+            reference_v_info=reference_v_info,
+            target_functions=target_functions,
+            target_deterministic_transitions=target_deterministic_transitions,
+            state_names=state_names,
+        )
         for ref_name, ref in compiled.qualified_gate_refs.items()
     }
     fallback_landing_readers = tuple(
-        _landing_reader(name=f"{EDGE_FALLBACK_ARG_PREFIX}{leg_index}", ref=ref)
+        _build_landing_reader(
+            name=f"{EDGE_FALLBACK_ARG_PREFIX}{leg_index}",
+            ref=ref,
+            reference_v_info=reference_v_info,
+            target_functions=target_functions,
+            target_deterministic_transitions=target_deterministic_transitions,
+            state_names=state_names,
+        )
         for leg_index, ref in enumerate(qualified_fallbacks)
     )
 
@@ -1668,23 +1651,13 @@ def get_edge_fold(
         *fallback_landing_readers,
     )
 
-    @with_signature(args=outer_arg_names, return_annotation="FloatND")
-    def fold(**kwargs: _ParamsLeaf) -> FloatND:
-        same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
-        # Direct (un-interpolated) reads of the target's own value and flag, so a
-        # `-inf` dissolution cell never poisons a neighbour through interpolation.
-        target_V = same_period_V[edge.target]
-        target_components: dict[str, FloatND] = {}
-        for index, name in enumerate(target_component_names):
-            target_components[name] = (
-                target_V[..., index] if target_stakeholders is not None else target_V
-            )
-        d_value = same_period_V.get(f"{edge.target}{D_KEY_SUFFIX}")
-
-        surfaces = [target_components[name] for name in channels.component_names]
-        if channels.has_dissolution:
-            surfaces.append(cast("FloatND", d_value))
-        return jnp.stack(jnp.broadcast_arrays(*surfaces), axis=-1)
+    fold = _EdgeSurfaces(
+        edge_target=edge.target,
+        target_component_names=target_component_names,
+        target_stakeholders=target_stakeholders,
+        channels=channels,
+        arg_names=tuple(outer_arg_names),
+    )
 
     combine = _get_edge_branch_combiner(
         edge=edge,
@@ -1754,45 +1727,18 @@ def _get_edge_branch_combiner(
         | (set(gate_arg_names) - injected_names)
     )
 
-    @with_signature(args=outer_arg_names, return_annotation="FloatND")
-    def combine(**kwargs: _ParamsLeaf) -> FloatND:
-        stacked = cast("FloatND", kwargs[EDGE_CHANNELS_ARG])
-        gate_kwargs = _assemble_gate_kwargs(
-            gate_arg_names=gate_arg_names,
-            target_components={
-                name: stacked[..., channels.component_index(name)]
-                for name in channels.component_names
-            },
-            d_value=(
-                stacked[..., channels.dissolution_index]
-                if channels.has_dissolution
-                else None
-            ),
-            gate_ref_values={
-                name: cast("FloatND", kwargs[name]) for name in gate_ref_names
-            },
-            state_mesh={
-                name: cast("FloatND", kwargs[name]) for name in gate_state_names
-            },
-            cell_kwargs=kwargs,
-        )
-        gate = _as_boolean_gate(
-            value=gate_evaluator(**gate_kwargs), target=edge.target, phase="solve"
-        )
-        # STRICT where — never `gate*V + (1-gate)*fallback` (`0*-inf = NaN`).
-        component_values = [
-            jnp.where(
-                gate, stacked[..., open_index], cast("FloatND", kwargs[fallback_name])
-            )
-            for open_index, fallback_name in zip(
-                open_indices, fallback_names, strict=True
-            )
-        ]
-        return (
-            component_values[0]
-            if singleton_source
-            else jnp.stack(component_values, axis=-1)
-        )
+    combine = _EdgeBranchCombine(
+        edge_target=edge.target,
+        channels=channels,
+        gate_evaluator=gate_evaluator,
+        gate_arg_names=gate_arg_names,
+        gate_ref_names=gate_ref_names,
+        gate_state_names=gate_state_names,
+        open_indices=open_indices,
+        fallback_names=fallback_names,
+        singleton_source=singleton_source,
+        arg_names=tuple(outer_arg_names),
+    )
 
     return EdgeBranchCombiner(
         combine=combine,
@@ -2071,24 +2017,26 @@ def get_edge_simulate_gate_evaluator(
     if gate_ref_readers:
         engine_args.add(SAME_PERIOD_PARAMS_ARG)
     provenance_builder = _ProvenanceBuilder(states=frozenset(state_names))
-
-    def _expose(*, arg: str, namespace: str) -> str:
-        if arg in state_names or arg in engine_args:
-            return arg
-        return provenance_builder.expose(qname=arg, namespace=namespace)
+    exposure = _ArgExposure(
+        state_names=frozenset(state_names),
+        engine_args=frozenset(engine_args),
+        provenance_builder=provenance_builder,
+    )
 
     target_component_exposed = {
-        arg: _expose(arg=arg, namespace=TARGET_PARAMS) for arg in target_component_args
+        arg: exposure.expose(arg=arg, namespace=TARGET_PARAMS)
+        for arg in target_component_args
     }
     d_interpolator_exposed = {
-        arg: _expose(arg=arg, namespace=TARGET_PARAMS) for arg in d_interpolator_args
+        arg: exposure.expose(arg=arg, namespace=TARGET_PARAMS)
+        for arg in d_interpolator_args
     }
     gate_ref_exposed = {
-        name: {arg: _expose(arg=arg, namespace=SOURCE_PARAMS) for arg in args}
+        name: {arg: exposure.expose(arg=arg, namespace=SOURCE_PARAMS) for arg in args}
         for name, args in gate_ref_args.items()
     }
     gate_extra_exposed = {
-        arg: _expose(arg=arg, namespace=SOURCE_PARAMS)
+        arg: exposure.expose(arg=arg, namespace=SOURCE_PARAMS)
         for arg in sorted(set(gate_arg_names) - injected_names)
     }
 
@@ -2106,84 +2054,24 @@ def get_edge_simulate_gate_evaluator(
         outer_arg_names=outer_arg_names, engine_args=engine_args
     )
 
-    @with_signature(args=list(outer_arg_names), return_annotation="BoolND")
-    def evaluate_simulate_gate(**kwargs: _ParamsLeaf) -> BoolND:
-        same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
-        target_V = same_period_V[edge.target]
-
-        # VALUE-operand read: interpolate the target's own (per-component)
-        # value array at the realized point, instead of reading the
-        # solve-side fold's baked boolean gate off-grid. Exact on nodes and
-        # interpolated between them -- NOT a recompute of `max_a Q`; see this
-        # function's docstring for the residual that leaves.
-        target_components: dict[str, FloatND] = {}
-        for index, name in enumerate(target_component_names):
-            component_arr = (
-                target_V[..., index] if target_stakeholders is not None else target_V
-            )
-            target_components[name] = target_component_interpolator(
-                **{
-                    arg: kwargs[exposed]
-                    for arg, exposed in target_component_exposed.items()
-                },
-                **{_SIMULATE_TARGET_V_ARR_NAME: component_arr},
-            )
-
-        # DOCUMENTED RESIDUAL: `D_target` is linearly interpolated and
-        # thresholded (same recipe as every other simulate-side value read),
-        # never recomputed from its own per-action IR comparison — see this
-        # function's docstring. Only built/interpolated when the gate
-        # actually reads it (`reads_d_target`, a Python-level bool at trace
-        # time), so a pure value-operand gate (consent) pays no cost for a
-        # `D` array it never uses.
-        d_value: FloatND | None = None
-        if reads_d_target:
-            d_flag = same_period_V.get(f"{edge.target}{D_KEY_SUFFIX}")
-            if d_flag is not None:
-                d_value = d_interpolator(
-                    **{
-                        arg: kwargs[exposed]
-                        for arg, exposed in d_interpolator_exposed.items()
-                    },
-                    **{_SIMULATE_D_ARR_NAME: d_flag},
-                )
-
-        gate_ref_values = {
-            name: reader(
-                **{
-                    arg: kwargs[exposed]
-                    for arg, exposed in gate_ref_exposed[name].items()
-                }
-            )
-            for name, reader in gate_ref_readers.items()
-        }
-
-        # Shared with `get_edge_fold`: identical kwargs assembly, then the
-        # identical predicate call.
-        gate_kwargs = _assemble_gate_kwargs(
-            gate_arg_names=gate_arg_names,
-            target_components=target_components,
-            d_value=d_value,
-            gate_ref_values=gate_ref_values,
-            state_mesh={name: jnp.asarray(kwargs[name]) for name in state_names},
-            # The predicate declares its params under their OWN qnames; map the
-            # qualified leaves back before handing them over, so `edge.gate` and
-            # `_assemble_gate_kwargs` see the names the solve side passes them.
-            cell_kwargs={
-                arg: kwargs[exposed] for arg, exposed in gate_extra_exposed.items()
-            },
-        )
-        return _as_boolean_gate(
-            value=gate_evaluator(**gate_kwargs),
-            target=edge.target,
-            phase="simulate",
-        )
-
-    # Published for `route_gated_edges`, which has EVERY regime's flat params in
-    # hand and no other way to tell which one an arg belongs to.
-    evaluate_simulate_gate.arg_provenance = arg_provenance  # ty: ignore[unresolved-attribute]
-
-    return evaluate_simulate_gate
+    return _SimulateGateEvaluator(
+        edge_target=edge.target,
+        target_component_names=target_component_names,
+        target_stakeholders=target_stakeholders,
+        target_component_interpolator=target_component_interpolator,
+        target_component_exposed=target_component_exposed,
+        reads_d_target=reads_d_target,
+        d_interpolator=d_interpolator,
+        d_interpolator_exposed=d_interpolator_exposed,
+        gate_ref_readers=gate_ref_readers,
+        gate_ref_exposed=gate_ref_exposed,
+        gate_evaluator=gate_evaluator,
+        gate_arg_names=gate_arg_names,
+        state_names=state_names,
+        gate_extra_exposed=gate_extra_exposed,
+        arg_names=outer_arg_names,
+        arg_provenance=arg_provenance,
+    )
 
 
 _FALLBACK_PROJECTION_TARGET_PREFIX = "__fallback_state__"
@@ -2346,23 +2234,408 @@ def build_fallback_state_projector(
         outer_arg_names=arg_names, engine_args=set(context_args)
     )
 
-    @with_signature(
-        args=list(arg_names), return_annotation="Mapping[StateName, FloatND]"
+    return _FallbackStateProjector(
+        projection_funcs=projection_funcs,
+        projection_args=projection_args,
+        fallback_simulate_state_names=fallback_simulate_state_names,
+        arg_names=arg_names,
+        arg_provenance=arg_provenance,
     )
-    def project(**kwargs: _ParamsLeaf) -> Mapping[StateName, FloatND]:
-        return {
-            state_name: projection_funcs[state_name](
-                **{arg: kwargs[arg] for arg in projection_args[state_name]}
+
+
+def _build_landing_reader(
+    *,
+    name: str,
+    ref: ResolvedProjectedRegimeValue,
+    reference_v_info: Mapping[RegimeName, VInterpolationInfo],
+    target_functions: EconFunctionsMapping,
+    target_deterministic_transitions: Mapping[
+        TransitionFunctionName, TransitionFunction
+    ],
+    state_names: tuple[StateName, ...],
+) -> ProjectedLandingReader:
+    """Build one projected reference, to be read at the source's landing.
+
+    The reader is left un-mapped. Product-mapping it over the target's grid
+    would tabulate `V_ref o projection` and leave the source interpolating
+    THAT surface, which equals `V_ref(projection(landing))` only where the
+    projection is affine — so a curved projection would price a branch at a
+    value it does not pay, and forward simulation, which evaluates the
+    projection at the realized point, would route on the other number.
+    """
+    reader = _build_same_period_ref_reader(
+        ref=ref,
+        v_interpolation_info=reference_v_info[ref.regime],
+        functions=target_functions,
+        deterministic_transitions=target_deterministic_transitions,
+        # The value belongs to the period the source LANDS in, which
+        # backward induction has already solved and rolled forward, so it
+        # arrives on the edge-reference channel rather than the
+        # same-period one the value constraints read.
+        v_mapping_arg=EDGE_REF_V_ARG,
+        params_mapping_arg=EDGE_REF_PARAMS_ARG,
+    )
+    args = tuple(get_union_of_args([reader]))
+    return ProjectedLandingReader(
+        name=name,
+        reader=reader,
+        state_args=tuple(arg for arg in args if arg in state_names),
+        other_args=tuple(arg for arg in args if arg not in state_names),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _EdgeSurfaces:
+    """Stack one edge's operands on the target's grid, one channel each."""
+
+    edge_target: RegimeName
+    """The edge's target regime."""
+    target_component_names: tuple[str, ...]
+    """The target's value components, `V_target` or `V_target_<s>`."""
+    target_stakeholders: tuple[str, ...] | None
+    """The target regime's stakeholders, or `None`."""
+    channels: EdgeChannels
+    """Which operands become channels, and in which order."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="FloatND",
+            name="fold",
+        )
+
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+        same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
+        # Direct (un-interpolated) reads of the target's own value and flag, so a
+        # `-inf` dissolution cell never poisons a neighbour through interpolation.
+        target_V = same_period_V[self.edge_target]
+        target_components: dict[str, FloatND] = {}
+        for index, name in enumerate(self.target_component_names):
+            target_components[name] = (
+                target_V[..., index]
+                if self.target_stakeholders is not None
+                else target_V
             )
-            for state_name in fallback_simulate_state_names
+        d_value = same_period_V.get(f"{self.edge_target}{D_KEY_SUFFIX}")
+
+        surfaces = [target_components[name] for name in self.channels.component_names]
+        if self.channels.has_dissolution:
+            surfaces.append(cast("FloatND", d_value))
+        return jnp.stack(jnp.broadcast_arrays(*surfaces), axis=-1)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _EdgeBranchCombine:
+    """Apply one edge's gate to operands already read at a realized point."""
+
+    edge_target: RegimeName
+    """The edge's target regime."""
+    channels: EdgeChannels
+    """Which operands the stacked channels carry, and in which order."""
+    gate_evaluator: Callable[..., FloatND]
+    """The gate predicate, concatenated with the target DAG."""
+    gate_arg_names: tuple[str, ...]
+    """Every argument the gate reads."""
+    gate_ref_names: tuple[str, ...]
+    """The gate references, read at the landing point under their own names."""
+    gate_state_names: tuple[StateName, ...]
+    """Target states the gate reads, supplied at the landing point."""
+    open_indices: tuple[int, ...]
+    """Per leg, the channel index of the component the leg opens onto."""
+    fallback_names: tuple[str, ...]
+    """Per leg, the keyword its fallback value arrives under."""
+    singleton_source: bool
+    """Whether the source is a singleton regime, publishing one leg's value."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="FloatND",
+            name="combine",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+        stacked = cast("FloatND", kwargs[EDGE_CHANNELS_ARG])
+        gate_kwargs = _assemble_gate_kwargs(
+            gate_arg_names=self.gate_arg_names,
+            target_components={
+                name: stacked[..., self.channels.component_index(name)]
+                for name in self.channels.component_names
+            },
+            d_value=(
+                stacked[..., self.channels.dissolution_index]
+                if self.channels.has_dissolution
+                else None
+            ),
+            gate_ref_values={
+                name: cast("FloatND", kwargs[name]) for name in self.gate_ref_names
+            },
+            state_mesh={
+                name: cast("FloatND", kwargs[name]) for name in self.gate_state_names
+            },
+            cell_kwargs=kwargs,
+        )
+        gate = _as_boolean_gate(
+            value=self.gate_evaluator(**gate_kwargs),
+            target=self.edge_target,
+            phase="solve",
+        )
+        # STRICT where — never `gate*V + (1-gate)*fallback` (`0*-inf = NaN`).
+        component_values = [
+            jnp.where(
+                gate, stacked[..., open_index], cast("FloatND", kwargs[fallback_name])
+            )
+            for open_index, fallback_name in zip(
+                self.open_indices, self.fallback_names, strict=True
+            )
+        ]
+        return (
+            component_values[0]
+            if self.singleton_source
+            else jnp.stack(component_values, axis=-1)
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ArgExposure:
+    """Expose a gate-evaluator argument under its namespace-qualified name."""
+
+    state_names: frozenset[StateName]
+    """The target's states, exposed under their own names."""
+    engine_args: frozenset[str]
+    """Engine-supplied arguments, exposed under their own names."""
+    provenance_builder: _ProvenanceBuilder
+    """Records every parameter's namespace as it is exposed."""
+
+    def expose(self, *, arg: str, namespace: str) -> str:
+        """Return the exposed name of `arg`, recording its provenance."""
+        if arg in self.state_names or arg in self.engine_args:
+            return arg
+        return self.provenance_builder.expose(qname=arg, namespace=namespace)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SimulateGateEvaluator:
+    """Evaluate one edge's gate at a realized target-state point in simulation."""
+
+    edge_target: RegimeName
+    """The edge's target regime."""
+    target_component_names: tuple[str, ...]
+    """The target's value components, `V_target` or `V_target_<s>`."""
+    target_stakeholders: tuple[str, ...] | None
+    """The target regime's stakeholders, or `None`."""
+    target_component_interpolator: Callable[..., FloatND]
+    """Interpolates one of the target's value components at the point."""
+    target_component_exposed: Mapping[str, str]
+    """The interpolator's arguments and the names they are exposed under."""
+    reads_d_target: bool
+    """Whether the gate reads the target's dissolution flag."""
+    d_interpolator: Callable[..., FloatND]
+    """Interpolates the target's dissolution flag at the point."""
+    d_interpolator_exposed: Mapping[str, str]
+    """The flag interpolator's arguments and the names they are exposed under."""
+    gate_ref_readers: Mapping[str, Callable[..., FloatND]]
+    """Per gate reference, its same-period reader."""
+    gate_ref_exposed: Mapping[str, Mapping[str, str]]
+    """Per gate reference, its reader's arguments and their exposed names."""
+    gate_evaluator: Callable[..., FloatND]
+    """The gate predicate, concatenated with the target DAG."""
+    gate_arg_names: tuple[str, ...]
+    """Every argument the gate reads."""
+    state_names: tuple[StateName, ...]
+    """The target's states."""
+    gate_extra_exposed: Mapping[str, str]
+    """The gate's own free arguments and the names they are exposed under."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+    arg_provenance: EdgeArgProvenance
+    """Which namespace resolves each argument, for the value router."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="BoolND",
+            name="evaluate_simulate_gate",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: _ParamsLeaf) -> BoolND:
+        _fail_if_arguments_do_not_match(
+            kwargs=kwargs, arg_names=self.arg_names, name="evaluate_simulate_gate"
+        )
+        same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
+        target_V = same_period_V[self.edge_target]
+
+        # VALUE-operand read: interpolate the target's own (per-component)
+        # value array at the realized point, instead of reading the
+        # solve-side fold's baked boolean gate off-grid. Exact on nodes and
+        # interpolated between them -- NOT a recompute of `max_a Q`; see
+        # `get_edge_simulate_gate_evaluator` for the residual that leaves.
+        target_components: dict[str, FloatND] = {}
+        for index, name in enumerate(self.target_component_names):
+            component_arr = (
+                target_V[..., index]
+                if self.target_stakeholders is not None
+                else target_V
+            )
+            target_components[name] = self.target_component_interpolator(
+                **{
+                    arg: kwargs[exposed]
+                    for arg, exposed in self.target_component_exposed.items()
+                },
+                **{_SIMULATE_TARGET_V_ARR_NAME: component_arr},
+            )
+
+        # DOCUMENTED RESIDUAL: `D_target` is linearly interpolated and
+        # thresholded (same recipe as every other simulate-side value read),
+        # never recomputed from its own per-action IR comparison — see
+        # `get_edge_simulate_gate_evaluator`. Only built/interpolated when the
+        # gate actually reads it (`reads_d_target`, a Python-level bool at trace
+        # time), so a pure value-operand gate (consent) pays no cost for a
+        # `D` array it never uses.
+        d_value: FloatND | None = None
+        if self.reads_d_target:
+            d_flag = same_period_V.get(f"{self.edge_target}{D_KEY_SUFFIX}")
+            if d_flag is not None:
+                d_value = self.d_interpolator(
+                    **{
+                        arg: kwargs[exposed]
+                        for arg, exposed in self.d_interpolator_exposed.items()
+                    },
+                    **{_SIMULATE_D_ARR_NAME: d_flag},
+                )
+
+        gate_ref_values = {
+            name: reader(
+                **{
+                    arg: kwargs[exposed]
+                    for arg, exposed in self.gate_ref_exposed[name].items()
+                }
+            )
+            for name, reader in self.gate_ref_readers.items()
         }
 
-    # Published for `route_gated_edges`, exactly like the simulate gate
-    # evaluator's: the router holds every regime's params and cannot otherwise
-    # tell a source-declared projection parameter from a target one.
-    project.arg_provenance = arg_provenance  # ty: ignore[unresolved-attribute]
+        # Shared with `get_edge_fold`: identical kwargs assembly, then the
+        # identical predicate call.
+        gate_kwargs = _assemble_gate_kwargs(
+            gate_arg_names=self.gate_arg_names,
+            target_components=target_components,
+            d_value=d_value,
+            gate_ref_values=gate_ref_values,
+            state_mesh={name: jnp.asarray(kwargs[name]) for name in self.state_names},
+            # The predicate declares its params under their OWN qnames; map the
+            # qualified leaves back before handing them over, so `edge.gate` and
+            # `_assemble_gate_kwargs` see the names the solve side passes them.
+            cell_kwargs={
+                arg: kwargs[exposed] for arg, exposed in self.gate_extra_exposed.items()
+            },
+        )
+        return _as_boolean_gate(
+            value=self.gate_evaluator(**gate_kwargs),
+            target=self.edge_target,
+            phase="simulate",
+        )
 
-    return project
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _FallbackStateProjector:
+    """Project a target-grid point onto one edge leg's fallback state coordinates."""
+
+    projection_funcs: Mapping[StateName, Callable[..., FloatND]]
+    """Per fallback state, its projection concatenated with the target DAG."""
+    projection_args: Mapping[StateName, tuple[str, ...]]
+    """Per fallback state, the arguments its projection reads."""
+    fallback_simulate_state_names: tuple[StateName, ...]
+    """The fallback regime's simulate states, in order."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+    arg_provenance: EdgeArgProvenance
+    """Which namespace resolves each argument, for the value router."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="Mapping[StateName, FloatND]",
+            name="project",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: _ParamsLeaf) -> Mapping[StateName, FloatND]:
+        _fail_if_arguments_do_not_match(
+            kwargs=kwargs, arg_names=self.arg_names, name="project"
+        )
+        return {
+            state_name: self.projection_funcs[state_name](
+                **{arg: kwargs[arg] for arg in self.projection_args[state_name]}
+            )
+            for state_name in self.fallback_simulate_state_names
+        }
+
+
+def _fail_if_arguments_do_not_match(
+    *, kwargs: Mapping[str, object], arg_names: tuple[str, ...], name: str
+) -> None:
+    """Fail if a router-facing callable is handed the wrong keyword arguments.
+
+    The value router assembles these arguments by provenance, so a missing or
+    unexpected keyword is a routing defect and is named as such rather than
+    surfacing as a bare lookup error deep in the evaluation.
+
+    Raises:
+        InvalidFunctionArgumentsError: If an argument is missing or unexpected.
+
+    """
+    unexpected = set(kwargs) - set(arg_names)
+    if unexpected:
+        plural = "s" if len(unexpected) >= 2 else ""  # noqa: PLR2004
+        raise InvalidFunctionArgumentsError(
+            f"{name} got unexpected keyword argument{plural} "
+            f"{', '.join(sorted(unexpected))}"
+        )
+    missing = set(arg_names) - set(kwargs)
+    if missing:
+        plural = "s" if len(missing) >= 2 else ""  # noqa: PLR2004
+        raise InvalidFunctionArgumentsError(
+            f"{name} is missing required argument{plural}: {', '.join(sorted(missing))}"
+        )
+
+
+def _publish_signature(
+    *,
+    target: object,
+    arg_names: tuple[str, ...],
+    return_annotation: str,
+    name: str,
+) -> None:
+    """Publish the argument names, return annotation, and name of a callable instance.
+
+    The instance is a frozen dataclass, so the attributes go through
+    `object.__setattr__`. The arguments carry no annotations of their own; only
+    the return annotation is published.
+    """
+    signature = inspect.Signature(
+        [
+            inspect.Parameter(arg, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for arg in arg_names
+        ],
+        return_annotation=return_annotation,
+    )
+    object.__setattr__(target, "__signature__", signature)
+    object.__setattr__(target, "__annotations__", {"return": return_annotation})
+    object.__setattr__(target, "__name__", name)
 
 
 def _assemble_gate_kwargs(

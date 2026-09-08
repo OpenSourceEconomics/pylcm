@@ -173,36 +173,9 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         if declaration is not None
     }
 
-    def _phase_spec(
-        *,
-        functions: dict[FunctionName, UserFunction],
-        grid_states: dict[StateName, Grid | AgeSpecializedGrid],
-        state_transitions: dict[StateName, _PhaseStateTransition],
-        joint_transitions: _PhaseJointTransitions,
-        regime_transition: _PhaseRegimeTransition,
-        koopmans_aggregator: UserFunction | None,
-    ) -> RegimePhaseSpec:
-        return RegimePhaseSpec(
-            functions=MappingProxyType(functions),
-            # Constraints are phase-invariant by the slot grammar (phase-variant
-            # containers were rejected above), so both slices normalize the same
-            # declarations. A `None` entry is a model-level broadcast mask: it
-            # has no local constraint to normalize and is removed during merge.
-            constraints=normalize_constraints(constraints=constraints),
-            grid_states=MappingProxyType(grid_states),
-            state_transitions=MappingProxyType(state_transitions),
-            joint_transitions=joint_transitions,
-            koopmans_aggregator=koopmans_aggregator,
-            regime_transition=regime_transition,
-            # A per-target dict is stochastic by construction (each cell is a
-            # MarkovTransition-wrapped probability function).
-            stochastic_regime_transition=isinstance(
-                regime_transition, MarkovTransition | Mapping
-            ),
-        )
-
     return PhasedRegimeSpec(
-        solution=_phase_spec(
+        solution=_build_phase_spec(
+            constraints=constraints,
             functions=solve_functions,
             grid_states=solve_grid_states,
             state_transitions=solve_state_transitions,
@@ -210,7 +183,8 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             regime_transition=solve_transition,
             koopmans_aggregator=cast("UserFunction | None", solve_aggregator),
         ),
-        simulation=_phase_spec(
+        simulation=_build_phase_spec(
+            constraints=constraints,
             functions=simulate_functions,
             grid_states=simulate_grid_states,
             state_transitions=simulate_state_transitions,
@@ -248,6 +222,37 @@ def normalize_all_regime_phases(
             regime_name: normalize_regime_phases(user_regime)
             for regime_name, user_regime in user_regimes.items()
         }
+    )
+
+
+def _build_phase_spec(
+    *,
+    constraints: dict[str, ConstraintLike],
+    functions: dict[FunctionName, UserFunction],
+    grid_states: dict[StateName, Grid | AgeSpecializedGrid],
+    state_transitions: dict[StateName, _PhaseStateTransition],
+    joint_transitions: _PhaseJointTransitions,
+    regime_transition: _PhaseRegimeTransition,
+    koopmans_aggregator: UserFunction | None,
+) -> RegimePhaseSpec:
+    """Assemble one phase's slice from its resolved slot values."""
+    return RegimePhaseSpec(
+        functions=MappingProxyType(functions),
+        # Constraints are phase-invariant by the slot grammar (phase-variant
+        # containers are rejected by the resolver), so both slices normalize the
+        # same declarations. A `None` entry is a model-level broadcast mask: it
+        # has no local constraint to normalize and is removed during merge.
+        constraints=normalize_constraints(constraints=constraints),
+        grid_states=MappingProxyType(grid_states),
+        state_transitions=MappingProxyType(state_transitions),
+        joint_transitions=joint_transitions,
+        koopmans_aggregator=koopmans_aggregator,
+        regime_transition=regime_transition,
+        # A per-target dict is stochastic by construction (each cell is a
+        # MarkovTransition-wrapped probability function).
+        stochastic_regime_transition=isinstance(
+            regime_transition, MarkovTransition | Mapping
+        ),
     )
 
 

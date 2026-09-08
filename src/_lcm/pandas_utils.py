@@ -1,5 +1,6 @@
 """Utilities for converting between pandas and LCM data structures."""
 
+import functools
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -477,17 +478,16 @@ def _convert_param_value(
 
     """
 
-    def _recurse(inner_value: object) -> object:
-        return _convert_param_value(
-            value=inner_value,
-            func=func,
-            param_name=param_name,
-            func_name=func_name,
-            ages=ages,
-            user_regimes=user_regimes,
-            regime_names_to_ids=regime_names_to_ids,
-            regime_name=regime_name,
-        )
+    recurse = functools.partial(
+        _convert_param_value,
+        func=func,
+        param_name=param_name,
+        func_name=func_name,
+        ages=ages,
+        user_regimes=user_regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        regime_name=regime_name,
+    )
 
     if isinstance(value, pd.Series):
         return array_from_series(
@@ -504,9 +504,9 @@ def _convert_param_value(
     # so leaves are still in user form. Preserve that user form on output:
     # canonicalization happens downstream in `cast_params_to_canonical_dtypes`.
     if isinstance(value, UserMappingLeaf):
-        return UserMappingLeaf({k: _recurse(v) for k, v in value.data.items()})
+        return UserMappingLeaf({k: recurse(value=v) for k, v in value.data.items()})
     if isinstance(value, UserSequenceLeaf):
-        return UserSequenceLeaf(tuple(_recurse(v) for v in value.data))
+        return UserSequenceLeaf(tuple(recurse(value=v) for v in value.data))
     return value
 
 
@@ -715,6 +715,17 @@ class _LevelMapping:
     """Valid label names, for error messages. Empty for age levels."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class _RegimeIdCode:
+    """Map a regime name to its integer code."""
+
+    regime_names_to_ids: RegimeNamesToIds
+    """Immutable mapping from regime names to integer indices."""
+
+    def __call__(self, label: str) -> int:
+        return int(self.regime_names_to_ids[label])
+
+
 def _age_level_mapping(ages: AgeGrid) -> _LevelMapping:
     """Create a `_LevelMapping` for the age dimension."""
     return _LevelMapping(
@@ -809,7 +820,7 @@ def _build_outcome_mapping(
         return _LevelMapping(
             name="next_regime",
             size=len(regime_names_to_ids),
-            get_code_from_label=lambda label: int(regime_names_to_ids[label]),
+            get_code_from_label=_RegimeIdCode(regime_names_to_ids=regime_names_to_ids),
             valid_labels=tuple(regime_names_to_ids),
         )
 

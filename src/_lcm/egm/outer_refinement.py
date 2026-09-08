@@ -281,14 +281,7 @@ def _consider(
     a finite candidate always beats a ``-inf`` incumbent and two ``-inf`` values
     never tie.
     """
-
-    def _tie(*, a: FloatND, b: FloatND) -> FloatND:
-        both_finite = jnp.isfinite(a) & jnp.isfinite(b)
-        eps = jnp.finfo(jnp.result_type(a, b)).eps
-        band = _TIE_BAND_ULPS * eps * jnp.maximum(jnp.abs(a), jnp.abs(b))
-        return jnp.where(both_finite, band, 0.0)
-
-    best_tie = _tie(a=cand_v, b=best_v)
+    best_tie = _tie_band(a=cand_v, b=best_v)
     better = (cand_v > best_v + best_tie) | (
         (jnp.abs(cand_v - best_v) <= best_tie) & (cand_x < best_x)
     )
@@ -297,7 +290,7 @@ def _consider(
     # (e.g. a refined bracket optimum that lands back on an already-folded node)
     # carries the winner's value and would install a duplicate second-best —
     # a spurious zero best/second margin that reads as a branch tie.
-    second_tie = _tie(a=cand_v, b=second_v)
+    second_tie = _tie_band(a=cand_v, b=second_v)
     runner_up = (
         (~better)
         & (cand_x != best_x)
@@ -315,6 +308,19 @@ def _consider(
         new_second_v,
         jnp.where(better, cand_width, width),
     )
+
+
+def _tie_band(*, a: FloatND, b: FloatND) -> FloatND:
+    """Dtype-aware rounding band within which two finite values count as tied.
+
+    `_TIE_BAND_ULPS * eps * max(|a|, |b|)` where both values are finite, and
+    exactly `0.0` otherwise, so a finite value always beats `-inf` and two
+    `-inf` values never tie.
+    """
+    both_finite = jnp.isfinite(a) & jnp.isfinite(b)
+    eps = jnp.finfo(jnp.result_type(a, b)).eps
+    band = _TIE_BAND_ULPS * eps * jnp.maximum(jnp.abs(a), jnp.abs(b))
+    return jnp.where(both_finite, band, 0.0)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -626,20 +632,21 @@ def _dump_worst_cell(
     take = (slice(None), *cell)
     nd = np.asarray(nodes)
     mids = 0.5 * (nd[:-1] + nd[1:])
-
-    def _row(a: np.ndarray) -> str:
-        return "[" + " ".join(f"{v:+.4e}" for v in np.ravel(a)) + "]"
-
     sys.stderr.write(
         f"[LCM_OUTER_DUMP_WORST_CELL] state_cell={cell} "
         f"worst_interval={interval} "
         f"norm_err={float(np.asarray(normalized)[worst]):.3e}\n"
-        f"  node_abscissa : {_row(nd)}\n"
-        f"  node_exact_val: {_row(np.asarray(values)[take])}\n"
-        f"  mid_abscissa  : {_row(mids)}\n"
-        f"  mid_exact_val : {_row(np.asarray(exact)[take])}\n"
-        f"  mid_interp_val: {_row(np.asarray(interpolated)[take])}\n"
+        f"  node_abscissa : {_format_row(nd)}\n"
+        f"  node_exact_val: {_format_row(np.asarray(values)[take])}\n"
+        f"  mid_abscissa  : {_format_row(mids)}\n"
+        f"  mid_exact_val : {_format_row(np.asarray(exact)[take])}\n"
+        f"  mid_interp_val: {_format_row(np.asarray(interpolated)[take])}\n"
     )
+
+
+def _format_row(a: np.ndarray) -> str:
+    """Render a flattened array as a bracketed row of `+.4e` numbers."""
+    return "[" + " ".join(f"{v:+.4e}" for v in np.ravel(a)) + "]"
 
 
 def _close_over_neighbors(

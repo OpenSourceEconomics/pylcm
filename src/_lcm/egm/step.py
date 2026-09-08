@@ -132,8 +132,10 @@ at solve time, so `Model` construction always succeeds for a validated
 DC-EGM regime.
 """
 
+import functools
 import math
 from collections.abc import Callable, Hashable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -589,15 +591,77 @@ def _get_egm_step(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
 
-    def egm_step(
+    return _EGMStep(
+        pieces=pieces,
+        get_solve_one_combo=get_solve_one_combo,
+        mask_gap_rows=mask_gap_rows,
+        has_taste_shocks=has_taste_shocks,
+        own_discrete_state_names=own_discrete_state_names,
+        own_passive_state_names=own_passive_state_names,
+        own_discrete_action_values=own_discrete_action_values,
+        own_runtime_process_names=own_runtime_process_names,
+        euler_batch_size=euler_batch_size,
+        savings_batch_size=savings_batch_size,
+        combo_state_batch_sizes=combo_state_batch_sizes,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _EGMStep:
+    """The DC-EGM kernel of one regime for one continuation-target configuration.
+
+    Runs the per-combo solve over the regime's combo product and publishes V
+    on the exogenous grid, the carry its parents interpolate, and the
+    simulation policy. The continuation is read from the carries alone; no
+    next-period value array enters the step.
+    """
+
+    pieces: _EgmKernelPieces
+    """Build-time statics shared by every per-combo computation."""
+
+    get_solve_one_combo: Callable[
+        ...,
+        Callable[
+            [tuple[ScalarInt | ScalarFloat, ...]],
+            tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
+        ],
+    ]
+    """Builder of the per-combo solve (single-post-state or asset-row)."""
+
+    mask_gap_rows: bool
+    """Whether the backend's read-support verdict masks the simulation rows."""
+
+    has_taste_shocks: bool
+    """Whether the regime smooths its discrete actions with EV1 taste shocks."""
+
+    own_discrete_state_names: tuple[StateName, ...]
+    """The regime's discrete states in carry-axis order."""
+
+    own_passive_state_names: tuple[StateName, ...]
+    """The regime's passive continuous states in carry-axis order."""
+
+    own_discrete_action_values: MappingProxyType[ActionName, Any]
+    """The regime's discrete actions and their grid values."""
+
+    own_runtime_process_names: tuple[StateName, ...]
+    """Process states whose grids are resolved at runtime."""
+
+    euler_batch_size: int
+    """The Euler grid's `batch_size` (asset-row kernel only)."""
+
+    savings_batch_size: int
+    """The savings grid's `batch_size`."""
+
+    combo_state_batch_sizes: MappingProxyType[StateName, int]
+    """Per combo-state `batch_size` (0 keeps the axis fused)."""
+
+    def __call__(
+        self,
         *,
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         """Run the DC-EGM step and publish V on the exogenous grid.
-
-        The continuation is read from the carries alone; no next-period value
-        array enters the step.
 
         Args:
             next_regime_to_continuation: The next period's EGM carries.
@@ -607,53 +671,51 @@ def _get_egm_step(
         Returns:
             Tuple of the value-function array on the exogenous state grid
             (discrete-state axes leading, continuous states in canonical
-            order) and the regime's carry (one row per discrete-state x
-            passive-node x discrete-action combo).
+            order), the regime's carry (one row per discrete-state x
+            passive-node x discrete-action combo), and the simulation policy.
 
         """
+        pieces = self.pieces
         dtype = canonical_float_dtype()
         own_state_names = {
             pieces.euler_state_name,
-            *own_discrete_state_names,
-            *own_passive_state_names,
+            *self.own_discrete_state_names,
+            *self.own_passive_state_names,
         }
         pool = {k: v for k, v in kwargs.items() if k not in own_state_names}
         state_grid = jnp.asarray(kwargs[pieces.euler_state_name], dtype=dtype)
         own_taste_shock_scale = (
             jnp.asarray(kwargs[TASTE_SHOCK_SCALE_PARAM], dtype=dtype)
-            if has_taste_shocks
+            if self.has_taste_shocks
             else jnp.asarray(0.0, dtype=dtype)
         )
         resolved_process_grids = MappingProxyType(
             {
                 name: jnp.asarray(kwargs[name], dtype=dtype)
-                for name in own_runtime_process_names
+                for name in self.own_runtime_process_names
             }
         )
-        solve_one_combo = get_solve_one_combo(
+        solve_one_combo = self.get_solve_one_combo(
             pieces=pieces,
             pool=pool,
             state_grid=state_grid,
             next_regime_to_continuation=next_regime_to_continuation,
-            euler_batch_size=euler_batch_size,
-            savings_batch_size=savings_batch_size,
+            euler_batch_size=self.euler_batch_size,
+            savings_batch_size=self.savings_batch_size,
             resolved_process_grids=resolved_process_grids,
         )
 
         if pieces.combo_names:
             combo_var_names = (
-                own_discrete_state_names
-                + own_passive_state_names
-                + tuple(own_discrete_action_values)
+                self.own_discrete_state_names
+                + self.own_passive_state_names
+                + tuple(self.own_discrete_action_values)
             )
-
-            @with_signature(args=list(combo_var_names))
-            def solve_one_combo_over_axes(
-                **combo_values: ScalarFloat | ScalarInt,
-            ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
-                return solve_one_combo(
-                    tuple(combo_values[name] for name in combo_var_names)
+            solve_one_combo_over_axes = with_signature(args=list(combo_var_names))(
+                _SolveOneComboOverAxes(
+                    solve_one_combo=solve_one_combo, combo_var_names=combo_var_names
                 )
+            )
 
             # Map the per-combo solve over the Cartesian product of the combo
             # axes: a discrete state / process / passive grid's `batch_size`
@@ -665,11 +727,12 @@ def _get_egm_step(
             combo_axis_values = {
                 **{
                     name: jnp.asarray(kwargs[name])
-                    for name in own_discrete_state_names + own_passive_state_names
+                    for name in self.own_discrete_state_names
+                    + self.own_passive_state_names
                 },
                 **{
                     name: jnp.asarray(values)
-                    for name, values in own_discrete_action_values.items()
+                    for name, values in self.own_discrete_action_values.items()
                 },
             }
             (
@@ -684,13 +747,15 @@ def _get_egm_step(
                 combo_var_names=combo_var_names,
                 combo_axis_values=combo_axis_values,
                 batch_sizes={
-                    **dict(combo_state_batch_sizes),
-                    **dict.fromkeys(own_discrete_action_values, 0),
+                    **dict(self.combo_state_batch_sizes),
+                    **dict.fromkeys(self.own_discrete_action_values, 0),
                 },
             )
-            n_state_axes = len(own_discrete_state_names) + len(own_passive_state_names)
+            n_state_axes = len(self.own_discrete_state_names) + len(
+                self.own_passive_state_names
+            )
             action_axes = tuple(range(n_state_axes, len(combo_var_names)))
-            if action_axes and has_taste_shocks:
+            if action_axes and self.has_taste_shocks:
                 V_arr, _ = logsum_and_softmax(
                     values=V_stack, scale=own_taste_shock_scale, axes=action_axes
                 )
@@ -715,16 +780,18 @@ def _get_egm_step(
             # so the read's finite/in-support acceptance falls back to the
             # grid-argmax pair. The solve-side carry keeps the row unchanged.
             read_ok = (
-                read_supported_stack[..., None] if mask_gap_rows else jnp.asarray(True)  # noqa: FBT003
+                read_supported_stack[..., None]
+                if self.mask_gap_rows
+                else jnp.asarray(True)  # noqa: FBT003
             )
             sim_policy = EGMSimPolicy(
                 endog_grid=jnp.where(read_ok, grid_stack, jnp.nan),
                 policy=jnp.where(read_ok, policy_stack, jnp.nan),
                 value=jnp.where(read_ok, value_stack, jnp.nan),
                 marginal_utility=jnp.where(read_ok, marginal_stack, jnp.nan),
-                row_discrete_state_names=own_discrete_state_names,
-                row_passive_state_names=own_passive_state_names,
-                row_discrete_action_names=tuple(own_discrete_action_values),
+                row_discrete_state_names=self.own_discrete_state_names,
+                row_passive_state_names=self.own_passive_state_names,
+                row_discrete_action_names=tuple(self.own_discrete_action_values),
             )
         else:
             V_arr, grid_row, policy_row, value_row, marginal_row, read_supported = (
@@ -739,7 +806,7 @@ def _get_egm_step(
             # See the combo branch: a gap-compacted row is withheld from the
             # off-grid read; the carry keeps it.
             read_ok = (
-                read_supported if mask_gap_rows else jnp.asarray(True)  # noqa: FBT003
+                read_supported if self.mask_gap_rows else jnp.asarray(True)  # noqa: FBT003
             )
             sim_policy = EGMSimPolicy(
                 endog_grid=jnp.where(read_ok, grid_row, jnp.nan),
@@ -749,7 +816,26 @@ def _get_egm_step(
             )
         return V_arr, carry, sim_policy
 
-    return egm_step
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SolveOneComboOverAxes:
+    """The per-combo solve, keyed by combo variable name for `productmap`."""
+
+    solve_one_combo: Callable[
+        [tuple[ScalarInt | ScalarFloat, ...]],
+        tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool],
+    ]
+    """The positional per-combo solve."""
+
+    combo_var_names: tuple[StateOrActionName, ...]
+    """The combo variables in the order the solve takes their values."""
+
+    def __call__(
+        self, **combo_values: ScalarFloat | ScalarInt
+    ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
+        return self.solve_one_combo(
+            tuple(combo_values[name] for name in self.combo_var_names)
+        )
 
 
 def _map_combo_product(
@@ -803,14 +889,16 @@ def _map_combo_product(
     for name in splayed:
         block *= batch_sizes[name]
 
-    def at_one_splayed_combo(
-        splayed_values: tuple[ScalarFloat | ScalarInt, ...],
-    ) -> tuple[FloatND | BoolND, ...]:
-        return inner(
-            **dict(zip(splayed, splayed_values, strict=True)), **vmapped_values
-        )
-
-    stacked = jax.lax.map(at_one_splayed_combo, flat_splayed, batch_size=block)
+    stacked = jax.lax.map(
+        functools.partial(
+            _at_one_splayed_combo,
+            inner=inner,
+            splayed=splayed,
+            vmapped_values=vmapped_values,
+        ),
+        flat_splayed,
+        batch_size=block,
+    )
 
     # Restore `combo_var_names` order: `stacked` axes are
     # (flattened splayed, *vmapped, *per-element); reshape the flat axis back
@@ -818,13 +906,37 @@ def _map_combo_product(
     current_order = splayed + vmapped
     perm = tuple(current_order.index(name) for name in combo_var_names)
     n_combo = len(combo_var_names)
+    return tuple(
+        _reorder_combo_axes(
+            arr=arr, splayed_dims=splayed_dims, perm=perm, n_combo=n_combo
+        )
+        for arr in stacked
+    )
 
-    def _reorder(arr: FloatND | BoolND) -> FloatND | BoolND:
-        arr = arr.reshape(*splayed_dims, *arr.shape[1:])
-        trailing = tuple(range(n_combo, arr.ndim))
-        return jnp.transpose(arr, (*perm, *trailing))
 
-    return tuple(_reorder(arr) for arr in stacked)
+# keyword-only-exempt: library-callback=jax.lax.map
+def _at_one_splayed_combo(
+    splayed_values: tuple[ScalarFloat | ScalarInt, ...],
+    *,
+    inner: Callable[..., tuple[FloatND | BoolND, ...]],
+    splayed: tuple[StateOrActionName, ...],
+    vmapped_values: dict[StateOrActionName, FloatND | IntND],
+) -> tuple[FloatND | BoolND, ...]:
+    """Run the vmapped inner product at one flattened splayed combo."""
+    return inner(**dict(zip(splayed, splayed_values, strict=True)), **vmapped_values)
+
+
+def _reorder_combo_axes(
+    *,
+    arr: FloatND | BoolND,
+    splayed_dims: tuple[int, ...],
+    perm: tuple[int, ...],
+    n_combo: int,
+) -> FloatND | BoolND:
+    """Unflatten the splayed axis and transpose the combo axes into canonical order."""
+    arr = arr.reshape(*splayed_dims, *arr.shape[1:])
+    trailing = tuple(range(n_combo, arr.ndim))
+    return jnp.transpose(arr, (*perm, *trailing))
 
 
 def _build_kernel_pieces(
@@ -921,20 +1033,27 @@ def _build_feasibility_function(
     """
     if not constraints:
         return None
-    constraints_func = concatenate_functions(
-        functions={
-            **dict(functions),
-            **dict(constraints),
-        },
-        targets=list(constraints),
-        return_type="dict",
-        enforce_signature=False,
-        set_annotations=True,
+    return _ComboFeasibility(
+        constraints_func=concatenate_functions(
+            functions={
+                **dict(functions),
+                **dict(constraints),
+            },
+            targets=list(constraints),
+            return_type="dict",
+            enforce_signature=False,
+            set_annotations=True,
+        )
     )
 
-    def feasibility(**combo_pool: Any) -> ScalarBool:  # noqa: ANN401
-        """Evaluate all constraints for one combo and combine them."""
-        outputs = constraints_func(**combo_pool)
-        return jnp.all(jnp.stack([jnp.asarray(out) for out in outputs.values()]))
 
-    return feasibility
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ComboFeasibility:
+    """All of a regime's constraints, evaluated and conjoined for one combo."""
+
+    constraints_func: Callable[..., Mapping[str, BoolND]]
+    """The concatenated constraint DAG, returning every constraint by name."""
+
+    def __call__(self, **combo_pool: Any) -> ScalarBool:  # noqa: ANN401
+        outputs = self.constraints_func(**combo_pool)
+        return jnp.all(jnp.stack([jnp.asarray(out) for out in outputs.values()]))

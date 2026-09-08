@@ -206,6 +206,36 @@ def test_simulate_debug_persists_snapshot(*, tmp_path, model_and_params):
     assert snapshot.result is not None
 
 
+def test_simulate_debug_persists_snapshot_from_a_loaded_solution(
+    *, tmp_path, model_and_params, solved
+):
+    """A simulation consuming a solution read back from disk still writes its snapshot.
+
+    A loaded solution's value store reads lazily from the archive and holds handles
+    the snapshot pickle cannot serialize; the snapshot keeps the value arrays in its
+    own HDF5 file, so the consumed solution is dropped from the pickled result.
+    """
+    model, params = model_and_params
+    archive = tmp_path / "solution.lcm"
+    save_solution(solution=solved, path=archive)
+    loaded = load_solution(path=archive)
+
+    model.simulate(
+        params=params,
+        initial_conditions=_initial_conditions(),
+        solution=loaded,
+        log_level="debug",
+        log_path=tmp_path / "snapshots",
+    )
+
+    dirs = sorted((tmp_path / "snapshots").glob("simulate_snapshot_*/"))
+    assert len(dirs) == 1
+    snapshot = load_snapshot(path=dirs[0])
+    assert isinstance(snapshot, SimulateSnapshot)
+    assert snapshot.result is not None
+    assert snapshot.result.solution is None
+
+
 def test_simulate_with_solve_debug_persists_snapshot(*, tmp_path, model_and_params):
     model, params = model_and_params
     model.simulate(

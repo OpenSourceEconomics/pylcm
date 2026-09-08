@@ -8,10 +8,12 @@ therefore read off the regime's own function pool, which is also the only way a
 condition over a discrete state can compose at all.
 """
 
+import inspect
 from collections.abc import Mapping
-from typing import cast
+from dataclasses import dataclass
+from typing import cast, no_type_check
 
-from dags import concatenate_functions, get_annotations, with_signature
+from dags import concatenate_functions, get_annotations
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.constraints.processed import ProcessedConstraint
@@ -49,20 +51,49 @@ def as_constraint_function(
         # annotations supplied, because it has none of its own.
         return cast("ConstraintFunction", constraint.declaration)
 
-    arg_names = constraint.condition.arg_names
-
-    @with_signature(
-        args={
-            arg_name: annotation_of(pool=pool, name=arg_name) for arg_name in arg_names
-        },
-        return_annotation="BoolND",
-        enforce=False,
+    return cast(
+        "ConstraintFunction",
+        _ConstraintEvaluator(
+            constraint=constraint,
+            argument_annotations={
+                arg_name: annotation_of(pool=pool, name=arg_name)
+                for arg_name in constraint.condition.arg_names
+            },
+        ),
     )
-    def evaluate_constraint(**values: ValueND) -> BoolND:
-        return constraint.evaluate(**values)
 
-    evaluate_constraint.__name__ = constraint.name
-    return evaluate_constraint  # ty: ignore[invalid-return-type]
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ConstraintEvaluator:
+    """A condition evaluated through the DAG under the regime's own annotations."""
+
+    constraint: ProcessedConstraint
+    """The normalized constraint, evaluated on each call."""
+    argument_annotations: dict[str, str]
+    """Annotation of each dependency, in signature order."""
+
+    def __post_init__(self) -> None:
+        signature = inspect.Signature(
+            [
+                inspect.Parameter(
+                    arg, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation
+                )
+                for arg, annotation in self.argument_annotations.items()
+            ],
+            return_annotation="BoolND",
+        )
+        object.__setattr__(self, "__signature__", signature)
+        object.__setattr__(
+            self, "__annotations__", {**self.argument_annotations, "return": "BoolND"}
+        )
+        object.__setattr__(self, "__name__", self.constraint.name)
+
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(self, **values: ValueND) -> BoolND:
+        return self.constraint.evaluate(**values)
 
 
 def annotation_of(*, pool: Mapping[FunctionName, UserFunction], name: str) -> str:

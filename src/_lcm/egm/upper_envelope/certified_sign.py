@@ -264,25 +264,6 @@ def affine_numerator(
     )
 
 
-def _same_bits(*, left: FloatND, right: FloatND) -> BoolND:
-    """Report whether two floats have identical representations.
-
-    Float equality is the wrong instrument wherever an operand may be
-    subnormal. The backend flushes subnormals to zero in comparisons as well as
-    in arithmetic, so `==` reports a subnormal equal to zero and equal to every
-    other subnormal — statements about the backend, not about the operands. Two
-    identical representations are identical numbers whatever the backend does
-    with them.
-
-    Signed zeros have different representations and are declined, which costs
-    only a shortcut and never an answer.
-    """
-    unsigned = _IEEE_FIELDS[jnp.dtype(left.dtype).name][0]
-    return jax.lax.bitcast_convert_type(left, jnp.dtype(unsigned)) == (
-        jax.lax.bitcast_convert_type(right, jnp.dtype(unsigned))
-    )
-
-
 @cache
 def backend_flushes_subnormals(dtype: DTypeLike) -> bool:
     """Report whether this backend destroys a subnormal rather than reading it.
@@ -311,8 +292,13 @@ def backend_flushes_subnormals(dtype: DTypeLike) -> bool:
     """
     with jax.ensure_compile_time_eval():
         smallest_normal = np.asarray(jnp.finfo(dtype).tiny, dtype=dtype)
-        halved = jax.jit(lambda value: value * 0.5)(smallest_normal)
+        halved = jax.jit(_halve)(smallest_normal)
         return bool(np.asarray(halved) == 0.0)
+
+
+def _halve(value: FloatND) -> FloatND:
+    """Multiply by one half — the step that takes a smallest normal subnormal."""
+    return value * 0.5
 
 
 def is_subnormal(value: FloatND) -> BoolND:

@@ -34,6 +34,7 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.published_policy import EGMSimPolicy, egm_sim_policy_role_tree
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
@@ -169,6 +170,28 @@ class LTMEnvelope:
 @dataclass(frozen=True, kw_only=True)
 class MSSEnvelope:
     """HARK-style left-to-right segment envelope configuration."""
+
+    arithmetic: ComparisonArithmetic = "certified"
+    """Which arithmetic settles a comparison between two candidate chords.
+
+    The geometry is the same either way: which stored piece covers an interval,
+    which node owns a query, and where two branches hand over. Only the
+    comparison changes.
+
+    - `"certified"` decides on the stored operands, so an ordering the working
+      format cannot separate is still settled, and a comparison the arithmetic
+      cannot decide publishes `NaN` rather than a guess. Requires the installed
+      exact-affine payload for the active backend.
+    - `"ordinary"` compares two readings formed in the working format. A
+      reading is a slope and then an affine step, so it carries no bound in
+      representable steps: cancellation or a large common level can reverse an
+      ordering the correctly rounded values would separate, and candidates
+      whose readings coincide are separated by the declared tie order. It
+      reaches no native kernel, so it is the route available when that payload
+      is absent; its values, owners and crossings are the caller's to validate
+      for the intended model at every precision, backend and transformation in
+      use.
+    """
 
 
 type EnvelopeConfig = (
@@ -341,6 +364,14 @@ class DCEGM(OneMarginSolver):
             _fail_if_exact_affine_kernel_unavailable(
                 regime_name=context.regime_name,
                 selection="ExactEnvelope",
+            )
+        if (
+            isinstance(self.envelope, MSSEnvelope)
+            and self.envelope.arithmetic == "certified"
+        ):
+            _fail_if_exact_affine_kernel_unavailable(
+                regime_name=context.regime_name,
+                selection="the certified MSSEnvelope arithmetic",
             )
 
     def build_constraint_routes(

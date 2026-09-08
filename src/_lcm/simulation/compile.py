@@ -152,26 +152,15 @@ def compile_all_simulation_phases(
         )
 
     compiled: dict[Hashable, jax.stages.Compiled] = {}
-
-    def _compile_and_log(
-        *,
-        key: Hashable,
-        low: jax.stages.Lowered,
-        label: str,
-    ) -> tuple[Hashable, jax.stages.Compiled]:
-        logger.info("  compiling %s ...", label)
-        start = time.monotonic()
-        result = low.compile()
-        logger.info(
-            "  compiled  %s  %s",
-            label,
-            format_duration(seconds=time.monotonic() - start),
-        )
-        return key, result
-
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = [
-            pool.submit(_compile_and_log, key=key, low=low, label=unique[key][2])
+            pool.submit(
+                _compile_and_log,
+                key=key,
+                low=low,
+                label=unique[key][2],
+                logger=logger,
+            )
             for key, low in lowered.items()
         ]
         for future in as_completed(futures):
@@ -194,6 +183,25 @@ def compile_all_simulation_phases(
         compiled=compiled,
         func_keys=func_keys,
     )
+
+
+def _compile_and_log(
+    *,
+    key: Hashable,
+    low: jax.stages.Lowered,
+    label: str,
+    logger: logging.Logger,
+) -> tuple[Hashable, jax.stages.Compiled]:
+    """Compile one lowered program, logging its duration."""
+    logger.info("  compiling %s ...", label)
+    start = time.monotonic()
+    result = low.compile()
+    logger.info(
+        "  compiled  %s  %s",
+        label,
+        format_duration(seconds=time.monotonic() - start),
+    )
+    return key, result
 
 
 def _collect_unique_simulation_callables(

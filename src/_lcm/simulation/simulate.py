@@ -4,6 +4,7 @@ import itertools
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -1391,14 +1392,8 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
 
     n_subjects = next(iter(states.values())).shape[0]
 
-    def grid_position(*, name: StateOrActionName, values: FloatND | IntND) -> IntND:
-        grid_values = jnp.asarray(regime.simulation.grids[name].to_jax())
-        return jnp.clip(
-            jnp.searchsorted(grid_values, values), 0, grid_values.shape[0] - 1
-        )
-
     state_positions = tuple(
-        grid_position(name=name, values=jnp.asarray(states[name]))
+        _grid_position(regime=regime, name=name, values=jnp.asarray(states[name]))
         for name in sim_policy.row_discrete_state_names
     )
 
@@ -1595,19 +1590,16 @@ def _redecide_branch_and_read_policy(
 
     winner = jnp.argmax(objectives, axis=0)
 
-    def at_winner(stacked: FloatND | BoolND) -> FloatND | BoolND:
-        return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
-
-    off_grid_action = at_winner(policies)
-    winner_resources = at_winner(resources)
-    winner_objective = at_winner(objectives)
+    off_grid_action = _take_at_winner(stacked=policies, winner=winner)
+    winner_resources = _take_at_winner(stacked=resources, winner=winner)
+    winner_objective = _take_at_winner(stacked=objectives, winner=winner)
     # The winner is accepted only if it scores no worse than the grid-argmax pair
     # under the same canonical `Q`, so the replacement cannot degrade the
     # finite-grid decision. Support is required of the winner alone: elsewhere a
     # row read is an edge extension rather than the published policy.
     accepted = (
         jnp.any(feasible, axis=0)
-        & at_winner(in_support)
+        & _take_at_winner(stacked=in_support, winner=winner)
         & jnp.isfinite(winner_objective)
         & jnp.isfinite(off_grid_action)
         & (off_grid_action > 0.0)
@@ -1703,16 +1695,9 @@ def _read_nested_policy(
     n_subjects = next(iter(states.values())).shape[0]
     liquid = jnp.asarray(states[payload.liquid_state_name])
 
-    def grid_position(name: StateOrActionName) -> IntND:
-        grid_values = jnp.asarray(regime.simulation.grids[name].to_jax())
-        return jnp.clip(
-            jnp.searchsorted(grid_values, jnp.asarray(states[name])),
-            0,
-            grid_values.shape[0] - 1,
-        )
-
     discrete_idx = tuple(
-        grid_position(name) for name in keeper_pol.row_discrete_state_names
+        _grid_position(regime=regime, name=name, values=jnp.asarray(states[name]))
+        for name in keeper_pol.row_discrete_state_names
     )
 
     passive_bracket: tuple[IntND, IntND, FloatND] | None = None
@@ -1727,58 +1712,36 @@ def _read_nested_policy(
         )
         passive_bracket = (lo, hi, weight)
 
-    def blended_read(
-        *, pol: EGMSimPolicy, field: Literal["policy", "value"]
-    ) -> tuple[FloatND, BoolND]:
-        if passive_bracket is None:
-            return _interp_rows_with_support(
-                sim_policy=pol,
-                field=field,
-                index=discrete_idx,
-                resources=liquid,
-                n_subjects=n_subjects,
-            )
-        lo, hi, weight = passive_bracket
-        value_lo, support_lo = _interp_rows_with_support(
-            sim_policy=pol,
-            field=field,
-            index=(*discrete_idx, lo),
-            resources=liquid,
-            n_subjects=n_subjects,
-        )
-        value_hi, support_hi = _interp_rows_with_support(
-            sim_policy=pol,
-            field=field,
-            index=(*discrete_idx, hi),
-            resources=liquid,
-            n_subjects=n_subjects,
-        )
-        return (
-            value_lo * (1.0 - weight) + value_hi * weight,
-            support_lo & support_hi,
-        )
-
-    keeper_value, keeper_support = blended_read(pol=keeper_pol, field="value")
-    keeper_action, _ = blended_read(pol=keeper_pol, field="policy")
-
-    def candidate_read(pol: EGMSimPolicy) -> tuple[FloatND, BoolND, FloatND]:
-        value, support = blended_read(pol=pol, field="value")
-        action, _ = blended_read(pol=pol, field="policy")
-        return value, support, action
-
-    candidate_values, candidate_support, candidate_actions = vmap(candidate_read)(
-        bank.policies
+    row_read = functools.partial(
+        _blended_nested_read,
+        passive_bracket=passive_bracket,
+        discrete_idx=discrete_idx,
+        liquid=liquid,
+        n_subjects=n_subjects,
     )
+    keeper_value, keeper_support = row_read(pol=keeper_pol, field="value")
+    keeper_action, _ = row_read(pol=keeper_pol, field="policy")
+
+    candidate_values, candidate_support, candidate_actions = vmap(
+        functools.partial(
+            _read_nested_candidate,
+            passive_bracket=passive_bracket,
+            discrete_idx=discrete_idx,
+            liquid=liquid,
+            n_subjects=n_subjects,
+        )
+    )(bank.policies)
 
     # The same surrogate class and safeguarded search as the solve's collapse:
     # exact node values compete directly, golden section refines only inside
     # brackets around node-local maxima of the interpolated profile.
     outer_nodes = bank.outer_nodes
     profile = jnp.where(candidate_support, candidate_values, -jnp.inf)
-    interpolant = LocalCubicOuterInterpolant()
     search = safeguarded_continuous_argmax(
-        objective=lambda query: interpolant.evaluate(
-            nodes=outer_nodes, values=profile, query=query
+        objective=_InterpolatedProfileObjective(
+            interpolant=LocalCubicOuterInterpolant(),
+            nodes=outer_nodes,
+            values=profile,
         ),
         nodes=outer_nodes,
         node_values=profile,
@@ -1983,20 +1946,18 @@ def _best_admissible_replay_candidate(
         (keeper_reaches_target, adjusters_reach_target), axis=0
     )
 
-    def resources_at(*, outer_action: FloatND, image: FloatND) -> FloatND:
-        return _nested_resources(
+    resources = vmap(
+        functools.partial(
+            _nested_resources,
             payload=payload,
             regime=regime,
             states=states,
-            outer_action=outer_action,
-            outer_post_decision=image,
             flat_params=flat_params,
             period=period,
             age=age,
             n_subjects=n_subjects,
         )
-
-    resources = vmap(resources_at)(outer_action=outer_actions, image=images)
+    )(outer_action=outer_actions, outer_post_decision=images)
     preliminary_admissible = (
         reaches_target
         & support
@@ -2161,18 +2122,12 @@ def _nested_grid_baseline(
         grid_inner[None, ...],
     )
 
-    def canonical_at_branch(
-        *, outer_action: FloatND, inner_action: FloatND
-    ) -> tuple[FloatND, BoolND]:
-        branch_actions = MappingProxyType(
-            {
-                **grid_actions,
-                payload.outer_action_name: outer_action,
-                payload.inner_action_name: inner_action,
-            }
-        )
-        return _canonical_Q_at_actions(
-            candidate_actions=branch_actions,
+    replay_values, replay_q_feasible = vmap(
+        functools.partial(
+            _canonical_Q_at_branch,
+            grid_actions=grid_actions,
+            outer_action_name=payload.outer_action_name,
+            inner_action_name=payload.inner_action_name,
             regime=regime,
             canonical_states=canonical_states,
             action_names=action_names,
@@ -2182,10 +2137,7 @@ def _nested_grid_baseline(
             period=period,
             age=age,
         )
-
-    replay_values, replay_q_feasible = vmap(canonical_at_branch)(
-        outer_action=safe_outer_actions, inner_action=safe_inner_actions
-    )
+    )(outer_action=safe_outer_actions, inner_action=safe_inner_actions)
     replay_admissible = (
         replay_preliminary & replay_q_feasible & jnp.isfinite(replay_values)
     )
@@ -2324,31 +2276,65 @@ def _outer_transition_offset_and_forward(
     and carries it forward, so the law itself does not mention the outer action
     and inverting the law could not recover one.
     """
-    transition = _replay_function(regime=regime, name=payload.outer_post_decision_name)
+    transition_at = _OuterTransitionAt(
+        transition_func=_replay_function(
+            regime=regime, name=payload.outer_post_decision_name
+        ),
+        outer_action_name=payload.outer_action_name,
+        outer_post_decision_name=payload.outer_post_decision_name,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    offset = transition_at(jnp.zeros(n_subjects))
+    return offset, transition_at
 
-    def resolve(action_value: FloatND) -> dict[str, FloatND | IntND]:
+
+@dataclass(frozen=True, eq=False)
+class _OuterTransitionAt:
+    """The declared outer post-decision map evaluated at one action per subject."""
+
+    transition_func: Callable[..., FloatND]
+    """The regime's outer post-decision function, resolved for replay."""
+    outer_action_name: ActionName
+    """Name under which the evaluated action is bound into the map."""
+    outer_post_decision_name: FunctionName
+    """Name of the map, for the capability check's message."""
+    states: Mapping[StateOrActionName, FloatND | IntND]
+    """Per-subject state values the map reads."""
+    flat_params: FlatRegimeParams
+    """The regime's flat parameters."""
+    period: int
+    """Period index of the evaluation."""
+    age: ScalarFloat | ScalarInt
+    """Age of the evaluation."""
+    n_subjects: int
+    """Number of subjects; the image is reshaped to one value per subject."""
+
+    def resolve(self, *, action_value: FloatND) -> dict[str, FloatND | IntND]:
+        """Bind the map's arguments at `action_value`, refusing an unmet capability."""
         bound = _resolve_function_kwargs(
-            func=transition,
-            states=states,
-            bindings={payload.outer_action_name: action_value},
-            flat_params=flat_params,
-            period=period,
-            age=age,
-            n_subjects=n_subjects,
+            func=self.transition_func,
+            states=self.states,
+            bindings={self.outer_action_name: action_value},
+            flat_params=self.flat_params,
+            period=self.period,
+            age=self.age,
+            n_subjects=self.n_subjects,
         )
         _fail_if_the_published_capability_does_not_hold(
-            bound=bound, name=payload.outer_post_decision_name
+            bound=bound, name=self.outer_post_decision_name
         )
         return cast("dict[str, FloatND | IntND]", bound)
 
-    offset = jnp.reshape(
-        jnp.asarray(transition(**resolve(jnp.zeros(n_subjects)))), (n_subjects,)
-    )
-
-    def evaluate_at(action: FloatND) -> FloatND:
-        return jnp.reshape(jnp.asarray(transition(**resolve(action))), (n_subjects,))
-
-    return offset, evaluate_at
+    def __call__(self, action: FloatND) -> FloatND:
+        """Return the map's image at `action`, one value per subject."""
+        return jnp.reshape(
+            jnp.asarray(self.transition_func(**self.resolve(action_value=action))),
+            (self.n_subjects,),
+        )
 
 
 def _fail_if_the_published_capability_is_not_replayable(
@@ -2507,15 +2493,11 @@ def _interp_rows_with_support(
         if rows_slope is not None:
             rows_slope = jnp.broadcast_to(rows_slope, (n_subjects, *rows_slope.shape))
     if rows_slope is None:
-        values = vmap(
-            lambda x_query, xp, fp: interp_on_padded_grid(x_query=x_query, xp=xp, fp=fp)
-        )(resources, rows_x, rows_f)
+        values = vmap(interp_on_padded_grid)(x_query=resources, xp=rows_x, fp=rows_f)
     else:
-        values = vmap(
-            lambda x_query, xp, fp, fp_slopes: interp_on_padded_grid(
-                x_query=x_query, xp=xp, fp=fp, fp_slopes=fp_slopes
-            )
-        )(resources, rows_x, rows_f, rows_slope)
+        values = vmap(interp_on_padded_grid)(
+            x_query=resources, xp=rows_x, fp=rows_f, fp_slopes=rows_slope
+        )
     valid_length = jnp.sum(jnp.isfinite(rows_x), axis=-1)
     last_live = jnp.take_along_axis(rows_x, (valid_length - 1)[:, None], axis=-1)[:, 0]
     in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)
@@ -2619,9 +2601,7 @@ def _score_nnbegm_candidate_bank(
         period=period,
         age=age,
     )
-    return jax.vmap(lambda actions: score_actions(candidate_actions=actions))(
-        candidate_actions
-    )
+    return jax.vmap(score_actions)(candidate_actions=candidate_actions)
 
 
 def _invert_nnbegm_outer_targets(
@@ -2660,23 +2640,23 @@ def _invert_nnbegm_outer_targets(
     else:
         discrete_inputs = {}
 
-    def bind(outer_action: FloatND) -> dict[str, EconFunctionArg]:
-        pool = {
-            **dict(flat_params),
-            **state_inputs,
-            **discrete_inputs,
-            sim_policy.inner_action_name: candidate_inner,
-            sim_policy.outer_action_name: outer_action,
-            "period": jnp.int32(period),
-            "age": age,
-        }
-        return {name: value for name, value in pool.items() if name in accepted}
-
-    def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
-        return target_function(**bind(outer_action))
+    forward = _NNBEGMOuterForward(
+        target_function=target_function,
+        accepted_names=frozenset(accepted),
+        flat_params=flat_params,
+        state_inputs=state_inputs,
+        discrete_inputs=discrete_inputs,
+        inner_action_name=sim_policy.inner_action_name,
+        outer_action_name=sim_policy.outer_action_name,
+        candidate_inner=candidate_inner,
+        period=period,
+        age=age,
+        outer_post_decision=policy_read.outer_post_decision,
+        candidate_shape=candidate_shape,
+    )
 
     zeros = jnp.zeros_like(candidate_inner)
-    bound_at_zero = bind(zeros)
+    bound_at_zero = forward.bind(outer_action=zeros)
     at_zero_results = target_function(**bound_at_zero)
     at_zero = jnp.broadcast_to(
         jnp.asarray(at_zero_results[policy_read.outer_post_decision]), candidate_shape
@@ -2724,12 +2704,6 @@ def _invert_nnbegm_outer_targets(
     )
     realized_target = jnp.concatenate((keeper_targets, adjuster_targets), axis=0)
 
-    def forward(outer_action: FloatND) -> FloatND:
-        return jnp.broadcast_to(
-            jnp.asarray(evaluate(outer_action)[policy_read.outer_post_decision]),
-            candidate_shape,
-        )
-
     inversion = invert_declared_outer_target(
         inverse=inverse,
         target=realized_target,
@@ -2744,6 +2718,64 @@ def _invert_nnbegm_outer_targets(
     # Q with a finite number attached.
     candidate_outer = jnp.where(represented, inversion.action, jnp.nan)
     return candidate_outer, represented
+
+
+@dataclass(frozen=True, eq=False)
+class _NNBEGMOuterForward:
+    """The declared outer target map over one candidate bank, per subject."""
+
+    target_function: Callable[..., Mapping[str, FloatND]]
+    """The period's outer target function from the replay adapter."""
+    accepted_names: frozenset[str]
+    """Parameter names `target_function` accepts; every other input is dropped."""
+    flat_params: FlatRegimeParams
+    """The regime's flat parameters."""
+    state_inputs: Mapping[str, FloatND | IntND]
+    """Per-subject states broadcast to the candidate bank's shape."""
+    discrete_inputs: Mapping[str, IntND]
+    """Candidate discrete action codes broadcast to the bank's shape, if any."""
+    inner_action_name: ActionName
+    """Name under which the candidate inner actions are bound."""
+    outer_action_name: ActionName
+    """Name under which the evaluated outer action is bound."""
+    candidate_inner: FloatND
+    """Candidate inner actions, shaped `(n_candidates, n_subjects)`."""
+    period: int
+    """Period index of the evaluation."""
+    age: ScalarFloat | ScalarInt
+    """Age of the evaluation."""
+    outer_post_decision: str
+    """Name of the outer post-decision output read from the map's results."""
+    candidate_shape: tuple[int, int]
+    """`(n_candidates, n_subjects)`; every image is broadcast to it."""
+
+    def bind(self, *, outer_action: FloatND) -> dict[str, EconFunctionArg]:
+        """Assemble the map's accepted inputs at `outer_action`."""
+        pool = {
+            **dict(self.flat_params),
+            **self.state_inputs,
+            **self.discrete_inputs,
+            self.inner_action_name: self.candidate_inner,
+            self.outer_action_name: outer_action,
+            "period": jnp.int32(self.period),
+            "age": self.age,
+        }
+        return {
+            name: value for name, value in pool.items() if name in self.accepted_names
+        }
+
+    def evaluate(self, *, outer_action: FloatND) -> Mapping[str, FloatND]:
+        """Evaluate every output of the map at `outer_action`."""
+        return self.target_function(**self.bind(outer_action=outer_action))
+
+    def __call__(self, outer_action: FloatND) -> FloatND:
+        """Return the outer post-decision image at `outer_action`, bank-shaped."""
+        return jnp.broadcast_to(
+            jnp.asarray(
+                self.evaluate(outer_action=outer_action)[self.outer_post_decision]
+            ),
+            self.candidate_shape,
+        )
 
 
 def _replay_nnbegm_candidates(
@@ -2782,14 +2814,10 @@ def _replay_nnbegm_candidates(
             )
         coordinates.append(coordinate)
 
-    def read_bank(bank: FloatND) -> FloatND:
-        return jax.vmap(
-            lambda surface: map_coordinates(input=surface, coordinates=coordinates)
-        )(bank)
-
-    candidate_inner = read_bank(sim_policy.candidate_inner_action)
-    candidate_target = read_bank(sim_policy.candidate_outer_target)
-    candidate_value = read_bank(sim_policy.candidate_value)
+    read_bank = functools.partial(_read_candidate_bank, coordinates=coordinates)
+    candidate_inner = read_bank(bank=sim_policy.candidate_inner_action)
+    candidate_target = read_bank(bank=sim_policy.candidate_outer_target)
+    candidate_value = read_bank(bank=sim_policy.candidate_value)
     candidate_outer, outer_represented = _invert_nnbegm_outer_targets(
         regime=regime,
         sim_policy=sim_policy,
@@ -2835,18 +2863,15 @@ def _replay_nnbegm_candidates(
     # declared discrete-product order exactly.
     winner = jnp.asarray(jnp.argmax(ranking_values, axis=0), dtype=jnp.int32)
 
-    def at_winner(stacked: FloatND) -> FloatND:
-        return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
-
     any_valid = jnp.any(valid, axis=0)
-    selected_inner = at_winner(candidate_inner)
-    selected_outer = at_winner(candidate_outer)
+    selected_inner = _take_at_winner(stacked=candidate_inner, winner=winner)
+    selected_outer = _take_at_winner(stacked=candidate_outer, winner=winner)
     selected_codes, selected_discrete_actions = _select_nnbegm_discrete_actions(
         sim_policy=sim_policy,
         winner=winner,
         n_candidates=n_candidates,
     )
-    selected_value = at_winner(canonical_values)
+    selected_value = _take_at_winner(stacked=canonical_values, winner=winner)
     chosen_inner = jnp.where(any_valid, selected_inner, jnp.nan)
     chosen_outer = jnp.where(any_valid, selected_outer, jnp.nan)
     chosen_value = jnp.where(any_valid, selected_value, -jnp.inf)
@@ -2906,6 +2931,156 @@ def _announce_dropped_outer_candidates(
         "post-decision stocks lie inside it, or coarsen the outer search."
     )
     raise_or_warn(logger=logger, error=error)
+
+
+def _grid_position(
+    *, regime: Regime, name: StateOrActionName, values: FloatND | IntND
+) -> IntND:
+    """Return each value's clipped insertion position on the named simulation grid."""
+    grid_values = jnp.asarray(regime.simulation.grids[name].to_jax())
+    return jnp.clip(jnp.searchsorted(grid_values, values), 0, grid_values.shape[0] - 1)
+
+
+def _take_at_winner(*, stacked: FloatND | BoolND, winner: IntND) -> FloatND | BoolND:
+    """Select the winning candidate's row from a candidate-major stack per subject."""
+    return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
+
+
+def _blended_nested_read(
+    *,
+    pol: EGMSimPolicy,
+    field: Literal["policy", "value"],
+    passive_bracket: tuple[IntND, IntND, FloatND] | None,
+    discrete_idx: tuple[IntND, ...],
+    liquid: FloatND,
+    n_subjects: int,
+) -> tuple[FloatND, BoolND]:
+    """Read one policy field at the subjects' liquid values and discrete rows.
+
+    With a passive bracket, the two enclosing rows on the passive state's axis
+    are read and interpolated linearly with the bracket's weight; support is the
+    conjunction of both rows' support.
+    """
+    if passive_bracket is None:
+        return _interp_rows_with_support(
+            sim_policy=pol,
+            field=field,
+            index=discrete_idx,
+            resources=liquid,
+            n_subjects=n_subjects,
+        )
+    lo, hi, weight = passive_bracket
+    value_lo, support_lo = _interp_rows_with_support(
+        sim_policy=pol,
+        field=field,
+        index=(*discrete_idx, lo),
+        resources=liquid,
+        n_subjects=n_subjects,
+    )
+    value_hi, support_hi = _interp_rows_with_support(
+        sim_policy=pol,
+        field=field,
+        index=(*discrete_idx, hi),
+        resources=liquid,
+        n_subjects=n_subjects,
+    )
+    return (
+        value_lo * (1.0 - weight) + value_hi * weight,
+        support_lo & support_hi,
+    )
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _read_nested_candidate(
+    pol: EGMSimPolicy,
+    *,
+    passive_bracket: tuple[IntND, IntND, FloatND] | None,
+    discrete_idx: tuple[IntND, ...],
+    liquid: FloatND,
+    n_subjects: int,
+) -> tuple[FloatND, BoolND, FloatND]:
+    """Read one candidate policy's value, support, and action; mapped over the bank."""
+    value, support = _blended_nested_read(
+        pol=pol,
+        field="value",
+        passive_bracket=passive_bracket,
+        discrete_idx=discrete_idx,
+        liquid=liquid,
+        n_subjects=n_subjects,
+    )
+    action, _ = _blended_nested_read(
+        pol=pol,
+        field="policy",
+        passive_bracket=passive_bracket,
+        discrete_idx=discrete_idx,
+        liquid=liquid,
+        n_subjects=n_subjects,
+    )
+    return value, support, action
+
+
+@dataclass(frozen=True, eq=False)
+class _InterpolatedProfileObjective:
+    """The interpolated candidate-value profile as a continuous search objective."""
+
+    interpolant: LocalCubicOuterInterpolant
+    """The surrogate that interpolates the profile between outer nodes."""
+    nodes: FloatND
+    """Outer nodes the profile is known at."""
+    values: FloatND
+    """Profile values at `nodes`, `-inf` where a candidate is unsupported."""
+
+    def __call__(self, query: FloatND) -> FloatND:
+        """Evaluate the interpolated profile at `query`."""
+        return self.interpolant.evaluate(
+            nodes=self.nodes, values=self.values, query=query
+        )
+
+
+def _canonical_Q_at_branch(
+    *,
+    outer_action: FloatND,
+    inner_action: FloatND,
+    grid_actions: MappingProxyType[ActionName, FloatND | IntND],
+    outer_action_name: ActionName,
+    inner_action_name: ActionName,
+    regime: Regime,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    flat_params: FlatRegimeParams,
+    referenced_value_kwargs: Mapping[str, object],
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[FloatND, BoolND]:
+    """Score the grid actions with one replay branch's outer and inner pair."""
+    branch_actions = MappingProxyType(
+        {
+            **grid_actions,
+            outer_action_name: outer_action,
+            inner_action_name: inner_action,
+        }
+    )
+    return _canonical_Q_at_actions(
+        candidate_actions=branch_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        referenced_value_kwargs=referenced_value_kwargs,
+        period=period,
+        age=age,
+    )
+
+
+def _read_candidate_bank(
+    *, bank: FloatND, coordinates: list[FloatND | IntND]
+) -> FloatND:
+    """Interpolate every surface of a candidate bank at the subjects' coordinates."""
+    return jax.vmap(functools.partial(map_coordinates, coordinates=coordinates))(
+        input=bank
+    )
 
 
 def _canonical_Q_at_actions(

@@ -240,9 +240,19 @@ def periodized_tree_signature(*, tree: Mapping[str, object], period: int) -> Has
     Mirrors the structure of pylcm's nested transition trees.
     """
     return _tree_signature(
-        tree=tree,
-        leaf_signature=lambda node: periodized_node_signature(node=node, period=period),
+        tree=tree, leaf_signature=_PeriodizedNodeSignature(period=period)
     )
+
+
+@dataclass(frozen=True)
+class _PeriodizedNodeSignature:
+    """Leaf-signature callback fingerprinting a node at one fixed period."""
+
+    period: int
+    """The period every node is fingerprinted at."""
+
+    def __call__(self, node: object) -> Hashable:
+        return periodized_node_signature(node=node, period=self.period)
 
 
 def continuation_grid_signature_from_schedule(
@@ -400,11 +410,48 @@ def continuation_group_key(
 
     """
 
-    def group_key(period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
+    return _ContinuationGroupKey(
+        phase_reachability=phase_reachability,
+        source_regime_name=source_regime_name,
+        functions=functions,
+        constraints=constraints,
+        grid_schedule=grid_schedule,
+        continuation_info=continuation_info,
+        continuation_functions=continuation_functions,
+        gated_reference_regimes=gated_reference_regimes,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ContinuationGroupKey:
+    """Per-period grouping key over targets, policy, and continuation signatures."""
+
+    phase_reachability: PhaseReachability
+    """Static reachability graph for the phase."""
+    source_regime_name: RegimeName
+    """Name of the regime whose periods are grouped."""
+    functions: Mapping[str, object]
+    """Mapping of function names to functions, for the policy signature."""
+    constraints: Mapping[str, object]
+    """Mapping of constraint names to functions, for the policy signature."""
+    grid_schedule: AgeGridSchedule | None
+    """Age-grid schedule, or `None` when no state is age-specialized."""
+    continuation_info: (
+        Callable[[int], MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    )
+    """Per-period continuation interpolation info, or `None` to omit the partition."""
+    continuation_functions: Mapping[str, object] | None
+    """The perceived continuation pool when it differs from `functions`."""
+    gated_reference_regimes: Mapping[RegimeName, tuple[RegimeName, ...]]
+    """Mapping of gated-edge targets to the regimes the edge's gate and legs read."""
+
+    def __call__(self, period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
         complete = (
             ()
-            if period == phase_reachability.n_periods - 1
-            else phase_reachability.targets(period=period, source=source_regime_name)
+            if period == self.phase_reachability.n_periods - 1
+            else self.phase_reachability.targets(
+                period=period, source=self.source_regime_name
+            )
         )
         # Beside each continuation target, the grids a gated edge into that
         # target reads: its gate references and leg fallbacks are interpolated
@@ -416,36 +463,36 @@ def continuation_group_key(
                     *(
                         reference
                         for target in complete
-                        for reference in gated_reference_regimes.get(target, ())
+                        for reference in self.gated_reference_regimes.get(target, ())
                     ),
                 ]
             )
         )
         continuation_sig = continuation_grid_signature_from_schedule(
-            grid_schedule=grid_schedule,
+            grid_schedule=self.grid_schedule,
             target_period=period + 1,
             target_regimes=read_regimes,
         )
         scalar_targets: tuple[RegimeName, ...] = ()
-        if continuation_info is not None:
+        if self.continuation_info is not None:
             _, scalar_targets = partition_continuation_targets(
                 targets=complete,
-                regime_to_v_interpolation_info=continuation_info(period),
+                regime_to_v_interpolation_info=self.continuation_info(period),
             )
         signature = (
-            periodized_tree_signature(tree=functions, period=period),
-            periodized_tree_signature(tree=constraints, period=period),
+            periodized_tree_signature(tree=self.functions, period=period),
+            periodized_tree_signature(tree=self.constraints, period=period),
             continuation_sig,
             scalar_targets,
             (
-                periodized_tree_signature(tree=continuation_functions, period=period)
-                if continuation_functions is not None
+                periodized_tree_signature(
+                    tree=self.continuation_functions, period=period
+                )
+                if self.continuation_functions is not None
                 else ()
             ),
         )
         return (complete, signature)
-
-    return group_key
 
 
 def continuation_info_lookup(
@@ -462,22 +509,35 @@ def continuation_info_lookup(
     otherwise.
     """
 
-    def continuation_info(
-        period: int,
-    ) -> MappingProxyType[RegimeName, VInterpolationInfo]:
-        if period_to_regime_v_interp is None:
-            return regime_to_v_interpolation_info
-        per_period = period_to_regime_v_interp.get(
+    return _ContinuationInfoLookup(
+        period_to_regime_v_interp=period_to_regime_v_interp,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ContinuationInfoLookup:
+    """Per-period continuation info, on the `t+1` grid where age-specialized."""
+
+    period_to_regime_v_interp: (
+        Mapping[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    )
+    """Per-period interpolation info from the schedule, or `None` when age-invariant."""
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo]
+    """Representative-grid interpolation info per regime."""
+
+    def __call__(self, period: int) -> MappingProxyType[RegimeName, VInterpolationInfo]:
+        if self.period_to_regime_v_interp is None:
+            return self.regime_to_v_interpolation_info
+        per_period = self.period_to_regime_v_interp.get(
             period + 1, cast("MappingProxyType[RegimeName, VInterpolationInfo]", {})
         )
         return MappingProxyType(
             {
                 regime_name: per_period.get(regime_name, info)
-                for regime_name, info in regime_to_v_interpolation_info.items()
+                for regime_name, info in self.regime_to_v_interpolation_info.items()
             }
         )
-
-    return continuation_info
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -811,21 +871,24 @@ def _collect_function_markers(
     the three.
     """
     markers: dict[int, AgeSpecializedFunction] = {}
-
-    def _visit(value: object) -> None:
-        if isinstance(value, AgeSpecializedFunction):
-            markers.setdefault(id(value), value)
-        elif isinstance(value, Phased):
-            _visit(value.solve)
-            _visit(value.simulate)
-
     for value in (
         *user_regime.functions.values(),
         *user_regime.constraints.values(),
         *user_regime.states.values(),
     ):
-        _visit(value)
+        _visit_function_marker(value=value, markers=markers)
     return markers
+
+
+def _visit_function_marker(
+    *, value: object, markers: dict[int, AgeSpecializedFunction]
+) -> None:
+    """Record `value` in `markers` if it is (or a `Phased` side of it is) a marker."""
+    if isinstance(value, AgeSpecializedFunction):
+        markers.setdefault(id(value), value)
+    elif isinstance(value, Phased):
+        _visit_function_marker(value=value.solve, markers=markers)
+        _visit_function_marker(value=value.simulate, markers=markers)
 
 
 def normalize_age_specialization(

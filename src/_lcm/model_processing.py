@@ -764,29 +764,12 @@ def _remove_fixed_params_from_template(
 
     """
 
-    def _trim(
-        *, branch: Mapping[str, object], prefix: tuple[str, ...], fixed: Mapping
-    ) -> dict[str, object]:
-        trimmed: dict[str, object] = {}
-        for key, value in branch.items():
-            if isinstance(value, Mapping):
-                inner = _trim(
-                    branch=cast("Mapping[str, object]", value),
-                    prefix=(*prefix, key),
-                    fixed=fixed,
-                )
-                if inner:
-                    trimmed[key] = MappingProxyType(inner)
-            elif qname_from_tree_path((*prefix, key)) not in fixed:
-                trimmed[key] = value
-        return trimmed
-
     return cast(
         "ParamsTemplate",
         MappingProxyType(
             {
                 regime_name: MappingProxyType(
-                    _trim(
+                    _trim_fixed_params(
                         branch=regime_template,
                         prefix=(),
                         fixed=fixed_flat_params.get(regime_name, MappingProxyType({})),
@@ -796,6 +779,25 @@ def _remove_fixed_params_from_template(
             }
         ),
     )
+
+
+def _trim_fixed_params(
+    *, branch: Mapping[str, object], prefix: tuple[str, ...], fixed: Mapping
+) -> dict[str, object]:
+    """Copy `branch` without the leaves whose qualified name is in `fixed`."""
+    trimmed: dict[str, object] = {}
+    for key, value in branch.items():
+        if isinstance(value, Mapping):
+            inner = _trim_fixed_params(
+                branch=cast("Mapping[str, object]", value),
+                prefix=(*prefix, key),
+                fixed=fixed,
+            )
+            if inner:
+                trimmed[key] = MappingProxyType(inner)
+        elif qname_from_tree_path((*prefix, key)) not in fixed:
+            trimmed[key] = value
+    return trimmed
 
 
 def _partial_fixed_params_into_regimes(

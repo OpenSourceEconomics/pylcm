@@ -5,6 +5,103 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### The MSS upper envelope decides its orderings from the stored operands
+
+- The envelope's comparison arithmetic is selectable: `MSSEnvelope(arithmetic=...)` takes
+  `"certified"`, the default, or `"ordinary"`. The geometry is the same either way —
+  which stored piece covers an interval, which node owns a query, and where two branches
+  hand over — so both settle a knot at the root of the pieces covering it, and only the
+  comparison changes. The certified arithmetic decides on the stored operands, so an
+  ordering the working format cannot separate is still settled and a comparison it cannot
+  decide publishes `NaN`; it needs the installed exact-affine payload for the active
+  backend, and a regime selecting it is refused at model construction when that payload
+  is absent. The ordinary one compares two readings formed in the working format, each a
+  slope and then an affine step rather than one correctly rounded value, so a reading
+  carries no bound in representable steps: cancellation or a large common level can
+  reverse an ordering the correctly rounded values would separate, and candidates whose
+  readings coincide are separated by the declared tie order rather than by value. It
+  reaches no native kernel, so it is the route available where that payload is absent;
+  it trades certified decisions for warm cost, and its values, owners and crossings are
+  the caller's to validate for the intended model.
+- Which link owns a query is certified rather than read off a rounded comparison:
+  every link bracketing that query enters one exact reduction through the integer
+  comparator the other envelope paths already use. Links certified level with one
+  another are separated right-continuously — the link reaching strictly
+  right of the query, then the steeper one, then the earlier stored link — so a
+  node where two branches meet is owned by the branch that owns the interval above
+  it, and a switch decided by a single representable step is published at the node
+  the geometry puts it at rather than lost.
+- A query whose owner the exact comparator leaves undecided publishes no value: the
+  envelope reads `NaN` there instead of falling back to a rounded comparison, so an
+  ordering the arithmetic cannot settle is visible rather than silently chosen.
+- Which links compete for a query is decided by their stored spans alone, never by
+  whether reading one of them succeeded numerically. A model whose grids and values
+  sit near the top or bottom of the working format keeps the owner it should have:
+  the reading of the selected owner is range-safe, so an intermediate product that
+  leaves the representable range no longer removes a finite winner from the contest.
+- A link's value at a query is its own chord's value: the certified reader forms the
+  exact rational through the two stored endpoints and rounds it once to the working
+  format, without weighted floating products. The reading is the stored value at
+  either endpoint exactly and elsewhere does not carry the cancellation of a line
+  extrapolated from one far anchor. The published value and policy at a node always
+  come from one owner.
+- Ownership, support, orientation and node identity are decided from each link's original
+  stored coordinates. A link stored as a single point keeps its own abscissa as its
+  support instead of acquiring a readable width to the right, so a point and a segment
+  that read the same value at a query are separated by the declared right-continuous
+  order rather than by whichever carries the wider line. A readable surrogate is still
+  used to read a channel, but never to decide who owns the query.
+- Two abscissae name one published node exactly when they are the same geometric
+  location, decided on the stored encodings: the two spellings of zero are one location,
+  while distinct values closer together than the smallest normal remain distinct. The
+  same rule orders, orients, admits and coalesces, so no two of those can disagree about
+  whether two coordinates coincide.
+- A crossing is constructed from the pieces that cover the interval the switch was
+  observed in, not from whichever piece owns each of its two nodes. A branch entered at
+  the right node is often represented there by the piece continuing above that node,
+  whose line says nothing about the interval below it; the piece covering both of the
+  interval's abscissae is the one the crossing is solved from, so a kink sits where the
+  branches actually meet rather than where a continuation extrapolated backwards would
+  meet them. Exact equality at the shared endpoint connects the selected piece to the
+  node it hands over at, and a trace that is missing, ambiguous, or disconnected from
+  that node publishes `NaN` rather than a plausible abscissa.
+- The gap between those two pieces is signed only where both of them are supported, and
+  its root is solved from the stored operands themselves, so a switch whose two rounded
+  chord readings coincide is still placed at the abscissa the geometry puts it at
+  instead of being collapsed onto an interval endpoint, and the policy read on each side
+  of it belongs to the branch that owns that side. Its published value is the higher of
+  the two chords there, so an emitted kink can never sit below both branches.
+- A crossing landing exactly on one of the two query nodes is published rather than
+  discarded. That node's own row is one of the two records the switch needs and the
+  emission contributes the other: the incoming owner after a crossing at the left
+  node, the outgoing owner before a crossing at the right node. Either way the kink
+  abscissa carries exactly two rows, outgoing owner first.
+- Whether a crossing lies on the envelope is settled by naming the owner at the crossing
+  abscissa and requiring it to carry the same value there as the piece the crossing was
+  built from, rather than by comparing two readings within a tolerance band. A shared
+  branch label is not provenance on its own, so the emission depends on neither a
+  declared band nor the working precision, and a crossing whose provenance the exact
+  comparator cannot certify is published as `NaN` rather than admitted.
+
+### Engine functions are defined once, not per call
+
+- Every function the engine defines is a module-level function or a frozen dataclass
+  with a `__call__`, apart from the five sources named below; no other function
+  definition runs inside another function per model build, per solve, per simulate, or
+  per trace. pylcm's beartype claw decorates each function definition it sees and
+  beartype memoizes every decorated function object for the life of the process, so a
+  per-call definition pinned everything it closed over: grids, arrays, tracers,
+  compiled kernels, whole models. Building and solving, then dropping, a model of any
+  shipped solver family leaves no engine function behind outside those five, and a long
+  session or test worker no longer grows with every model it builds.
+- Five sources still define a function per call, and the nested-function probe names
+  each of them as an exemption: `regime_building/max_Q_over_a.py`,
+  `regime_building/collective.py`, `regime_building/processing.py`,
+  `solution/negm.py`, and `solution/nnbegm.py`. The candidate certificate pins the
+  reducer builders' bodies verbatim, nested definitions included, so their shape
+  changes with that certificate or not at all; the remaining three are converted
+  together with the execution work that rewrites the same call sites.
+
 ### Complete solution persistence and executable external replay
 
 - `save_solution(solution=..., path=...)` and `SolutionResult.save(path=...)` atomically
@@ -98,10 +195,6 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - `SolutionResult.save()` flushes the archive through a writable handle before the
   atomic rename, so publication also succeeds on platforms that refuse to flush a
   read-only one.
-- A function that carries beartype's marks only because `functools.wraps` copied them
-  from the guarded callee it forwards to is fingerprinted as the function it is. Only
-  a body beartype itself compiled is treated as a transparent guard to see through,
-  so a downstream package's guarded model functions survive the engine's own adapters.
 - A result nobody references any more releases its arrays. The store constructors and
   the artifact plan walkers keep their working state in explicit arguments rather than
   in per-call closures: pylcm's beartype claw decorates every function definition,

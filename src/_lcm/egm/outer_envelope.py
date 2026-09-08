@@ -30,6 +30,7 @@ convention; `outer_envelope_at_query` is a self-contained reference for the
 query-side max, not a byte-for-byte oracle of the production aggregation.
 """
 
+import functools
 from dataclasses import replace
 
 import jax
@@ -196,63 +197,9 @@ def outer_envelope_at_query(
         Tuple of the envelope value and the winner's marginal, each `(n_query,)`.
 
     """
-
-    def read_one(
-        *, endog: Float1D, value: Float1D, marginal: Float1D
-    ) -> tuple[
-        Float1D,
-        Float1D,
-        Float1D,
-        tuple[Bool1D, Float1D, Float1D, Float1D],
-        tuple[Bool1D, Float1D, Float1D, Float1D],
-    ]:
-        cand_lower = jnp.min(jnp.where(jnp.isfinite(endog), endog, jnp.inf))
-        value_at_query = interp_on_padded_grid(
-            x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
-        )
-        marginal_at_query = interp_on_padded_grid(
-            x_query=x_query, xp=endog, fp=marginal
-        )
-        left_marginal_at_query = interp_left_record_on_padded_grid(
-            x_query=x_query, xp=endog, fp=marginal
-        )
-        right_germ_at_query = interp_right_germ_on_padded_grid(
-            x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
-        )
-        left_germ_at_query = interp_left_germ_on_padded_grid(
-            x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
-        )
-        # The support mask applies only where a finite first node exists:
-        # `cand_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read
-        # must reach the maximum fail-loud instead of becoming an ordinary
-        # infeasible `(-inf, 0)` pair.
-        below_support = (x_query < cand_lower) & jnp.isfinite(cand_lower)
-        value_at_query = jnp.where(below_support, -jnp.inf, value_at_query)
-        marginal_at_query = jnp.where(below_support, 0.0, marginal_at_query)
-        left_marginal_at_query = jnp.where(below_support, 0.0, left_marginal_at_query)
-        # Strictly above a candidate's own last finite node its value read is
-        # a constant clamp, so its marginal payload is exactly zero there —
-        # the separate linear marginal read would republish the terminal
-        # record of a node strictly below the query. Re-pinned per candidate,
-        # BEFORE the collapse, so an earlier-ending clamp winner cannot
-        # publish a stale record; at exact equality the node's own record
-        # stands. `cand_upper` is `-inf` on an all-NaN row (mask off — the
-        # NaN read stays poisonous).
-        cand_upper = jnp.max(jnp.where(jnp.isfinite(endog), endog, -jnp.inf))
-        above_support = (x_query > cand_upper) & jnp.isfinite(cand_upper)
-        marginal_at_query = jnp.where(above_support, 0.0, marginal_at_query)
-        left_marginal_at_query = jnp.where(above_support, 0.0, left_marginal_at_query)
-        return (
-            value_at_query,
-            marginal_at_query,
-            left_marginal_at_query,
-            right_germ_at_query,
-            left_germ_at_query,
-        )
-
-    values, marginals, left_marginals, right_germ, left_germ = jax.vmap(read_one)(
-        endog=candidate_endog, value=candidate_value, marginal=candidate_marginal
-    )
+    values, marginals, left_marginals, right_germ, left_germ = jax.vmap(
+        functools.partial(_read_candidate_at_query, x_query=x_query)
+    )(endog=candidate_endog, value=candidate_value, marginal=candidate_marginal)
     winner, left_owned = right_germ_winner(
         value=values.T,
         right_germ=_transposed_germ(right_germ),
@@ -340,6 +287,64 @@ def right_germ_winner(
     # int32 winner indices: the candidate axis has at most a few hundred
     # entries, so the x64-default int64 only doubles the gather-index buffers.
     return jnp.argmax(survivors, axis=-1, keepdims=True).astype(jnp.int32), left_owned
+
+
+def _read_candidate_at_query(
+    *, endog: Float1D, value: Float1D, marginal: Float1D, x_query: Float1D
+) -> tuple[
+    Float1D,
+    Float1D,
+    Float1D,
+    tuple[Bool1D, Float1D, Float1D, Float1D],
+    tuple[Bool1D, Float1D, Float1D, Float1D],
+]:
+    """Read one lifted candidate row at every query, support-masked.
+
+    Returns the value read, the ordinary and left-record marginal reads, and
+    the right and left value germs; see `outer_envelope_at_query` for the
+    conventions each channel follows.
+    """
+    cand_lower = jnp.min(jnp.where(jnp.isfinite(endog), endog, jnp.inf))
+    value_at_query = interp_on_padded_grid(
+        x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
+    )
+    marginal_at_query = interp_on_padded_grid(x_query=x_query, xp=endog, fp=marginal)
+    left_marginal_at_query = interp_left_record_on_padded_grid(
+        x_query=x_query, xp=endog, fp=marginal
+    )
+    right_germ_at_query = interp_right_germ_on_padded_grid(
+        x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
+    )
+    left_germ_at_query = interp_left_germ_on_padded_grid(
+        x_query=x_query, xp=endog, fp=value, fp_slopes=marginal
+    )
+    # The support mask applies only where a finite first node exists:
+    # `cand_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read
+    # must reach the maximum fail-loud instead of becoming an ordinary
+    # infeasible `(-inf, 0)` pair.
+    below_support = (x_query < cand_lower) & jnp.isfinite(cand_lower)
+    value_at_query = jnp.where(below_support, -jnp.inf, value_at_query)
+    marginal_at_query = jnp.where(below_support, 0.0, marginal_at_query)
+    left_marginal_at_query = jnp.where(below_support, 0.0, left_marginal_at_query)
+    # Strictly above a candidate's own last finite node its value read is
+    # a constant clamp, so its marginal payload is exactly zero there —
+    # the separate linear marginal read would republish the terminal
+    # record of a node strictly below the query. Re-pinned per candidate,
+    # BEFORE the collapse, so an earlier-ending clamp winner cannot
+    # publish a stale record; at exact equality the node's own record
+    # stands. `cand_upper` is `-inf` on an all-NaN row (mask off — the
+    # NaN read stays poisonous).
+    cand_upper = jnp.max(jnp.where(jnp.isfinite(endog), endog, -jnp.inf))
+    above_support = (x_query > cand_upper) & jnp.isfinite(cand_upper)
+    marginal_at_query = jnp.where(above_support, 0.0, marginal_at_query)
+    left_marginal_at_query = jnp.where(above_support, 0.0, left_marginal_at_query)
+    return (
+        value_at_query,
+        marginal_at_query,
+        left_marginal_at_query,
+        right_germ_at_query,
+        left_germ_at_query,
+    )
 
 
 def _transposed_germ(

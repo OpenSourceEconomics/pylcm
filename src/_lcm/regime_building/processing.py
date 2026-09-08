@@ -3,7 +3,7 @@ import inspect
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Collection, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
 from itertools import product
 from math import prod as math_prod
@@ -2015,15 +2015,29 @@ def _fail_if_same_period_ref_cycle(
         )
         for regime_name, user_regime in user_regimes.items()
     }
-    visiting: set[RegimeName] = set()
-    done: set[RegimeName] = set()
-    stack: list[RegimeName] = []
+    search = _SamePeriodRefSearch(graph=graph)
+    for regime_name in graph:
+        search.visit(regime_name)
 
-    def visit(node: RegimeName) -> None:
-        if node in done or node not in graph:
+
+@dataclass(frozen=True)
+class _SamePeriodRefSearch:
+    """Depth-first three-color search over the same-period reference graph."""
+
+    graph: Mapping[RegimeName, tuple[RegimeName, ...]]
+    """Each regime's reference regimes, in declaration order."""
+    visiting: set[RegimeName] = field(default_factory=set)
+    """Regimes on the current search path."""
+    done: set[RegimeName] = field(default_factory=set)
+    """Regimes whose reachable references are known to be acyclic."""
+    stack: list[RegimeName] = field(default_factory=list)
+    """The current search path, root first, which names a cycle when one closes."""
+
+    def visit(self, node: RegimeName) -> None:
+        if node in self.done or node not in self.graph:
             return
-        if node in visiting:
-            cycle = [*stack[stack.index(node) :], node]
+        if node in self.visiting:
+            cycle = [*self.stack[self.stack.index(node) :], node]
             msg = (
                 "`same_period_refs` declarations form a cycle: "
                 f"{' -> '.join(cycle)}. Within a period, a reference regime "
@@ -2031,16 +2045,13 @@ def _fail_if_same_period_ref_cycle(
                 "the reference graph must be acyclic."
             )
             raise ModelInitializationError(msg)
-        visiting.add(node)
-        stack.append(node)
-        for successor in graph[node]:
-            visit(successor)
-        stack.pop()
-        visiting.discard(node)
-        done.add(node)
-
-    for regime_name in graph:
-        visit(regime_name)
+        self.visiting.add(node)
+        self.stack.append(node)
+        for successor in self.graph[node]:
+            self.visit(successor)
+        self.stack.pop()
+        self.visiting.discard(node)
+        self.done.add(node)
 
 
 def _fail_if_folded_regime_is_same_period_endpoint(
@@ -3967,12 +3978,11 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
 
     - `MSSEnvelope` ⇒ no: the refinement inserts crossings only between adjacent query
       winners, so a branch that owns ground strictly inside one candidate
-      interval leaves no record in the row, and a switch landing exactly on a
-      candidate abscissa is suppressed by the strict-interior test. Opening the
-      read on such a row does not merely blur a switch — it publishes a
-      different action, and one the canonical-Q safeguard cannot recover,
-      because that safeguard rescores the emitted candidate against the finite
-      action grid and an omitted owner is in neither set.
+      interval leaves no record in the row. Opening the read on such a row does
+      not merely blur a switch — it publishes a different action, and one the
+      canonical-Q safeguard cannot recover, because that safeguard rescores the
+      emitted candidate against the finite action grid and an omitted owner is
+      in neither set.
     - `ExactEnvelope` ⇒ no: ownership is resolved per node cell and certified,
       a boundary whose sides differ in value or policy emits both one-sided
       records, and a chain with more owned sub-cells than the row has slots

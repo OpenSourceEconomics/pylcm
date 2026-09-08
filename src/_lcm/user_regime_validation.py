@@ -608,19 +608,8 @@ def _first_age_specialized_ancestor_of_transition(
     if transition is None or not specialized_names:
         return None
 
-    def arg_names_of(value: object) -> list[str]:
-        names: list[str] = []
-        for node in _iter_transition_nodes(value):
-            func = node.func if isinstance(node, MarkovTransition) else node
-            if callable(func):
-                try:
-                    names.extend(inspect.signature(func).parameters)
-                except TypeError, ValueError:
-                    continue
-        return names
-
     seen: set[str] = set()
-    stack = arg_names_of(transition)
+    stack = _transition_node_arg_names(transition)
     while stack:
         name = stack.pop()
         if name in seen:
@@ -629,8 +618,21 @@ def _first_age_specialized_ancestor_of_transition(
         if name in specialized_names:
             return name
         if name in pool:
-            stack.extend(arg_names_of(pool[name]))
+            stack.extend(_transition_node_arg_names(pool[name]))
     return None
+
+
+def _transition_node_arg_names(value: object) -> list[str]:
+    """List the parameter names of every callable node inside a transition value."""
+    names: list[str] = []
+    for node in _iter_transition_nodes(value):
+        func = node.func if isinstance(node, MarkovTransition) else node
+        if callable(func):
+            try:
+                names.extend(inspect.signature(func).parameters)
+            except TypeError, ValueError:
+                continue
+    return names
 
 
 def _age_specialized_scope_errors(
