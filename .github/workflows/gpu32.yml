@@ -67,7 +67,8 @@ jobs:
         run: >-
           pixi run -e tests-cuda12 test --
           --ci-policy=pr --hardware-profile=gpu-small --precision=auto
-          --environment=tests-cuda12 --report-dir=reports/policy tests
+          --environment=tests-cuda12 --report-dir=reports/policy
+          --log-cli-level=INFO tests
       - name: Upload policy and native reports
         if: always()
         uses: actions/upload-artifact@v7.0.1
