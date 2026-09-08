@@ -234,6 +234,12 @@ jobs:
             --durations=25 --junitxml=reports/junit-cpu-fp64-simulation-operands.xml \
             --cov=./ --cov-append --cov-report= -n 0 \
           && check_population reports/junit-cpu-fp64-simulation-operands.xml \
+          && pixi run -e tests-cpu pytest tests/simulation/test_host_operations.py \
+            --precision=64 -p no:randomly --policy-child \
+            --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
+            --durations=25 --junitxml=reports/junit-cpu-fp64-host-operations.xml \
+            --cov=./ --cov-append --cov-report= -n 0 \
+          && check_population reports/junit-cpu-fp64-host-operations.xml \
           && pixi run -e tests-cpu pytest tests/test_distributed_template_placement.py \
             -p no:randomly --policy-child --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v \
@@ -454,6 +460,11 @@ jobs:
             --durations=25 --junitxml=reports/junit-cpu-fp32-simulation-operands.xml \
             -n 0 \
           && check_population reports/junit-cpu-fp32-simulation-operands.xml \
+          && pixi run -e tests-cpu pytest tests/simulation/test_host_operations.py \
+            --precision=32 -p no:randomly --policy-child \
+            --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
+            --durations=25 --junitxml=reports/junit-cpu-fp32-host-operations.xml -n 0 \
+          && check_population reports/junit-cpu-fp32-host-operations.xml \
           && pixi run -e tests-cpu pytest tests/test_distributed_template_placement.py \
             --precision=32 -p no:randomly --policy-child \
             --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
