@@ -69,14 +69,14 @@ repos:
           - pyi
           - python
   - repo: https://github.com/astral-sh/ty-pre-commit
-    rev: v0.0.75
+    rev: v0.0.79
     hooks:
       - id: ty
-        # `--no-project` keeps uv from creating a `.venv`/`uv.lock` in this
-        # pixi-managed repo; ty resolves third-party imports from the env named
-        # in `[tool.ty] environment.python` (run `pixi install` once).
-        args:
-          - --no-project
+        # Run ty directly so import resolution uses `[tool.ty] environment.python`.
+        # Keep this dependency pin aligned with the hook revision above.
+        entry: ty check
+        additional_dependencies:
+          - ty==0.0.79
   - repo: https://github.com/kynan/nbstripout
     rev: 0.9.1
     hooks:

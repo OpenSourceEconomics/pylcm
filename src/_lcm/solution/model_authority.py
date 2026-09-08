@@ -159,8 +159,7 @@ def snapshot_solution_authority(authority: SolutionAuthority) -> SolutionAuthori
         ("artifacts", authority.artifacts),
         ("artifact_descriptors", authority.artifact_descriptors),
     ):
-        if type(mapping) is not MappingProxyType:
-            raise TypeError(f"Solution authority {name} must be immutable and exact.")
+        _require_exact_mapping(value=mapping, label=f"Solution authority {name}")
 
     values: dict[tuple[int, RegimeName], ValueCellDescriptor] = {}
     for coordinate, descriptor in authority.values.items():

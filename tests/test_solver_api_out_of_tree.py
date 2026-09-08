@@ -53,6 +53,7 @@ from lcm.solvers import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    StateActionSpace,
     StateAxesLeading,
 )
 from lcm.typing import (
@@ -96,6 +97,14 @@ def stay_alive(age: ScalarFloat) -> ScalarFloat:  # noqa: ARG001
 def _wealth_value(*, wealth: Float1D) -> Float1D:
     """One value per state node: the wealth itself."""
     return wealth
+
+
+def _wealth_arguments(build: CoreBuildContext) -> Mapping[str, object]:
+    """Bind wealth from the public state-space contract the solver consumes."""
+    state_action_space = build.state_action_space
+    if not isinstance(state_action_space, StateActionSpace):
+        raise TypeError("The wealth solver requires a StateActionSpace.")
+    return {"wealth": state_action_space.states["wealth"]}
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -153,9 +162,7 @@ class WealthSolver(Solver):
         program = CoreProgram(
             name="main",
             function=_wealth_value,
-            argument_builder=lambda build: {
-                "wealth": build.state_action_space.states["wealth"]
-            },
+            argument_builder=_wealth_arguments,
             requirements=CoreExecutionRequirements(),
             output_roles=OutputRole.VALUE,
             disposition=CoreExecutionDisposition.DENSE,
@@ -268,6 +275,14 @@ def _counting_value(*, wealth: Float1D, count: FloatND) -> tuple[Float1D, _Count
     return wealth + count, _Counter(count=count + 1.0)
 
 
+def _counting_arguments(build: CoreBuildContext) -> Mapping[str, object]:
+    """Bind the solver's own count payload through its declared runtime type."""
+    continuation = build.next_regime_to_continuation["alive"]
+    if not isinstance(continuation, _Counter):
+        raise TypeError("The counting solver requires its declared _Counter payload.")
+    return {**_wealth_arguments(build), "count": continuation.count}
+
+
 class _CountingSolver(Solver):
     """Reads its own next-period artifact and republishes it incremented."""
 
@@ -279,10 +294,7 @@ class _CountingSolver(Solver):
         program = CoreProgram(
             name="main",
             function=_counting_value,
-            argument_builder=lambda build: {
-                "wealth": build.state_action_space.states["wealth"],
-                "count": build.next_regime_to_continuation["alive"].count,
-            },
+            argument_builder=_counting_arguments,
             requirements=CoreExecutionRequirements(),
             output_roles=(
                 OutputRole.VALUE,
@@ -490,10 +502,7 @@ class _MislabellingSolver(Solver):
         program = CoreProgram(
             name="main",
             function=_mislabelled_value,
-            argument_builder=lambda build: {
-                "wealth": build.state_action_space.states["wealth"],
-                "count": build.next_regime_to_continuation["alive"].count,
-            },
+            argument_builder=_counting_arguments,
             requirements=CoreExecutionRequirements(),
             output_roles=(
                 OutputRole.VALUE,
