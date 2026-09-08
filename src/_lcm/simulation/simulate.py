@@ -74,7 +74,6 @@ from _lcm.simulation.period_inputs import (
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
-    generate_simulation_keys,
     split_simulation_key,
 )
 from _lcm.simulation.replay_inputs import PreparedReplayReader, place_replay_payload
@@ -84,6 +83,11 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
+from _lcm.simulation.taste_stream import (
+    build_taste_stream_addresses,
+    create_taste_shock_key,
+    prepare_decision_taste_keys,
+)
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
@@ -162,6 +166,7 @@ def simulate(
         MappingProxyType({})
     ),
     seed: int | None = None,
+    taste_shock_seed: int | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
     period_to_regime_to_dissolution_flags: MappingProxyType[
@@ -200,6 +205,7 @@ def simulate(
             used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
+        taste_shock_seed: Independent taste seed, or None for the ordinary stream.
         subject_batch_size: Concrete subject chunk size, already resolved by the
             caller (`Model.simulate` maps the user-facing `0`/`>0` knob to
             an int here). `0` or a value `>= n_subjects` simulates the whole
@@ -229,6 +235,23 @@ def simulate(
     """
     if seed is None:
         seed = draw_random_seed()
+
+    taste_addresses = (
+        MappingProxyType({})
+        if taste_shock_seed is None
+        else build_taste_stream_addresses(
+            ages=ages,
+            discrete_actions_by_regime={
+                name: {
+                    action: grid
+                    for action in regime.solution.action_names
+                    if isinstance(grid := regime.solution.grids[action], DiscreteGrid)
+                }
+                for name, regime in regimes.items()
+                if regime.has_taste_shocks
+            },
+        )
+    )
 
     logger.info("Starting simulation")
     total_start = time.monotonic()
@@ -343,6 +366,8 @@ def simulate(
             flat_params=flat_params,
             ages=ages,
             seed=seed,
+            taste_shock_seed=taste_shock_seed,
+            taste_addresses=taste_addresses,
             logger=logger,
             device_ids=device_ids,
             memory=memory,
@@ -464,6 +489,10 @@ def _simulate_subject_chunk(
     ),
     device_ids: tuple[int, ...] = (),
     memory: SimulationMemory | None = None,
+    taste_shock_seed: int | None = None,
+    taste_addresses: Mapping[
+        tuple[int, RegimeName], tuple[int, ...]
+    ] = MappingProxyType({}),
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -506,6 +535,12 @@ def _simulate_subject_chunk(
         memory=memory,
     )
 
+    taste_key = create_taste_shock_key(
+        seed=taste_shock_seed if taste_addresses else None,
+        memory=memory,
+        live_inputs=(states, subject_regime_ids, own_stakeholder, key),
+    )
+
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in regimes
     }
@@ -513,7 +548,13 @@ def _simulate_subject_chunk(
     for period, original_age in enumerate(ages.values):
         period_start = time.monotonic()
         if memory is not None:
-            memory.unit_inputs = (states, subject_regime_ids, own_stakeholder, key)
+            memory.unit_inputs = (
+                states,
+                subject_regime_ids,
+                own_stakeholder,
+                key,
+                taste_key,
+            )
         age = cast(
             "ScalarInt | ScalarFloat",
             place_simulation_arguments(
@@ -587,6 +628,7 @@ def _simulate_subject_chunk(
                     own_stakeholder,
                     new_own_stakeholder,
                     key,
+                    taste_key,
                     age,
                 ),
             )
@@ -630,6 +672,8 @@ def _simulate_subject_chunk(
                         )
                     ),
                     key=key,
+                    taste_key=taste_key,
+                    taste_address=taste_addresses.get((period, regime_name)),
                     logger=logger,
                     n_subjects=n_subjects,
                     subject_slice=subject_slice,
@@ -1110,6 +1154,8 @@ def _simulate_regime_in_period(
         EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
     ) = None,
     replay_reader: PreparedReplayReader | ReplayReader | None = None,
+    taste_key: PRNGKeyND | None = None,
+    taste_address: tuple[int, ...] | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -1313,15 +1359,16 @@ def _simulate_regime_in_period(
     else:
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:
-            key, gumbel_keys = generate_simulation_keys(
+            key, gumbel_keys = prepare_decision_taste_keys(
                 key=key,
-                names=["taste_shock"],
-                n_initial_states=n_subjects,
+                taste_key=taste_key,
+                taste_address=taste_address,
+                n_subjects=n_subjects,
                 subject_slice=subject_slice,
                 original_n_subjects=original_n_subjects,
                 memory=memory,
             )
-            taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
+            taste_shock_kwargs = {"taste_shock_key": gumbel_keys}
 
         indices_optimal_actions, V_arr = cast(
             "tuple[IntND, FloatND]",

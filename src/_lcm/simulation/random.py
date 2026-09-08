@@ -122,6 +122,7 @@ def generate_simulation_keys(
             "names": tuple(names),
             "n_initial_states": n_initial_states,
             "original_n_subjects": original_n_subjects,
+            "partitionable": jax.config.jax_threefry_partitionable,
             "subject_window": (
                 None
                 if subject_slice is None
@@ -137,6 +138,7 @@ def _generate_simulation_keys(
     names: tuple[str, ...],
     n_initial_states: int,
     original_n_subjects: int | None,
+    partitionable: bool,
     subject_window: tuple[int | None, int | None, int | None] | None,
 ) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
     """Form the existing full-population stream and select its declared window."""
@@ -145,17 +147,18 @@ def _generate_simulation_keys(
     pad = n_initial_states - original_n_subjects
     simulation_keys = {}
     next_key = key
-    for name in names:
-        keys = jax.random.split(key=next_key, num=original_n_subjects + 1)
-        next_key = keys[0]
-        per_subject_keys = keys[1:]
-        if pad > 0:
-            per_subject_keys = jnp.concatenate(
-                [per_subject_keys, jnp.repeat(per_subject_keys[-1:], pad, axis=0)]
-            )
-        if subject_window is not None:
-            per_subject_keys = per_subject_keys[slice(*subject_window)]
-        simulation_keys[f"key_{name}"] = per_subject_keys
+    with jax.threefry_partitionable(partitionable):
+        for name in names:
+            keys = jax.random.split(key=next_key, num=original_n_subjects + 1)
+            next_key = keys[0]
+            per_subject_keys = keys[1:]
+            if pad > 0:
+                per_subject_keys = jnp.concatenate(
+                    [per_subject_keys, jnp.repeat(per_subject_keys[-1:], pad, axis=0)]
+                )
+            if subject_window is not None:
+                per_subject_keys = per_subject_keys[slice(*subject_window)]
+            simulation_keys[f"key_{name}"] = per_subject_keys
     return next_key, simulation_keys
 
 

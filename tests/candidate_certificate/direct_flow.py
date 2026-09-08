@@ -151,7 +151,10 @@ COMPILER_INPUTS_SOURCE = "src/_lcm/execution/compiler_inputs.py"
 
 SIMULATION_MEMBERSHIP_SOURCE = "src/_lcm/simulation/membership.py"
 
+SIMULATION_TASTE_STREAM_SOURCE = "src/_lcm/simulation/taste_stream.py"
+
 _CERTIFIED_CORRIDOR_SOURCES = (
+    SIMULATION_TASTE_STREAM_SOURCE,
     SIMULATION_MEMBERSHIP_SOURCE,
     COMPILER_INPUTS_SOURCE,
     MAX_Q_SOURCE,
@@ -235,6 +238,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
+    SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c28ac1ab4acab2166120867158dec5eb866c082cdd05f7cb7877f2dc3c52ef8a",
     SIMULATION_OPERANDS_SOURCE: "4c0333036fd861ace225a0a38c925fa2a694433e3eddcc47d9fe1c0eea2ee9f8",
@@ -280,10 +284,10 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "400326d4fe75f7ee62daf88ca334c095f30689b37ef5cf16f0aacd61b9cb2b75",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "a67cc97bb050b38b9274afbc4288db9582938671efbe4398b53d138ac0ddeab0",
+    SIMULATION_SOURCE: "6215536d5dfe2c2dc32639280c591abf54df561c303dc85e4231138ed8212818",
     SIMULATION_TRANSITIONS_SOURCE: "18f53b35a8a11536f9e3df03cfc48cec357bbc2fa11308d04091620d02e179a6",
     SIMULATION_COMPILE_SOURCE: "3ca1959d612dbfbf323e523fee496a56390ddaa1f509f607803a111d728899d2",
-    MODEL_SOURCE: "17fc3cce20f947e186f4a4b2a1eedf0c916032a13197756364049c1b2d5be169",
+    MODEL_SOURCE: "dca4df85fd7ad5ccf7a4b5ce2ec655a635fcacce12ff53cf7c1b30fefe0b422f",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "320d88ecb4959c19274da453a5bacd7995b5e7d54a6da76d47d0fe24f583809d",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
@@ -292,7 +296,7 @@ _SOURCE_SEALS = {
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
-    SIMULATION_RANDOM_SOURCE: "601d0017e3f4fe26fd5edd169eb8cbe7dc3ce84811bf2c7a05cee70feb2d6cf0",
+    SIMULATION_RANDOM_SOURCE: "2b7fb689c8bbfdc8689916bc25063c3c001aed4103d0381e71f61b4c889a865e",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
     SOLUTION_CONTRACT_SOURCE: "ccf4b3215c9c390a189a39ece56537e7521443629c8036d297a41ccc76277111",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
@@ -3022,11 +3026,11 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     """
     contracts = {
         SIMULATION_SOURCE: (
-            "ab484ebad51cc61937a9b0ffc8bae60f03436edcaa8dbc209caca1ebd5bd26e6",
+            "e6ec229f947fcfd8826271670ca17a532fdcc4d5897c9d78ca3456f7c2ea4750",
             {
-                "_simulate_regime_in_period": "bdb8a5a2bfba02c143c9e5fecf7f8c3aa960fba74114dea5a1fd05186bcd2dde",
-                "simulate": "9b4999c33ca03ee781486f7f427c0466b79d5cb3cc41a177ad4e0218da0ce8ae",
-                "_simulate_subject_chunk": "b8d79c7fa36ece183e350fe730cfca06edfc2457a369df09335659118dd309d0",
+                "_simulate_regime_in_period": "2d0ede012becb7860aef63976765e1f9965793b449338399f7ea3ad238208448",
+                "simulate": "de24d5855fc9ca1cd45fbec89bafa783759bc66ecc0f5dce5fcb6d8e0a117c13",
+                "_simulate_subject_chunk": "040cee82b493bbc8630962270a8c692c08186085f8c43bc8108ea673d53b2af9",
                 "_bind_unit_executor": "8a2a8bc6a28f5d7c6a4a2c8d3bea6db86e79c211a8a9b2a409336126a7572a66",
                 "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
                 "_read_external_replay": "7972d2214dbda0c4173fedfabe12b9ae3b03ed099db9f950cd176ee082131c90",
@@ -3044,24 +3048,25 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "7e45789e42b3c4851cae838a37c3b76c7548d13419674569b6b1f3c1cc02d86c",
+            "23b219f6c9c6544a395bcace03190a8d6553ece411c040f45c4de841a866ecce",
             {
                 "Model._resolve_simulate_regimes": "5a11f26e52496d8210ae0ab2b9846d5ca234569764f82d47e871f26e33751ee2",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model._ensure_simulate_compiled": "2e59224333ce9bd7453608d05359e933217971dbf8867e3f9851b9f503a2df86",
-                "Model.simulate": "a540023a10af16787cdb403c023bf6b1fdb9d97d6891ec49fdc2c75eb9a02d01",
+                "Model.simulate": "71a0b10d4da31b3f882ea235a11e8ff66b234b6a7073ee0757733d0d46b46f76",
                 "Model._build_external_replay_readers": "33c41f2c3f7bd300f3e0b4ac042f7371b93efbfe1762e5fe639fc854b19f1f5f",
+                "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
             },
         ),
         SIMULATION_RANDOM_SOURCE: (
-            "ba7a3957502cab5582edb4146e9588c61cceee875d45434f5590692f47afe2a9",
+            "b52d2661652f8b3924beb34a3e04a3a207ed5584c70a532c83a2d5312cfecf17",
             {
                 "create_simulation_key": "76fca4fbc2e18885d2ee67512e8207616fe8d17443954d9b36765a4bc52b3dd4",
                 "_create_simulation_key": "1ab7921d3e42ea7255fb8bbc60d1ed58e408e8818d0bac91ec132c276c62a05d",
                 "split_simulation_key": "9968b4530b74638b082b63c0160391573b8ae4c20a9dc3b733a9b424de259921",
                 "_split_simulation_key": "666d1e23f386815a8fd331cd543813fa2fcdb501f7672a82be9f48fe31c293b2",
-                "generate_simulation_keys": "5cb476eef31804207d3a94c467f4def05661442b325370ad4775023d3757138c",
-                "_generate_simulation_keys": "140d3e33d99bb3e865f17b2ea88a630eb4b1841809aa1b519468cee8369ec472",
+                "generate_simulation_keys": "a0ada0cd4a1e738dcf51b6966b081504b19f86d9ca5a344111ccc25ee7daaf89",
+                "_generate_simulation_keys": "87d86ba01310209a8ac5b222c2ea6aebc8ff4488b2ba373b1b28d5b682c737b8",
                 "draw_random_seed": "42fb402a3282c789664d45fb988b3ed07b8cec706924d3e6e11e26b44c393502",
             },
         ),
@@ -3082,6 +3087,22 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
 
 
 _SIMULATION_ADAPTER_CONTRACTS = {
+    SIMULATION_TASTE_STREAM_SOURCE: (
+        "947474b7e88fd4664df411678ada61eaf7c026cf7bed0abb6fb348057809bc93",
+        {
+            "create_taste_shock_key": "d0b1e91beb7a9d482b7cc520dc00543112c082ff285f37e17c8ea1a283685d32",
+            "prepare_decision_taste_keys": "ef085a5cfac60dce08367fc50b280500313659e270771b1e94367b73e3ddf717",
+            "generate_taste_shock_keys": "66f0dddec645c123e66957e33ea5da7f932c83c23822dd9a49c308034339a038",
+            "advance_simulation_taste_key": "49eecd1a5724049acc7108921c86640236140477924fbf3b561156c7a449381b",
+            "build_taste_stream_addresses": "b880a2eb4e2eed50de19654b6385ab4a46e68530fbd017643cf1fd599a47947d",
+            "_encode_subject_row": "9206dbef80b1bf9607d6cfc42db24af9d7a01ee34ee04079d13c61582eeba82a",
+            "_advance_simulation_taste_key": "d8854c351a6aac51cc858691332541a21413b90baccf6dd2a52fd2ae601a3752",
+            "_taste_address_words": "4490c80c002e777c58e57d242f5a722e17f31d10e7d8120e32b31123ea284478",
+            "draw_taste_shock_keys": "bdc7eb50b64e31949af64b051935650b7f744467074adadc2dea930012d9d577",
+            "_row_offset_words": "5b7e8a0ca6032c00fd2db2d24513c6642a270e20d98facc362b45bc784d80778",
+            "_fold_subject_key": "6c3faf14f43234d25195bd3525659c095512857f4b9d4422e05e43e33d936493",
+        },
+    ),
     COMPILER_INPUTS_SOURCE: (
         "ab4df3a33f7b46329e2eb3a4ac7c6a96c75560172f7528e2874e06bed37dae4d",
         {
@@ -4933,6 +4954,11 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
 
 
 _SUPPLEMENTAL_SOURCE_MUTATIONS = {
+    "simulation_taste_stream:global_row_high_word_ignored": (
+        SIMULATION_TASTE_STREAM_SOURCE,
+        "return jax.random.fold_in(jax.random.fold_in(key, high), low)",
+        "return jax.random.fold_in(jax.random.fold_in(key, 0), low)",
+    ),
     "compiler_inputs:eliminated_input_counted_by_compiler": (
         COMPILER_INPUTS_SOURCE,
         "return frozenset(path for path, sharding in with_paths if sharding is not None)",

@@ -58,12 +58,68 @@ _RANDOM_HELPER_MUTATIONS = {
         '{"partitionable": False}',
     ),
     "simulation_random:declared_split_mode_ignored": (
-        "with jax.threefry_partitionable(partitionable):",
-        "with jax.threefry_partitionable(False):",
+        (
+            "with jax.threefry_partitionable(partitionable):\n"
+            "        next_states_key, next_regime_key, next_key = "
+            "jax.random.split(key=key, num=3)"
+        ),
+        (
+            "with jax.threefry_partitionable(False):\n"
+            "        next_states_key, next_regime_key, next_key = "
+            "jax.random.split(key=key, num=3)"
+        ),
+    ),
+    "simulation_random:population_split_context_ignored": (
+        '"partitionable": jax.config.jax_threefry_partitionable,',
+        '"partitionable": False,',
+    ),
+    "simulation_random:declared_population_mode_ignored": (
+        "with jax.threefry_partitionable(partitionable):\n        for name in names:",
+        "with jax.threefry_partitionable(False):\n        for name in names:",
     ),
 }
 
 _PROFILED_HELPER_MUTATIONS = {
+    "simulation_taste_stream:namespace_changed": (
+        "src/_lcm/simulation/taste_stream.py",
+        '"pylcm.taste-stream.v1",',
+        '"pylcm.taste-stream.v2",',
+    ),
+    "simulation_taste_stream:action_domain_ignored": (
+        "src/_lcm/simulation/taste_stream.py",
+        "        domain,\n    )",
+        "        (),\n    )",
+    ),
+    "simulation_taste_stream:ordinary_carry_not_advanced": (
+        "src/_lcm/simulation/taste_stream.py",
+        "return next_key, taste_keys",
+        "return key, taste_keys",
+    ),
+    "simulation_taste_stream:ambient_implementation_used": (
+        "src/_lcm/simulation/taste_stream.py",
+        '"impl": "threefry2x32",',
+        '"impl": jax.config.jax_default_prng_impl,',
+    ),
+    "simulation_taste_stream:dynamic_address_ignored": (
+        "src/_lcm/simulation/taste_stream.py",
+        '"address_words": np.asarray(address_words, dtype=np.uint32),',
+        '"address_words": np.zeros(8, dtype=np.uint32),',
+    ),
+    "simulation_taste_stream:chunk_start_ignored": (
+        "src/_lcm/simulation/taste_stream.py",
+        '"subject_start": _encode_subject_row(row=start),',
+        '"subject_start": _encode_subject_row(row=0),',
+    ),
+    "simulation_taste_stream:subject_output_layout_omitted": (
+        "src/_lcm/simulation/taste_stream.py",
+        "subject_outputs=True,",
+        "subject_outputs=False,",
+    ),
+    "simulation_taste_stream:root_caller_owners_omitted": (
+        "src/_lcm/simulation/taste_stream.py",
+        "memory.hold(tree=live_inputs)",
+        "memory.hold(tree=())",
+    ),
     "simulation_host:unused_input_omitted_from_peak": (
         "src/_lcm/simulation/host_operations.py",
         "jax.jit(bound, keep_unused=True)",
@@ -191,6 +247,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     assert set(supplemental) == {
         "compiler_inputs:eliminated_input_counted_by_compiler",
         "simulation_membership:entry_period_changed",
+        "simulation_taste_stream:global_row_high_word_ignored",
     }
     assert not set(registered) & set(supplemental)
     assert {spec["path"] for spec in (registered | supplemental).values()} == set(
@@ -207,6 +264,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "src/_lcm/execution/compiler_inputs.py",
         "src/_lcm/execution/footprint.py",
         "src/_lcm/simulation/membership.py",
+        "src/_lcm/simulation/taste_stream.py",
     ],
 )
 def test_live_simulation_program_sources_are_certified(source: str):

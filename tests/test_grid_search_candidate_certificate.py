@@ -77,7 +77,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.regime_building import max_Q_over_a as max_Q_over_a_module
 from _lcm.simulation import programs as simulation_programs_module
 from _lcm.simulation import runtime as simulation_runtime_module
-from _lcm.simulation import simulate as simulation_module
+from _lcm.simulation import taste_stream as taste_stream_module
 from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
 from lcm import (
@@ -552,6 +552,7 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations():
     assert isinstance(_parse("src/_lcm/simulation/host_operations.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/memory.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/membership.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/taste_stream.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/period_inputs.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/replay_inputs.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/value_reads.py"), ast.Module)
@@ -2158,7 +2159,7 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
     baseline = _simulate_seeded_taste_routing(
         model=model, subject_batch_size=_RNG_SUBJECT_BATCH_SIZE
     )
-    original = simulation_module.generate_simulation_keys
+    original = taste_stream_module.generate_simulation_keys
 
     def reassigned_keys(**kwargs: Any) -> tuple[Any, dict[str, Any]]:
         next_key, keys = original(**kwargs)
@@ -2166,7 +2167,9 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
             name: jnp.roll(values, 1, axis=0) for name, values in keys.items()
         }
 
-    monkeypatch.setattr(simulation_module, "generate_simulation_keys", reassigned_keys)
+    monkeypatch.setattr(
+        taste_stream_module, "generate_simulation_keys", reassigned_keys
+    )
     shifted = _simulate_seeded_taste_routing(
         model=model, subject_batch_size=_RNG_SUBJECT_BATCH_SIZE
     )

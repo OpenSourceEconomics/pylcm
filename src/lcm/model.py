@@ -2152,6 +2152,7 @@ class Model:
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
         seed: int | None = None,
+        taste_shock_seed: int | None = None,
         subject_batch_size: int = 0,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
@@ -2193,6 +2194,14 @@ class Model:
                 When omitted, ``simulate`` obtains the same complete result from an
                 automatic solve.
             seed: Random seed.
+            taste_shock_seed: Optional independent seed for common taste-shock
+                realizations across counterfactual simulations. Matching exact
+                ages, initial-condition row positions and ordered discrete-action
+                domains receive the same standardized shocks, regardless of
+                `seed`, policy parameters or realized regime. Reordering or
+                resizing that discrete domain changes the stream. Uses Threefry;
+                comparisons require matching precision/backend and JAX random
+                configuration. `None` preserves the ordinary seeded stream.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG
                 keys are drawn for the full population and sliced by global index.
@@ -2228,6 +2237,7 @@ class Model:
 
         """
         self._sealed_bindings.fail_if_moved()
+        _fail_if_invalid_taste_shock_seed(taste_shock_seed=taste_shock_seed)
         log = get_logger(log_level=log_level)
         self._fail_if_simulation_is_unsupported()
         entry_inputs = capture_simulation_entry_inputs(
@@ -2374,6 +2384,7 @@ class Model:
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
+            taste_shock_seed=taste_shock_seed,
             subject_batch_size=compile_batch_size,
             original_n_subjects=original_n_subjects,
             device_ids=self._execution.device_ids,
@@ -2510,6 +2521,14 @@ class Model:
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
         return flat_params
+
+
+def _fail_if_invalid_taste_shock_seed(*, taste_shock_seed: int | None) -> None:
+    """Refuse Boolean stream configuration before processing inputs or solving."""
+    if taste_shock_seed is not None and type(taste_shock_seed) is not int:
+        raise InvalidSimulationInputError(
+            f"taste_shock_seed must be an integer or None, got {taste_shock_seed!r}."
+        )
 
 
 def _missing_policy_message(

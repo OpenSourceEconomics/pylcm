@@ -32,6 +32,7 @@ FOUR_DEVICE_TEST_FILES = (
     "tests/test_distributed_simulation_value_reads.py",
     "tests/simulation/test_operand_placement.py",
     "tests/simulation/test_host_operations.py",
+    "tests/test_distributed_taste_stream.py",
 )
 
 #: The configuration option a multi-device test file pins when it is imported.

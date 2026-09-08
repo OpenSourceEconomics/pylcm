@@ -5,6 +5,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Common taste shocks across counterfactuals
+
+- `Model.simulate(taste_shock_seed=...)` selects an independent Threefry stream for
+  EV1 taste shocks. Matching exact ages, initial subject rows and ordered discrete
+  action domains share standardized draws across policies and regimes, independently
+  of the ordinary seed, horizon endpoints, chunking and padding. Omitting the argument
+  preserves the ordinary seeded behavior. Reordering or resizing a discrete action
+  domain changes its stream.
+- Cached simulation key generation now follows changes to JAX's Threefry partition
+  setting between calls, including when an executable has already been compiled.
+
 ### Solver API version 2
 
 - `SOLVER_API_VERSION` is 2. A core program declares what it publishes to another
