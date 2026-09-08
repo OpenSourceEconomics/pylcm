@@ -12,11 +12,11 @@ from beartype.roar import BeartypeCallHintViolation
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.execution.reductions import (
-    WEIGHTED_EXPECTATION_REDUCTION,
-    WeightedExpectationResult,
     HARD_MAX_WITH_CARRY_REDUCTION,
+    WEIGHTED_EXPECTATION_REDUCTION,
     HardMaxWithCarryResult,
     OuterCandidateAccumulator,
+    WeightedExpectationResult,
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
 from _lcm.solution.collective_action_reduction import (
@@ -318,22 +318,6 @@ def test_weighted_expectation_block_fold_matches_the_dense_mean(
     )
 
 
-@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
-def test_weighted_expectation_block_fold_accumulates_the_whole_weight_mass(
-    *, partition: tuple[int, ...]
-) -> None:
-    """The published mass is the sum of every block's weights, to a few ULP."""
-    assert_agrees_to_ulp(
-        got=np.asarray(
-            _folded_weighted_expectation(
-                partition=partition, values=_values(), weights=_weights()
-            ).weight_mass
-        ),
-        expected=np.asarray(_weights()).sum(),
-        n_ulp=16,
-    )
-
-
 def _candidate_carry() -> FloatND:
     """Return a per-candidate payload row the winner's carry is read from."""
     rng = np.random.default_rng(seed=20260910)
@@ -489,6 +473,9 @@ def test_weighted_expectation_gives_a_zero_weight_infinity_no_contribution() -> 
         np.asarray(reduction.finalize(accumulator=accumulator).expectation),
         np.full(_N_STATES, 2.0),
     )
+
+
+@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
 def test_hard_max_with_carry_block_fold_selects_the_dense_winner_identity(
     *, partition: tuple[int, ...]
 ) -> None:

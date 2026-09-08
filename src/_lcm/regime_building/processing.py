@@ -687,6 +687,7 @@ def process_regimes(
     build_canonical_regimes = _CanonicalRegimeBuilder(
         ages=ages,
         all_grids=all_grids,
+        axis_widths=resolved_execution.axis_widths,
         egm_continuation_targets=egm_continuation_targets,
         enable_jit=enable_jit,
         fold_only_regimes=fold_only_regimes,
@@ -839,6 +840,9 @@ class _CanonicalRegimeBuilder:
 
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]]
     """Immutable mapping of regime names to their state and action grids."""
+
+    axis_widths: MappingProxyType[str, int]
+    """Model-resolved widths, including host loops built by a solver."""
 
     egm_continuation_targets: frozenset[RegimeName]
     """Regimes an EGM source carries into, which owe an engine-produced carry."""
@@ -1024,6 +1028,7 @@ class _CanonicalRegimeBuilder:
                 grid_schedule=self.grid_schedule,
                 state_action_space=self.state_action_spaces[regime_name],
                 submesh_device_ids=self.placement.devices_for(regime_name=regime_name),
+                axis_widths=self.axis_widths,
                 sharded_state_names=self.sharded_state_names_by_regime[regime_name],
                 ages=self.ages,
                 enable_jit=self.enable_jit,
@@ -3045,6 +3050,7 @@ def _build_solution_phase(
     grid_schedule: AgeGridSchedule | None = None,
     state_action_space: StateActionSpace,
     submesh_device_ids: tuple[int, ...],
+    axis_widths: MappingProxyType[str, int],
     sharded_state_names: frozenset[StateName],
     ages: AgeGrid,
     enable_jit: bool,
@@ -3093,6 +3099,7 @@ def _build_solution_phase(
         state_action_space: The state-action space for this regime.
         submesh_device_ids: Ascending ids of the devices the planner assigned
             this regime's nodes; empty means every device the model uses.
+        axis_widths: Model-resolved widths the solver's host dispatch loops read.
         sharded_state_names: The regime's states carrying a device axis.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
@@ -3336,6 +3343,7 @@ def _build_solution_phase(
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
         submesh_device_ids=submesh_device_ids,
+        axis_widths=axis_widths,
         period_to_state_nodes=period_to_state_nodes,
         functions=core.functions,
         koopmans_aggregator=core.koopmans_aggregator,

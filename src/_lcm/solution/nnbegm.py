@@ -1044,9 +1044,10 @@ class _NNBEGMPeriodKernel:
         dispatches the inner `replay` programs and assembles the nested policy
         from their banks.
 
-        The keeper's programs keep the inner disposition; the adjuster's take
-        whichever `_adjuster_disposition` returns, so an outer search that
-        dispatches the adjuster from a host loop republishes it host-driven.
+        The keeper's programs keep the inner disposition. The finite search's
+        host loop surrounds planned adjuster programs; the adaptive search
+        republishes the adjuster as host-driven. Both searches declare the
+        surrounding loop's configurable name separately from compiled axes.
         """
         programs: dict[str, CoreProgram] = {}
         for role, kernel, outer_node in (
@@ -1090,6 +1091,14 @@ class _NNBEGMPeriodKernel:
                     if role_reads
                     else program.requirements
                 )
+                if role == "adjuster":
+                    requirements = replace(
+                        requirements,
+                        host_axis_names=(
+                            *requirements.host_axis_names,
+                            OUTER_CANDIDATE_AXIS,
+                        ),
+                    )
                 programs[graph_key] = replace(
                     program,
                     name=graph_key,
@@ -1118,8 +1127,8 @@ class _NNBEGMPeriodKernel:
     ) -> tuple[CoreExecutionDisposition, str | None]:
         """Return the disposition the adjuster's programs are republished under.
 
-        The adjuster is dispatched once, exactly like the keeper, so it keeps the
-        inner program's own disposition.
+        Each finite-grid node dispatches the inner program under its own
+        disposition; the surrounding host loop does not change its execution.
         """
         return program.disposition, program.disposition_reason
 
@@ -1158,11 +1167,12 @@ class _NNBEGMPeriodKernel:
         The retention shows in the compiled programs: the inner `replay`
         programs are present exactly when the solve retains replay artifacts,
         and only then does the outer search assemble a nested policy. The
-        finite search folds completed chunks immediately, so the outer dispatch
-        width bounds retained candidate data while publishing the complete
-        finite candidate identities for exact replay. The adaptive search keeps
-        its exact-node bank because interpolation and policy publication consume
-        every refined node.
+        finite search folds completed chunks immediately. Without replay, it
+        releases their per-node value temporaries before the next chunk. Every
+        finite solve retains the full continuation-carry bank, and replay also
+        retains all node results, so the dispatch width does not bound those
+        banks. The adaptive search keeps its exact-node bank because interpolation
+        and policy publication consume every refined node.
         """
         keeper_result = self._solve_keeper(
             compiled_cores=compiled_cores,
@@ -1628,8 +1638,10 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                 adjuster_carries.append(
                     cast("EGMCarry", adjuster_result.continuations[EGM_CONTINUATION])
                 )
-                adjuster_results.append(adjuster_result)
+                if retain_replay:
+                    adjuster_results.append(adjuster_result)
             V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
+            del chunk_results, adjuster_result
 
         from _lcm.egm.outer_envelope import stack_candidate_carries  # noqa: PLC0415
 

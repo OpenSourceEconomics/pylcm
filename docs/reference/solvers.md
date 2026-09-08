@@ -311,13 +311,25 @@ republishes the inner NB-EGM programs as `keeper:main`, `keeper:replay`,
 scope. The keeper programs keep the inner planned disposition; under
 `AdaptiveOuterMesh` the adjuster programs are host-driven, because the mesh decides
 from the solves it has already seen how many more nodes to request, and they declare
-the continuation leaves that host loop reads. The keeper programs are built from the
-period's own inputs; the adjuster programs bind the outer post-decision at the first
-outer node, the
-same shape every per-node call rebinds. A values-only solve dispatches the inner `main`
-programs and the nested collapse publishes the value and the carry alone; a
-replay-retaining solve dispatches the inner `replay` programs and assembles the nested
-policy from their banks.
+the continuation leaves that host loop reads. Both roles declare the leaves they read,
+so the nested dispatch node has no undeclared reader. The keeper programs are built from
+the period's own inputs; the adjuster programs bind the outer post-decision at the first
+outer node, the same shape every per-node call rebinds. A values-only solve dispatches
+the inner `main` programs and the nested collapse publishes the value and the carry
+alone; a replay-retaining solve dispatches the inner `replay` programs and assembles the
+nested policy from their banks.
+
+Both outer-search routes declare `outer_candidate` as a host-dispatch axis. Set its
+width when building the model with
+`execution_config=ExecutionConfig(axis_widths={"outer_candidate": k})`. The host loop
+dispatches at most `k` pending nodes per step, preserving their order; without a fixed
+width it dispatches all pending nodes in one step. The finite adjuster keeps its
+planned inner core and continuation transfers; the adaptive adjuster remains
+host-driven. A finite values-only solve releases each completed chunk's per-node
+value temporaries before dispatching the next chunk. It still retains every
+continuation carry, and a replay-retaining solve also keeps all node results.
+The adaptive search retains its exact-node bank. The width therefore limits
+dispatch chunks, not the memory occupied by these complete banks.
 
 How the keeper and adjuster branches combine is an economic declaration, not a solver
 setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savings.md).

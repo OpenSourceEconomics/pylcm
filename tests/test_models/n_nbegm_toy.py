@@ -20,14 +20,10 @@ the degenerate plain-EGM case.
 """
 
 from collections.abc import Callable, Mapping
-from copy import copy
-from dataclasses import replace
-from types import MappingProxyType
 
 import jax.numpy as jnp
 
 from _lcm.grids.base import Grid
-from _lcm.solution.nnbegm import _NNBEGMPeriodKernel
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -438,37 +434,3 @@ def build_model(
         fixed_params={"final_age_alive": final_age_alive},
         execution_config=execution_config,
     )
-
-
-def with_outer_dispatch_width(*, model: Model, width: int | None) -> Model:
-    """Return a copy of `model` whose nested kernels dispatch `width` at a time.
-
-    The nested outer collapse runs as a host loop over separate dispatches of
-    the compiled adjuster, so its `outer_candidate` width is a field of the
-    period kernel rather than a static keyword bound into one compiled program.
-    `None` dispatches every pending node at once. The argument is left as it
-    was, so one built model serves a whole width parametrization.
-    """
-    rebuilt = copy(model)
-    rebuilt._regimes = MappingProxyType(
-        {
-            name: replace(
-                regime,
-                solution=replace(
-                    regime.solution,
-                    period_kernels=MappingProxyType(
-                        {
-                            period: (
-                                replace(kernel, outer_dispatch_width=width)
-                                if isinstance(kernel, _NNBEGMPeriodKernel)
-                                else kernel
-                            )
-                            for period, kernel in regime.solution.period_kernels.items()
-                        }
-                    ),
-                ),
-            )
-            for name, regime in model._regimes.items()
-        }
-    )
-    return rebuilt

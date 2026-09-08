@@ -541,7 +541,7 @@ def test_plan_rejects_a_dataclass_path_segment_that_is_not_a_field() -> None:
     stored = _stored_value()
     payload = _CarryPayload(values=stored, breakpoints=object(), policy=object())
 
-    with pytest.raises(KeyError, match="requires a field name of _CarryPayload"):
+    with pytest.raises(KeyError, match="names no field of _CarryPayload"):
         _dataclass_plan_result(
             path=("working", "not_a_field"), payload=payload, stored=stored
         )

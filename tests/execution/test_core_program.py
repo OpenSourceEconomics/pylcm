@@ -2,7 +2,7 @@
 
 import functools
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -138,6 +138,60 @@ def _eval_resolved_shape(resolved: ResolvedCoreProgram) -> object:
     """Evaluate abstract output with the resolver's static choices bound."""
     bound = functools.partial(resolved.function, **resolved.static_kwargs)
     return jax.eval_shape(bound, **resolved.arguments)
+
+
+def test_host_dispatch_axes_are_configurable_without_a_compiled_axis() -> None:
+    """A host loop names its width without inventing a static coordinate extent."""
+    requirements = CoreExecutionRequirements(host_axis_names=("outer_candidate",))
+
+    assert (requirements.axis_names, requirements.axes) == (("outer_candidate",), ())
+
+
+@pytest.mark.parametrize("names", [("",), (" ",), ("outer", "outer")])
+def test_host_dispatch_axis_names_are_nonempty_and_unique(
+    *, names: tuple[str, ...]
+) -> None:
+    """Host dispatch names cannot be empty or repeated."""
+    with pytest.raises(ValueError, match="axis name"):
+        CoreExecutionRequirements(host_axis_names=names)
+
+
+def test_host_dispatch_and_compiled_axes_cannot_share_a_name() -> None:
+    """One width name addresses exactly one loop in a program."""
+    with pytest.raises(ValueError, match="duplicate axis name"):
+        CoreExecutionRequirements(
+            reduced_axes=(_axis(),), host_axis_names=("action_product",)
+        )
+
+
+def test_a_dense_program_cannot_declare_a_host_dispatch_axis() -> None:
+    """A dense program cannot accept a width its declared route does not own."""
+    program = CoreProgram(
+        name="main",
+        function=_unused_value_consumer_core,
+        argument_builder=lambda _context: {},
+        requirements=CoreExecutionRequirements(host_axis_names=("outer_candidate",)),
+        output_roles=VALUE,
+        disposition=CoreExecutionDisposition.DENSE,
+        disposition_reason="dense_test",
+    )
+
+    with pytest.raises(ValueError, match="host dispatch"):
+        core_program_graph(kernel=_Provider(program=program))
+
+
+def test_a_host_loop_leaves_the_planned_inner_width_keyword_unchanged() -> None:
+    """A surrounding host loop adds no keyword to its planned inner core."""
+    program = _program()
+    program = replace(
+        program,
+        requirements=replace(
+            program.requirements, host_axis_names=("outer_candidate",)
+        ),
+    )
+    resolved = resolve_core_program(program=program, tile_widths={"action_product": 2})
+
+    assert dict(resolved.static_kwargs) == {_WIDTH_KEYWORD: 2}
 
 
 def _unused_value_consumer_core(**_arguments: object) -> object:

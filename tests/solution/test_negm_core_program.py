@@ -441,16 +441,12 @@ def test_block_width_leaves_every_periods_solved_values_within_ulp(*, width: int
     array with the one-block solve bounds that effect at both precisions; the
     finiteness pattern of the values must agree exactly.
     """
-    reference = negm_kinked_toy.build_model().solve(
-        params=_PARAMS,
-        log_level="off",
-        execution_config=ExecutionConfig(axis_widths={OUTER_CANDIDATE_AXIS: _N_OUTER}),
-    )
-    solution = negm_kinked_toy.build_model().solve(
-        params=_PARAMS,
-        log_level="off",
-        execution_config=ExecutionConfig(axis_widths={OUTER_CANDIDATE_AXIS: width}),
-    )
+    reference = negm_kinked_toy.build_model(
+        execution_config=ExecutionConfig(axis_widths={OUTER_CANDIDATE_AXIS: _N_OUTER})
+    ).solve(params=_PARAMS, log_level="off")
+    solution = negm_kinked_toy.build_model(
+        execution_config=ExecutionConfig(axis_widths={OUTER_CANDIDATE_AXIS: width})
+    ).solve(params=_PARAMS, log_level="off")
 
     assert solution.values.keys() == reference.values.keys()
     for period, regime_to_value in reference.values.items():

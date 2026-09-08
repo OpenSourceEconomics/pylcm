@@ -24,6 +24,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     Regime,
@@ -219,7 +220,10 @@ def build_dead_regime() -> Regime:
     )
 
 
-def build_model() -> Model:
+def build_model(
+    *,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     """Build the kinked-toy NEGM model (the G1 parity target)."""
     final_age_alive = 20 + (N_PERIODS - 2) * 5
     return Model(
@@ -230,4 +234,5 @@ def build_model() -> Model:
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        execution_config=execution_config,
     )

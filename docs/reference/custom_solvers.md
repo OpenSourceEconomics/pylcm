@@ -163,7 +163,15 @@ the width choice to the engine and must *not* carry a reason; declaring one is r
 A planned program declares whichever axes the engine may stream — `reduced_axes` for an
 axis folded by a reduction, `tiled_axes` for one whose tiles are concatenated — and a
 solver whose body streams nothing declares an empty set; the shipped NB-EGM graph does
-exactly that. Only a planned program may declare an execution axis.
+exactly that. Only a planned program may declare a compiled execution axis.
+
+`CoreExecutionRequirements.host_axis_names` names configurable host loops around
+individual program dispatches. These names have no static coordinate extent and no
+compiled width keyword: the solver reads the configured widths from
+`SolverBuildContext.axis_widths` and applies them to its loop. Such a loop may surround
+a `PLANNED` core or own a `HOST_DRIVEN` core; `DENSE` programs cannot declare host axes.
+The configurable `axis_names` include both compiled and host axes, while `axes` contains
+only the compiled axes the workspace planner schedules.
 
 A `ReducedAxis` is the Cartesian product of the coordinates its `coordinate_names`
 address — each names a program argument holding that coordinate's 1-D values, whether a
@@ -182,11 +190,11 @@ it. `ACTION_PRODUCT_AXIS` is the name the shipped `GridSearch` gives its action 
 and `OUTER_CANDIDATE_AXIS` the name a nested outer search gives its exogenous
 post-decision candidates; each is the name to pass when fixing that solver's width.
 
-`ExecutionConfig(axis_widths=...)` fixes the compiled width of a declared axis by its
-name. It is hardware-local: it changes what is compiled, never what is published, and
-never enters the durable model fingerprint. A width above an axis's extent is taken as
-the extent, and a name no program of the model declares is refused with the declared
-names listed, so a typo cannot pass as a tuning choice.
+`ExecutionConfig(axis_widths=...)` fixes the compiled or host-dispatch width of a
+declared axis by its name. It is hardware-local: it changes execution, never what is
+published, and never enters the durable model fingerprint. A width above an axis's
+extent is taken as the extent, and a name no program of the model declares is refused
+with the declared names listed, so a typo cannot pass as a tuning choice.
 
 A reduced axis names its reduction at one of two levels. `ReductionDeclaration` is the
 contract: a stable `semantic_key`, which enters static program identity so two programs

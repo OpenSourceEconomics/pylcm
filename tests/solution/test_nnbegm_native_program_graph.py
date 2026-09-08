@@ -112,9 +112,9 @@ def test_the_graph_republishes_every_inner_program_under_role_prefixes():
             assert program.disposition is CoreExecutionDisposition.PLANNED
             assert program.disposition_reason is None
             assert program.function is inner.function
-            assert replace(program.requirements, value_reads=()) == replace(
-                inner.requirements, value_reads=()
-            )
+            assert replace(
+                program.requirements, value_reads=(), host_axis_names=()
+            ) == replace(inner.requirements, value_reads=())
             assert program.output_roles == inner.output_roles
             assert program.donation_candidates == inner.donation_candidates
     assert graph["keeper:main"].scope is ProgramScope.VALUES_ONLY

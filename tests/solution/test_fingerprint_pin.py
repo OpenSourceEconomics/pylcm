@@ -122,13 +122,14 @@ def test_no_model_hashes_an_execution_policy_field(key: str) -> None:
     assert leaked == []
 
 
-def test_the_policy_field_scan_reaches_the_bound_solvers() -> None:
+def test_the_policy_field_scan_reaches_a_bound_solver() -> None:
     """The scan is not vacuous: it finds the role-bound solver a regime stores.
 
     Without this, a walk that silently stopped finding owners would leave the
-    test above asserting nothing at all. `NNBEGM` carries no row of its own —
-    its outer search is a registered config object — so the bound forms the
-    table can reach are NEGM's and NB-EGM's.
+    test above asserting nothing at all. Only a solver carrying a row of its own
+    is reachable, and `NEGM` and `NNBEGM` carry none — their outer searches are
+    candidate sets, and the width of the loop over them is an execution axis, so
+    the bound form the table reaches is the NB-EGM one nested inside them.
     """
     found = {
         type(owner).__name__
@@ -136,20 +137,12 @@ def test_the_policy_field_scan_reaches_the_bound_solvers() -> None:
         for owner, _ in _registered_owners(model=_MODELS[key]())
     }
 
-    assert {"_BoundNEGM", "_BoundNBEGM"} <= found
+    assert {"_BoundNBEGM"} <= found
 
 
 # One entry per in-tree solver carrying an execution-policy field, as the pair of
 # model builders differing in that field and in nothing else.
 _POLICY_VARIANTS = {
-    "negm_outer_batch_size": (
-        lambda: negm_kinked_toy.build_model(outer_batch_size=0),
-        lambda: negm_kinked_toy.build_model(outer_batch_size=4),
-    ),
-    "negm_outer_batch_size_housing": (
-        lambda: ds_app2_housing.build_model(n_grid=8, outer_batch_size=0),
-        lambda: ds_app2_housing.build_model(n_grid=8, outer_batch_size=2),
-    ),
     "nbegm_stochastic_node_batch_size": (
         lambda: nbegm_stochastic_node_toy.build_model(
             variant="nbegm", stochastic_node_batch_size=0
@@ -157,10 +150,6 @@ _POLICY_VARIANTS = {
         lambda: nbegm_stochastic_node_toy.build_model(
             variant="nbegm", stochastic_node_batch_size=2
         ),
-    ),
-    "nnbegm_outer_batch_size": (
-        lambda: n_nbegm_toy.build_model(variant="n_nbegm", outer_batch_size=0),
-        lambda: n_nbegm_toy.build_model(variant="n_nbegm", outer_batch_size=2),
     ),
 }
 

@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 from jax.typing import DTypeLike
 
-from lcm import IrregSpacedGrid, LinSpacedGrid
+from lcm import ExecutionConfig, IrregSpacedGrid, LinSpacedGrid
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.n_nbegm_toy import RegimeId
 
@@ -245,15 +245,19 @@ def _simulate_replay(
     dtype: DTypeLike,
 ):
     """Run the public solve-and-simulate path for three off-grid subjects."""
-    model = toy.with_outer_dispatch_width(
-        model=toy.build_model(
-            variant="n_nbegm",
-            n_periods=2,
-            illiquid_grid=toy.ILLIQUID_GRID,
-            illiquid_investment_grid=IrregSpacedGrid(points=points),
-            consumption_grid=toy.CONSUMPTION_GRID,
+    model = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        illiquid_grid=toy.ILLIQUID_GRID,
+        illiquid_investment_grid=IrregSpacedGrid(points=points),
+        consumption_grid=toy.CONSUMPTION_GRID,
+        execution_config=ExecutionConfig(
+            axis_widths=(
+                {}
+                if outer_dispatch_width is None
+                else {"outer_candidate": outer_dispatch_width}
+            )
         ),
-        width=outer_dispatch_width,
     )
     initial_conditions = {
         "wealth": jnp.asarray([4.0, 15.0, 24.0], dtype=dtype),

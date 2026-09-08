@@ -22,6 +22,7 @@ from lcm.solvers import (
     ACTION_PRODUCT_AXIS,
     CELL_AXIS,
     EULER_POINT_AXIS,
+    OUTER_CANDIDATE_AXIS,
     SAVINGS_POINT_AXIS,
     STOCHASTIC_NODE_AXIS,
 )
@@ -37,9 +38,10 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 _DECLARED_AXIS_NAMES = {
     "grid_search": (ACTION_PRODUCT_AXIS,),
     "dcegm": (CELL_AXIS, EULER_POINT_AXIS, SAVINGS_POINT_AXIS, STOCHASTIC_NODE_AXIS),
-    "negm": (CELL_AXIS, SAVINGS_POINT_AXIS),
+    "negm": (CELL_AXIS, OUTER_CANDIDATE_AXIS, SAVINGS_POINT_AXIS),
     "nnbegm": (),
 }
+_HOST_AXIS_NAMES = {"nnbegm": (OUTER_CANDIDATE_AXIS,)}
 
 
 def _build(*, family: str, execution_config: ExecutionConfig) -> Model:
@@ -71,8 +73,15 @@ def _declared_axes(*, model: Model) -> Mapping[str, ReducedAxis | TiledOutputAxi
 @pytest.mark.parametrize("family", sorted(_DECLARED_AXIS_NAMES))
 def test_the_declared_names_are_what_the_programs_declare(*, family: str) -> None:
     """The table above is what the family's own core programs declare."""
-    assert sorted(_declared_axes(model=_reference(family=family))) == sorted(
-        _DECLARED_AXIS_NAMES[family]
+    names = {
+        name
+        for regime in _reference(family=family)._regimes.values()
+        for kernel in regime.solution.period_kernels.values()
+        for program in core_program_graph(kernel=kernel).values()
+        for name in program.requirements.axis_names
+    }
+    assert sorted(names) == sorted(
+        (*_DECLARED_AXIS_NAMES[family], *_HOST_AXIS_NAMES.get(family, ()))
     )
 
 
@@ -113,9 +122,8 @@ def test_a_name_no_program_declares_is_refused(*, family: str) -> None:
             execution_config=ExecutionConfig(axis_widths={"not_an_axis": 4}),
         )
 
-    assert f"declared axes are {sorted(_DECLARED_AXIS_NAMES[family])!r}." in str(
-        refusal.value
-    )
+    names = sorted((*_DECLARED_AXIS_NAMES[family], *_HOST_AXIS_NAMES.get(family, ())))
+    assert f"declared axes are {names!r}." in str(refusal.value)
 
 
 def test_an_axis_another_solver_declares_is_refused() -> None:

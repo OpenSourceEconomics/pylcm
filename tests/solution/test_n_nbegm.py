@@ -13,7 +13,7 @@ from beartype.roar import BeartypeCallHintParamViolation
 
 import _lcm.solution.nnbegm as nnbegm_module
 from _lcm.egm.published_policy import NNBEGMSimPolicy
-from lcm import NormalIIDProcess
+from lcm import ExecutionConfig, NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
@@ -286,8 +286,10 @@ def test_outer_dispatch_width_is_value_invariant(*, width: int) -> None:
         .values
     )
     chunked = (
-        toy.with_outer_dispatch_width(
-            model=toy.build_model(variant="n_nbegm", n_periods=2), width=width
+        toy.build_model(
+            variant="n_nbegm",
+            n_periods=2,
+            execution_config=ExecutionConfig(axis_widths={"outer_candidate": width}),
         )
         .solve(params=_PARAMS, log_level="debug")
         .values

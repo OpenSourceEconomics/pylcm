@@ -392,12 +392,10 @@ def test_outer_candidate_width_leaves_value_function_unchanged(*, width: int):
     """
     base = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="debug").values
     blocked = (
-        negm_kinked_toy.build_model()
-        .solve(
-            params=_PARAMS,
-            log_level="debug",
-            execution_config=ExecutionConfig(axis_widths={OUTER_CANDIDATE_AXIS: width}),
+        negm_kinked_toy.build_model(
+            execution_config=ExecutionConfig(axis_widths={OUTER_CANDIDATE_AXIS: width})
         )
+        .solve(params=_PARAMS, log_level="debug")
         .values
     )
     assert base.keys() == blocked.keys()

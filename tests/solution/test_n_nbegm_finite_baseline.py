@@ -24,6 +24,7 @@ import pytest
 from jax import config as jax_config
 
 import _lcm.solution.nnbegm as solvers_mod
+from lcm import ExecutionConfig
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.typing import FloatND
 from tests.test_models import n_nbegm_toy as toy
@@ -82,9 +83,12 @@ def _solve_recording_kernel_results(
         recording_call,
     )
     solution = (
-        toy.with_outer_dispatch_width(
-            model=toy.build_model(variant="n_nbegm", n_periods=_N_PERIODS),
-            width=width,
+        toy.build_model(
+            variant="n_nbegm",
+            n_periods=_N_PERIODS,
+            execution_config=ExecutionConfig(
+                axis_widths={} if width is None else {"outer_candidate": width}
+            ),
         )
         .solve(params=_PARAMS, log_level="debug")
         .values

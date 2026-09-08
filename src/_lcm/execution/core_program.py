@@ -219,12 +219,26 @@ class CoreExecutionRequirements:
     internal_inputs: Mapping[str, InternalInputRef] = MappingProxyType({})
     """Consumer argument name to the producer output that fills it at dispatch."""
 
+    host_axis_names: tuple[str, ...] = ()
+    """Names of configurable host loops surrounding this core's dispatches.
+
+    A host loop may surround a planned core without changing the compiled
+    axes inside that core. Its extent may change between dispatches, so these
+    names declare no static extent or compiled width keyword.
+    """
+
     def __post_init__(self) -> None:
         """Snapshot the declared axes, value reads, and internal inputs."""
         object.__setattr__(self, "reduced_axes", tuple(self.reduced_axes))
         object.__setattr__(self, "tiled_axes", tuple(self.tiled_axes))
         object.__setattr__(self, "value_reads", tuple(self.value_reads))
-        names = [axis.name for axis in self.axes]
+        host_names = tuple(self.host_axis_names)
+        for name in host_names:
+            if type(name) is not str or not name.strip():
+                msg = "A host dispatch axis name must be a non-empty string."
+                raise ValueError(msg)
+        object.__setattr__(self, "host_axis_names", host_names)
+        names = self.axis_names
         for name in names:
             if names.count(name) > 1:
                 msg = f"Core program declares a duplicate axis name {name!r}."
@@ -246,8 +260,8 @@ class CoreExecutionRequirements:
 
     @property
     def axis_names(self) -> tuple[str, ...]:
-        """Return the axis names in `axes` order."""
-        return tuple(axis.name for axis in self.axes)
+        """Return compiled axis names, followed by surrounding host-loop names."""
+        return (*tuple(axis.name for axis in self.axes), *self.host_axis_names)
 
 
 class CoreExecutionDisposition(StrEnum):
@@ -818,6 +832,15 @@ def _validate_disposition_reason(
     Only a planned program leaves the width choice to the engine; a dense or
     host-driven one takes it back and says why.
     """
+    if (
+        program.requirements.host_axis_names
+        and program.disposition is CoreExecutionDisposition.DENSE
+    ):
+        msg = (
+            f"Dense CoreProgram {program.name!r} cannot declare host dispatch axes; "
+            "use a planned or host-driven program."
+        )
+        raise ValueError(msg)
     reason = program.disposition_reason
     if program.disposition is CoreExecutionDisposition.PLANNED:
         if reason is not None:
