@@ -55,6 +55,7 @@ from _lcm.simulation.initial_conditions import (
     trim_pad_from_raw_results,
 )
 from _lcm.simulation.random import draw_random_seed, generate_simulation_keys
+from _lcm.simulation.runtime import execute_simulation_program
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
@@ -1003,10 +1004,8 @@ def _simulate_regime_in_period(
         regime_states=states[regime_name],
         base=base_state_action_space,
     )
-    # Compute optimal actions
-    # We need to pass the value function array of the next period to the
-    # argmax_and_max_Q_over_a function, as the current Q-function requires the
-    # next period's value function. In the last period, we pass an empty dict.
+    # The decision reads the next period's reachable values. In the last period
+    # it receives an empty mapping because no continuation is consumed.
     next_period_values = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
     next_regime_to_V_arr = _require_next_period_values(
         next_period_values=next_period_values,
@@ -1097,8 +1096,6 @@ def _simulate_regime_in_period(
         )
         nested_fallback = None
     else:
-        argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
-
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:
             key, gumbel_keys = generate_simulation_keys(
@@ -1110,16 +1107,25 @@ def _simulate_regime_in_period(
             )
             taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
 
-        indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
-            **state_action_space.states,
-            **state_action_space.discrete_actions,
-            **state_action_space.continuous_actions,
-            **taste_shock_kwargs,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            **referenced_value_kwargs,
-            **flat_params[regime_name],
-            period=jnp.int32(period),
-            age=age,
+        indices_optimal_actions, V_arr = cast(
+            "tuple[IntND, FloatND]",
+            execute_simulation_program(
+                programs=regime.simulation.programs,
+                family="decision",
+                period=period,
+                n_subjects=n_chunk_subjects,
+                arguments={
+                    **state_action_space.states,
+                    **state_action_space.discrete_actions,
+                    **state_action_space.continuous_actions,
+                    **taste_shock_kwargs,
+                    "next_regime_to_V_arr": next_regime_to_V_arr,
+                    **referenced_value_kwargs,
+                    **flat_params[regime_name],
+                    "period": jnp.int32(period),
+                    "age": age,
+                },
+            ),
         )
         # A stateless collective result lacks the leading subject axis that
         # every downstream simulation operation expects.

@@ -13,15 +13,16 @@ role names what that position publishes.
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
+from typing import Protocol, runtime_checkable
 
-from _lcm.execution.core_program import CoreProgram, TiledOutputAxis
+from _lcm.execution.core_program import CoreBuildContext, CoreProgram, TiledOutputAxis
 from _lcm.typing import RegimeName, StateOrActionName
 
 # Planner name of the per-subject axis every simulation program tiles.
 SUBJECT_AXIS = "subject"
 
 # Keyword each simulation program body accepts for the planner-bound tile width.
-SUBJECT_WIDTH_KEYWORD = "_lcm_subject_width"
+SUBJECT_WIDTH_KEYWORD = "__lcm_subject_width__"
 
 # Graph key of the one program each simulation family publishes per period.
 DECISION_PROGRAM = "simulate_decision"
@@ -41,6 +42,37 @@ REGIME_TRANSITION_PROB = "regime_transition_prob"
 # lowering path replaces the axis with the chunk width it lowers for, so this
 # value never reaches a compiled program.
 UNRESOLVED_SUBJECT_EXTENT = 1
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SimulationBuildContext(CoreBuildContext):
+    """Complete dynamic arguments for one forward program invocation."""
+
+    call_arguments: Mapping[str, object]
+    """Subject states, action operands, parameters, keys and addressed value reads."""
+
+    def __post_init__(self) -> None:
+        """Snapshot the call arguments together with the common core context."""
+        super().__post_init__()
+        object.__setattr__(
+            self, "call_arguments", MappingProxyType(dict(self.call_arguments))
+        )
+
+
+@runtime_checkable
+class SimulationProgramExecutor(Protocol):
+    """Dispatch a declared program against one population's live arguments."""
+
+    def dispatch(
+        self,
+        *,
+        program: CoreProgram,
+        arguments: Mapping[str, object],
+        period: int,
+        n_subjects: int,
+    ) -> object:
+        """Select and invoke the executable for this argument signature."""
+        ...
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -71,6 +103,9 @@ class SimulationPrograms:
     route: MappingProxyType[int, CoreProgram]
     """Period to the regime-transition program that period dispatches; empty
     where the regime draws no successor, which is every terminal regime."""
+
+    executor: SimulationProgramExecutor | None = None
+    """Call-local lowering and dispatch owner, absent from model declarations."""
 
     def __post_init__(self) -> None:
         """Snapshot the caller-owned program mappings."""

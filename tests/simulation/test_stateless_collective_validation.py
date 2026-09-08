@@ -22,6 +22,7 @@ from lcm.ages import AgeGrid
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building.test_collective_regime_simulate import _solve_and_process
 from tests.regime_building.test_simulate_guards import _make_stateless_collective_regime
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 _REGIME_NAME = "stateless_couple"
 
@@ -62,7 +63,7 @@ def _simulate_stateless_collective_at_debug() -> PeriodRegimeSimulationData:
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,

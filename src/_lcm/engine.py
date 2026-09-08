@@ -20,7 +20,6 @@ from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
-    ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatRegimeParams,
@@ -947,9 +946,6 @@ class SimulationPhase:
     compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
     """Regime transition probability function for simulate, or `None`."""
 
-    argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
-    """Immutable mapping of period to argmax-and-max-Q functions."""
-
     programs: SimulationPrograms
     """The decision, transition, and route programs this regime declares.
 
@@ -982,7 +978,7 @@ class SimulationPhase:
     Evaluates the canonical `Q` and its feasibility at one action value per
     subject, rather than maximizing over the action grid. It shares the model
     DAG, transitions, constraints, aggregators, params, and next-period value
-    arrays with `argmax_and_max_Q_over_a`, so a value it reports for an off-grid
+    arrays with `programs.decision`, so a value it reports for an off-grid
     candidate action is directly comparable with the grid winner's value.
     """
 
@@ -993,7 +989,7 @@ class SimulationPhase:
     """Function names that were `AgeSpecializedFunction` in the user regime.
 
     The published `functions` hold these resolved at the regime's representative
-    age only — the per-period programs (`argmax_and_max_Q_over_a`, `next_state`)
+    age only — the per-period decision and transition programs
     carry the true per-age closures. Consumers computing period-specific outputs
     from `functions` (e.g. `additional_targets`) must reject targets that depend
     on these names."""

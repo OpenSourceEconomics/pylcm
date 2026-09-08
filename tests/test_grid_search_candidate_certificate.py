@@ -75,7 +75,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building import max_Q_over_a as max_Q_over_a_module
-from _lcm.simulation import compile as simulation_compile_module
+from _lcm.simulation import runtime as simulation_runtime_module
 from _lcm.simulation import simulate as simulation_module
 from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
@@ -542,6 +542,9 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations():
         _parse("src/_lcm/solution/logsumexp_action_reduction.py"), ast.Module
     )
     assert isinstance(_parse("src/_lcm/solution/period_replay.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/programs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/program_types.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/runtime.py"), ast.Module)
 
 
 def test_direct_flow_certificate_names_every_supported_route():
@@ -839,10 +842,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 362
+    assert len(names) == 386
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "c374edd768b75b142d86b275d6baad1e530763ccdd21dfc6b49830bccaedbc6d"
+        == "ef2fd95367327acc193d97d4f9ca8c4b6627af9a763419ec9a60b73d32da812d"
     )
 
 
@@ -1837,14 +1840,14 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
     model = _build_dedup_collision_model()
     params = _dedup_params(model)
     values = model.solve(params=params, log_level="debug")
-    original = simulation_compile_module._func_dedup_key
+    original = simulation_runtime_module._func_dedup_key
 
     def collapsed_key(*, func: Callable[..., Any]):
         if isinstance(func, functools.partial):
             return original(func=func)
         return 0
 
-    monkeypatch.setattr(simulation_compile_module, "_func_dedup_key", collapsed_key)
+    monkeypatch.setattr(simulation_runtime_module, "_func_dedup_key", collapsed_key)
     result = model.simulate(
         params=params,
         initial_conditions={

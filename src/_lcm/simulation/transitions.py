@@ -8,6 +8,7 @@ transition functions from user-defined regimes; this module executes them.
 
 from functools import partial
 from types import MappingProxyType
+from typing import cast
 
 import jax
 from dags.tree import qname_from_tree_path
@@ -16,6 +17,7 @@ from jax import vmap
 
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.simulation.random import generate_simulation_keys
+from _lcm.simulation.runtime import execute_simulation_program
 from _lcm.state_action_space import _validate_all_states_present
 from _lcm.typing import (
     ActionName,
@@ -123,8 +125,6 @@ def calculate_next_states(
         original_n_subjects=original_n_subjects,
     )
 
-    next_state_vmapped = regime.simulation.next_state[period]
-
     # Carried states are true values that the decision's state-action space
     # deliberately excludes. Feed them to the realized transition so it reads
     # each carried state as a leaf — the actual carried value — rather than
@@ -134,14 +134,27 @@ def calculate_next_states(
         for name in regime.simulation.carried_grids
     }
 
-    states_with_next_prefix = next_state_vmapped(
-        **state_action_space.states,
-        **simulate_only_states,
-        **optimal_actions,
-        **stochastic_variables_keys,
-        period=jnp.int32(period),
-        age=age,
-        **regime_params,
+    states_with_next_prefix = (
+        cast(
+            "dict[RegimeName, dict[str, FloatND | IntND]]",
+            execute_simulation_program(
+                programs=regime.simulation.programs,
+                family="transition",
+                period=period,
+                n_subjects=len(subjects_in_regime),
+                arguments={
+                    **state_action_space.states,
+                    **simulate_only_states,
+                    **optimal_actions,
+                    **stochastic_variables_keys,
+                    "period": jnp.int32(period),
+                    "age": age,
+                    **regime_params,
+                },
+            ),
+        )
+        if period in regime.simulation.programs.transition
+        else {}
     )
 
     # Transition functions are DAG-named `next_<state>` to distinguish them from
@@ -230,15 +243,22 @@ def calculate_next_regime_membership(
         name: states_per_regime[regime.name][name]
         for name in regime.simulation.carried_grids
     }
-    regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
-        regime.simulation.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
-            **state_action_space.states,
-            **simulate_only_states,
-            **optimal_actions,
-            period=jnp.int32(period),
-            age=age,
-            **regime_params,
-        )
+    regime_transition_probs = cast(
+        "MappingProxyType[RegimeName, FloatND]",
+        execute_simulation_program(
+            programs=regime.simulation.programs,
+            family="route",
+            period=period,
+            n_subjects=len(subjects_in_regime),
+            arguments={
+                **state_action_space.states,
+                **simulate_only_states,
+                **optimal_actions,
+                "period": jnp.int32(period),
+                "age": age,
+                **regime_params,
+            },
+        ),
     )
     # A per-target regime transition's probs dict covers only its declared
     # targets — anything else is structurally unreachable (zero probability).

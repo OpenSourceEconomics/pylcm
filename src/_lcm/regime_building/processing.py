@@ -4372,15 +4372,6 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
             gated_continuations=gated_continuations,
         ).by_period
 
-    argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
-        state_action_space=state_action_space,
-        Q_and_F_functions=Q_and_F_functions,
-        enable_jit=enable_jit,
-        has_taste_shocks=has_taste_shocks,
-        stakeholders=stakeholders,
-        pareto_weights=pareto_weights,
-    )
-
     per_subject_decisions = _build_per_subject_decisions_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
@@ -4673,7 +4664,6 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         reachability=simulation_reachability,
         transition_plans=core.transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
-        argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         # A source standing at `period` reads the edges folding at `period + 1`,
         # the same selection the period's Q_and_F was built from, so the channel
         # names exactly the regimes that period's readers interpolate.
@@ -4687,7 +4677,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
                         if period + 1 in schedule.by_period
                     ),
                 )
-                for period, func in argmax_and_max_Q_over_a.items()
+                for period, func in per_subject_decisions.items()
                 if EDGE_REF_V_ARG in get_union_of_args([func])
             }
         ),
@@ -7756,55 +7746,6 @@ def _build_Q_and_F_per_period(
     )
 
 
-def _build_argmax_and_max_Q_over_a_per_period(
-    *,
-    state_action_space: StateActionSpace,
-    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    enable_jit: bool,
-    has_taste_shocks: bool = False,
-    stakeholders: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
-) -> MappingProxyType[int, ArgmaxQOverAFunction]:
-    """Build argmax-and-max-Q-over-a closures for each period.
-
-    Periods sharing the same Q_and_F object reuse a single compiled function.
-    With taste shocks, the per-subject Gumbel key is vmapped alongside the
-    simulated states.
-
-    `stakeholders`/`pareto_weights`, when set, thread into
-    `get_argmax_and_max_Q_over_a`'s collective branch — the returned V carries
-    a trailing stakeholder axis, which `simulation_spacemap` below preserves
-    (it only maps over `state_names`, never the trailing axis).
-    """
-    spacemapped_names = tuple(state_action_space.states)
-    if has_taste_shocks:
-        spacemapped_names = (*spacemapped_names, "taste_shock_key")
-
-    built: dict[int, ArgmaxQOverAFunction] = {}
-    result: dict[int, ArgmaxQOverAFunction] = {}
-    for period, Q_and_F in Q_and_F_functions.items():
-        q_id = id(Q_and_F)
-        if q_id not in built:
-            func = get_argmax_and_max_Q_over_a(
-                Q_and_F=Q_and_F,
-                action_names=state_action_space.action_names,
-                state_names=state_action_space.state_names,
-                n_discrete_action_axes=len(state_action_space.discrete_actions),
-                has_taste_shocks=has_taste_shocks,
-                stakeholders=stakeholders,
-                pareto_weights=pareto_weights,
-            )
-            if enable_jit:
-                func = jax.jit(func)
-            built[q_id] = simulation_spacemap(
-                func=func,
-                action_names=(),
-                state_names=spacemapped_names,
-            )
-        result[period] = built[q_id]
-    return MappingProxyType(result)
-
-
 def _build_per_subject_decisions_per_period(
     *,
     state_action_space: StateActionSpace,
@@ -7815,9 +7756,8 @@ def _build_per_subject_decisions_per_period(
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
     """Build the canonical argmax reducer at one subject's state cell, per period.
 
-    The same reducer `_build_argmax_and_max_Q_over_a_per_period` maps over the
-    subject axis, left unmapped so the execution planner owns the width it runs
-    at. Periods sharing a `Q_and_F` object share one reducer.
+    The execution planner owns the subject width. Periods sharing a
+    `Q_and_F` object share one reducer.
     """
     built: dict[int, ArgmaxQOverAFunction] = {}
     result: dict[int, ArgmaxQOverAFunction] = {}

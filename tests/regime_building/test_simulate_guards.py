@@ -68,6 +68,7 @@ from tests.regime_building.test_collective_regime_simulate import (
     _solve_and_process,
     _solve_dissolution,
 )
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 _BETA = 0.95
 
@@ -490,7 +491,7 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
@@ -574,7 +575,7 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,
@@ -644,7 +645,7 @@ def test_stateful_collective_regime_simulate_shape_is_byte_identical():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,

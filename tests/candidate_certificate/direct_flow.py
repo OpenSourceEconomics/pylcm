@@ -29,18 +29,20 @@ The nine corridors are:
 * singleton solve -> ``Q_arr.max(where=F_arr, ...)``;
 * singleton streamed solve -> complete C-order blocks -> mergeable hard max ->
   optional unchanged fold quadrature -> compiled VALUE core;
-* singleton simulate -> ``argmax_and_max(Q_arr, where=F_arr, ...)``;
+* singleton simulate -> published dense argmax or streamed C-order hard max ->
+  subject tiles -> materialized, resolved and dispatched decision program;
 * collective solve -> ``collective_readout(..., feasibility=F_arr, ...)``;
 * collective streamed reference -> complete C-order stakeholder blocks -> shared
   household hard max -> compiled ``(VALUE, DISSOLUTION_FLAG)`` core;
-* collective simulate -> ``collective_argmax_and_readout(...,
-  feasibility=F_arr, ...)``;
+* collective simulate -> published dense ``collective_argmax_and_readout(...,
+  feasibility=F_arr, ...)`` -> subject tiles -> selected decision executable;
 * taste-shock dense solve fallback -> exact mask, continuous maximum, then full
   discrete logsum;
 * taste-shock streamed reference -> ordered discrete-prefix branch hard max -> one
   dynamically bound log-sum-exp -> compiled VALUE core;
-* taste-shock simulate -> exact mask, row-major continuous maximum, one
-  mean-zero Gumbel draw per discrete cell, and exact flat-index reconstruction.
+* taste-shock simulate -> published dense exact mask, row-major continuous maximum,
+  one mean-zero Gumbel draw per discrete cell, and exact flat-index reconstruction
+  -> subject tiles -> selected decision executable.
 
 The only allowed representation change is the collective split of the trailing
 stakeholder axis, exactly ``Q_arr[..., index]`` for every enumerated stakeholder.
@@ -55,6 +57,7 @@ logsum and taste-noise helpers are pinned too.
 # ruff: noqa: E501
 
 import ast
+import copy
 import hashlib
 import json
 import tempfile
@@ -92,6 +95,9 @@ STATE_ACTION_SPACE_SOURCE = "src/_lcm/state_action_space.py"
 SIMULATION_SOURCE = "src/_lcm/simulation/simulate.py"
 SIMULATION_TRANSITIONS_SOURCE = "src/_lcm/simulation/transitions.py"
 SIMULATION_COMPILE_SOURCE = "src/_lcm/simulation/compile.py"
+SIMULATION_PROGRAMS_SOURCE = "src/_lcm/simulation/programs.py"
+SIMULATION_PROGRAM_TYPES_SOURCE = "src/_lcm/simulation/program_types.py"
+SIMULATION_RUNTIME_SOURCE = "src/_lcm/simulation/runtime.py"
 MODEL_SOURCE = "src/lcm/model.py"
 SOLVER_API_SOURCE = "src/lcm/_solver_api/replay.py"
 BACKWARD_INDUCTION_SOURCE = "src/_lcm/solution/backward_induction.py"
@@ -148,6 +154,9 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     SIMULATION_SOURCE,
     SIMULATION_TRANSITIONS_SOURCE,
     SIMULATION_COMPILE_SOURCE,
+    SIMULATION_PROGRAMS_SOURCE,
+    SIMULATION_PROGRAM_TYPES_SOURCE,
+    SIMULATION_RUNTIME_SOURCE,
     MODEL_SOURCE,
     SOLVER_API_SOURCE,
     BACKWARD_INDUCTION_SOURCE,
@@ -184,11 +193,14 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # mutation; this independent allowlist cannot. It closes relocation into every
 # repository-local helper on which the nine certified routes depend.
 _SOURCE_SEALS = {
+    SIMULATION_PROGRAMS_SOURCE: "d8f6a3d3dcd4c22980c31d39e125f9da4a80e26894728fc14e1211bcb5c34860",
+    SIMULATION_PROGRAM_TYPES_SOURCE: "44b0bf3b343b6a0ad3659e78666c602bf4c64547ddc558c45337db1c2cafd19f",
+    SIMULATION_RUNTIME_SOURCE: "fa3e025cf6f8b18544abb482d2eee040a9034754762b2e3978b14478b5577fb9",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "e01b3de5cdad12804794a3ce83ff3a74424a9539caa70330e8792ca7878f1bc9",
-    PROCESSING_SOURCE: "7f1157b26bf857c1a22d385576a4e48f517f3ee6bd0ff92ece52ca99d180108a",
+    PROCESSING_SOURCE: "c36f7919a097c2a54bcd96ae1e8636ca56049d9b7df68d5b1f6f2a39b971c602",
     GRID_SEARCH_SOURCE: "f39ebf919b3d59ba7f2d2cd6c14607954d8a543a4d417a1accf93d6984774e26",
     CORE_PROGRAM_SOURCE: "078df8c1d82cd31e9cfa1bfb7acd263154676ecbd13117ff7c446bab5130fdba",
     OUTPUT_LAYOUT_SOURCE: "b5e9c667a15dcb6a1393f54f4ba7d8fcea85d3e78104f6e9e4cbd16c60fd1bb5",
@@ -204,12 +216,12 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "7322eb654188ad6c405c2fc53280f275e6b4e7c0003455b8e0cbf846b22232c8",
+    ENGINE_SOURCE: "be0fa547eb5cefb56a92371e7fe30751057b996d3cdfc18ec5c59210b3882c37",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "7b220dbf2ab0315d881dca484e1f9e7e42d38eebcc5cfa2e3c5d8a2c6f46c931",
-    SIMULATION_TRANSITIONS_SOURCE: "a4a31f1cbb27668cc18610512e77947cbde38c9973e9a2b9c4bef2bf6e2edd98",
-    SIMULATION_COMPILE_SOURCE: "cdf968afb1eb12833e91f7b9409ac293186a0129b1c206eb6fcc28d9054c7b49",
-    MODEL_SOURCE: "734f2483262738912a76625f5293c2e782d64bbc4d2dd3b59d2f508bc1a3f5b3",
+    SIMULATION_SOURCE: "3f71e13ab654a5bc3b0d2847291581585e4b214b9639a004e87624b9f42cba0b",
+    SIMULATION_TRANSITIONS_SOURCE: "4d16328d966f6ee848e58f080b33efe272d2fef86c63058f138913f8c62ab164",
+    SIMULATION_COMPILE_SOURCE: "a44e829da05b631f80f8780318b3263059301ec26ef54f5d42a77b5de32b9460",
+    MODEL_SOURCE: "2eb637ca0ec7a0d34a3fb5c1ab2b78a1b9e1e3a44e24e31ee48f53b47c716835",
     SOLVER_API_SOURCE: "99ab6ccb9e42bc36cc339a98d0cc054570dacb938365e383bdebafefe51611af",
     BACKWARD_INDUCTION_SOURCE: "48bb1a85e0a92365e2a35bfa54a57383b201964090b59eeab8bdcce7cac50ac4",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
@@ -237,12 +249,12 @@ _SOURCE_SEALS = {
     DTYPES_SOURCE: "0df3aa83d3d7d2f55438d91b9d4af2f25a17ea0ce836e923ab06a7458c59e73a",
     NAMESPACE_SOURCE: "254509e538c6a2264a71e04cdd5abdb60ad92f04899a37f710004222ae855bea",
     PANDAS_UTILS_SOURCE: "a0e3f5efb79cf0b252690ee1177bb0c6a3d52882dea15cc70854e71da4ea57a8",
-    MODEL_PROCESSING_SOURCE: "caec615d9c6084db649eabdf9f90e408e210d0a01220d9c4df2e64596cd239e7",
+    MODEL_PROCESSING_SOURCE: "7bf036615ed4014bb2a7e9c90348dd0932d0c377a420ede40068b0af53071fc5",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 362
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 386
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "c374edd768b75b142d86b275d6baad1e530763ccdd21dfc6b49830bccaedbc6d"
+    "ef2fd95367327acc193d97d4f9ca8c4b6627af9a763419ec9a60b73d32da812d"
 )
 
 
@@ -2708,95 +2720,51 @@ COLLECTIVE = "collective"
 
 
 def _processing_caller_errors(tree: ast.Module) -> list[str]:
-    """Pin simulation metadata, spacemapping, and live phase publication."""
-    errors: list[str] = []
+    """Pin canonical dense reducers and live publication of the program bundle."""
+    errors = _exact_callable_errors(
+        tree=tree,
+        label="simulate caller",
+        contracts={
+            "_build_per_subject_decisions_per_period": "762d57a4dca8e9ce3cafc9725c81032b1a87dff7a2297593395cb5040fab1e2d",
+            "_argmax_reducer": "d703712f2beec0f93e9cacbb67754faffe20bf4628e71979dba4dd8f4dd6842c",
+        },
+    )
     try:
-        builder = _definition(
-            tree=tree, name="_build_argmax_and_max_Q_over_a_per_period"
-        )
         live = _definition(tree=tree, name="_build_simulation_phase")
     except ValueError as error:
-        return [f"simulate caller: {error}"]
-    args = builder.args
-    if not (
-        not args.posonlyargs
-        and not args.args
-        and args.vararg is None
-        and tuple(item.arg for item in args.kwonlyargs)
-        == (
-            "state_action_space",
-            "Q_and_F_functions",
-            "enable_jit",
-            "has_taste_shocks",
-            "stakeholders",
-            "pareto_weights",
-        )
-        and tuple(
-            ast.unparse(item) if item is not None else None for item in args.kw_defaults
-        )
-        == (None, None, None, "False", "None", "None")
-        and args.kwarg is None
-        and not args.defaults
-        and not builder.decorator_list
-    ):
-        errors.append("simulate caller: period-builder signature changed")
-    expected_builder = r"""spacemapped_names = tuple(state_action_space.states)
-if has_taste_shocks:
-    spacemapped_names = (*spacemapped_names, "taste_shock_key")
-built: dict[int, ArgmaxQOverAFunction] = {}
-result: dict[int, ArgmaxQOverAFunction] = {}
-for period, Q_and_F in Q_and_F_functions.items():
-    q_id = id(Q_and_F)
-    if q_id not in built:
-        func = get_argmax_and_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            action_names=state_action_space.action_names,
-            state_names=state_action_space.state_names,
-            n_discrete_action_axes=len(state_action_space.discrete_actions),
-            has_taste_shocks=has_taste_shocks,
-            stakeholders=stakeholders,
-            pareto_weights=pareto_weights,
-        )
-        if enable_jit:
-            func = jax.jit(func)
-        built[q_id] = simulation_spacemap(
-            func=func,
-            action_names=(),
-            state_names=spacemapped_names,
-        )
-    result[period] = built[q_id]
-return MappingProxyType(result)
-"""
-    if not _body_matches(node=builder, expected_source=expected_builder):
-        errors.append(
-            "simulate caller: action metadata, reducer wiring, or spacemap changed"
-        )
-
+        return [*errors, f"simulate caller: {error}"]
     live_body = _body_without_docstring(live)
-    live_assignments = [
-        statement
-        for statement in live_body
-        if isinstance(statement, ast.Assign)
-        and any(
-            _target_names(target) == ("argmax_and_max_Q_over_a",)
-            for target in statement.targets
-        )
-    ]
-    expected_live_assignment = r"""argmax_and_max_Q_over_a = (
-    _build_argmax_and_max_Q_over_a_per_period(
-        state_action_space=state_action_space,
-        Q_and_F_functions=Q_and_F_functions,
-        enable_jit=enable_jit,
-        has_taste_shocks=has_taste_shocks,
-        stakeholders=stakeholders,
-        pareto_weights=pareto_weights,
-    )
-)
-"""
-    if len(live_assignments) != 1 or not _statements_match(
-        observed=live_assignments, expected_source=expected_live_assignment
-    ):
-        errors.append("simulate caller: live phase does not call the certified builder")
+    assignments = {
+        "per_subject_decisions": """per_subject_decisions = _build_per_subject_decisions_per_period(
+    state_action_space=state_action_space,
+    Q_and_F_functions=Q_and_F_functions,
+    has_taste_shocks=has_taste_shocks,
+    stakeholders=stakeholders,
+    pareto_weights=pareto_weights,
+)""",
+        "programs": """programs = build_simulation_programs(
+    context=solver_context,
+    Q_and_F_functions=Q_and_F_functions,
+    per_subject_decisions=per_subject_decisions,
+    per_subject_transitions=next_state_build.per_subject_by_period,
+    per_subject_route=per_subject_route,
+    simulation_state_names=simulation_variables.state_names,
+    active_periods=tuple(regimes_to_active_periods[regime_name]),
+    has_gated_edges=bool(user_regime.gated_edges),
+)""",
+    }
+    bindings = _scope_binding_counts(live_body)
+    for name, expected in assignments.items():
+        observed = [
+            statement
+            for statement in live_body
+            if isinstance(statement, ast.Assign)
+            and any(_target_names(target) == (name,) for target in statement.targets)
+        ]
+        if bindings.get(name) != 1 or not _statements_match(
+            observed=observed, expected_source=expected
+        ):
+            errors.append(f"simulate caller: live {name} transport changed")
     returns = [node for node in ast.walk(live) if isinstance(node, ast.Return)]
     if len(returns) != 1 or live_body[-1] is not returns[0]:
         errors.append("simulate caller: live phase gained a bypass return")
@@ -2804,22 +2772,20 @@ return MappingProxyType(result)
         isinstance(returns[0].value, ast.Call)
         and _call_name(returns[0].value) == "SimulationPhase"
         and _name(
-            node=_keyword(call=returns[0].value, name="argmax_and_max_Q_over_a"),
-            expected="argmax_and_max_Q_over_a",
+            node=_keyword(call=returns[0].value, name="programs"), expected="programs"
         )
     ):
-        errors.append("simulate caller: certified reducer mapping is not published")
-    live_bindings = _scope_binding_counts(live_body)
-    expected_live_bindings = {
-        "_build_argmax_and_max_Q_over_a_per_period": 0,
-        "argmax_and_max_Q_over_a": 1,
-        "has_taste_shocks": 0,
-    }
+        errors.append("simulate caller: certified program bundle is not published")
     if any(
-        live_bindings.get(name, 0) != count
-        for name, count in expected_live_bindings.items()
+        bindings.get(name, 0)
+        for name in (
+            "has_taste_shocks",
+            "_build_per_subject_decisions_per_period",
+            "build_simulation_programs",
+            "SimulationPhase",
+        )
     ):
-        errors.append("simulate caller: live taste/reducer bindings changed")
+        errors.append("simulate caller: live taste/program bindings changed")
     errors.extend(
         _module_contract_errors(
             tree=tree,
@@ -2827,28 +2793,197 @@ return MappingProxyType(result)
             relevant_import_names={
                 "MappingProxyType",
                 "get_argmax_and_max_Q_over_a",
-                "jax",
-                "simulation_spacemap",
+                "build_simulation_programs",
+                "SimulationPhase",
             },
             expected_imports=[
                 "from types import MappingProxyType",
-                "import jax",
+                "from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime, SimulationPhase, SolutionPhase, StateActionSpace, Variables, _fail_if_template_is_misplaced, placed_devices_for_ids",
                 "from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a",
-                "from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d",
+                "from _lcm.simulation.programs import build_simulation_programs",
             ],
             expected_binding_counts={
                 "MappingProxyType": 1,
-                "_build_argmax_and_max_Q_over_a_per_period": 1,
-                "_build_simulation_phase": 1,
                 "get_argmax_and_max_Q_over_a": 1,
+                "build_simulation_programs": 1,
+                "SimulationPhase": 1,
+                "_build_per_subject_decisions_per_period": 1,
+                "_argmax_reducer": 1,
                 "id": 0,
-                "jax": 1,
                 "len": 0,
-                "simulation_spacemap": 1,
-                "tuple": 0,
             },
         )
     )
+    return errors
+
+
+def _transport_surface_statement(statement: ast.stmt) -> ast.stmt:
+    """Keep bindings and class schemas while callable bodies are checked separately."""
+    result = copy.copy(statement)
+    if isinstance(result, ast.FunctionDef | ast.AsyncFunctionDef):
+        result.body = [ast.Pass()]
+    elif isinstance(result, ast.ClassDef):
+        result.body = [
+            _transport_surface_statement(item)
+            for item in result.body
+            if not (
+                isinstance(item, ast.Expr)
+                and isinstance(item.value, ast.Constant)
+                and isinstance(item.value.value, str)
+            )
+        ]
+    return result
+
+
+def _transport_module_surface(tree: ast.Module) -> str:
+    """Pin imports, constants, decorators, schemas and every callable's binding."""
+    return _statements_ast_sha256(
+        [
+            _transport_surface_statement(item)
+            for item in tree.body
+            if not (
+                isinstance(item, ast.Expr)
+                and isinstance(item.value, ast.Constant)
+                and isinstance(item.value.value, str)
+            )
+        ]
+    )
+
+
+def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Pin the reviewed declaration → materialization → dispatch corridor.
+
+    The declaration binds the same Q/F function into either the canonical dense
+    argmax or the sealed C-order hard-max fold. Subject tiling maps that body
+    without altering action support. Complete per-call arguments materialize
+    exactly once; the planner compiles the resolved function, and dispatch calls
+    its selected executable with those same arguments. AOT prewarming prepares
+    the same cache with transient arguments and a bounded compilation pool.
+
+    Callable ASTs pin these executable bodies independently of refreshable byte
+    seals. Separate module surfaces forbid import rebinding, altered constants,
+    descriptors or replacement classes from bypassing those body checks.
+    """
+    contracts = {
+        SIMULATION_PROGRAMS_SOURCE: (
+            "6dec9ddaa8683aa3add536507a22bc2a42d4dc2758f0486ed0d5cb587c352a56",
+            {
+                "build_simulation_programs": "5f659984e66927620c07173a9a093352dc95e48d3fb852f843cccdce3eda9b5c",
+                "_fail_if_the_streamed_reduction_is_wrong": "4393d8f3dc1dded01122dc6bf97e4f51c88e52f3804f79b08d600bc75496dd0a",
+                "_route_value_reads": "dd2410c6b957caad38d2f7382967aa08375e4001ca031b6c445ac127b186363d",
+                "_gated_targets": "ee836488f2c77815d8ab7ea3caa547c94bb2f96d7796c297f8d45b9cc723a986",
+                "_decision_subject_arg_names": "3bf80bc49a6326e6be6369de80863482db1615e713b95ce476966e9562d6fde5",
+                "_decision_value_reads": "7480309f78099994ba417dab87ff44c8ccc545f662855a44bc142bd3509cc1a9",
+                "_decision_body": "42f84d94a9520d5462d81c7f4e1ae322f832b14a98945346f57469c1799d978e",
+                "_StreamedArgmaxQOverA.__call__": "a32599a767896a0389a70cbac3e193c656abaebae1b90c237deb9bd7cc80c721",
+                "_StreamedArgmaxQOverA._fold": "0396d37b300cace88652b5ad0c5040a82f3b45df2ef8892cea61e37d3e2ce793",
+                "_SubjectTiled.__call__": "18e7c8d24d06f4d10915e6a770a61485625ceda42d158d9d24258c6ff6593ef5",
+                "_evaluate_subject_tile": "9094e457bed0e17f6bfc4d6fc00ed22ccaa39bfa5a74a5b6371da7f6e34d72c2",
+                "_ArgumentsBoundAtDispatch.__call__": "fd35ff6f3ed6f5a272f4aa291869b2972b07533cb051bdf86e00ca82c6edd34d",
+            },
+        ),
+        SIMULATION_PROGRAM_TYPES_SOURCE: (
+            "bf2290be45903028142ff3cf2fe6239595eba5d4b7208d9e06700a4f984d1e32",
+            {
+                "SimulationBuildContext.__post_init__": "00641d48094283340c57d2137f90f4568bd7dfa8ff6372e0348ccf6abad54a31",
+                "SimulationProgramExecutor.dispatch": "7dc2a7b53175a8eb36dba1ccaf927391aaaffc12a3a913d695f16346ff38883b",
+                "SimulationPrograms.__post_init__": "8a101d3c4179b03c7c0a0759a20e57c9c96535fa5e062cfac4736ddb97e443f3",
+                "SimulationPrograms.declared_axis_names": "4de2577510af20c9e9c469173eee78444dbec2fb5d9e6463c0d475865e0a3ac5",
+                "transition_output_roles": "ed772c2beff03f47113b71f5d3f0405469b6ef4bf67d4c3ad4df1a3f064e3fab",
+                "route_output_roles": "81ccd2cdf1a29d1dcb3021d775c4abc8cb70364819a027303968afc69af19a2e",
+                "subject_axis": "2d1dda5c95debf5b8c7d0a72c8fa71db6c42b2fb22763cc943ec494dfd3d942f",
+            },
+        ),
+        SIMULATION_RUNTIME_SOURCE: (
+            "b75b5bab02938162f4ba4c79572df4256d12a4e9f5a8d7e847a443dbd0444b7d",
+            {
+                "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
+                "SimulationRuntime.dispatch": "82ba5e42ab42487137a25c687befcbd9cc88266e930ed56da3e3154428505406",
+                "SimulationRuntime.prepare": "da2c9573e45727d04cb36f9f485e414dabab41f450f1069124c14a68ebaf7081",
+                "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
+                "SimulationRuntime._prepare_materialized": "a44e119effc619dff7c19248ded485c29fcaa250b347362720d48067eaa16f9e",
+                "execute_simulation_program": "6248e86d6a967be348ab00114e7d036d6f40e233c80a71ad07dd4dab67d4667e",
+                "_SimulationCandidateCompiler.__call__": "553c04e4bf00e97e87ff4f89c1920d6541adc956cff30e255cfcc6dc8d4433f7",
+                "_with_subject_extent": "c48502d31e8f9fb29221122b0de6d10f38f3d6f740854a82512c2b964079e463",
+                "_build_context": "d2de03c66739cd53f5c9e1f95f9fd0ab4c57334ca853e7a5e8f0422cf733852d",
+            },
+        ),
+        SIMULATION_COMPILE_SOURCE: (
+            "6f8b75e212bf057647b235a9e51a07d966d62e57bdcff0e728c5472aadc02109",
+            {
+                "bind_simulation_runtime": "5400cfe2e39cb3c51f861552433f7920b0d1e65d0542d8a312000bb525db8990",
+                "lower_simulation_programs": "e059dc26c7aa66e039d39d8008cfd0f385b396322bd3a85afe368fcba92cd27c",
+                "_prepare_and_log": "6380580f956921448a5106ee53accfa712c9bf62bded1b224c18b7561bf63f67",
+                "_compile_and_install_gate": "a0551505388660688c0465fdd862906f608840bc0189c31243f5cb83a8c90b5f",
+                "_drain_compilations": "0d226343d92bb2cc8f0e9d661135cf92e332fe7499dc9c4e910e75fb723fac64",
+                "_compile_and_log": "6d216963f57fe9fcc5182a4ca62df0779376d14613ab2755adca60860d14fbb3",
+                "_collect_edge_gate_evaluators": "d91165e6c050ef045ef6a42c0f4d611de9bbc84fa750fad515e1bb65b33dc608",
+                "_edge_fold_periods": "7ac4cf626ea06a1a26c7744cec2647ec202afe46a39ce42bef6bf594013da64c",
+                "_build_gate_evaluator_args": "cb02ee3a863169e02d119826d7ad4b721a2a00e210155ffa24a1bcfc5079be83",
+                "_subject_state_carrier_template": "36bef4048f2f1a4cbac3f120b14380b348751bd4e862a6bbfa9aadbfba2c03d4",
+                "_with_edge_substitution": "0085398d5da99b120b93658a96b488e0185c2453e8c98614d78dc09428487119",
+                "_build_argmax_args": "812d30ffdd0073ea9353fd1b25db27027a1a54e94c001c114ddb043d0557d7fb",
+                "_build_next_state_args": "917d68840e18c2750b508761601bbae2ef4c049e6323d63ff56097c475b71e80",
+                "_build_crtp_args": "59fc3bc51d17a7d5ac6ded8492ee1dad4fc0eb76eeb757809618177c28fabb56",
+                "_simulate_only_subject_states": "5bf91104667ed6f854fdf9fbebfab497ff37ddce57caf644344e042ec8785edb",
+                "_subject_shape_arrays": "e1a0a530003382d3defe2810eb3c39e1684f580ab6a3878d492825efd25307b3",
+            },
+        ),
+    }
+    surface, callables = contracts[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="simulation program corridor", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            "simulation program corridor: module bindings or class surface changed"
+        )
+    return errors
+
+
+def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Pin phase publication and consumption of the selected decision's exact pair.
+
+    The live caller passes complete action grids, states, values and addressed
+    random keys to the published period program. It decodes that program's flat
+    index through the same completed action grids. Model AOT publication and lazy
+    dispatch share the same executor; phase schemas cannot substitute a property.
+    """
+    contracts = {
+        SIMULATION_SOURCE: (
+            "6e6c8e2236b6f0e1ae76947f8dd7d49deaaef68ce46c14bde559ae95c80d4a33",
+            {
+                "_simulate_regime_in_period": "aae9fef0e372cc6c67aab226ea47fc5fae0ab2fc8df7ef1fa1ce4482bb0c4362"
+            },
+        ),
+        SIMULATION_TRANSITIONS_SOURCE: (
+            "325f288c0f6d952c6a2bbf9ed2bf7f376afe87f7d5da819562c04d55bdafa51f",
+            {
+                "calculate_next_states": "ff5a4c21a2250b4663064905cd3eea2e8d813203cb66509ee8db2be32b31717a",
+                "calculate_next_regime_membership": "8c11a6cb245ebd1c6d0d135cea6052b043a07f6de7e0cec1a7de623d1728448e",
+            },
+        ),
+        MODEL_SOURCE: (
+            "c94174134d1afca4dbefc4a94ebfc540d7cefb3ec60482dd3ad2e0ab0db2cc46",
+            {
+                "Model._resolve_simulate_regimes": "5a11f26e52496d8210ae0ab2b9846d5ca234569764f82d47e871f26e33751ee2",
+                "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
+                "Model._ensure_simulate_compiled": "2e59224333ce9bd7453608d05359e933217971dbf8867e3f9851b9f503a2df86",
+            },
+        ),
+        ENGINE_SOURCE: (
+            "e01ad3548a990bddebd784b984b4243a4339ddb1cd6939b6234f477b0cda8db5",
+            {},
+        ),
+    }
+    surface, callables = contracts[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="simulation dispatch corridor", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            "simulation dispatch corridor: publication or module surface changed"
+        )
     return errors
 
 
@@ -3628,6 +3763,18 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         errors.extend(new_errors)
         if new_errors:
             offending.add(PROCESSING_SOURCE)
+    for relative in (
+        SIMULATION_PROGRAMS_SOURCE,
+        SIMULATION_PROGRAM_TYPES_SOURCE,
+        SIMULATION_RUNTIME_SOURCE,
+        SIMULATION_COMPILE_SOURCE,
+    ):
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _simulation_program_corridor_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     backward_tree = parsed.get(BACKWARD_INDUCTION_SOURCE)
     if backward_tree is not None:
         new_errors = _backward_output_layout_errors(backward_tree)
@@ -3664,6 +3811,20 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         errors.extend(new_errors)
         if new_errors:
             offending.add(SIMULATION_SOURCE)
+    for relative in (
+        SIMULATION_SOURCE,
+        SIMULATION_TRANSITIONS_SOURCE,
+        MODEL_SOURCE,
+        ENGINE_SOURCE,
+    ):
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _simulation_dispatch_corridor_errors(
+                tree=tree, source=relative
+            )
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     return {
         "ok": not errors,
         "result": "pass" if not errors else "fail",
@@ -3676,7 +3837,11 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
                 "hard max -> optional unchanged fold quadrature -> VALUE-only "
                 "compiled core"
             ),
-            "singleton_simulate": "Q_and_F -> argmax_and_max(a=Q_arr, where=F_arr)",
+            "singleton_simulate": (
+                "published decision program: Q_and_F -> canonical dense argmax or "
+                "C-order action blocks -> exact hard max -> subject tiles -> "
+                "materialize -> resolve -> planned executable -> dispatched flat index/value"
+            ),
             "collective_solve": (
                 "Q_and_F -> trailing stakeholder split -> "
                 "collective_readout(feasibility=F_arr)"
@@ -3688,8 +3853,9 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
                 "(VALUE, DISSOLUTION_FLAG) core"
             ),
             "collective_simulate": (
-                "Q_and_F -> trailing stakeholder split -> "
-                "collective_argmax_and_readout(feasibility=F_arr)"
+                "published dense decision program: Q_and_F -> trailing stakeholder split -> "
+                "collective_argmax_and_readout(feasibility=F_arr) -> subject tiles -> "
+                "materialize -> resolve -> planned executable -> dispatched flat index/value"
             ),
             "taste_shock_solve": (
                 "Q_and_F -> exact feasibility mask -> continuous max -> "
@@ -3701,8 +3867,9 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
                 "bound log-sum-exp -> VALUE-only compiled core"
             ),
             "taste_shock_simulate": (
-                "Q_and_F -> exact feasibility mask -> row-major continuous max -> "
-                "per-cell Gumbel-max -> exact flat index/value"
+                "published dense decision program: Q_and_F -> exact feasibility mask -> "
+                "row-major continuous max -> per-cell Gumbel-max -> subject tiles -> "
+                "materialize -> resolve -> planned executable -> dispatched flat index/value"
             ),
         },
         "certified_corridor_sources": list(_CERTIFIED_CORRIDOR_SOURCES),
@@ -4270,6 +4437,15 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         encoding="utf-8"
     )
     simulation_compile_source = (root / SIMULATION_COMPILE_SOURCE).read_text(
+        encoding="utf-8"
+    )
+    simulation_programs_source = (root / SIMULATION_PROGRAMS_SOURCE).read_text(
+        encoding="utf-8"
+    )
+    simulation_program_types_source = (
+        root / SIMULATION_PROGRAM_TYPES_SOURCE
+    ).read_text(encoding="utf-8")
+    simulation_runtime_source = (root / SIMULATION_RUNTIME_SOURCE).read_text(
         encoding="utf-8"
     )
     model_source = (root / MODEL_SOURCE).read_text(encoding="utf-8")
@@ -5781,40 +5957,261 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         }
     )
 
+    specs.update(
+        {
+            "simulation_program:dense_reducer_replaced": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="return _SubjectTiled(func=dense_reducer, subject_arg_names=subject_arg_names)",
+                    new="return _SubjectTiled(func=candidate_filter(dense_reducer), subject_arg_names=subject_arg_names)",
+                    label="dense_reducer_replaced",
+                ),
+            },
+            "simulation_program:q_and_f_replaced": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="                Q_and_F=Q_and_F_functions[period],",
+                    new="                Q_and_F=candidate_filter(Q_and_F_functions[period]),",
+                    label="q_and_f_replaced",
+                ),
+            },
+            "simulation_program:action_coordinates_reversed": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="                            coordinate_names=action_names,",
+                    new="                            coordinate_names=tuple(reversed(action_names)),",
+                    label="action_coordinates_reversed",
+                ),
+            },
+            "simulation_program:action_order_changed": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old='                            canonical_order="c",',
+                    new='                            canonical_order="f",',
+                    label="action_order_changed",
+                ),
+            },
+            "simulation_program:hard_max_reduction_replaced": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="                            reduction=HARD_MAX_REDUCTION,",
+                    new="                            reduction=candidate_filter(HARD_MAX_REDUCTION),",
+                    label="hard_max_reduction_replaced",
+                ),
+            },
+            "simulation_program:streamed_width_ignored": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="                block_width=block_width,",
+                    new="                block_width=1,",
+                    label="streamed_width_ignored",
+                ),
+            },
+            "simulation_program:streamed_q_and_f_filtered": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="                Q_and_F=self.Q_and_F,",
+                    new="                Q_and_F=candidate_filter(self.Q_and_F),",
+                    label="streamed_q_and_f_filtered",
+                ),
+            },
+            "simulation_program:streamed_index_shifted": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="jnp.maximum(result.best_global_action_id, 0).astype(jnp.int32)",
+                    new="jnp.maximum(result.best_global_action_id + 1, 0).astype(jnp.int32)",
+                    label="streamed_index_shifted",
+                ),
+            },
+            "simulation_program:streamed_value_filtered": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="            result.best_value,",
+                    new="            candidate_filter(result.best_value),",
+                    label="streamed_value_filtered",
+                ),
+            },
+            "simulation_program:subject_tiles_reversed": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="tiles = {name: kwargs.pop(name) for name in self.subject_arg_names}",
+                    new="tiles = {name: kwargs.pop(name)[::-1] for name in self.subject_arg_names}",
+                    label="subject_tiles_reversed",
+                ),
+            },
+            "simulation_program:argument_mapping_filtered": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="            return context.call_arguments",
+                    new="            return candidate_filter(context.call_arguments)",
+                    label="argument_mapping_filtered",
+                ),
+            },
+            "simulation_program:decision_mapping_dropped": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="        decision=MappingProxyType(decision),",
+                    new="        decision=MappingProxyType({}),",
+                    label="decision_mapping_dropped",
+                ),
+            },
+            "simulation_program:streamed_guard_bypassed": {
+                "path": SIMULATION_PROGRAMS_SOURCE,
+                "source": replace_once(
+                    source=simulation_programs_source,
+                    old="    if not (has_taste_shocks or stakeholders is not None):",
+                    new="    if True:",
+                    label="streamed_guard_bypassed",
+                ),
+            },
+            "simulation_program:program_snapshot_filtered": {
+                "path": SIMULATION_PROGRAM_TYPES_SOURCE,
+                "source": replace_once(
+                    source=simulation_program_types_source,
+                    old="self, field, MappingProxyType(dict(getattr(self, field)))",
+                    new="self, field, MappingProxyType(candidate_filter(dict(getattr(self, field))))",
+                    label="program_snapshot_filtered",
+                ),
+            },
+            "simulation_program:resolved_body_bypassed": {
+                "path": SIMULATION_RUNTIME_SOURCE,
+                "source": replace_once(
+                    source=simulation_runtime_source,
+                    old="            function = resolved.function",
+                    new="            function = self.program.function",
+                    label="resolved_body_bypassed",
+                ),
+            },
+            "simulation_program:lowered_body_replaced": {
+                "path": SIMULATION_RUNTIME_SOURCE,
+                "source": replace_once(
+                    source=simulation_runtime_source,
+                    old="            executable=lowered.compile(), static_kwargs=MappingProxyType({})",
+                    new="            executable=candidate_filter(lowered).compile(), static_kwargs=MappingProxyType({})",
+                    label="lowered_body_replaced",
+                ),
+            },
+            "simulation_program:dispatch_family_replaced": {
+                "path": SIMULATION_RUNTIME_SOURCE,
+                "source": replace_once(
+                    source=simulation_runtime_source,
+                    old="        program=families[family][period],",
+                    new='        program=families["transition"][period],',
+                    label="dispatch_family_replaced",
+                ),
+            },
+            "simulation_program:dispatch_arguments_filtered": {
+                "path": SIMULATION_RUNTIME_SOURCE,
+                "source": replace_once(
+                    source=simulation_runtime_source,
+                    old="        return compiled(**materialized.arguments)",
+                    new="        return compiled(**candidate_filter(materialized.arguments))",
+                    label="dispatch_arguments_filtered",
+                ),
+            },
+            "simulation_program:body_cache_identity_dropped": {
+                "path": SIMULATION_RUNTIME_SOURCE,
+                "source": replace_once(
+                    source=simulation_runtime_source,
+                    old="            program_identity=_func_dedup_key(func=program.function),",
+                    new="            program_identity=0,",
+                    label="body_cache_identity_dropped",
+                ),
+            },
+            "simulation_program:compiler_options_dropped": {
+                "path": SIMULATION_RUNTIME_SOURCE,
+                "source": replace_once(
+                    source=simulation_runtime_source,
+                    old="            compiler_options=program.compiler_options,",
+                    new="            compiler_options=(),",
+                    label="compiler_options_dropped",
+                ),
+            },
+            "simulation_program:duplicate_future_replaced": {
+                "path": SIMULATION_RUNTIME_SOURCE,
+                "source": replace_once(
+                    source=simulation_runtime_source,
+                    old="            return future.result()",
+                    new="            return candidate_filter(future.result())",
+                    label="duplicate_future_replaced",
+                ),
+            },
+            "simulation_program:resolved_widths_ignored": {
+                "path": SIMULATION_RUNTIME_SOURCE,
+                "source": replace_once(
+                    source=simulation_runtime_source,
+                    old="                tile_widths=widths,",
+                    new="                tile_widths={name: 1 for name in widths},",
+                    label="resolved_widths_ignored",
+                ),
+            },
+            "simulation_program:prewarm_program_replaced": {
+                "path": SIMULATION_COMPILE_SOURCE,
+                "source": replace_once(
+                    source=simulation_compile_source,
+                    old="        program=program, arguments=arguments, period=period, n_subjects=n_subjects",
+                    new="        program=dataclasses.replace(program, function=candidate_filter(program.function)), arguments=arguments, period=period, n_subjects=n_subjects",
+                    label="prewarm_program_replaced",
+                ),
+            },
+            "simulation_program:prewarm_failure_hidden": {
+                "path": SIMULATION_COMPILE_SOURCE,
+                "source": replace_once(
+                    source=simulation_compile_source,
+                    old="        raise first_error",
+                    new="        return None",
+                    label="prewarm_failure_hidden",
+                ),
+            },
+        }
+    )
+
     processing_cases = {
         "caller_simulate:action_names_slice": replace_once(
             source=processing_source,
-            old="                action_names=state_action_space.action_names,",
-            new="                action_names=state_action_space.action_names[:-1],",
+            old="        action_names=state_action_space.action_names,",
+            new="        action_names=state_action_space.action_names[:-1],",
             label="simulate caller action names",
         ),
         "caller_simulate:wrong_discrete_axis_count": replace_once(
             source=processing_source,
-            old="                n_discrete_action_axes=len(state_action_space.discrete_actions),",
-            new="                n_discrete_action_axes=max(\n"
+            old="        n_discrete_action_axes=len(state_action_space.discrete_actions),",
+            new="        n_discrete_action_axes=max(\n"
             "                    0, len(state_action_space.discrete_actions) - 1\n"
             "                ),",
             label="simulate caller axis count",
         ),
         "caller_simulate:taste_flag_disabled": replace_once(
             source=processing_source,
-            old="                n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
-            "                has_taste_shocks=has_taste_shocks,",
-            new="                n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
-            "                has_taste_shocks=False,",
+            old="        n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
+            "        has_taste_shocks=has_taste_shocks,",
+            new="        n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
+            "        has_taste_shocks=False,",
             label="simulate caller taste flag",
         ),
         "caller_simulate:live_taste_flag_rebinding": replace_once(
             source=processing_source,
-            old="    argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(",
+            old="    per_subject_decisions = _build_per_subject_decisions_per_period(",
             new="    has_taste_shocks = False\n\n"
-            "    argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(",
+            "    per_subject_decisions = _build_per_subject_decisions_per_period(",
             label="simulate live taste rebinding",
         ),
         "caller_simulate:published_empty_mapping": replace_once(
             source=processing_source,
-            old="        argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,",
-            new="        argmax_and_max_Q_over_a=MappingProxyType({}),",
+            old="        programs=programs,",
+            new="        programs=dataclass_replace(programs, decision=MappingProxyType({})),",
             label="simulate caller publication",
         ),
         "caller_simulate:attribute_simulation_phase": replace_once(
@@ -6213,16 +6610,13 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
         },
         "aot_compile:argmax_index_shift": {
-            "path": SIMULATION_COMPILE_SOURCE,
+            "path": SIMULATION_RUNTIME_SOURCE,
             "source": replace_once(
-                source=simulation_compile_source,
-                old="            argmax_func = sf.argmax_and_max_Q_over_a[period]",
-                new="            argmax_func = sf.argmax_and_max_Q_over_a[period]\n"
-                "            original_argmax_func = argmax_func\n"
-                "            def argmax_func(**kwargs):\n"
-                "                index, value = original_argmax_func(**kwargs)\n"
-                "                return index + 1, value",
-                label="AOT argmax index shift",
+                source=simulation_runtime_source,
+                old="        return self.executable(**arguments, **self.static_kwargs)",
+                new="        index, value = self.executable(**arguments, **self.static_kwargs)\n"
+                "        return index + 1, value",
+                label="selected simulation executable index shift",
             ),
         },
         "aot_model:compiled_regime_filter": {
@@ -6785,6 +7179,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         SIMULATION_SOURCE: simulation_source,
         SIMULATION_TRANSITIONS_SOURCE: simulation_transitions_source,
         SIMULATION_COMPILE_SOURCE: simulation_compile_source,
+        SIMULATION_PROGRAMS_SOURCE: simulation_programs_source,
+        SIMULATION_PROGRAM_TYPES_SOURCE: simulation_program_types_source,
+        SIMULATION_RUNTIME_SOURCE: simulation_runtime_source,
         MODEL_SOURCE: model_source,
         SOLVER_API_SOURCE: solver_api_source,
         BACKWARD_INDUCTION_SOURCE: backward_induction_source,

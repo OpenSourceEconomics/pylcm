@@ -56,6 +56,7 @@ from lcm.processes import RouwenhorstAR1Process
 from lcm.transition import MarkovTransition
 from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserFunction
 from tests.conftest import build_prepared_structure
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
 @categorical(ordered=True)
@@ -1448,7 +1449,7 @@ def _simulate_route(
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=processed,
+        regimes=bind_eager_simulation(regimes=processed),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,

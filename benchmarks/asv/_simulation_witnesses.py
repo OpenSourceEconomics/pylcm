@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping
 from jax import numpy as jnp
 
 from lcm import Model
+from lcm.execution import ExecutionConfig
 from lcm.typing import UserInitialConditions, UserParams
 
 _REPOSITORY_ROOT = str(pathlib.Path(__file__).resolve().parents[2])
@@ -39,23 +40,47 @@ MULTI_INITIAL_CONDITIONS = {
 }
 
 
-def multi_regime() -> tuple[Model, UserParams, UserInitialConditions]:
+def multi_regime(
+    *, execution_config: ExecutionConfig | None = None, n_subjects: int | None = None
+) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the two-non-terminal-regime shock model and its simulate inputs."""
+    model = get_multi_regime_model(n_periods=6, distribution_type="normal")
+    if execution_config is not None or n_subjects is not None:
+        model = Model(
+            regimes=model.user_regimes,
+            ages=model.ages,
+            regime_id_class=MultiRegimeId,
+            fixed_params=model.fixed_params,
+            execution_config=execution_config or ExecutionConfig(),
+            n_subjects=n_subjects,
+        )
     return (
-        get_multi_regime_model(n_periods=6, distribution_type="normal"),
+        model,
         get_multi_regime_params("normal"),
         MULTI_INITIAL_CONDITIONS,
     )
 
 
-def dissolution() -> tuple[Model, UserParams, UserInitialConditions]:
+def dissolution(
+    *, execution_config: ExecutionConfig | None = None, n_subjects: int | None = None
+) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the collective dissolution model and its simulate inputs."""
     from lcm_examples.collective_regimes import (
+        DissolutionRegimeId,
         get_dissolution_model,
         get_params,
     )
 
     model = get_dissolution_model()
+    if execution_config is not None or n_subjects is not None:
+        model = Model(
+            regimes=model.user_regimes,
+            ages=model.ages,
+            regime_id_class=DissolutionRegimeId,
+            fixed_params=model.fixed_params,
+            execution_config=execution_config or ExecutionConfig(),
+            n_subjects=n_subjects,
+        )
     initial_conditions = {
         "wage": jnp.array([1.0, 2.0, 3.0]),
         "age": jnp.zeros(3),
@@ -68,7 +93,7 @@ def dissolution() -> tuple[Model, UserParams, UserInitialConditions]:
 
 
 WITNESSES: Mapping[
-    str, Callable[[], tuple[Model, UserParams, UserInitialConditions]]
+    str, Callable[..., tuple[Model, UserParams, UserInitialConditions]]
 ] = {
     "dissolution": dissolution,
     "multi_regime": multi_regime,

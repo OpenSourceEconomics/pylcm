@@ -25,12 +25,12 @@ period-0 values are $(3, 0)$ and $(6, 1)$.
 from collections.abc import Mapping
 from types import MappingProxyType
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import simulate as simulate_with_replay_readers
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -141,7 +141,7 @@ def test_external_replay_scores_actions_with_same_period_reference_inputs() -> N
     result = simulate_with_replay_readers(
         flat_params=model._process_params(params),
         initial_conditions=initial_conditions,
-        regimes=model._regimes,
+        regimes=model._runtime_regimes_for_shape(compile_batch_size=_N_SUBJECTS),
         regime_names_to_ids=model.regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution.values.materialize(),
@@ -176,11 +176,14 @@ def _fail_if_aot_programs_missing(*, model: Model, n_subjects: int) -> None:
         )
         raise AssertionError(msg)
     interpreted = [
-        f"{regime_name}/argmax_and_max_Q_over_a[{period}]"
+        f"{regime_name}/simulate_decision[{period}]"
         for regime_name, regime in cached.items()
         for period in regime.active_periods
-        if not isinstance(
-            regime.simulation.argmax_and_max_Q_over_a[period], jax.stages.Compiled
+        if not (
+            isinstance(regime.simulation.programs.executor, SimulationRuntime)
+            and regime.simulation.programs.executor.is_prepared(
+                program=regime.simulation.programs.decision[period], period=period
+            )
         )
     ]
     if interpreted:

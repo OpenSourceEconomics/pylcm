@@ -65,6 +65,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import build_prepared_structure
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 _BETA = 0.95
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
@@ -227,7 +228,7 @@ def _solve_and_simulate():
     return simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=bi_result.value_functions,

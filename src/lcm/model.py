@@ -64,7 +64,7 @@ from _lcm.regime_building.processing import (
     compute_active_periods_by_regime,
     prepare_model_structure,
 )
-from _lcm.simulation.compile import compile_all_simulation_phases
+from _lcm.simulation.compile import bind_simulation_runtime, lower_simulation_programs
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
     pad_initial_conditions_to_multiple,
@@ -459,6 +459,9 @@ class Model:
     """AOT-compiled `regimes` keyed by chunk shape (`subject_batch_size`, or the
     full population when unbatched)."""
 
+    _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
+    """Program executors shared by lazy dispatch and prewarming for each shape."""
+
     _warned_n_subjects: set[int]
     """Mismatching `actual_n_subjects` already warned about (one warning each)."""
 
@@ -548,6 +551,7 @@ class Model:
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self.n_subjects = n_subjects
         self._simulate_compile_cache = {}
+        self._simulate_runtime_regimes = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
         # In-memory result provenance. Kept in pickle state so a model and a
@@ -746,6 +750,7 @@ class Model:
         for transient in (
             "_simulate_compile_lock",
             "_simulate_compile_cache",
+            "_simulate_runtime_regimes",
             "_warned_n_subjects",
             "_declared_authority_cache",
             "_declared_authority_lock",
@@ -767,6 +772,7 @@ class Model:
         if "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
         self._simulate_compile_cache = {}
+        self._simulate_runtime_regimes = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
         self._declared_authority_cache = OrderedDict()
@@ -1044,20 +1050,21 @@ class Model:
         compile_batch_size: int,
         log: logging.Logger,
     ) -> MappingProxyType[RegimeName, Regime]:
-        """Return regimes to use for simulate; AOT cache when matching.
+        """Return regimes sharing the executor for this call's subject shape.
 
         Dispatch by `n_subjects` and batch-shape match:
 
-        - `n_subjects is None`: return the original `regimes`
-          (purely lazy path).
+        - `n_subjects is None`: bind the lazy executor for the chunk shape.
         - `actual_n_subjects != n_subjects`: warn once per mismatching size,
-          return the original `regimes`.
+          use the lazy executor for the actual chunk shape.
         - `actual_n_subjects == n_subjects`: return the regimes compiled for
           `compile_batch_size` (the chunk shape; caller must have populated the
           cache before calling).
         """
         if self.n_subjects is None:
-            return self._regimes
+            return self._runtime_regimes_for_shape(
+                compile_batch_size=compile_batch_size
+            )
         if actual_n_subjects != self.n_subjects:
             with self._simulate_compile_lock:
                 already_warned = actual_n_subjects in self._warned_n_subjects
@@ -1070,9 +1077,26 @@ class Model:
                     actual_n_subjects,
                     self.n_subjects,
                 )
-            return self._regimes
+            return self._runtime_regimes_for_shape(
+                compile_batch_size=compile_batch_size
+            )
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[compile_batch_size]
+
+    def _runtime_regimes_for_shape(
+        self, *, compile_batch_size: int
+    ) -> MappingProxyType[RegimeName, Regime]:
+        """Return the call-local regime copies sharing this shape's executor."""
+        with self._simulate_compile_lock:
+            if compile_batch_size not in self._simulate_runtime_regimes:
+                self._simulate_runtime_regimes[compile_batch_size] = (
+                    bind_simulation_runtime(
+                        regimes=self._regimes,
+                        execution=self._execution,
+                        enable_jit=self.enable_jit,
+                    )
+                )
+            return self._simulate_runtime_regimes[compile_batch_size]
 
     def _resolve_solution_result(
         self, *, solution: _SolutionResultBoundary, flat_params: FlatParams
@@ -2455,8 +2479,10 @@ class Model:
             cached = compile_batch_size in self._simulate_compile_cache
         if cached:
             return
-        compiled = compile_all_simulation_phases(
-            regimes=self._regimes,
+        compiled = lower_simulation_programs(
+            regimes=self._runtime_regimes_for_shape(
+                compile_batch_size=compile_batch_size
+            ),
             flat_params=flat_params,
             ages=self.ages,
             n_subjects=compile_batch_size,

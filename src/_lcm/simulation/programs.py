@@ -47,6 +47,7 @@ from _lcm.simulation.program_types import (
     SUBJECT_AXIS,
     SUBJECT_WIDTH_KEYWORD,
     TRANSITION_PROGRAM,
+    SimulationBuildContext,
     SimulationPrograms,
     _PerSubjectFunction,
     subject_axis,
@@ -459,11 +460,15 @@ class _SubjectTiled:
     def __call__(self, **kwargs: Any) -> object:  # noqa: ANN401
         """Return the body's output for every subject, evaluated in tiles."""
         width = cast("int", kwargs.pop(SUBJECT_WIDTH_KEYWORD))
+        accepted = inspect.signature(self.func).parameters
         if not self.subject_arg_names:
-            return self.func(**kwargs)
+            return self.func(
+                **{name: value for name, value in kwargs.items() if name in accepted}
+            )
         tiles = {name: kwargs.pop(name) for name in self.subject_arg_names}
+        shared = {name: value for name, value in kwargs.items() if name in accepted}
         return jax.lax.map(
-            partial(_evaluate_subject_tile, func=self.func, shared=kwargs),
+            partial(_evaluate_subject_tile, func=self.func, shared=shared),
             tiles,
             batch_size=width,
         )
@@ -495,7 +500,9 @@ class _ArgumentsBoundAtDispatch:
     """Name of the program whose arguments the caller asked to bind."""
 
     def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
-        """Refuse to bind arguments a forward simulation supplies per call."""
+        """Bind complete forward arguments, refusing a model-build context."""
+        if isinstance(context, SimulationBuildContext):
+            return context.call_arguments
         msg = (
             f"Simulation program {self.program_name!r} binds its arguments at "
             f"dispatch, from the simulated population of period {context.period}, "

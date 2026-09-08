@@ -885,11 +885,24 @@ def _partial_fixed_params_into_regimes(
         simulation = regime.simulation
         new_simulate = dataclasses.replace(
             simulation,
-            argmax_and_max_Q_over_a=MappingProxyType(
-                {
-                    period: functools.partial(func, **regime_fixed)
-                    for period, func in simulation.argmax_and_max_Q_over_a.items()
-                }
+            programs=dataclasses.replace(
+                simulation.programs,
+                **{
+                    family: MappingProxyType(
+                        {
+                            period: dataclasses.replace(
+                                program,
+                                function=functools.partial(
+                                    program.function, **regime_fixed
+                                ),
+                            )
+                            for period, program in getattr(
+                                simulation.programs, family
+                            ).items()
+                        }
+                    )
+                    for family in ("decision", "transition", "route")
+                },
             ),
             Q_and_F=MappingProxyType(
                 {

@@ -29,6 +29,7 @@ from lcm.result import (
     _collect_array_tree_leaf_sizes,
 )
 from tests.conftest import build_prepared_structure
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 from tests.test_models.deterministic.regression import (
     START_AGE,
     RegimeId,
@@ -71,7 +72,7 @@ def simulate_inputs():
     )
 
     return {
-        "regimes": regimes,
+        "regimes": bind_eager_simulation(regimes=regimes),
         "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
         "simulation_output_dtypes": _get_output_dtypes(
@@ -219,24 +220,17 @@ def test_simulate_using_model_methods(
         )
 
 
-def test_grid_search_simulation_with_supplied_values_keeps_dense_policy_construction(
+def test_grid_search_simulation_with_supplied_values_dispatches_its_decision_program(
     iskhakov_et_al_2017_stripped_down_model_solution,
 ):
-    """GridSearch plans solve values but recomputes simulation policy densely.
-
-    The same processed regime has a planner-visible solve kernel and a plain
-    simulate-phase argmax. Supplying values from an earlier public ``solve`` call
-    must not silently route policy construction through the solve ``CoreProgram``.
-    """
+    """Supplying solved values still computes the subject's own decision."""
     period_to_regime_to_V_arr, params, model = (
         iskhakov_et_al_2017_stripped_down_model_solution(n_periods=2)
     )
     regime = model._regimes["working_life"]
 
     assert isinstance(regime.solution.period_kernels[0], CoreProgramGraphAware)
-    assert not isinstance(
-        regime.simulation.argmax_and_max_Q_over_a[0], CoreProgramGraphAware
-    )
+    assert regime.simulation.programs.decision[0].name == "simulate_decision"
 
     result = model.simulate(
         log_level="debug",
@@ -728,10 +722,8 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
 def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Path):
     """`save` drops `self._regimes` after pickling metadata to free the JIT cache.
 
-    Each `Regime` holds the compiled `simulate_functions`
-    (`argmax_and_max_Q_over_a[period]`, `next_state`, `compute_regime_transition_probs`)
-    and `solve_functions` whose XLA workspaces stay pinned on the
-    device for as long as a Python reference exists. Once `save` has
+    Each `Regime` holds numerical functions whose compiled workspaces can stay
+    pinned on the device for as long as a Python reference exists. Once `save` has
     serialised the regimes into `metadata.pkl`, the in-memory mapping
     is replaced with an empty `MappingProxyType` so the next allocator
     pressure (orbax's per-leaf D2H transfers) has a near-empty pool to
