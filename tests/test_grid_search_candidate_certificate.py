@@ -75,6 +75,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building import max_Q_over_a as max_Q_over_a_module
+from _lcm.simulation import programs as simulation_programs_module
 from _lcm.simulation import runtime as simulation_runtime_module
 from _lcm.simulation import simulate as simulation_module
 from _lcm.solution import action_streaming as action_streaming_module
@@ -2275,27 +2276,37 @@ def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_m
             aaae(observed["value_m"], expected, decimal=DECIMAL_PRECISION)
 
 
-def _argmax_masking_the_last_action_cell() -> Callable[..., Any]:
-    """Return an `argmax_and_max` that hides the last cell of the action product.
+def _q_and_f_masking_the_last_action_cell(
+    *, Q_and_F: Callable[..., tuple[FloatND, BoolND]], **kwargs: Any
+) -> tuple[FloatND, BoolND]:
+    """Hide exactly the final coordinate pair from the simulation hard-max fold."""
+    value, feasible = Q_and_F(**kwargs)
+    is_last = (kwargs["work"] == _WORK_VALUES[-1]) & (
+        kwargs["consumption"] == _CONSUMPTION_VALUES[-1]
+    )
+    return value, feasible & ~is_last
 
-    Patching the simulate-side reducer alone is what makes the control specific: the
-    solve reduction is a different callable and keeps the full candidate set, so a
-    green solve sweep beside a red simulate sweep is exactly the divergence a
-    solve-only certificate cannot see.
 
-    Returns:
-        A drop-in replacement for `argmax_and_max`.
+def _simulation_fold_masking_the_last_action_cell(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[str, ...],
+    block_width: int,
+) -> Callable[..., Any]:
+    """Build the simulation fold with one candidate hidden; leave solve unchanged.
+
+    The simulation module owns the patched builder binding. The solve module keeps
+    its original builder, and terminal folds without actions pass through untouched.
     """
-    real = max_Q_over_a_module.argmax_and_max
-
-    def patched(*, a: Any, where: Any = None, **kwargs: Any) -> Any:
-        # `argmax_and_max` also reduces rank-0 masks elsewhere in the engine; those
-        # carry no action axis to hide a cell along, so they pass through untouched.
-        if where is not None and where.ndim >= 1:
-            where = where.at[..., -1].set(False)  # noqa: PD008
-        return real(a=a, where=where, **kwargs)
-
-    return patched
+    return action_streaming_module.build_streaming_max_Q_over_a(
+        Q_and_F=(
+            functools.partial(_q_and_f_masking_the_last_action_cell, Q_and_F=Q_and_F)
+            if action_names
+            else Q_and_F
+        ),
+        action_names=action_names,
+        block_width=block_width,
+    )
 
 
 def test_masking_one_simulate_candidate_changes_the_published_action():
@@ -2307,9 +2318,9 @@ def test_masking_one_simulate_candidate_changes_the_published_action():
     """
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            max_Q_over_a_module,
-            "argmax_and_max",
-            _argmax_masking_the_last_action_cell(),
+            simulation_programs_module,
+            "build_streaming_max_Q_over_a",
+            _simulation_fold_masking_the_last_action_cell,
         )
         model = _build_model(
             utility=_labelled_utility,
@@ -2334,9 +2345,9 @@ def test_masking_one_simulate_candidate_leaves_the_others_alone():
     """
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            max_Q_over_a_module,
-            "argmax_and_max",
-            _argmax_masking_the_last_action_cell(),
+            simulation_programs_module,
+            "build_streaming_max_Q_over_a",
+            _simulation_fold_masking_the_last_action_cell,
         )
         model = _build_model(
             utility=_labelled_utility,
