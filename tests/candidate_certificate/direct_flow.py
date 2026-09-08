@@ -287,7 +287,7 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "400326d4fe75f7ee62daf88ca334c095f30689b37ef5cf16f0aacd61b9cb2b75",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "6215536d5dfe2c2dc32639280c591abf54df561c303dc85e4231138ed8212818",
+    SIMULATION_SOURCE: "578e4e7cc142608bdac9d48c604a21abf70c01fce7c7ab3bf32dcef2f75b33f3",
     SIMULATION_TRANSITIONS_SOURCE: "18f53b35a8a11536f9e3df03cfc48cec357bbc2fa11308d04091620d02e179a6",
     SIMULATION_COMPILE_SOURCE: "3ca1959d612dbfbf323e523fee496a56390ddaa1f509f607803a111d728899d2",
     MODEL_SOURCE: "c774110ee388ae6c7a2a4814edf05f38add7e3508cb8d605f92bc076adaade24",
@@ -3029,7 +3029,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     """
     contracts = {
         SIMULATION_SOURCE: (
-            "e6ec229f947fcfd8826271670ca17a532fdcc4d5897c9d78ca3456f7c2ea4750",
+            "d74b2a52ca9aaa8026fd44240e66ef30fb609aa7a695214dd8eeaf5f1f82d0bf",
             {
                 "_simulate_regime_in_period": "2d0ede012becb7860aef63976765e1f9965793b449338399f7ea3ad238208448",
                 "simulate": "de24d5855fc9ca1cd45fbec89bafa783759bc66ecc0f5dce5fcb6d8e0a117c13",
@@ -3037,6 +3037,9 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
                 "_bind_unit_executor": "8a2a8bc6a28f5d7c6a4a2c8d3bea6db86e79c211a8a9b2a409336126a7572a66",
                 "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
                 "_read_external_replay": "7972d2214dbda0c4173fedfabe12b9ae3b03ed099db9f950cd176ee082131c90",
+                "_replay_nnbegm_candidates": "5733c0a4a29a916da35662961a0b6ab2628bdb7668bbda923c4cffb999f93a36",
+                "_prepare_nnbegm_candidate_bank": "d5406bb8fb04f481aeb91ecbce93394cf531239a137df46d28ace9993797b62f",
+                "_rank_nnbegm_candidate_bank": "fe9d4341209042a24be1359ee77089f1f43cbd4a0a4ca1da63ee308b5c547f64",
                 "_initialize_chunk_state": "82b413fe657adbce560df50fae814cf80a268eabc0839cbb99a2242c4b2ab482",
             },
         ),

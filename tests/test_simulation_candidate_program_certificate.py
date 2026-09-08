@@ -138,6 +138,16 @@ _PROFILED_HELPER_MUTATIONS = {
         "return array_writer(value=np_value, dtype=np.dtype(np.int32), name=name)",
         "return jnp.asarray(np_value, dtype=jnp.int32)",
     ),
+    "simulation_finite_replay:diagnostic_bypassed": (
+        "src/_lcm/simulation/simulate.py",
+        "        dropped=live & ~represented,",
+        "        dropped=jnp.zeros_like(live),",
+    ),
+    "simulation_finite_replay:canonical_ranking_bypassed": (
+        "src/_lcm/simulation/simulate.py",
+        "ranking_values = jnp.where(valid, canonical_values, -jnp.inf)",
+        "ranking_values = jnp.where(valid, candidate_inner, -jnp.inf)",
+    ),
     "simulation_preflight:initial_feasibility_bypassed": (
         "src/_lcm/simulation/initial_conditions.py",
         "            _collect_feasibility_errors(",

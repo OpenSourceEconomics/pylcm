@@ -214,7 +214,7 @@
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
-            "sha256": "6215536d5dfe2c2dc32639280c591abf54df561c303dc85e4231138ed8212818"
+            "sha256": "578e4e7cc142608bdac9d48c604a21abf70c01fce7c7ab3bf32dcef2f75b33f3"
           },
           {
             "path": "src/_lcm/simulation/taste_stream.py",
@@ -322,7 +322,7 @@
           }
         ],
         "source_count": 79,
-        "source_inventory_sha256": "51018fdbce58e613fa5738e68d5c58b9254256b0d370e4e460ca2c67fc32a5b3"
+        "source_inventory_sha256": "74d3a67d130bee22fb154d80f04a53b69224b8e21eed161061b7e5af2d717f51"
       },
       "fast": {
         "candidate_sources": [
@@ -536,7 +536,7 @@
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
-            "sha256": "6215536d5dfe2c2dc32639280c591abf54df561c303dc85e4231138ed8212818"
+            "sha256": "578e4e7cc142608bdac9d48c604a21abf70c01fce7c7ab3bf32dcef2f75b33f3"
           },
           {
             "path": "src/_lcm/simulation/taste_stream.py",
@@ -644,13 +644,13 @@
           }
         ],
         "source_count": 79,
-        "source_inventory_sha256": "51018fdbce58e613fa5738e68d5c58b9254256b0d370e4e460ca2c67fc32a5b3"
+        "source_inventory_sha256": "74d3a67d130bee22fb154d80f04a53b69224b8e21eed161061b7e5af2d717f51"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "51018fdbce58e613fa5738e68d5c58b9254256b0d370e4e460ca2c67fc32a5b3",
+  "source_inventory_sha256": "74d3a67d130bee22fb154d80f04a53b69224b8e21eed161061b7e5af2d717f51",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -862,7 +862,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "6215536d5dfe2c2dc32639280c591abf54df561c303dc85e4231138ed8212818"
+      "sha256": "578e4e7cc142608bdac9d48c604a21abf70c01fce7c7ab3bf32dcef2f75b33f3"
     },
     {
       "path": "src/_lcm/simulation/taste_stream.py",

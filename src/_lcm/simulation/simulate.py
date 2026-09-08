@@ -3129,7 +3129,53 @@ def _replay_nnbegm_candidates(
     logger: logging.Logger,
     referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
-    """Replay and canonical-score the exact solve candidate product."""
+    """Reconstruct, validate, then rank the exact solve candidate product."""
+    candidate_inner, candidate_outer, live, represented = (
+        _prepare_nnbegm_candidate_bank(
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
+    )
+    # Keep this diagnostic before canonical scoring: debug refuses an
+    # unrepresentable solve candidate before evaluating the remaining bank.
+    _announce_dropped_outer_candidates(
+        logger=logger,
+        dropped=live & ~represented,
+        n_live=live,
+        regime_name=regime.name,
+        period=period,
+    )
+    return _rank_nnbegm_candidate_bank(
+        candidate_inner=candidate_inner,
+        candidate_outer=candidate_outer,
+        represented=represented,
+        optimal_actions=optimal_actions,
+        regime=regime,
+        sim_policy=sim_policy,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        referenced_value_kwargs=referenced_value_kwargs,
+    )
+
+
+def _prepare_nnbegm_candidate_bank(
+    *,
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[FloatND, FloatND, BoolND, BoolND]:
+    """Pure reconstruction with live/represented masks for the host diagnostic."""
     n_subjects = next(iter(states.values())).shape[0]
     coordinates = []
     in_support = jnp.ones((n_subjects,), dtype=bool)
@@ -3170,14 +3216,26 @@ def _replay_nnbegm_candidates(
         & jnp.isfinite(candidate_value)
     )
     represented = live & outer_represented
-    _announce_dropped_outer_candidates(
-        logger=logger,
-        dropped=live & ~outer_represented,
-        n_live=live,
-        regime_name=regime.name,
-        period=period,
-    )
+    return candidate_inner, candidate_outer, live, represented
 
+
+def _rank_nnbegm_candidate_bank(
+    *,
+    candidate_inner: FloatND,
+    candidate_outer: FloatND,
+    represented: BoolND,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    referenced_value_kwargs: Mapping[str, object],
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
+    """Pure canonical scoring and first-maximum ranking of the represented bank."""
     n_candidates = candidate_inner.shape[0]
     canonical_values, canonical_feasible = _score_nnbegm_candidate_bank(
         optimal_actions=optimal_actions,
