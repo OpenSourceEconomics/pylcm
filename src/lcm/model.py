@@ -908,6 +908,7 @@ class Model:
         max_compilation_workers: int | None,
         log_path: str | Path | None,
         log_keep_n_latest: int,
+        retained_input_arrays: object = (),
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
@@ -942,6 +943,7 @@ class Model:
             retain_all_artifacts=retain_all_persistable,
             persistable_artifact_refs=persistable_artifact_refs,
             collect_solver_diagnostics=True,
+            retained_input_arrays=retained_input_arrays,
         )
         authority = bind_generated_solution_authority(
             authority=declared_authority,
@@ -976,6 +978,7 @@ class Model:
         retain_all_artifacts: bool = False,
         persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
         collect_solver_diagnostics: bool = False,
+        retained_input_arrays: object = (),
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -1014,6 +1017,7 @@ class Model:
                 retain_replay=retain_replay,
                 retain_all_artifacts=retain_all_artifacts,
                 persistable_artifact_refs=persistable_artifact_refs,
+                retained_input_arrays=retained_input_arrays,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -2395,6 +2399,11 @@ class Model:
                 max_compilation_workers=max_compilation_workers,
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
+                retained_input_arrays=(
+                    ()
+                    if entry_allocations is None
+                    else entry_allocations.solve_input_roots()
+                ),
             )
             (
                 period_to_regime_to_V_arr,

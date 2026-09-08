@@ -244,7 +244,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
-    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "85ee8ee4be05eb1e332221228478691ebb5da7922cb9d8092c575b78538eacae",
+    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "aa0ccf797a5e4d9669a7d7265458584e09d97f37ff7b6b18cd90b626df5a2075",
     NBEGM_SOURCE: "32037ec1fc4e67cf7523d4a574e0172b91e1e600bfdacfbd2f8afa987319c0a4",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
@@ -296,9 +296,9 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "578e4e7cc142608bdac9d48c604a21abf70c01fce7c7ab3bf32dcef2f75b33f3",
     SIMULATION_TRANSITIONS_SOURCE: "18f53b35a8a11536f9e3df03cfc48cec357bbc2fa11308d04091620d02e179a6",
     SIMULATION_COMPILE_SOURCE: "3ca1959d612dbfbf323e523fee496a56390ddaa1f509f607803a111d728899d2",
-    MODEL_SOURCE: "c774110ee388ae6c7a2a4814edf05f38add7e3508cb8d605f92bc076adaade24",
+    MODEL_SOURCE: "6efb323f743bd96236024eaedb19210fa7dac58aea533c51ad2bf3a932c2f9e5",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "cea549b75d3feab68be27bd4f91f47f13374b60e175aea693623f57ab2cda244",
+    BACKWARD_INDUCTION_SOURCE: "43bfe665ac889a793e2f423aa38b87716228c2dc77e3f8fea2e23219b71c5257",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "5114b119e318dceb693e9cdb99ee8207155c9301ad5a883d7e111cb21f0ca2c5",
     RESULT_SOURCE: "bfc4b1f19bf1852c86c4f5b87d40abed2521d0519af99ff613975fb8d3ab09f0",
@@ -3060,12 +3060,16 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "b3317b4ea04842b43a47c34dac7f15c48ba3f4c952a6e4aa294fe23aead142de",
+            "247c556286f968e94044d14f96b2e5a05c3494404ca3918978c37a9349f0f2c2",
             {
                 "Model._resolve_simulate_regimes": "5a11f26e52496d8210ae0ab2b9846d5ca234569764f82d47e871f26e33751ee2",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model._ensure_simulate_compiled": "2e59224333ce9bd7453608d05359e933217971dbf8867e3f9851b9f503a2df86",
-                "Model.simulate": "e7e78e373e2684630b9d98171f818144740a99ae24091c6da99730546e281118",
+                "Model.simulate": "46703c80e1f82fe33e7e21bae3d6b2920a88f8b28fde2214615f5c848e111d98",
+                # Fixed caller owners flow through both private automatic-solve
+                # boundaries without becoming numerical operands or cache keys.
+                "Model._solve_from_flat_params": "155f0cc0924e38add9e4cccd83ef416b5f716360d20e79cc29cb1735da21f549",
+                "Model._solve_compiled": "1112d06897315b6ffd4d056509e78f6a54924d14ecf0a390b1ed1e4457ee94be",
                 "Model._build_external_replay_readers": "33c41f2c3f7bd300f3e0b4ac042f7371b93efbfe1762e5fe639fc854b19f1f5f",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
                 "Model._process_params": "511c26a9c31acbf937c226881d9105b08e759e0b81b139e5b0187f2169bd0837",
@@ -3118,9 +3122,10 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: (
-        "5c7bb977a05b12784fe90b12da72bae6779c4a08de582b3060698d598fb97c4e",
+        "2d2ae6bfabbbe061665dd4dd250a9c3c5af8218711b54850ad6fdb6bc3de10b4",
         {
             "SimulationEntryAllocations.snapshot": "e7ae5d93555a3a4f4f683bb21d19096a8385b87a8d2a7d11a4365ff61cfba963",
+            "SimulationEntryAllocations.solve_input_roots": "3cdc201ba2a560e0b5fb06ffc7cf79020614776b7a0a03a027bf33a1c1df2e31",
             "SimulationEntryAllocations.__call__": "d16c9d254801ebbff8ef1ce18125a3a9fe68073d83672bf8855eabf923da6624",
             "SimulationEntryAllocations.publish": "a8e437cc229448ceb3f4338fc580081b830cc530dd2fc837b1073fbe546e2ae8",
             "SimulationEntryAllocations.pad": "cfe078114a6c07cfa9ad0ecb0bf0411b8985742aee92a5359d8bae8315d4f0c5",
@@ -3647,7 +3652,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "a40912326f410dede3e4babeeb27c407f606d422ca38f90d2a23fc51a82f6b53"
+        != "8eaf79f7ad174027344101ac65e88bbf97c93e1c492666572d2fdd2e6b49b1a4"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -3665,10 +3670,14 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         ]
         if len(fixed_inputs) != 1 or not _expression_matches(
             node=fixed_inputs[0],
-            source="tuple((space.states, space.discrete_actions, space.continuous_actions) for space in base_state_action_spaces.values())",
+            source="(retained_input_arrays, tuple((space.states, space.discrete_actions, space.continuous_actions) for space in base_state_action_spaces.values()))",
         ):
             errors.append(
                 "backward output-layout transport: fixed owner inputs changed"
+            )
+        if _scope_binding_counts(solve.body).get("retained_input_arrays", 0):
+            errors.append(
+                "backward output-layout transport: retained caller inputs rebound"
             )
 
         def _is_kernel_output(statement: ast.stmt) -> bool:

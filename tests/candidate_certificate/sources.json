@@ -146,7 +146,7 @@
           },
           {
             "path": "src/_lcm/simulation/entry_allocations.py",
-            "sha256": "85ee8ee4be05eb1e332221228478691ebb5da7922cb9d8092c575b78538eacae"
+            "sha256": "aa0ccf797a5e4d9669a7d7265458584e09d97f37ff7b6b18cd90b626df5a2075"
           },
           {
             "path": "src/_lcm/simulation/entry_inputs.py",
@@ -246,7 +246,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "cea549b75d3feab68be27bd4f91f47f13374b60e175aea693623f57ab2cda244"
+            "sha256": "43bfe665ac889a793e2f423aa38b87716228c2dc77e3f8fea2e23219b71c5257"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -322,7 +322,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "c774110ee388ae6c7a2a4814edf05f38add7e3508cb8d605f92bc076adaade24"
+            "sha256": "6efb323f743bd96236024eaedb19210fa7dac58aea533c51ad2bf3a932c2f9e5"
           },
           {
             "path": "src/lcm/result.py",
@@ -330,7 +330,7 @@
           }
         ],
         "source_count": 81,
-        "source_inventory_sha256": "4043dd0c00712b4ca5984a7995a94fa7f24ef76182ab88c484c5de00df6110ed"
+        "source_inventory_sha256": "9a555816d674afa3c30f0830e1957417962bbb3ff01cdfc7a44840e849c2fa32"
       },
       "fast": {
         "candidate_sources": [
@@ -476,7 +476,7 @@
           },
           {
             "path": "src/_lcm/simulation/entry_allocations.py",
-            "sha256": "85ee8ee4be05eb1e332221228478691ebb5da7922cb9d8092c575b78538eacae"
+            "sha256": "aa0ccf797a5e4d9669a7d7265458584e09d97f37ff7b6b18cd90b626df5a2075"
           },
           {
             "path": "src/_lcm/simulation/entry_inputs.py",
@@ -576,7 +576,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "cea549b75d3feab68be27bd4f91f47f13374b60e175aea693623f57ab2cda244"
+            "sha256": "43bfe665ac889a793e2f423aa38b87716228c2dc77e3f8fea2e23219b71c5257"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -652,7 +652,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "c774110ee388ae6c7a2a4814edf05f38add7e3508cb8d605f92bc076adaade24"
+            "sha256": "6efb323f743bd96236024eaedb19210fa7dac58aea533c51ad2bf3a932c2f9e5"
           },
           {
             "path": "src/lcm/result.py",
@@ -660,13 +660,13 @@
           }
         ],
         "source_count": 81,
-        "source_inventory_sha256": "4043dd0c00712b4ca5984a7995a94fa7f24ef76182ab88c484c5de00df6110ed"
+        "source_inventory_sha256": "9a555816d674afa3c30f0830e1957417962bbb3ff01cdfc7a44840e849c2fa32"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "4043dd0c00712b4ca5984a7995a94fa7f24ef76182ab88c484c5de00df6110ed",
+  "source_inventory_sha256": "9a555816d674afa3c30f0830e1957417962bbb3ff01cdfc7a44840e849c2fa32",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -810,7 +810,7 @@
     },
     {
       "path": "src/_lcm/simulation/entry_allocations.py",
-      "sha256": "85ee8ee4be05eb1e332221228478691ebb5da7922cb9d8092c575b78538eacae"
+      "sha256": "aa0ccf797a5e4d9669a7d7265458584e09d97f37ff7b6b18cd90b626df5a2075"
     },
     {
       "path": "src/_lcm/simulation/entry_inputs.py",
@@ -910,7 +910,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "cea549b75d3feab68be27bd4f91f47f13374b60e175aea693623f57ab2cda244"
+      "sha256": "43bfe665ac889a793e2f423aa38b87716228c2dc77e3f8fea2e23219b71c5257"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -986,7 +986,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "c774110ee388ae6c7a2a4814edf05f38add7e3508cb8d605f92bc076adaade24"
+      "sha256": "6efb323f743bd96236024eaedb19210fa7dac58aea533c51ad2bf3a932c2f9e5"
     },
     {
       "path": "src/lcm/result.py",

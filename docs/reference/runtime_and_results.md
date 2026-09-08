@@ -99,6 +99,12 @@ which overlapping buffer spans are already represented in the compiler peak. Eli
 inputs stay charged as external residency. Conservative reservations may count some
 storage twice.
 
+When simulation solves automatically, its original and normalized inputs remain in the
+solve's fixed inventory. Shared input and model buffers count once by physical storage;
+separate dtype-conversion and padding buffers remain charged alongside their originals.
+This accounts for their coexistence during solve planning, without admitting earlier
+template or conversion allocations retroactively.
+
 This is an accounting convention using the backend's compiler report; it is not a
 measurement of the allocator's whole-call high-water mark. Compilation memory, non-pool
 allocations and remaining unprofiled orchestration allocations are outside a complete

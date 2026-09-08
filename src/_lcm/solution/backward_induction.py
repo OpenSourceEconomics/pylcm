@@ -202,6 +202,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retain_replay: bool = True,
     retain_all_artifacts: bool = False,
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
+    retained_input_arrays: object = (),
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -246,6 +247,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             selected by ``ALL_PERSISTABLE_ARTIFACTS``. Only these addresses are
             dispatched and copied for that mode; ordinary replay retention keeps
             its separate in-memory behavior, including ``NOT_PERSISTED`` routes.
+        retained_input_arrays: Caller's already materialized inputs kept alive
+            beside this solve, including automatic simulation's original and
+            normalized initial conditions. These enter fixed residency by actual
+            physical storage; they are not solve operands or cache entries.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -309,9 +314,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         persistable_artifact_refs=persistable_artifact_refs,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
-        fixed_input_arrays=tuple(
-            (space.states, space.discrete_actions, space.continuous_actions)
-            for space in base_state_action_spaces.values()
+        fixed_input_arrays=(
+            retained_input_arrays,
+            tuple(
+                (space.states, space.discrete_actions, space.continuous_actions)
+                for space in base_state_action_spaces.values()
+            ),
         ),
     )
     compiled_functions = compiled_programs.executables

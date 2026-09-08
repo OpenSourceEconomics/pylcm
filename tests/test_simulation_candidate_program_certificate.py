@@ -80,6 +80,47 @@ _RANDOM_HELPER_MUTATIONS = {
 }
 
 _PROFILED_HELPER_MUTATIONS = {
+    "simulation_entry:automatic_solve_owners_omitted": (
+        "src/lcm/model.py",
+        "else entry_allocations.solve_input_roots()",
+        "else ()",
+    ),
+    "simulation_entry:private_solve_owners_omitted": (
+        "src/lcm/model.py",
+        (
+            "            collect_solver_diagnostics=True,\n"
+            "            retained_input_arrays=retained_input_arrays,"
+        ),
+        (
+            "            collect_solver_diagnostics=True,\n"
+            "            retained_input_arrays=(),"
+        ),
+    ),
+    "simulation_entry:compiled_solve_owners_omitted": (
+        "src/lcm/model.py",
+        "                retained_input_arrays=retained_input_arrays,",
+        "                retained_input_arrays=(),",
+    ),
+    "simulation_entry:original_solve_inputs_omitted": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "            self.original_inputs.arrays,",
+        "            (),",
+    ),
+    "simulation_entry:normalized_solve_inputs_omitted": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "            self.model_roots,\n            tuple(self._stages.values()),",
+        "            self.model_roots,\n            (),",
+    ),
+    "simulation_entry:fixed_solve_inventory_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        "        fixed_input_arrays=(\n            retained_input_arrays,",
+        "        fixed_input_arrays=(\n            (),",
+    ),
+    "simulation_entry:fixed_solve_inputs_rebound": (
+        "src/_lcm/solution/backward_induction.py",
+        "    capture_target = resolve_capture_target()",
+        "    retained_input_arrays = ()\n    capture_target = resolve_capture_target()",
+    ),
     "simulation_entry:model_owner_inventory_omitted": (
         "src/_lcm/simulation/entry_allocations.py",
         "                        self.model_roots,",
@@ -275,8 +316,22 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "solution_runtime:fixed_source_owners_omitted": (
         "src/_lcm/solution/backward_induction.py",
-        "for space in base_state_action_spaces.values()\n        ),",
-        "for space in ()\n        ),",
+        (
+            "        fixed_input_arrays=(\n"
+            "            retained_input_arrays,\n"
+            "            tuple(\n"
+            "                (space.states, space.discrete_actions, "
+            "space.continuous_actions)\n"
+            "                for space in base_state_action_spaces.values()"
+        ),
+        (
+            "        fixed_input_arrays=(\n"
+            "            retained_input_arrays,\n"
+            "            tuple(\n"
+            "                (space.states, space.discrete_actions, "
+            "space.continuous_actions)\n"
+            "                for space in ()"
+        ),
     ),
     "solution_runtime:internal_output_reservation_omitted": (
         "src/_lcm/solution/backward_induction.py",

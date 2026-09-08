@@ -68,6 +68,23 @@ class SimulationEntryAllocations:
             )
         )
 
+    def solve_input_roots(self) -> tuple[object, ...]:
+        """Keep original and normalized inputs charged during an automatic solve.
+
+        These are actual array owners, not a byte total: the solve inventory must
+        union them with its own parameters and grids by physical storage. The
+        returned tuple belongs to this invocation and never enters a code cache.
+        """
+        if self.original_inputs is None:
+            raise RuntimeError("Simulation entry allocation owner is closed.")
+        return (
+            self.original_inputs.arrays,
+            self.model_roots,
+            tuple(self._stages.values()),
+            tuple(self._pending),
+            self._resolved_inputs,
+        )
+
     def __call__(
         self, *, value: np.ndarray | jax.Array, dtype: np.dtype, name: str
     ) -> jax.Array:
