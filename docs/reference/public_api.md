@@ -11,22 +11,22 @@ and the correctness of destinations require page-specific documentation and test
 
 ## Model and economic declarations
 
-| Public name                                                                                          | Canonical documentation                 |
-| ---------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution            |
-| [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                          |
-| [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths |
-| [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                       |
-| [`lcm.NestedConsumptionSavingsRegime`](consumption_savings.md#api-nested-consumption-savings-regime) | Liquid plus outer margin                |
-| [`lcm.LiquidMargin`](consumption_savings.md#api-liquid-margin)                                       | Liquid roles                            |
-| [`lcm.OuterContinuousMargin`](consumption_savings.md#api-outer-continuous-margin)                    | Outer roles                             |
-| [`lcm.NetOfAdjustmentCost`](consumption_savings.md#api-liquid-margin)                                | Resources composition                   |
-| [`lcm.post_decision_lower_bound`](consumption_savings.md#api-post-decision-lower-bounds)             | Checkable borrowing bound               |
-| [`lcm.outer_unchanged`](consumption_savings.md#api-outer-continuous-margin)                          | Identity no-adjustment sentinel         |
-| [`lcm.cash_on_hand_with_subsidy`](case_pieces.md)                                                    | Supported case-piece fixed form         |
-| [`lcm.liquid_law_from_resources`](consumption_savings.md)                                            | Conventional liquid law                 |
-| [`lcm.liquid_law_from_savings`](consumption_savings.md)                                              | Conventional savings-written liquid law |
-| [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#api-extreme-value-taste-shocks)                  | EV1 discrete-choice shocks              |
+| Public name                                                                                          | Canonical documentation                           |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                      |
+| [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
+| [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation |
+| [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                                 |
+| [`lcm.NestedConsumptionSavingsRegime`](consumption_savings.md#api-nested-consumption-savings-regime) | Liquid plus outer margin                          |
+| [`lcm.LiquidMargin`](consumption_savings.md#api-liquid-margin)                                       | Liquid roles                                      |
+| [`lcm.OuterContinuousMargin`](consumption_savings.md#api-outer-continuous-margin)                    | Outer roles                                       |
+| [`lcm.NetOfAdjustmentCost`](consumption_savings.md#api-liquid-margin)                                | Resources composition                             |
+| [`lcm.post_decision_lower_bound`](consumption_savings.md#api-post-decision-lower-bounds)             | Checkable borrowing bound                         |
+| [`lcm.outer_unchanged`](consumption_savings.md#api-outer-continuous-margin)                          | Identity no-adjustment sentinel                   |
+| [`lcm.cash_on_hand_with_subsidy`](case_pieces.md)                                                    | Supported case-piece fixed form                   |
+| [`lcm.liquid_law_from_resources`](consumption_savings.md)                                            | Conventional liquid law                           |
+| [`lcm.liquid_law_from_savings`](consumption_savings.md)                                              | Conventional savings-written liquid law           |
+| [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#api-extreme-value-taste-shocks)                  | EV1 discrete-choice shocks                        |
 
 ## Grids, categories, and processes
 

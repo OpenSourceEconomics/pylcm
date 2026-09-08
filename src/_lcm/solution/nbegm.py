@@ -62,6 +62,7 @@ from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.engine import StateActionSpace, placed_devices_for_ids
 from _lcm.execution.core_program import (
+    CoreArgumentBuilder,
     CoreBuildContext,
     CoreExecutionDisposition,
     CoreExecutionRequirements,
@@ -79,6 +80,17 @@ from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
+from _lcm.solution.continuation_arguments import (
+    MARGINAL_ARGUMENT,
+    MarginalLeafArguments,
+    MarginalLeafCore,
+    marginal_leaf_reads,
+)
+from _lcm.solution.continuation_reads import (
+    continuation_leaf_reads,
+    published_continuation_template,
+    with_continuation_leaf_reads,
+)
 from _lcm.solution.continuation_target import (
     period_to_continuation_target,
     target_period_grid,
@@ -228,7 +240,8 @@ class NBEGM(OneMarginSolver):
             prerequisites=(
                 "Supported case-piece or piecewise-affine declaration; proven "
                 "constraint routes; nonlinear CE only on eligible ride-along routes; "
-                "no EV1 taste shocks"
+                "no EV1 taste shocks; marginal donation only on an unsharded "
+                "self-carry main program with eligible ownership"
             ),
             main_tradeoff=(
                 "Preserves declared topology; structural probes and candidate "
@@ -238,6 +251,7 @@ class NBEGM(OneMarginSolver):
             tiled_axes=("cell",),
             host_axes=(),
             host_driven_programs=(),
+            donation_candidates=("main",),
             supports_ev1_taste_shocks=False,
             supports_nonlinear_certainty_equivalent=True,
         )
@@ -428,13 +442,20 @@ class NBEGM(OneMarginSolver):
     def declare_continuation_reads(
         self, *, kernels: SolutionKernels, context: SolverBuildContext
     ) -> SolutionKernels:
-        """Declare the carry rows the single-liquid route's arguments carry.
-
-        Only that route builds the one-row adapter; the streamed routes declare
-        nothing, because resolving a planned program's read into a transfer
-        would have to rebuild an `EGMCarry` around a replaced leaf.
-        """
-        return declare_egm_carry_reads(kernels=kernels, context=context)
+        """Declare actual leaves on the single-liquid and adapted self-carry routes."""
+        kernels = declare_egm_carry_reads(kernels=kernels, context=context)
+        adapted: dict[tuple[int, int], tuple[CoreArgumentBuilder, Callable]] = {}
+        return replace(
+            kernels,
+            period_kernels=MappingProxyType(
+                {
+                    period: _with_ride_marginal_reads(
+                        kernel=kernel, context=context, period=period, adapted=adapted
+                    )
+                    for period, kernel in kernels.period_kernels.items()
+                }
+            ),
+        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one case-piece EGM period adapter per active period."""
@@ -5877,6 +5898,73 @@ def _ride_along_core_programs(
             replaces_program="main" if publish_replay else None,
         )
     return MappingProxyType(programs)
+
+
+def _with_ride_marginal_reads(
+    *,
+    kernel: PeriodKernel,
+    context: SolverBuildContext,
+    period: int,
+    adapted: dict[tuple[int, int], tuple[CoreArgumentBuilder, Callable]],
+) -> PeriodKernel:
+    """Install the adapter and its complete reads together on the top-level route.
+
+    Composite solvers call NBEGM's builder but own a different declaration hook.
+    Their argument trees and read inventories therefore remain unchanged here.
+    The call-local memo shares wrappers across grouped periods, retaining only
+    existing callables and target metadata, never concrete inputs.
+    """
+    if not isinstance(kernel, _RideAlongNBEGMPeriodKernel):
+        return kernel
+    if (
+        context.sharded_state_names
+        or kernel.statics.co_map_state_names
+        or kernel.stateful_targets != frozenset({kernel.regime_name})
+    ):
+        return kernel
+    template = published_continuation_template(
+        continuation_specs=context.continuation_specs, target=kernel.regime_name
+    )
+    if not isinstance(template, EGMCarry):
+        raise TypeError(
+            "A marginal-leaf program requires its published EGMCarry template."
+        )
+    programs: dict[str, CoreProgram] = {}
+    for name, program in kernel.core_programs().items():
+        key = (id(program.function), id(program.argument_builder))
+        if key not in adapted:
+            adapted[key] = (
+                MarginalLeafArguments(
+                    inner=program.argument_builder, target=kernel.regime_name
+                ),
+                MarginalLeafCore(core=program.function, target=kernel.regime_name),
+            )
+        builder, function = adapted[key]
+        programs[name] = replace(
+            program,
+            function=function,
+            argument_builder=builder,
+            donation_candidates=(MARGINAL_ARGUMENT,) if name == "main" else (),
+        )
+    return replace(
+        kernel,
+        _core_programs=with_continuation_leaf_reads(
+            programs=programs,
+            reads_by_core_key={
+                name: marginal_leaf_reads(
+                    continuation_leaf_reads(
+                        template=template,
+                        artifact_key=EGM_CONTINUATION,
+                        target=kernel.regime_name,
+                        source_regime=kernel.regime_name,
+                        source_period=period,
+                        core_key=name,
+                    )
+                )
+                for name in kernel.core_programs()
+            },
+        ),
+    )
 
 
 def _ride_along_stochastic_axes(

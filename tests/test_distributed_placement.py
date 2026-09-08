@@ -782,11 +782,25 @@ def test_a_placed_single_device_regime_keeps_its_carry_template_on_its_device() 
 @_skip_pytest_parallel
 @pytest.mark.parametrize("regime", ["alive", "dead"])
 def test_the_nbegm_toy_publishes_the_same_values_under_both_placements(
-    *, regime: RegimeName
+    *, regime: RegimeName, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Sharding the ride-along type partitions the solve without changing it."""
+    """Co-mapped NB-EGM keeps ordinary ownership and the same solved values."""
     params = _nbegm_toy_params()
-    placed = _nbegm_toy(distributed_kind=True).solve(params=params, log_level="off")
+    run = backward_induction._run_period_kernel
+    nominations: list[tuple[str, ...]] = []
+
+    def observe(**kwargs: Any) -> Any:
+        if kwargs["regime_name"] == "alive":
+            nominations.extend(
+                core.donated_arguments for core in kwargs["compiled_cores"].values()
+            )
+        return run(**kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backward_induction, "_run_period_kernel", observe)
+        placed = _nbegm_toy(distributed_kind=True).solve(params=params, log_level="off")
+    assert nominations
+    assert not any(nominations)
     canonical = _nbegm_toy(distributed_kind=False).solve(params=params, log_level="off")
 
     for period in placed.values:

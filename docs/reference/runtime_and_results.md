@@ -60,6 +60,18 @@ Its fields:
   be an axis some core program declares.
 - `devices` names the device ids the model may use, ascending; `None` (the default)
   means every device JAX reports. Every id must be one JAX reports.
+- `donate_buffers` is an exact Boolean, defaulting to `True`. `False` disables compiled
+  solve input donation without changing the model fingerprint or economic inputs.
+
+NB-EGM can nominate one marginal leaf on an unsharded, self-carry `main` program.
+Donation requires exclusive solve ownership and a final, unretained read. A physical
+alias or unowned input selects an ordinary executable compiled at the same widths. With
+a memory budget, both variants must fit using their own compiler peak and live
+residency. This conservative fallback does not use donation to admit a width that only
+the donating executable fits. Eager execution never donates. A selected `replay` program
+does not donate; standalone NB-EGM can select `main` even under the default retention
+when its policy is not applicable. Retained continuation leaves remain ineligible. This
+feature promises no particular workflow speedup or backend buffer reuse.
 
 An unknown state, an unknown axis name, or an invisible device id raises
 `ExecutionPlanningError` at model build, naming the offender and the legal set.

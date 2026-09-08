@@ -348,6 +348,9 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
 
     assert set(supplemental) == {
+        "donation:ordinary_fallback_filtered",
+        "donation:physical_alias_protection_bypassed",
+        "donation:paired_residency_omitted",
         "compiler_inputs:eliminated_input_counted_by_compiler",
         "simulation_membership:entry_period_changed",
         "simulation_taste_stream:global_row_high_word_ignored",

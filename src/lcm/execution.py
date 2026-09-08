@@ -29,9 +29,14 @@ class ExecutionConfig:
     devices: tuple[int, ...] | None = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
+    donate_buffers: bool = True
+    """Allow eligible owned inputs to be donated by compiled solve programs."""
+
     def __post_init__(self) -> None:
         """Reject ambiguous or unusable values at construction."""
         _fail_if_budget_invalid(device_memory_bytes=self.device_memory_bytes)
+        if type(self.donate_buffers) is not bool:
+            raise TypeError("ExecutionConfig.donate_buffers must be an exact bool.")
         widths = dict(self.axis_widths)
         _fail_if_axis_widths_invalid(axis_widths=widths)
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))

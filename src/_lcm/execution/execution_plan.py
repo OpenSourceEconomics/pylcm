@@ -35,6 +35,9 @@ class ResolvedExecution:
     device_memory_bytes: int | None
     """Per-device workspace budget, or `None`."""
 
+    donate_buffers: bool = True
+    """Whether eligible solve inputs may be donated to a compiled executable."""
+
 
 def resolve_execution_config(
     *,
@@ -81,6 +84,7 @@ def resolve_execution_config(
         sharded_states=frozenset(config.sharded_states),
         axis_widths=MappingProxyType(dict(config.axis_widths)),
         device_memory_bytes=config.device_memory_bytes,
+        donate_buffers=config.donate_buffers,
     )
 
 

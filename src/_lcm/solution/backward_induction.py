@@ -550,8 +550,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     regime_name=regime_name,
                     period=period,
                 )
+                selected_cores, selected_donations = _select_runtime_donation_cores(
+                    compiled_programs=compiled_programs,
+                    unit=unit,
+                    inputs=SolveInputMappings(
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        next_edge_to_V_arr=next_edge_to_V_arr,
+                    ),
+                    templates=input_templates,
+                    registry=buffer_registry,
+                    logger=logger,
+                )
                 donated_inputs = _donated_input_arrays(
-                    donations=compiled_programs.donations,
+                    donations=selected_donations,
                     unit=unit,
                     inputs=SolveInputMappings(
                         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -566,7 +578,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     regime_name=regime_name,
                     period=period,
                     compiled_cores=_cores_with_transfer_cache(
-                        cores=compiled_functions[(regime_name, period)],
+                        cores=selected_cores,
                         cache=period_transfer_cache,
                     ),
                     capture_target=capture_target,
@@ -1910,6 +1922,72 @@ class _CompiledPrograms:
     donations: MappingProxyType[_CoreTriple, tuple[ResolvedDonation, ...]]
     """Per selected program, the donation decisions its executable carries."""
 
+    donation_fallbacks: MappingProxyType[_CoreTriple, PlannedCore] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Admitted ordinary alternatives at exactly the selected donating widths."""
+
+
+def _select_runtime_donation_cores(
+    *,
+    compiled_programs: _CompiledPrograms,
+    unit: DispatchUnit,
+    inputs: SolveInputMappings,
+    templates: SolveInputMappings,
+    registry: BufferRegistry,
+    logger: logging.Logger,
+) -> tuple[
+    MappingProxyType[str, PlannedCore],
+    MappingProxyType[_CoreTriple, tuple[ResolvedDonation, ...]],
+]:
+    """Use an already-admitted ordinary core when actual ownership bars donation."""
+    cores = dict(compiled_programs.executables[(unit.regime, unit.period)])
+    decisions: dict[_CoreTriple, tuple[ResolvedDonation, ...]] = {}
+    for name in unit.programs:
+        triple = (unit.regime, unit.period, name)
+        donations = compiled_programs.donations.get(triple, ())
+        reasons = tuple(
+            reason
+            for donation in donations
+            if donation.donated
+            for artifact in donation.artifacts
+            if (
+                reason := _donation_ownership_refusal(
+                    artifact=artifact,
+                    inputs=inputs,
+                    templates=templates,
+                    registry=registry,
+                )
+            )
+            is not None
+        )
+        if reasons:
+            cores[name] = compiled_programs.donation_fallbacks[triple]
+            decisions[triple] = ()
+            logger.debug("donation withheld at %r: %s", triple, "; ".join(reasons))
+        else:
+            decisions[triple] = donations
+    return MappingProxyType(cores), MappingProxyType(decisions)
+
+
+def _donation_ownership_refusal(
+    *,
+    artifact: ValueArtifactAddress,
+    inputs: SolveInputMappings,
+    templates: SolveInputMappings,
+    registry: BufferRegistry,
+) -> str | None:
+    """Explain an actual input's ownership conflict without consuming the input."""
+    array = locate_artifact(inputs=inputs, artifact=artifact)
+    if array is None or array is locate_artifact(inputs=templates, artifact=artifact):
+        return f"{artifact!r} is not a solve input of its own"
+    if registry.is_not_produced(array=array):
+        return f"{artifact!r} has a buffer no compiled executable produced"
+    partners = registry.artifacts_sharing(array=array) - {artifact}
+    if partners:
+        return f"{artifact!r} has a buffer {sorted(partners, key=repr)!r} still name"
+    return None
+
 
 def _build_planned_input_liveness(
     *,
@@ -3077,12 +3155,27 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         budget_bytes=execution.device_memory_bytes,
         fixed_widths=execution.axis_widths,
         enable_jit=enable_jit,
+        donate_buffers=execution.donate_buffers,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
     )
 
     _fail_if_one_key_covers_two_callables(
         lowering_keys=lowering_keys, resolved_programs=resolved_programs
+    )
+    fallback_programs = {
+        candidate: resolved_programs[candidate]
+        for candidate, decisions in donations.items()
+        if _donated_arguments(donations=decisions)
+    }
+    fallback_donations = dict.fromkeys(fallback_programs, ())
+    fallback_keys = _lowering_keys(
+        resolved_programs=fallback_programs,
+        internal_templates=internal_templates,
+        layouts=all_layouts,
+        donations=fallback_donations,
+        regimes=regimes,
+        model_fingerprint=model_fingerprint,
     )
 
     candidates_by_triple: dict[_CoreTriple, list[_CoreCandidate]] = {}
@@ -3209,6 +3302,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     labels: dict[Hashable, str] = {}
     peak_bytes_by_lowering_key: dict[Hashable, int] = {}
     resident_bytes_by_candidate: dict[_CoreCandidate, int] = {}
+    admission_keys: dict[_CoreCandidate, Hashable] = {}
     pending: dict[_CoreTriple, int] = dict.fromkeys(
         _triples_within_budget(
             candidates_by_triple=candidates_by_triple,
@@ -3255,30 +3349,76 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             compiled=compiled,
             labels=labels,
         )
+        wave_fallback_keys = {
+            candidate: fallback_keys[candidate]
+            for candidate in wave_candidates.values()
+            if candidate in fallback_keys
+        }
+        new_fallbacks: dict[Hashable, _CoreCandidate] = {}
+        for candidate, lowering_key in wave_fallback_keys.items():
+            if lowering_key not in compiled:
+                new_fallbacks.setdefault(lowering_key, candidate)
+        _lower_and_compile_wave(
+            new_lowerings=new_fallbacks,
+            resolved_programs=resolved_programs,
+            all_layouts=all_layouts,
+            internal_templates=internal_templates,
+            donations=fallback_donations,
+            ages=ages,
+            n_triples_per_lowering=_count_triples_per_lowering_key(
+                lowering_keys=wave_fallback_keys
+            ),
+            log_kernel_memory=budget_bytes is None,
+            n_workers=n_workers,
+            logger=logger,
+            compiled=compiled,
+            labels=labels,
+        )
+        admission_keys.update(wave_lowering_keys)
         if budget_bytes is None:
             break
         next_pending: dict[_CoreTriple, int] = {}
         for triple, position in pending.items():
             candidate = wave_candidates[triple]
-            lowering_key = lowering_keys[candidate]
-            if lowering_key not in peak_bytes_by_lowering_key:
-                peak_bytes = compiler_peak_bytes(
-                    compiled=compiled[lowering_key],
-                    widths=resolved_programs[candidate].tile_widths,
+            variant_keys = tuple(
+                dict.fromkeys(
+                    (
+                        lowering_keys[candidate],
+                        fallback_keys.get(candidate, lowering_keys[candidate]),
+                    )
                 )
-                peak_bytes_by_lowering_key[lowering_key] = peak_bytes
-                _log_kernel_memory(
-                    compiled=compiled[lowering_key],
-                    label=labels[lowering_key],
-                    logger=logger,
-                    precomputed_peak_bytes=peak_bytes,
-                )
-            resident = _candidate_resident_bytes(
-                compiled=compiled[lowering_key],
-                program=resolved_programs[candidate],
-                internal_arguments=internal_templates[candidate],
-                inventory=resident_inventory[triple],
             )
+            variant_residency: dict[Hashable, int] = {}
+            for variant_key in variant_keys:
+                if variant_key not in peak_bytes_by_lowering_key:
+                    peak_bytes = compiler_peak_bytes(
+                        compiled=compiled[variant_key],
+                        widths=resolved_programs[candidate].tile_widths,
+                    )
+                    peak_bytes_by_lowering_key[variant_key] = peak_bytes
+                    _log_kernel_memory(
+                        compiled=compiled[variant_key],
+                        label=labels[variant_key],
+                        logger=logger,
+                        precomputed_peak_bytes=peak_bytes,
+                    )
+                variant_residency[variant_key] = _candidate_resident_bytes(
+                    compiled=compiled[variant_key],
+                    program=resolved_programs[candidate],
+                    internal_arguments=internal_templates[candidate],
+                    inventory=resident_inventory[triple],
+                )
+            # Keep one variant's complete measured total intact. Combining a
+            # peak from one executable with another's kept-input subtraction
+            # can undercount retained buffers or invent a nonexistent peak.
+            lowering_key = max(
+                variant_keys,
+                key=lambda key: (
+                    peak_bytes_by_lowering_key[key] + variant_residency[key]
+                ),
+            )
+            admission_keys[candidate] = lowering_key
+            resident = variant_residency[lowering_key]
             resident_bytes_by_candidate[candidate] = resident
             logger.debug(
                 "  resident at %r period %d core %r: %d bytes",
@@ -3313,14 +3453,15 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     # without a second lowering or compilation.
     selected_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
     selected_cores: dict[_CoreTriple, PlannedCore] = {}
+    selected_fallbacks: dict[_CoreTriple, PlannedCore] = {}
     for triple, candidates in candidates_by_triple.items():
         programs_by_width = {
             candidate[1]: resolved_programs[candidate] for candidate in candidates
         }
         compiled_by_width = {
-            candidate[1]: compiled[lowering_keys[candidate]]
+            candidate[1]: compiled[admission_keys[candidate]]
             for candidate in candidates
-            if lowering_keys[candidate] in compiled
+            if candidate in admission_keys
         }
         representative = resolved_programs[candidates[0]]
         try:
@@ -3361,10 +3502,11 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 budget_bytes=budget_bytes,
                 error=error,
             ) from error
-        selected = programs_by_width[_width_key(widths=plan.widths)]
+        selected_candidate = (triple, _width_key(widths=plan.widths))
+        selected = programs_by_width[selected_candidate[1]]
         selected_programs[triple] = selected
         selected_cores[triple] = _attach_resolved_output_layout(
-            compiled=plan.compiled,
+            compiled=compiled[lowering_keys[selected_candidate]],
             layout=all_layouts[triple],
             tile_widths=plan.widths,
             input_transfer_plan=selected.input_transfer_plan,
@@ -3376,6 +3518,12 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             ),
             name=triple[2],
         )
+        if selected_candidate in fallback_keys:
+            selected_fallbacks[triple] = dataclasses.replace(
+                selected_cores[triple],
+                compiled=compiled[fallback_keys[selected_candidate]],
+                donated_arguments=(),
+            )
 
     return _CompiledPrograms(
         executables=_group_cores_by_regime_period(selected_cores),
@@ -3389,6 +3537,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 for triple in selected_cores
             }
         ),
+        donation_fallbacks=MappingProxyType(selected_fallbacks),
     )
 
 
@@ -3636,6 +3785,7 @@ def _resolve_output_layouts_and_lowering_keys(
     budget_bytes: int | None,
     fixed_widths: Mapping[str, int],
     enable_jit: bool,
+    donate_buffers: bool = True,
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> tuple[
@@ -3777,7 +3927,7 @@ def _resolve_output_layouts_and_lowering_keys(
                 ledger=input_liveness,
                 n_periods=n_periods,
             )
-            if enable_jit
+            if enable_jit and donate_buffers
             else ()
         )
         for candidate, resolved in resolved_programs.items()

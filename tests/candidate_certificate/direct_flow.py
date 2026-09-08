@@ -292,7 +292,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "3ca1959d612dbfbf323e523fee496a56390ddaa1f509f607803a111d728899d2",
     MODEL_SOURCE: "c774110ee388ae6c7a2a4814edf05f38add7e3508cb8d605f92bc076adaade24",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "320d88ecb4959c19274da453a5bacd7995b5e7d54a6da76d47d0fe24f583809d",
+    BACKWARD_INDUCTION_SOURCE: "cea549b75d3feab68be27bd4f91f47f13374b60e175aea693623f57ab2cda244",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "5114b119e318dceb693e9cdb99ee8207155c9301ad5a883d7e111cb21f0ca2c5",
     RESULT_SOURCE: "bfc4b1f19bf1852c86c4f5b87d40abed2521d0519af99ff613975fb8d3ab09f0",
@@ -3574,8 +3574,10 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "5d2f6e4201b212fa51b909caa184d89bfde3a7263ca11be6a3cb1a09bcd7f45e",
-            "_resolve_output_layouts_and_lowering_keys": "231acc7b714916f20dd60dc8c7545f7c1f2baab67cd1f5babd6cd0ff99e4b77d",
+            "_compile_all_functions": "09ce7fc7b6cc49e2fdd3e1b4c00424936145c8531990587366709d0c38879296",
+            "_resolve_output_layouts_and_lowering_keys": "4dcab394812daa474799c4cceb048d33db5f2d7f1cad943bc82a8f3fb0145b3c",
+            "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
+            "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "2b11ec8152b081ae0e2666a46c79b46ef5062ce2738717da0c93bcc502280c56",
             "_consumer_key": "44f91b9312a058528a7f7d34b843eb23efaae21783e834cc5fa06389f4006c73",
             "_resolve_program_for_execution": "6e3ec3139833f459a49be4a30a6c8c5813ba8cd66176a849ee24e7a81b27b433",
@@ -3602,7 +3604,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "982b65192ef304e806073420bb48927dcb38844b6d7f14ca5409ebf0f7bc35f4"
+        != "a40912326f410dede3e4babeeb27c407f606d422ca38f90d2a23fc51a82f6b53"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -3660,7 +3662,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "4ba675cde9b977b4aaeceea22d901bb878ccb0ca1897313d492512fb48aabc83"
+        expected = "9a58e554610ec84eb1967278c2509474cb01a0933f82f81db20ecc2219b22247"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -5014,6 +5016,25 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
         SIMULATION_ENTRY_ALLOCATIONS_SOURCE,
         "budget_bytes=self.budget_bytes,\n            live_footprint=live,",
         "budget_bytes=None,\n            live_footprint=live,",
+    ),
+    "donation:ordinary_fallback_filtered": (
+        BACKWARD_INDUCTION_SOURCE,
+        "cores[name] = compiled_programs.donation_fallbacks[triple]",
+        "cores[name] = candidate_filter(compiled_programs.donation_fallbacks[triple])",
+    ),
+    "donation:physical_alias_protection_bypassed": (
+        BACKWARD_INDUCTION_SOURCE,
+        (
+            "partners = registry.artifacts_sharing(array=array) - {artifact}\n"
+            "    if partners:\n"
+            "        return"
+        ),
+        "partners = set()\n    if partners:\n        return",
+    ),
+    "donation:paired_residency_omitted": (
+        BACKWARD_INDUCTION_SOURCE,
+        "peak_bytes_by_lowering_key[key] + variant_residency[key]",
+        "peak_bytes_by_lowering_key[key]",
     ),
     "simulation_taste_stream:global_row_high_word_ignored": (
         SIMULATION_TASTE_STREAM_SOURCE,
