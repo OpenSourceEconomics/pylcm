@@ -2301,12 +2301,6 @@ class Model:
             period_to_regime_to_sim_policy = None
             period_to_regime_to_dissolution_flags = None
             period_to_regime_to_replay_reader = None
-        if isinstance(initial_conditions, pd.DataFrame):
-            initial_conditions = initial_conditions_from_dataframe(
-                df=initial_conditions,
-                user_regimes=self.user_regimes,
-                regime_names_to_ids=self.regime_names_to_ids,
-            )
         if entry_allocations is not None:
             entry_allocations.update_solution(
                 solution=solution,
@@ -2317,6 +2311,14 @@ class Model:
                     period_to_regime_to_replay_reader,
                 ),
             )
+        if isinstance(initial_conditions, pd.DataFrame):
+            initial_conditions = initial_conditions_from_dataframe(
+                df=initial_conditions,
+                user_regimes=self.user_regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
+                array_writer=entry_allocations,
+            )
+        if entry_allocations is not None:
             entry_allocations.publish(stage="initial", tree=initial_conditions)
         initial_conditions = canonicalize_initial_conditions(
             initial_conditions=initial_conditions,
@@ -2589,10 +2591,11 @@ class Model:
                 ages=self.ages,
                 user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
+                array_writer=array_writer,
             )
         if array_writer is not None:
-            # Converted Series payloads already exist; observing them does not
-            # admit that separate conversion operation retroactively.
+            # The completed mapping takes ownership of any admitted Series leaves
+            # before canonicalization can allocate another numeric payload.
             array_writer.publish(stage="params", tree=flat_params)
         flat_params = cast_params_to_canonical_dtypes(
             flat_params, array_writer=array_writer

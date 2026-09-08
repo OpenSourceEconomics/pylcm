@@ -11,8 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
+from jax import Array
 
-from _lcm.dtypes import canonical_float_dtype
+from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
@@ -60,6 +61,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     df: pd.DataFrame,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
+    array_writer: CanonicalArrayWriter | None = None,
 ) -> InitialConditions:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
@@ -69,6 +71,8 @@ def initial_conditions_from_dataframe(  # noqa: C901
         user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
+        array_writer: Optional owner admitting each numeric device upload after
+            label validation and host conversion.
 
     Returns:
         Immutable mapping of state names (plus `"regime_id"`, and
@@ -169,18 +173,27 @@ def initial_conditions_from_dataframe(  # noqa: C901
     initial_conditions: dict[
         StateName | Literal["regime_id", "own_stakeholder"], Float1D | Int1D
     ] = {
-        col: jnp.array(arr, dtype=jnp.int32)
-        if col in discrete_state_names
-        else jnp.array(arr, dtype=canonical_float_dtype())
+        col: _write_pandas_array(
+            value=arr,
+            dtype=np.dtype(
+                jnp.int32 if col in discrete_state_names else canonical_float_dtype()
+            ),
+            name=f"initial_conditions.{col}",
+            array_writer=array_writer,
+        )
         for col, arr in result_arrays.items()
     }
-    initial_conditions["regime_id"] = jnp.array(
-        df["regime_name"].map(dict(regime_names_to_ids)).to_numpy(),
-        dtype=jnp.int32,
+    initial_conditions["regime_id"] = _write_pandas_array(
+        value=df["regime_name"].map(dict(regime_names_to_ids)).to_numpy(),
+        dtype=np.dtype(jnp.int32),
+        name="initial_conditions.regime_id",
+        array_writer=array_writer,
     )
     if "own_stakeholder" in df.columns:
         initial_conditions["own_stakeholder"] = _role_codes_from_labels(
-            labels=df["own_stakeholder"], user_regimes=user_regimes
+            labels=df["own_stakeholder"],
+            user_regimes=user_regimes,
+            array_writer=array_writer,
         )
 
     return MappingProxyType(initial_conditions)
@@ -190,6 +203,7 @@ def _role_codes_from_labels(
     *,
     labels: pd.Series,
     user_regimes: Mapping[RegimeName, UserRegime],
+    array_writer: CanonicalArrayWriter | None = None,
 ) -> Int1D:
     """Convert an `own_stakeholder` label column back to role codes.
 
@@ -201,6 +215,7 @@ def _role_codes_from_labels(
         labels: The frame's `own_stakeholder` column, as labels.
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances, the source of the role vocabulary.
+        array_writer: Optional owner admitting the role-code device upload.
 
     Returns:
         One role code per row.
@@ -222,7 +237,25 @@ def _role_codes_from_labels(
         raise ValueError(msg)
     codes = np.full(len(text), NO_ROLE, dtype=np.int32)
     codes[named.to_numpy()] = text[named].map(dict(role_ids)).to_numpy(dtype=np.int32)
-    return jnp.asarray(codes)
+    return _write_pandas_array(
+        value=codes,
+        dtype=np.dtype(np.int32),
+        name="initial_conditions.own_stakeholder",
+        array_writer=array_writer,
+    )
+
+
+def _write_pandas_array(
+    *,
+    value: np.ndarray,
+    dtype: np.dtype,
+    name: str,
+    array_writer: CanonicalArrayWriter | None,
+) -> Array:
+    """Materialize one host-converted leaf through its optional admission owner."""
+    if array_writer is not None:
+        return array_writer(value=value, dtype=dtype, name=name)
+    return jnp.array(value, dtype=dtype)
 
 
 def _map_discrete_labels(
@@ -255,6 +288,7 @@ def convert_series_in_params(
     ages: AgeGrid,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
+    array_writer: CanonicalArrayWriter | None = None,
 ) -> FlatParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
 
@@ -275,6 +309,8 @@ def convert_series_in_params(
         user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
+        array_writer: Optional owner admitting each Series upload and retaining
+            completed leaves while the parameter mapping is assembled.
 
     Returns:
         Immutable mapping with the same structure, Series replaced by JAX
@@ -340,6 +376,7 @@ def convert_series_in_params(
                 user_regimes=user_regimes,
                 regime_names_to_ids=regime_names_to_ids,
                 regime_name=regime_name,
+                array_writer=array_writer,
             )
         result[regime_name] = converted_regime
     return cast(
@@ -455,6 +492,7 @@ def _convert_param_value(
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None,
+    array_writer: CanonicalArrayWriter | None = None,
 ) -> object:
     """Convert a single param value, dispatching on type.
 
@@ -470,6 +508,7 @@ def _convert_param_value(
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime name for action grid lookup.
+        array_writer: Optional owner admitting each nested Series upload.
 
     Returns:
         Converted value: JAX array for Series, a `UserMappingLeaf` /
@@ -487,6 +526,7 @@ def _convert_param_value(
         user_regimes=user_regimes,
         regime_names_to_ids=regime_names_to_ids,
         regime_name=regime_name,
+        array_writer=array_writer,
     )
 
     if isinstance(value, pd.Series):
@@ -499,6 +539,7 @@ def _convert_param_value(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
+            array_writer=array_writer,
         )
     # `convert_series_in_params` runs between broadcast and canonicalization,
     # so leaves are still in user form. Preserve that user form on output:
@@ -520,6 +561,7 @@ def array_from_series(
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None = None,
+    array_writer: CanonicalArrayWriter | None = None,
 ) -> FloatND:
     """Convert a pandas Series to a JAX array.
 
@@ -547,6 +589,7 @@ def array_from_series(
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime for grid and derived categorical lookup.
+        array_writer: Optional owner admitting the completed numeric device array.
 
     Returns:
         JAX array with axes corresponding to the indexing parameters in
@@ -556,13 +599,20 @@ def array_from_series(
         ValueError: If level names don't match or labels are invalid.
 
     """
-    if func is None:
-        return jnp.array(sr.to_numpy(), dtype=canonical_float_dtype())
-
-    indexing_params = _get_func_indexing_params(func=func, array_param_name=param_name)
+    indexing_params = (
+        []
+        if func is None
+        else _get_func_indexing_params(func=func, array_param_name=param_name)
+    )
+    name = f"params.{regime_name}.{func_name}.{param_name}"
 
     if not indexing_params:
-        return jnp.array(sr.to_numpy(), dtype=canonical_float_dtype())
+        return _write_pandas_array(
+            value=sr.to_numpy(),
+            dtype=np.dtype(canonical_float_dtype()),
+            name=name,
+            array_writer=array_writer,
+        )
 
     grids = _resolve_categoricals(
         user_regimes=user_regimes,
@@ -595,7 +645,12 @@ def array_from_series(
         _fail_if_period_level(sr)
         sr = _filter_to_grid_ages(series=sr, ages=ages)
 
-    return _scatter_series(series=sr, level_mappings=level_mappings)
+    return _scatter_series(
+        series=sr,
+        level_mappings=level_mappings,
+        name=name,
+        array_writer=array_writer,
+    )
 
 
 def _resolve_categoricals(
@@ -845,6 +900,8 @@ def _scatter_series(
     series: pd.Series,
     level_mappings: tuple[_LevelMapping, ...],
     fill_value: float = np.nan,
+    name: str = "series",
+    array_writer: CanonicalArrayWriter | None = None,
 ) -> FloatND:
     """Scatter a MultiIndex Series into an N-dimensional JAX array.
 
@@ -856,6 +913,8 @@ def _scatter_series(
         series: Series with a named MultiIndex.
         level_mappings: One mapping per axis, in output axis order.
         fill_value: Value for positions not present in the Series.
+        name: Qualified parameter name attached to upload admission.
+        array_writer: Optional owner admitting the scattered device array.
 
     Returns:
         JAX array with shape `[m.size for m in level_mappings]`.
@@ -869,6 +928,13 @@ def _scatter_series(
     shape = [m.size for m in level_mappings]
 
     if len(series) == 0:
+        if array_writer is not None:
+            return _write_pandas_array(
+                value=np.full(shape, fill_value),
+                dtype=np.dtype(canonical_float_dtype()),
+                name=name,
+                array_writer=array_writer,
+            )
         return jnp.full(shape, fill_value, dtype=canonical_float_dtype())
 
     index_arrays = [
@@ -880,7 +946,12 @@ def _scatter_series(
 
     result = np.full(shape, fill_value)
     result[tuple(index_arrays)] = series.to_numpy()
-    return jnp.array(result, dtype=canonical_float_dtype())
+    return _write_pandas_array(
+        value=result,
+        dtype=np.dtype(canonical_float_dtype()),
+        name=name,
+        array_writer=array_writer,
+    )
 
 
 def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:

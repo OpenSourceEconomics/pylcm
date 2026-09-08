@@ -250,7 +250,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
-    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "aa0ccf797a5e4d9669a7d7265458584e09d97f37ff7b6b18cd90b626df5a2075",
+    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "74ea68920bdbc96dba54187bb207cc6d34a8e7e08fbb51c62927ea7d53a9bc21",
     NBEGM_SOURCE: "32037ec1fc4e67cf7523d4a574e0172b91e1e600bfdacfbd2f8afa987319c0a4",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
@@ -302,7 +302,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "fe6f2f8e9550314cc4aa76ba9ce41f104f6e55ed8a72804d6b15e18dce9ae8cc",
     SIMULATION_TRANSITIONS_SOURCE: "18f53b35a8a11536f9e3df03cfc48cec357bbc2fa11308d04091620d02e179a6",
     SIMULATION_COMPILE_SOURCE: "f6b4ec612b6bcf6263995d85ce5bd49c75c0c807af1bafd83a16c89140863d12",
-    MODEL_SOURCE: "1fe60119c587a264285c46f1485b3691ded638c839e1f786e156d8cf127e7185",
+    MODEL_SOURCE: "bad12f838f71ab465e15f21f8f02dbca16e6f939850c8a345ee53be09ebbbf83",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "43bfe665ac889a793e2f423aa38b87716228c2dc77e3f8fea2e23219b71c5257",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
@@ -329,7 +329,7 @@ _SOURCE_SEALS = {
     PARAMS_PROCESSING_SOURCE: "7406b1a17a7e3ed306790d9939e3fd0c37e14670200b5aceaf48ff31d9f2aa87",
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "254509e538c6a2264a71e04cdd5abdb60ad92f04899a37f710004222ae855bea",
-    PANDAS_UTILS_SOURCE: "a0e3f5efb79cf0b252690ee1177bb0c6a3d52882dea15cc70854e71da4ea57a8",
+    PANDAS_UTILS_SOURCE: "bc174d387fdb4b33d882e351e1cfab8b1f5ee67fd20217439c3fe49fe54e1537",
     MODEL_PROCESSING_SOURCE: "727870dc8917f7aedfe99e4b7f1cacac6ecd11f4763004a29d2b4ef8237522ea",
 }
 
@@ -3072,14 +3072,14 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
                 "Model._resolve_simulate_regimes": "5a11f26e52496d8210ae0ab2b9846d5ca234569764f82d47e871f26e33751ee2",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model._ensure_simulate_compiled": "2e59224333ce9bd7453608d05359e933217971dbf8867e3f9851b9f503a2df86",
-                "Model.simulate": "46703c80e1f82fe33e7e21bae3d6b2920a88f8b28fde2214615f5c848e111d98",
+                "Model.simulate": "69143470d9499971c9493fc9c4ac2d25d86808afe4b3b1ec2121ff3a09fa6a15",
                 # Fixed caller owners flow through both private automatic-solve
                 # boundaries without becoming numerical operands or cache keys.
                 "Model._solve_from_flat_params": "155f0cc0924e38add9e4cccd83ef416b5f716360d20e79cc29cb1735da21f549",
                 "Model._solve_compiled": "1112d06897315b6ffd4d056509e78f6a54924d14ecf0a390b1ed1e4457ee94be",
                 "Model._build_external_replay_readers": "33c41f2c3f7bd300f3e0b4ac042f7371b93efbfe1762e5fe639fc854b19f1f5f",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
-                "Model._process_params": "511c26a9c31acbf937c226881d9105b08e759e0b81b139e5b0187f2169bd0837",
+                "Model._process_params": "b08215b65b9edca9a1ef20fb5a64d1f8a42aba81c99d8d62dd32e62ce17cf6e9",
                 "_simulation_programs": "02d69b94d7005c2f01cb72585af823fcc62801fb5b45fbbac975fdfc1ceaae70",
             },
         ),
@@ -3112,6 +3112,21 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
 
 
 _SIMULATION_ADAPTER_CONTRACTS = {
+    # Pandas validates labels and assembles numeric host arrays before the same
+    # admitted writer used by ordinary inputs. Recursion keeps that writer and
+    # completed leaves stay owned until the complete mapping is published.
+    PANDAS_UTILS_SOURCE: (
+        "9ba7e396bcb873930eca11e396aa17d16135c1c64d76ed3ec6d4bd4f7e93db7f",
+        {
+            "initial_conditions_from_dataframe": "ccdc7238f3c2d036ca14b26ac6b2196fdfc4acd23cbf4978cc791749dd3fa394",
+            "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
+            "_write_pandas_array": "fc6fdb8c0b16669a7672c6eac52c951bb92f6180ebf607af7bd15907260c0a4d",
+            "convert_series_in_params": "30530b016415924c609dd56f200289643f3ea9dd506d104742a2e30e1889f78c",
+            "_convert_param_value": "d3dbe841331053864f44d94edbd8dbe85eb3224ab8e6a2de6854dfa37434fb59",
+            "array_from_series": "0d2d919f86566ac63eb3a66884b2100332a951cbf8f25500653a9c6d6de42dfa",
+            "_scatter_series": "68981f1c512410fc68eccb42c39ecb3a4b0d4be3a3c4f414329f69b5287f79cf",
+        },
+    ),
     DTYPES_SOURCE: (
         "661c05486d0b4cc02d475d8f74bfc9f845a3a4d1e7c2d3fdd03b90b8a2b82c24",
         {
@@ -7928,8 +7943,16 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": PANDAS_UTILS_SOURCE,
             "source": replace_once(
                 source=pandas_utils_source,
-                old="    if func is None:\n        return jnp.array(sr.to_numpy(), dtype=canonical_float_dtype())",
-                new="    if func is None:\n        return -jnp.array(sr.to_numpy(), dtype=canonical_float_dtype())",
+                old=(
+                    "    if not indexing_params:\n"
+                    "        return _write_pandas_array(\n"
+                    "            value=sr.to_numpy(),"
+                ),
+                new=(
+                    "    if not indexing_params:\n"
+                    "        return _write_pandas_array(\n"
+                    "            value=-sr.to_numpy(),"
+                ),
                 label="Series runtime action points changed during conversion",
             ),
         },

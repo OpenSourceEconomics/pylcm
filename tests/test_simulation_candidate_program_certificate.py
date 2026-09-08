@@ -80,6 +80,83 @@ _RANDOM_HELPER_MUTATIONS = {
 }
 
 _PROFILED_HELPER_MUTATIONS = {
+    "simulation_pandas:dataframe_writer_omitted": (
+        "src/lcm/model.py",
+        (
+            "                regime_names_to_ids=self.regime_names_to_ids,\n"
+            "                array_writer=entry_allocations,"
+        ),
+        (
+            "                regime_names_to_ids=self.regime_names_to_ids,\n"
+            "                array_writer=None,"
+        ),
+    ),
+    "simulation_pandas:series_writer_omitted": (
+        "src/lcm/model.py",
+        (
+            "                regime_names_to_ids=self.regime_names_to_ids,\n"
+            "                array_writer=array_writer,"
+        ),
+        (
+            "                regime_names_to_ids=self.regime_names_to_ids,\n"
+            "                array_writer=None,"
+        ),
+    ),
+    "simulation_pandas:nested_writer_omitted": (
+        "src/_lcm/pandas_utils.py",
+        (
+            "        array_writer=array_writer,\n"
+            "    )\n\n    if isinstance(value, pd.Series):"
+        ),
+        ("        array_writer=None,\n    )\n\n    if isinstance(value, pd.Series):"),
+    ),
+    "simulation_pandas:materialization_admission_bypassed": (
+        "src/_lcm/pandas_utils.py",
+        "return array_writer(value=value, dtype=dtype, name=name)",
+        "return jnp.array(value, dtype=dtype)",
+    ),
+    "simulation_pandas:empty_series_admission_bypassed": (
+        "src/_lcm/pandas_utils.py",
+        "    if len(series) == 0:\n        if array_writer is not None:",
+        "    if len(series) == 0:\n        if False and array_writer is not None:",
+    ),
+    "simulation_pandas:role_writer_omitted": (
+        "src/_lcm/pandas_utils.py",
+        (
+            '            labels=df["own_stakeholder"],\n'
+            "            user_regimes=user_regimes,\n"
+            "            array_writer=array_writer,"
+        ),
+        (
+            '            labels=df["own_stakeholder"],\n'
+            "            user_regimes=user_regimes,\n"
+            "            array_writer=None,"
+        ),
+    ),
+    "simulation_pandas:completed_mapping_owner_omitted": (
+        "src/lcm/model.py",
+        (
+            'array_writer.publish(stage="params", tree=flat_params)\n'
+            "        flat_params = cast_params_to_canonical_dtypes("
+        ),
+        (
+            'array_writer.publish(stage="params", tree={})\n'
+            "        flat_params = cast_params_to_canonical_dtypes("
+        ),
+    ),
+    "simulation_pandas:resolved_solution_owner_omitted": (
+        "src/lcm/model.py",
+        (
+            "            period_to_regime_to_replay_reader = None\n"
+            "        if entry_allocations is not None:\n"
+            "            entry_allocations.update_solution("
+        ),
+        (
+            "            period_to_regime_to_replay_reader = None\n"
+            "        if entry_allocations is not None:\n"
+            "            (lambda **kwargs: None)("
+        ),
+    ),
     "simulation_entry:automatic_solve_owners_omitted": (
         "src/lcm/model.py",
         "else entry_allocations.solve_input_roots()",
@@ -556,6 +633,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "src/_lcm/simulation/membership.py",
         "src/_lcm/simulation/taste_stream.py",
         "src/_lcm/simulation/entry_allocations.py",
+        "src/_lcm/pandas_utils.py",
         "src/_lcm/simulation/policy_programs.py",
         "src/_lcm/egm/published_policy.py",
     ],

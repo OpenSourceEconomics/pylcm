@@ -3,7 +3,8 @@
 Host validation and target-dtype conversion precede explicit first-selected-device
 staging. Upload admission uses the existing destination-payload plus declared
 transfer-scratch convention; it does not invent a zero-workspace device cast.
-Series/DataFrame construction and foreign solution copying remain separate operations.
+Pandas labels and scattered values are assembled on the host before the same numeric
+upload boundary. Foreign solution copying remains a separate operation.
 """
 
 import dataclasses
