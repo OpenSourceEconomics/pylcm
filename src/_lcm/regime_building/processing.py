@@ -130,7 +130,11 @@ from _lcm.regime_building.phases import (
     normalize_all_regime_phases,
     phase_variation_paths,
 )
-from _lcm.simulation.program_types import _PerSubjectFunction
+from _lcm.simulation.program_types import (
+    _PerSubjectFunction,
+    route_output_roles,
+    transition_output_roles,
+)
 from _lcm.simulation.programs import build_simulation_programs
 
 if TYPE_CHECKING:
@@ -6954,7 +6958,13 @@ def build_regime_transition_probs_functions(
         return jax.jit(next_regime) if enable_jit else next_regime
 
     per_subject = per_subject_regime_transition_probs(
-        next_regime=next_regime, grids=grids, flat_param_names=flat_param_names
+        next_regime=next_regime,
+        grids=grids,
+        flat_param_names=flat_param_names,
+        target_regime_names=_route_target_regime_names(
+            regime_names_to_ids=regime_names_to_ids,
+            next_regime_cells=next_regime_cells,
+        ),
     )
     next_regime_vmapped = vmap_1d(
         func=cast("RegimeTransitionFunction", per_subject.function),
@@ -7028,6 +7038,31 @@ def build_per_subject_regime_transition_probs(
         ),
         grids=grids,
         flat_param_names=flat_param_names,
+        target_regime_names=_route_target_regime_names(
+            regime_names_to_ids=regime_names_to_ids,
+            next_regime_cells=next_regime_cells,
+        ),
+    )
+
+
+def _route_target_regime_names(
+    *,
+    regime_names_to_ids: RegimeNamesToIds,
+    next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None,
+) -> tuple[RegimeName, ...]:
+    """Return the regimes a transition body publishes a probability for, in order.
+
+    A per-target transition publishes exactly its declared cells, in declaration
+    order; a coarse one publishes every regime, in regime-id order, because that
+    is the order its probability vector is indexed by.
+    """
+    if next_regime_cells is not None:
+        return tuple(next_regime_cells)
+    return tuple(
+        name
+        for _, name in sorted(
+            (int(idx), name) for name, idx in regime_names_to_ids.items()
+        )
     )
 
 
@@ -7036,12 +7071,14 @@ def per_subject_regime_transition_probs(
     next_regime: RegimeTransitionFunction,
     grids: MappingProxyType[StateOrActionName, Grid],
     flat_param_names: frozenset[str],
+    target_regime_names: tuple[RegimeName, ...],
 ) -> _PerSubjectFunction:
     """Return the regime-transition probabilities at one subject's state cell.
 
     The body accepts every state the regime declares, whether or not the
     transition reads it, because a transition function with no argument at all
-    cannot be mapped over the subject axis.
+    cannot be mapped over the subject axis. `target_regime_names` is the key
+    order the body's own probability mapping carries.
     """
     sig_args = list(inspect.signature(next_regime).parameters)
     next_regime_accepting_all = with_signature(
@@ -7054,6 +7091,7 @@ def per_subject_regime_transition_probs(
             all_args=tuple(inspect.signature(next_regime_accepting_all).parameters),
             flat_param_names=flat_param_names,
         ),
+        output_roles=route_output_roles(target_regime_names=target_regime_names),
     )
 
 
@@ -7965,7 +8003,17 @@ def _build_next_state_vmapped(
         )
         built[key] = jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
         per_subject[key] = _PerSubjectFunction(
-            function=next_state, subject_arg_names=vmap_variables
+            function=next_state,
+            subject_arg_names=vmap_variables,
+            output_roles=transition_output_roles(
+                target_next_state_names={
+                    target: [
+                        output.next_state_name
+                        for output in transition_plans[target].outputs.values()
+                    ]
+                    for target in period_transitions
+                }
+            ),
         )
 
     return _NextStateBuild(

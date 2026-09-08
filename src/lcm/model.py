@@ -248,6 +248,16 @@ def _solve_programs(*, regimes: Mapping[RegimeName, Regime]) -> Iterator[CorePro
             yield from core_program_graph(kernel=kernel).values()
 
 
+def _simulation_programs(
+    *, regimes: Mapping[RegimeName, Regime]
+) -> Iterator[CoreProgram]:
+    """Yield every core program the simulation phase of every regime declares."""
+    for regime in regimes.values():
+        programs = regime.simulation.programs
+        for family in (programs.decision, programs.transition, programs.route):
+            yield from family.values()
+
+
 def _built_in_policy_payload_defect(  # noqa: PLR0911
     *,
     supplied: object,
@@ -656,7 +666,10 @@ class Model:
         # Each phase contributes one collection of programs.
         fail_if_axis_widths_name_undeclared_axes(
             axis_widths=self._execution.axis_widths,
-            program_collections=(_solve_programs(regimes=self._regimes),),
+            program_collections=(
+                _solve_programs(regimes=self._regimes),
+                _simulation_programs(regimes=self._regimes),
+            ),
         )
         self.stakeholder_names_to_ids = next(
             (regime.stakeholder_names_to_ids for regime in self._regimes.values()),

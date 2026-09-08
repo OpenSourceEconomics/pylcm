@@ -14,11 +14,15 @@ product as a reduced axis too, with the same canonical order and the same exact
 hard-max reduction; a decision whose solve counterpart keeps the canonical dense
 reducer declares only the subject axis, and the absence of the reduced axis is
 what says the action product stays materialized.
+
+Every family declares an `output_roles` tree of the same structure its body
+returns: a pair for the decision, one role per next-state leaf under its target
+regime for the transition, and one role per drawable regime for the route.
 """
 
 import dataclasses
 import inspect
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
 from typing import Any, ClassVar, cast
@@ -39,8 +43,6 @@ from _lcm.simulation.program_types import (
     ACTION_INDEX,
     DECISION_PROGRAM,
     DECISION_VALUE,
-    NEXT_STATES,
-    REGIME_TRANSITION_PROBS,
     ROUTE_PROGRAM,
     SUBJECT_AXIS,
     SUBJECT_WIDTH_KEYWORD,
@@ -54,20 +56,18 @@ from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import (
     ACTION_PRODUCT_AXIS,
-    _ActionStreamingDisposition,
-    _classify_action_streaming,
     _edge_reference_regimes_for_targets,
     _select_action_width_keyword,
+    _supports_action_streaming,
     _value_reads,
 )
 from _lcm.typing import (
     ActionName,
-    FlatParams,
     QAndFFunction,
     RegimeName,
     StateOrActionName,
 )
-from lcm.ages import AgeGrid
+from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, IntND
 
 # Why a regime whose routing the host drives cedes its own width.
@@ -111,13 +111,19 @@ def build_simulation_programs(
         The regime's declared programs.
 
     """
-    streams_actions = _streams_action_product(context=context)
+    streams_actions = _supports_action_streaming(context=context)
+    if streams_actions:
+        _fail_if_the_streamed_reduction_is_wrong(
+            regime_name=context.regime_name,
+            has_taste_shocks=context.has_taste_shocks,
+            stakeholders=context.stakeholders,
+        )
     action_width_keyword = _select_action_width_keyword(context=context)
     action_names = context.state_action_space.action_names
     action_extents = context.state_action_space.actions_grid_shapes
 
     decision_bodies: dict[int, Callable[..., object]] = {}
-    decision: dict[Hashable, CoreProgram] = {}
+    decision: dict[int, CoreProgram] = {}
     for period in active_periods:
         group = id(Q_and_F_functions[period])
         if group not in decision_bodies:
@@ -132,10 +138,7 @@ def build_simulation_programs(
         decision[period] = CoreProgram(
             name=DECISION_PROGRAM,
             function=decision_bodies[group],
-            argument_builder=_SimulationArgumentBuilder(
-                regime_name=context.regime_name,
-                has_taste_shocks=context.has_taste_shocks,
-            ),
+            argument_builder=_ArgumentsBoundAtDispatch(program_name=DECISION_PROGRAM),
             requirements=CoreExecutionRequirements(
                 reduced_axes=(
                     (
@@ -160,10 +163,12 @@ def build_simulation_programs(
         )
 
     transition_bodies: dict[int, Callable[..., object]] = {}
-    transition: dict[Hashable, CoreProgram] = {}
+    transition: dict[int, CoreProgram] = {}
     for period in active_periods:
         built = per_subject_transitions.get(period)
-        if built is None:
+        # A period whose targets carry no state has a law of motion that writes
+        # nothing, so the regime publishes no program for it.
+        if built is None or not jax.tree.leaves(built.output_roles):
             continue
         group = id(built.function)
         if group not in transition_bodies:
@@ -174,44 +179,43 @@ def build_simulation_programs(
         transition[period] = CoreProgram(
             name=TRANSITION_PROGRAM,
             function=transition_bodies[group],
-            argument_builder=_SimulationArgumentBuilder(
-                regime_name=context.regime_name, has_taste_shocks=False
-            ),
+            argument_builder=_ArgumentsBoundAtDispatch(program_name=TRANSITION_PROGRAM),
             requirements=CoreExecutionRequirements(
                 tiled_axes=(subject_axis(state_names=simulation_state_names),)
             ),
-            output_roles=NEXT_STATES,
+            output_roles=built.output_roles,
             disposition=CoreExecutionDisposition.PLANNED,
             donation_candidates=(),
         )
 
-    route: dict[Hashable, CoreProgram] = {}
+    route: dict[int, CoreProgram] = {}
     if per_subject_route is not None:
-        route[ROUTE_PROGRAM] = CoreProgram(
-            name=ROUTE_PROGRAM,
-            function=_SubjectTiled(
-                func=per_subject_route.function,
-                subject_arg_names=per_subject_route.subject_arg_names,
-            ),
-            argument_builder=_SimulationArgumentBuilder(
-                regime_name=context.regime_name, has_taste_shocks=False
-            ),
-            requirements=CoreExecutionRequirements(
-                tiled_axes=(
-                    ()
-                    if has_gated_edges
-                    else (subject_axis(state_names=simulation_state_names),)
-                )
-            ),
-            output_roles=REGIME_TRANSITION_PROBS,
-            disposition=(
-                CoreExecutionDisposition.HOST_DRIVEN
-                if has_gated_edges
-                else CoreExecutionDisposition.PLANNED
-            ),
-            disposition_reason=_GATED_ROUTE_REASON if has_gated_edges else None,
-            donation_candidates=(),
+        route_body = _SubjectTiled(
+            func=per_subject_route.function,
+            subject_arg_names=per_subject_route.subject_arg_names,
         )
+        for period in active_periods:
+            route[period] = CoreProgram(
+                name=ROUTE_PROGRAM,
+                function=route_body,
+                argument_builder=_ArgumentsBoundAtDispatch(program_name=ROUTE_PROGRAM),
+                requirements=CoreExecutionRequirements(
+                    tiled_axes=(
+                        ()
+                        if has_gated_edges
+                        else (subject_axis(state_names=simulation_state_names),)
+                    ),
+                    value_reads=_route_value_reads(context=context, period=period),
+                ),
+                output_roles=per_subject_route.output_roles,
+                disposition=(
+                    CoreExecutionDisposition.HOST_DRIVEN
+                    if has_gated_edges
+                    else CoreExecutionDisposition.PLANNED
+                ),
+                disposition_reason=_GATED_ROUTE_REASON if has_gated_edges else None,
+                donation_candidates=(),
+            )
 
     return SimulationPrograms(
         decision=MappingProxyType(decision),
@@ -220,16 +224,78 @@ def build_simulation_programs(
     )
 
 
-def _streams_action_product(*, context: SolverBuildContext) -> bool:
-    """Return whether this regime's decision streams its action product.
+def _fail_if_the_streamed_reduction_is_wrong(
+    *,
+    regime_name: RegimeName,
+    has_taste_shocks: bool,
+    stakeholders: tuple[str, ...] | None,
+) -> None:
+    """Refuse a streamed decision whose reduction is not the exact hard max.
 
     The simulate decision mirrors the solve: it streams exactly where the solve
     kernel streams, so both reduce the same canonical product with the same
     exact hard max and a period's two phases cannot disagree about the winner.
+    That mirror is sound only for a regime whose action reduction *is* that hard
+    max. A taste shock adds a per-subject Gumbel term to the choice and a
+    collective utility reduces the household over its stakeholders; either one
+    makes the streamed body answer a different question than the regime asks, so
+    the mismatch is refused here rather than left to the classifier's ordering.
     """
-    return (
-        _classify_action_streaming(context=context)
-        is _ActionStreamingDisposition.STREAMED
+    if not (has_taste_shocks or stakeholders is not None):
+        return
+    reduction = (
+        "taste shocks draw a per-subject Gumbel term"
+        if has_taste_shocks
+        else "a collective utility reduces over stakeholders"
+    )
+    msg = (
+        f"Regime {regime_name!r} would declare a streamed simulation "
+        f"decision, but {reduction}, so its action reduction is not the exact "
+        "hard max the streamed body folds. Declare a dense action product for "
+        "this regime instead."
+    )
+    raise ExecutionPlanningError(msg)
+
+
+def _route_value_reads(
+    *, context: SolverBuildContext, period: int
+) -> tuple[ValueRead, ...]:
+    """Declare every stored value leaf one period's gated routing reads.
+
+    A regime with no gated edge reads none: its transition probabilities are a
+    function of the subject's own states and actions, and the realized draw
+    reads no stored value. A gated edge is different — the routing recomputes
+    the gate, which reads its target's continuation and every projected value
+    the gate names — so those addresses are declared for the periods the edge's
+    target is reachable at.
+    """
+    gated_targets = _gated_targets(context=context, period=period)
+    if not gated_targets:
+        return ()
+    return _value_reads(
+        regime_name=context.regime_name,
+        period=period,
+        target_regimes=gated_targets,
+        same_period_ref_regimes=(),
+        edge_reference_regimes=_edge_reference_regimes_for_targets(
+            context=context, target_regimes=gated_targets
+        ),
+        edge_target_regimes=context.edge_target_regimes,
+    )
+
+
+def _gated_targets(
+    *, context: SolverBuildContext, period: int
+) -> tuple[RegimeName, ...]:
+    """Return the targets reachable this period whose edge a gate drives."""
+    if period == context.solution_reachability.n_periods - 1:
+        return ()
+    return tuple(
+        target
+        for target in context.solution_reachability.targets(
+            period=period, source=context.regime_name
+        )
+        if target in context.edge_target_regimes
     )
 
 
@@ -332,6 +398,11 @@ class _StreamedArgmaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
+    folds: dict[int, Callable[..., Any]] = dataclasses.field(
+        default_factory=dict, repr=False
+    )
+    """Streamed folds already built, by the block width each streams at."""
+
     def __call__(
         self,
         *,
@@ -345,15 +416,25 @@ class _StreamedArgmaxQOverA:
             for name, value in states_actions_params.items()
             if name in self.q_and_f_arg_names
         }
-        result = build_streaming_max_Q_over_a(
-            Q_and_F=self.Q_and_F,
-            action_names=self.action_names,
-            block_width=block_width,
-        )(next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params)
+        result = self._fold(block_width=block_width)(
+            next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params
+        )
         return (
             jnp.maximum(result.best_global_action_id, 0).astype(jnp.int32),
             result.best_value,
         )
+
+    def _fold(self, *, block_width: int) -> Callable[..., Any]:
+        """Return the streamed fold for one block width, building it once."""
+        fold = self.folds.get(block_width)
+        if fold is None:
+            fold = build_streaming_max_Q_over_a(
+                Q_and_F=self.Q_and_F,
+                action_names=self.action_names,
+                block_width=block_width,
+            )
+            self.folds[block_width] = fold
+        return fold
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -400,29 +481,27 @@ def _evaluate_subject_tile(
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class _SimulationArgumentBuilder:
-    """Build one simulation program's arguments for lowering and dispatch."""
+class _ArgumentsBoundAtDispatch:
+    """The argument contract of a simulation program, refused until it runs.
 
-    regime_name: RegimeName
-    """Name of the regime whose flat params the body binds."""
+    A simulation program's arguments are a per-call fact: the subject population
+    arrives with the initial conditions, and the states it carries are the ones
+    the previous period wrote. Nothing binds them at model build, so asking for
+    them there is a defect in the caller, and this says so rather than handing
+    back an argument mapping the body would silently disagree with.
+    """
 
-    has_taste_shocks: bool
-    """Whether the body takes a per-subject Gumbel key beside the states."""
+    program_name: str
+    """Name of the program whose arguments the caller asked to bind."""
 
     def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
-        """Return the exact kwargs shared by lowering and the runtime call."""
-        state_action_space = context.state_action_space
-        flat_params = cast("FlatParams", context.flat_params)
-        ages = cast("AgeGrid", context.ages)
-        return {
-            **state_action_space.states,  # ty: ignore[unresolved-attribute]
-            **state_action_space.discrete_actions,  # ty: ignore[unresolved-attribute]
-            **state_action_space.continuous_actions,  # ty: ignore[unresolved-attribute]
-            "next_regime_to_V_arr": context.next_regime_to_V_arr,
-            **flat_params[self.regime_name],
-            "period": jnp.int32(context.period),
-            "age": ages.values[context.period],
-        }
+        """Refuse to bind arguments a forward simulation supplies per call."""
+        msg = (
+            f"Simulation program {self.program_name!r} binds its arguments at "
+            f"dispatch, from the simulated population of period {context.period}, "
+            "not at model build."
+        )
+        raise ExecutionPlanningError(msg)
 
 
 __all__ = [
