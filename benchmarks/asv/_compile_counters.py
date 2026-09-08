@@ -56,12 +56,7 @@ def count_compile_requests() -> Iterator[CompileRequestCounts]:
     try:
         yield counts
     finally:
-        # Unregistering asserts membership, and `clear_event_listeners()`
-        # rebinds the listener list, so a listener dropped by anything else in
-        # the process would raise out of this `finally` and mask whatever the
-        # block itself raised.
-        with contextlib.suppress(AssertionError, ValueError):
-            jax.monitoring.unregister_event_duration_listener(listener)
+        _unregister(listener=listener)
 
 
 _FIELD_BY_EVENT = {
@@ -88,3 +83,23 @@ class _EventCounter:
         field = _FIELD_BY_EVENT.get(event)
         if field is not None:
             setattr(self.counts, field, getattr(self.counts, field) + 1)
+
+
+def _unregister(*, listener: _EventCounter) -> None:
+    """Take one listener back out of JAX's duration-listener list.
+
+    Unregistering asserts membership, and `clear_event_listeners()` rebinds the
+    list, so a listener something else in the process already dropped would
+    raise out of the caller's `finally` and mask whatever the block itself
+    raised. Under `-O` the assert is stripped and `list.remove` raises
+    `ValueError` in its place.
+
+    A failure is swallowed only once the listener really is gone. A listener
+    left in the list would keep counting into a later block, so if it is still
+    there the failure propagates rather than being hidden.
+    """
+    try:
+        jax.monitoring.unregister_event_duration_listener(listener)
+    except AssertionError, ValueError:
+        if listener in jax.monitoring._event_duration_secs_listeners:  # noqa: SLF001
+            raise

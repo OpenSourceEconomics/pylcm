@@ -823,6 +823,12 @@ def _validate_period_values(
     to describe what it found. At `log_level="off"` no reduction is issued at
     all.
 
+    Every offending regime of the period is named first, then the enriched
+    reports run. At `log_level="debug"` the first enriched report raises, so
+    naming the period's regimes first is what keeps the other offenders --- an
+    Inf-only regime among them, which the enriched report never speaks about
+    --- in the record of the aborted run.
+
     Args:
         logger: Logger carrying the runtime-validation policy.
         age: Age corresponding to the current period.
@@ -837,6 +843,12 @@ def _validate_period_values(
         values=tuple(data.V_arr for _, data in period_results),
         in_regime=tuple(data.in_regime for _, data in period_results),
     ).tolist()
+    log_non_finite_values(
+        logger=logger,
+        age=age,
+        regime_names=regime_names,
+        flags=tuple(has_non_finite),
+    )
     for (regime_name, data), flag in zip(period_results, has_nan, strict=True):
         if flag:
             _validate_simulated_value(
@@ -846,12 +858,6 @@ def _validate_period_values(
                 regime_name=regime_name,
                 logger=logger,
             )
-    log_non_finite_values(
-        logger=logger,
-        age=age,
-        regime_names=regime_names,
-        flags=tuple(has_non_finite),
-    )
 
 
 def _validate_simulated_value(

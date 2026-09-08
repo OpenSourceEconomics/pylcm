@@ -9,12 +9,14 @@ regime and the age, on a value the regime does own.
 """
 
 import logging
+from collections.abc import Callable
 
 import jax.numpy as jnp
 import pytest
 
 from _lcm.utils.logging import LogLevel
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import get_model, get_params
@@ -146,3 +148,81 @@ def test_a_period_with_a_non_finite_value_warns_once_per_offending_regime(caplog
         if "NaN/Inf" in record.getMessage()
     ]
     assert lines == [f"NaN/Inf in V_arr for regime 'work' at age {NAN_AGE}"]
+
+
+@categorical(ordered=False)
+class TwoOffenderRegimeId:
+    work: ScalarInt
+    study: ScalarInt
+    dead: ScalarInt
+
+
+def _next_regime_from_work(*, age: FloatND) -> ScalarInt:
+    """Stay at work until the last age at which work is possible."""
+    return jnp.where(age >= 50, TwoOffenderRegimeId.dead, TwoOffenderRegimeId.work)
+
+
+def _next_regime_from_study(*, age: FloatND) -> ScalarInt:
+    """Stay at study until the last age at which study is possible."""
+    return jnp.where(age >= 50, TwoOffenderRegimeId.dead, TwoOffenderRegimeId.study)
+
+
+def _two_offender_model() -> Model:
+    """Build a model whose simulated value is NaN in two regimes of one period."""
+    grid = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
+
+    def occupied_regime(*, transition: Callable[..., ScalarInt]) -> UserRegime:
+        """Build one regime whose value goes NaN off a wealth node at `NAN_AGE`."""
+        return UserRegime(
+            transition=transition,
+            actions={"consumption": grid},
+            states={"wealth": grid},
+            state_transitions={"wealth": _off_node_next_wealth},
+            constraints={"borrowing_constraint": _off_node_borrowing_constraint},
+            functions={"utility": _off_node_utility},
+            active=lambda age: age < 60,
+        )
+
+    return Model(
+        regimes={
+            "work": occupied_regime(transition=_next_regime_from_work),
+            "study": occupied_regime(transition=_next_regime_from_study),
+            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+        },
+        ages=AgeGrid(start=40, stop=60, step="10Y"),
+        regime_id_class=TwoOffenderRegimeId,
+    )
+
+
+def test_every_offending_regime_of_a_period_is_named_before_debug_raises(caplog):
+    """At `debug`, both NaN-holding regimes of a period are named before the raise."""
+    model = _two_offender_model()
+    with (
+        caplog.at_level(logging.WARNING, logger="lcm"),
+        pytest.raises(InvalidValueFunctionError),
+    ):
+        model.simulate(
+            params={"discount_factor": 0.95},
+            initial_conditions={
+                "wealth": jnp.array([1.5, 2.5, 1.5, 2.5]),
+                "age": jnp.full(4, float(NAN_AGE)),
+                "regime_id": jnp.array(
+                    [
+                        TwoOffenderRegimeId.work,
+                        TwoOffenderRegimeId.work,
+                        TwoOffenderRegimeId.study,
+                        TwoOffenderRegimeId.study,
+                    ]
+                ),
+            },
+            log_level="debug",
+        )
+    lines = [
+        record.getMessage()
+        for record in caplog.records
+        if "NaN/Inf" in record.getMessage()
+    ]
+    assert lines == [
+        f"NaN/Inf in V_arr for regime 'work' at age {NAN_AGE}",
+        f"NaN/Inf in V_arr for regime 'study' at age {NAN_AGE}",
+    ]

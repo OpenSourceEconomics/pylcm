@@ -1,15 +1,22 @@
-"""Second-call dispatch counts and host time per (period, regime) of simulation.
+"""Second-call compile requests and host time per (period, regime) of simulation.
 
 Two CPU witnesses cover the two forward-simulation shapes pylcm has: a
 multi-regime model whose states carry a discretised shock process, and a
 collective model whose regime transition runs through gated edges. Each
 benchmark warms the witness with one call at the measured log level, so what
-the second call reports is steady-state dispatch and host cost.
+the second call reports is the steady-state compile-request and host cost.
 
 Model, params, and JAX imports are deferred into the method bodies: ASV's
 forkserver imports every `bench_*.py` module to discover benchmarks before it
 forks workers, and a JAX import at module scope puts the multithreaded XLA
 backend into the forkserver, which every fork then inherits.
+
+An asv metric is identified by module, class and method name, and the design
+spec's acceptance clause names `track_second_call_compiles` and
+`track_host_ms_per_period_regime` directly. Those three names therefore stay as
+they are, even though what the first counts is a compile *request*: the counter
+itself says so, and renaming the metric would silently break every reference to
+it outside this file.
 """
 
 import time
@@ -74,7 +81,7 @@ class SimulationDispatch:
     def _measure(self, *, log_level: str) -> tuple[float, int]:
         import jax
 
-        from benchmarks.asv._dispatch_counters import count_compile_requests
+        from benchmarks.asv._compile_counters import count_compile_requests
 
         with count_compile_requests() as counts:
             start = time.perf_counter()
