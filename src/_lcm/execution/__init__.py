@@ -41,6 +41,7 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
     ValueTransferKind,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 
 __all__ = [
     "EXACTNESS_VALUES",
@@ -61,6 +62,7 @@ __all__ = [
     "ReductionDeclaration",
     "ReductionSemantics",
     "ResolvedCoreProgram",
+    "SolverExecutionCapabilities",
     "TiledOutputAxis",
     "TransferCost",
     "TransferOperationClass",

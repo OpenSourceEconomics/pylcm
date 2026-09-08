@@ -31,6 +31,7 @@ from lcm.solver_api import (
     ReplayRouteRequirements,
     ReplayRouteSnapshot,
     SimulationBuildContext,
+    SolverExecutionCapabilities,
     SolverIdentity,
 )
 from lcm.solvers import (
@@ -347,6 +348,16 @@ class TerminalCounterSolver(Solver):
     """Publish the scalar zero boundary required by ``ReferenceSolver``."""
 
     @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
+    @property
     def identity(self) -> SolverIdentity:
         """Return the shared external plugin's durable identity."""
         return _PLUGIN_IDENTITY
@@ -572,6 +583,16 @@ class ReferenceReplayRoute(ExecutableReplayRoute):
 
 class ReferenceSolver(Solver):
     """Value solver with a custom continuation, replay route, and artifact ledger."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     @property
     def identity(self) -> SolverIdentity:
@@ -896,6 +917,16 @@ class TargetValueSolver(Solver):
     core reads it through, so the planner can transfer the array and track its
     liveness without inspecting the core.
     """
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     @property
     def identity(self) -> SolverIdentity:

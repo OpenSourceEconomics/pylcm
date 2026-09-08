@@ -13,19 +13,28 @@ adapter or automatic migration across versions is not implied.
 
 ## What a solver owes the engine
 
-A solver is a class deriving from `Solver` with one abstract method to implement,
-`build_period_kernels`. The shipped solvers are frozen dataclasses because they carry
-numerical configuration; a solver with no configuration needs no fields. Between them, a
-solver and its kernels answer three questions.
+A solver derives from `Solver` and implements the `capabilities` property and
+`build_period_kernels` method. The shipped solvers are frozen dataclasses because they
+carry numerical configuration; a solver with no configuration needs no fields. Solver
+API version 3 requires both declarations. Between them, a solver and its kernels answer
+the following questions.
+
+- **What can this configuration execute?** `capabilities` returns frozen
+  `SolverExecutionCapabilities` describing prerequisites, tradeoffs, potential reduced,
+  tiled and host axes, repeated program keys and supported preference features. A
+  concrete model accepts only axes declared by its built programs; the capability
+  description does not authorize additional widths or bypass structural validation.
 
 - **Which continuations do I read?** `required_continuation_keys` returns a frozenset of
   `ArtifactKey`. Model building checks every key against what each reachable target
   regime publishes and refuses the model, naming both regimes and the demanded version,
   before anything compiles. Grid search returns the empty set; every endogenous-grid
   solver returns `{EGM_CONTINUATION}`.
+
 - **What does a period compute?** `build_period_kernels(context=...)` returns
   `SolutionKernels` holding one period kernel per active period, and optionally a
   `ContinuationSpec` naming the artifact those kernels publish.
+
 - **Which periods did I build alike?** Publish each period's group key in
   `SolutionKernels.period_group_keys`. The engine folds that key into the compiled
   program's identity beside its own per-period signature, so two periods share one
@@ -44,8 +53,10 @@ solver and its kernels answer three questions.
   building a fresh, equivalent closure per period — or a `functools.partial` over
   equal-but-distinct bound values — is refused by that same `ExecutionPlanningError`, so
   a grouping solver builds once and hands every period in the group the object it built.
+
 - **What does one period publish?** Each kernel declares a native core-program graph
   through `core_programs()` and returns a `KernelOutput` from its call.
+
 - **How is my decision replayed?** `SolutionKernels.replay_route` names how simulation
   obtains the solved decision: an `ExecutableReplayRoute`, or one of the two
   `DeclaredReplay` values. Leaving it unset is a build error for any solver outside the
@@ -73,6 +84,7 @@ from lcm.solvers import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    SolverExecutionCapabilities,
     SolverIdentity,
 )
 from lcm.typing import Float1D
@@ -121,6 +133,15 @@ class WealthKernel:
 
 class WealthSolver(Solver):
     """Publishes the wealth grid as the value in every active period."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="One wealth-grid value per state",
+            prerequisites="A wealth state; no optimization",
+            main_tradeoff="Dense identity computation for this example",
+        )
 
     @property
     def identity(self) -> SolverIdentity:

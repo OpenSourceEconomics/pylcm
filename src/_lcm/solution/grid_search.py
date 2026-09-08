@@ -75,6 +75,7 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
@@ -154,6 +155,28 @@ def _select_width_keyword(*, context: SolverBuildContext, prefix: str) -> str:
 @dataclass(frozen=True, kw_only=True)
 class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime or a specialized regime",
+            problem_shape="General discrete-continuous action product",
+            prerequisites=(
+                "Ordinary callable constraints; EV1 taste shocks; transition-local "
+                "joint lotteries"
+            ),
+            main_tradeoff=(
+                "Broad representation; eligible singleton hard-max routes stream "
+                "actions, while EV1 and collective reductions use dense actions"
+            ),
+            reduced_axes=("action_product",),
+            tiled_axes=("cell",),
+            host_axes=(),
+            host_driven_programs=(),
+            supports_ev1_taste_shocks=True,
+            supports_nonlinear_certainty_equivalent=True,
+        )
 
     @property
     def supports_transition_local_lotteries(self) -> bool:

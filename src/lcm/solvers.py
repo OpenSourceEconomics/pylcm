@@ -142,6 +142,7 @@ from _lcm.solution.grid_search import ACTION_PRODUCT_AXIS, GridSearch
 from _lcm.solution.nbegm import BRANCH_AXIS, INTERVAL_AXIS, NBEGM
 from _lcm.solution.negm import NEGM, OUTER_CANDIDATE_AXIS
 from _lcm.solution.nnbegm import NNBEGM
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.branch_aggregation import (
     BranchAggregateResult,
     DeterministicOuterMaximum,
@@ -297,6 +298,7 @@ __all__ = [
     "SolutionSource",
     "Solver",
     "SolverBuildContext",
+    "SolverExecutionCapabilities",
     "SolverIdentity",
     "StateActionSpace",
     "StateAxesLeading",

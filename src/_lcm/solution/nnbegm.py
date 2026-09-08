@@ -120,6 +120,7 @@ from _lcm.typing import (
     RegimeName,
     SimulationPolicy,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ModelInitializationError,
@@ -170,6 +171,30 @@ class NNBEGM(TwoMarginSolver):
     to solve two coupled first-order conditions (that case belongs to
     the two-continuous-state solver published with its own paper).
     """
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration=(
+                "NestedConsumptionSavingsRegime with liquid and outer margins"
+            ),
+            problem_shape="NBEGM inner solve inside a finite or adaptive outer search",
+            prerequisites=(
+                "Inner NBEGM contract plus compatible outer search and branch "
+                "aggregation; no EV1 taste shocks"
+            ),
+            main_tradeoff=(
+                "Declared budget topology inside each outer candidate adds structural "
+                "and computational cost"
+            ),
+            reduced_axes=self.inner.capabilities.reduced_axes,
+            tiled_axes=self.inner.capabilities.tiled_axes,
+            host_axes=("outer_candidate",),
+            host_driven_programs=("adjuster:main", "adjuster:replay"),
+            supports_ev1_taste_shocks=False,
+            supports_nonlinear_certainty_equivalent=self.inner.capabilities.supports_nonlinear_certainty_equivalent,
+        )
 
     inner: NBEGM
     """Numerical configuration of the inner 1-D NB-EGM solve."""

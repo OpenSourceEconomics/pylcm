@@ -16,9 +16,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Cached simulation key generation now follows changes to JAX's Threefry partition
   setting between calls, including when an executable has already been compiled.
 
-### Solver API version 2
+### Solver API version 3
 
-- `SOLVER_API_VERSION` is 2. A core program declares what it publishes to another
+- `SOLVER_API_VERSION` is 3. Every solver implements `capabilities`, returning the
+  frozen `SolverExecutionCapabilities` exported by `lcm.solver_api` and `lcm.solvers`.
+  Its structural requirements, execution axes and supported preference features drive
+  the solver reference tables. Concrete model programs remain the authority for
+  accepted execution widths. Custom plugins must implement this property and target
+  API 3. Solver identities and model fingerprints change with this compatibility
+  version; API 2 solution archives are not automatically migrated.
+- A core program declares what it publishes to another
   program of the same kernel graph with `InternalOutputSpec`, and a consumer names what
   it reads with `InternalInputRef`; both are published through `lcm.solvers`. The engine
   lowers producers before consumers against the exact shapes, dtypes and weak typing the
@@ -88,29 +95,30 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   partition is vectorized at its own width, so they agree to within a few units in
   the last place rather than bit for bit. One device or one regime per period is
   placed as before.
-- A streaming width fits when its compiler-reported peak plus the bytes the plan keeps
-  resident on the device at the core's scheduled position fit
-  `ExecutionConfig.device_memory_bytes`, excluding what the core reads on its stored
-  layout (assumed already counted in the peak, as on the XLA CPU backend; a report that
-  excludes argument bytes under-counts) and double-counting a no-reads core's pinned
-  inputs as the safe direction. A position already over budget is refused before any
-  width compiles.
+- A streaming width fits when its compiler-reported peak plus accounted external
+  residency fits `ExecutionConfig.device_memory_bytes`. Retained owners and
+  compiler-eliminated operands remain in residency; only the overlapping spans of
+  actual compiler-kept inputs are excluded to avoid counting them twice. Fixed
+  model inputs and scheduled transfer copies are included conservatively.
 
-### Memory-aware action-width policy and solve/simulate GPU-memory attribution
+### Execution configuration and solve/simulate memory attribution
 
-- `ExecutionConfig(device_memory_bytes=...)`, passed to `model.solve(...)` or to an
-  auto-solving `model.simulate(...)`, declares a per-device ceiling for the
-  compiler-reported peak workspace of every compiled solve core. The planner walks a
-  deterministic width frontier for each streamed action product widest-first, reads
-  each executable's compiler memory report without running it, and dispatches the
-  first candidate that fits, so a core whose full extent fits costs no extra
-  compilation; when no candidate fits, `ExecutionPlanningError` is raised before
-  backward induction. Without a budget every streamed axis is lowered at its bootstrap
-  width — the largest power of two below the extent, capped at 64.
-- `GridSearch(action_block_width=...)` fixes the streamed action-block width of a
-  regime's eligible solve cores. It is an execution request — rejected at model build on
-  deliberately dense, unsupported, or trivial-product routes — and enters neither the
-  model nor the parameter fingerprint.
+- Pass `ExecutionConfig` to `Model(...)` to select devices, sharded states, execution
+  widths and a per-device memory budget for both phases. Grids describe economic
+  support; their `batch_size` and `distributed` constructor arguments and the
+  corresponding solver execution knobs are removed. Explicit `axis_widths` names the
+  actual compiled program axes; a flattened state-cell width is not a per-state grid
+  width. Execution policy does not enter the durable model fingerprint.
+- With a budget, solve planning compiles candidates along a deterministic widest-first
+  frontier and selects the first whose compiler peak plus accounted residency fits.
+  Without a budget, streamed solve axes use their bootstrap widths, capped at 64,
+  unless an explicit width is supplied. An omitted width requests planning, and zero
+  is not a full-width sentinel in `axis_widths`.
+- Supplied solutions on regime submeshes are accepted by simulation. Forward programs
+  and profiled allocation operations recheck current retained inputs and growing
+  results at dispatch. Unprofiled eager or host-driven programs fail visibly under a
+  budget. These checks do not yet bound every allocation across the whole call or
+  memory used during compilation.
 - Period captures record the selected tile widths, so `replay_period` and the
   compiler-memory analyzer lower exactly the executable the solve dispatched.
 - The ASV GPU-memory series for the ACA baseline and Mahler–Yum rows are split into

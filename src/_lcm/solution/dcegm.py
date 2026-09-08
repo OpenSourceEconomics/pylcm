@@ -74,6 +74,7 @@ from _lcm.typing import (
     FlatParams,
     RegimeName,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExactAffineKernelUnavailableError,
@@ -240,6 +241,29 @@ class DCEGM(OneMarginSolver):
     as a feasibility mask during simulation.
 
     """
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration="ConsumptionSavingsRegime with one LiquidMargin",
+            problem_shape="One liquid Euler margin and optional discrete choice",
+            prerequisites=(
+                "Valid resources and post-decision roles; lower bound; supported "
+                "passive states and continuation layout; EV1 taste shocks"
+            ),
+            main_tradeoff=(
+                "Constrained candidates and upper envelope; simulation may "
+                "re-optimize on the action grid"
+            ),
+            reduced_axes=("stochastic_node",),
+            tiled_axes=("cell", "savings_point", "euler_point")
+            + (("envelope_cell",) if isinstance(self.envelope, ExactEnvelope) else ()),
+            host_axes=(),
+            host_driven_programs=(),
+            supports_ev1_taste_shocks=True,
+            supports_nonlinear_certainty_equivalent=False,
+        )
 
     @property
     def publishes_simulation_policy(self) -> bool:

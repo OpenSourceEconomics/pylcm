@@ -5,23 +5,22 @@ working float format, so the table records one row per format and each test read
 the row of the format the session runs under. What it never covers is execution
 policy: two models differing only in ExecutionConfig widths are the same model.
 
-Running this file as a script rewrites one row of the table:
-`pixi run python tests/solution/test_fingerprint_pin.py 64`, then repeat with `32`.
-The float format must be chosen before the model modules build their grids,
-which is why the script sets it above the model imports.
+The immutable table records Solver API 2 identities. A test-only projection of
+SolverIdentity.solver_api_version isolates the deliberate API 3 compatibility
+break; every other semantic field must still reproduce the historical digest.
+Production fingerprints continue to bind the current API version.
 """
 
+import dataclasses
 import json
-import sys
 from pathlib import Path
 
 import jax
 import pytest
 
-if __name__ == "__main__":
-    jax.config.update("jax_enable_x64", sys.argv[1] == "64")
-
+from _lcm.solution.fingerprint import _SemanticHasher, fingerprint_model_structure
 from lcm import ExecutionConfig
+from lcm.solver_api import SolverIdentity
 from lcm_examples.collective_regimes import get_dissolution_model
 from tests.test_models import (
     ds_app2_housing,
@@ -80,10 +79,48 @@ def test_fingerprint_is_invariant_to_a_solvers_execution_policy(key: str) -> Non
 
 
 @pytest.mark.parametrize("key", sorted(_MODELS))
-def test_model_fingerprint_matches_pinned_table(key: str) -> None:
-    """A model's durable fingerprint equals the value recorded in the fixture table."""
+def test_model_declaration_matches_api2_pin_after_version_projection(
+    *, key: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the explicit solver API identity differs from the immutable model pins."""
+    original = _SemanticHasher._visit_dataclass
+    projected = []
     model = _MODELS[key]()
-    assert model._model_structure_fingerprint == _pinned()[key]
+
+    # keyword-only-exempt: library-callback=_SemanticHasher._visit_dataclass
+    def visit_at_api2(self: _SemanticHasher, value: object) -> None:
+        if type(value) is SolverIdentity:
+            assert value.solver_api_version == 3
+            projected.append(value)
+            # This intentionally incompatible identity exists only inside the
+            # historical hash oracle; no solver or archive consumes it.
+            historical = object.__new__(SolverIdentity)
+            for declaration in dataclasses.fields(value):
+                object.__setattr__(
+                    historical,
+                    declaration.name,
+                    2
+                    if declaration.name == "solver_api_version"
+                    else getattr(value, declaration.name),
+                )
+            value = historical
+        original(self, value)
+
+    monkeypatch.setattr(_SemanticHasher, "_visit_dataclass", visit_at_api2)
+    historical = fingerprint_model_structure(
+        ages=model.ages,
+        regimes=model._regimes,
+        user_regimes=model.user_regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
+    assert projected, "The version projection must actually observe solver identities."
+    assert historical == _pinned()[key]
+
+
+@pytest.mark.parametrize("key", sorted(_MODELS))
+def test_production_fingerprint_binds_the_current_solver_api(key: str) -> None:
+    """Production fingerprints preserve the deliberate API compatibility break."""
+    assert _MODELS[key]()._model_structure_fingerprint != _pinned()[key]
 
 
 def test_pinned_table_covers_every_listed_model() -> None:
@@ -94,13 +131,3 @@ def test_pinned_table_covers_every_listed_model() -> None:
 def test_pinned_table_covers_both_working_float_formats() -> None:
     """The fixture table records a row for each float format the suite runs under."""
     assert set(json.loads(_FIXTURE.read_text())) == {"32", "64"}
-
-
-if __name__ == "__main__":
-    recorded = json.loads(_FIXTURE.read_text()) if _FIXTURE.exists() else {}
-    recorded[_precision_key()] = {
-        key: _MODELS[key]()._model_structure_fingerprint for key in sorted(_MODELS)
-    }
-    _FIXTURE.write_text(
-        json.dumps({key: recorded[key] for key in sorted(recorded)}, indent=2) + "\n"
-    )

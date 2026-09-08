@@ -56,7 +56,11 @@ from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.kernel_output import ConsumedKernelOutput, KernelOutput
 from lcm.exceptions import ExecutionPlanningError
-from lcm.solver_api import ArtifactKey, ContinuationCapabilities
+from lcm.solver_api import (
+    ArtifactKey,
+    ContinuationCapabilities,
+    SolverExecutionCapabilities,
+)
 from lcm.solvers import (
     ContinuationSpec,
     CoreProgram,
@@ -208,6 +212,16 @@ class _MainKernel:
 
 class _LeafReadingSolver(Solver):
     """Reads its own next-period count leaf through the arguments it names."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     arguments: tuple[str, ...] = ("count",)
     donation_candidates: tuple[str, ...] = ()

@@ -39,6 +39,7 @@ from lcm.solver_api import (
     KernelOutput,
     ReplayMode,
     ResultRetention,
+    SolverExecutionCapabilities,
 )
 from lcm.solvers import (
     NBEGM,
@@ -157,6 +158,16 @@ class _GraphKernel:
 
 class WealthSolver(Solver):
     """Publishes the wealth grid as the value in every active period."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         program = CoreProgram(
@@ -285,6 +296,16 @@ def _counting_arguments(build: CoreBuildContext) -> Mapping[str, object]:
 
 class _CountingSolver(Solver):
     """Reads its own next-period artifact and republishes it incremented."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     @property
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
@@ -493,6 +514,16 @@ def _mislabelled_value(
 
 class _MislabellingSolver(Solver):
     """Publishes a continuation the payload itself does not claim to be."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     @property
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:

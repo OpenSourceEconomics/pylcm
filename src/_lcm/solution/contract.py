@@ -5,9 +5,9 @@ dispatches polymorphically on the solver instance. Model finalization calls
 `solver.validate_model(context)`; the processed build calls
 `solver.validate_build(context)` and then
 `solver.build_period_kernels(context)`, with no switch on solver type. Add a
-solver by subclassing `Solver` and implementing `build_period_kernels`; override
-either validation hook for the stage whose information it needs (both default
-to no-ops).
+solver by subclassing `Solver` and implementing `capabilities` and
+`build_period_kernels`; override either validation hook for the stage whose
+information it needs (both default to no-ops).
 
 Each entry of `SolutionKernels.period_kernels` is a `PeriodKernel`: a single
 non-jitted period adapter that wraps the solver's compiled programs, calls them
@@ -79,6 +79,7 @@ from _lcm.typing import (
     StateOrActionName,
     TransitionFunctionsMapping,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
@@ -826,6 +827,11 @@ class Solver(ABC):
     polymorphism (`Grid(ABC)`, the stochastic processes). Subclasses are frozen
     dataclasses carrying the solver's configuration.
     """
+
+    @property
+    @abstractmethod
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configuration; concrete programs authorize model axes."""
 
     @abstractmethod
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:

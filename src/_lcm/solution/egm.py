@@ -70,6 +70,7 @@ from _lcm.typing import (
     FlatParams,
     RegimeName,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.solver_api import (
@@ -103,6 +104,25 @@ class EGM(OneMarginSolver):
     finite difference of a coarse value array), so each period both reads its
     continuation's marginal and publishes its own.
     """
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration="ConsumptionSavingsRegime with one LiquidMargin",
+            problem_shape="Smooth concave one-state/one-action cash-on-hand problem",
+            prerequisites=(
+                "One continuous state and action; no discrete/process axes; identity "
+                "resources; additive continuation; provable post-decision lower bound"
+            ),
+            main_tradeoff="Narrow structural contract with no upper envelope",
+            reduced_axes=(),
+            tiled_axes=(),
+            host_axes=(),
+            host_driven_programs=(),
+            supports_ev1_taste_shocks=False,
+            supports_nonlinear_certainty_equivalent=False,
+        )
 
     savings_grid: ContinuousGrid
     """Exogenous post-decision savings grid; its lower bound is the borrowing limit.

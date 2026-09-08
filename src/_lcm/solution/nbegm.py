@@ -114,6 +114,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import map_over_leading_axis
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.case_piece import CaseBoundary, EqualityOwner
 from lcm.exceptions import RegimeInitializationError
@@ -214,6 +215,32 @@ class NBEGM(OneMarginSolver):
     - Discrete action over a smooth budget: one continuous subproblem per
       discrete-action value, merged by the discrete upper envelope.
     """
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration="ConsumptionSavingsRegime with one LiquidMargin",
+            problem_shape=(
+                "Supported declared kinks, jumps, hard boundaries or smooth discrete "
+                "branches"
+            ),
+            prerequisites=(
+                "Supported case-piece or piecewise-affine declaration; proven "
+                "constraint routes; nonlinear CE only on eligible ride-along routes; "
+                "no EV1 taste shocks"
+            ),
+            main_tradeoff=(
+                "Preserves declared topology; structural probes and candidate "
+                "geometry add cost"
+            ),
+            reduced_axes=("stochastic_node", "interval", "branch"),
+            tiled_axes=("cell",),
+            host_axes=(),
+            host_driven_programs=(),
+            supports_ev1_taste_shocks=False,
+            supports_nonlinear_certainty_equivalent=True,
+        )
 
     savings_grid: ContinuousGrid
     """Exogenous post-decision savings grid `s = coh - consumption` (>= 0)."""

@@ -36,7 +36,12 @@ from lcm import (
     Regime,
     fixed_transition,
 )
-from lcm.solver_api import ArtifactKey, ContinuationCapabilities, KernelOutput
+from lcm.solver_api import (
+    ArtifactKey,
+    ContinuationCapabilities,
+    KernelOutput,
+    SolverExecutionCapabilities,
+)
 from lcm.solvers import (
     ContinuationSpec,
     CoreBuildContext,
@@ -286,6 +291,16 @@ def _terminal_program(*, function: Any, output_roles: Any) -> CoreProgram:
 class _TerminalCarrySolver(Solver):
     """Publishes a state-shaped value and a leaf on a buffer of its own."""
 
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Declare one dense program per active period, publishing the count."""
         from tests.test_solver_api_out_of_tree import _GraphKernel  # noqa: PLC0415
@@ -362,6 +377,16 @@ class _AliasingKernel:
 class _AliasingTerminalSolver(Solver):
     """Publishes the value array itself as the continuation leaf."""
 
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Declare one dense value program per active period."""
         program = _terminal_program(function=_state_sum, output_roles=OutputRole.VALUE)
@@ -425,6 +450,16 @@ class _SharedLeafKernel:
 
 class _SharedLeafTerminalSolver(Solver):
     """Publishes one produced array under both leaf paths of its payload."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Declare one dense program per active period, publishing both paths."""
@@ -497,6 +532,16 @@ def _reading_kernels(
 
 class _ReadingSolver(Solver):
     """Reads the terminal regime's published leaf into its own value."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     donation_candidates: tuple[str, ...] = ()
 

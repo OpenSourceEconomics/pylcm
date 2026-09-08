@@ -50,11 +50,11 @@ model = Model(
 
 Its fields:
 
-- `device_memory_bytes` declares a per-device byte ceiling for the compiler-reported
-  peak workspace of every compiled solve core; `None` (the default) leaves execution
-  unconstrained.
-- `sharded_states` names the states whose grid axis is spread over the devices their
-  regime is placed on. Every name must be a state some regime declares.
+- `device_memory_bytes` declares a per-device ceiling for compiler peak plus accounted
+  live residency. `None` (the default) omits memory-budget admission.
+- `sharded_states` names model-level discrete states whose grid axes are spread over the
+  devices their regimes are placed on. A continuous grid cannot be sharded merely
+  because its extent divides the number of devices.
 - `axis_widths` fixes the compiled width of one named planner axis, leaving the rest to
   the planner; see [Fix a planner axis width](../user_guide/tuning.md). Every key must
   be an axis some core program declares.
@@ -80,16 +80,19 @@ width product, ties broken toward the lexicographically largest width tuple in a
 declaration order. A position whose resident bytes alone already reach the budget is
 refused before any candidate compiles, since no width could serve it. Otherwise each
 candidate is lowered and compiled, its compiler-reported peak is read, and the first
-candidate whose peak plus the resident bytes fits is dispatched. The resident bytes are
-predicted from the solve's own schedule — every retained value of a later period, every
-continuation and gated-edge input another dispatch still has to read, and the outputs of
-every regime dispatched concurrently on the same device — excluding what reaches this
-core on its stored layout: that is assumed already counted in the compiler-reported
-peak, as it is on the XLA CPU backend, where the peak equals argument plus output plus
-temporary bytes; a backend whose report excludes argument bytes makes this ceiling
-under-count. A core declaring no reads names nothing to exclude, so what the ledger pins
-on its behalf is counted in both the resident bytes and the peak — an over-count, the
-safe direction. This ceiling bounds the device's footprint, not one program's workspace.
+candidate whose peak plus the resident bytes fits is dispatched. Solve residency
+includes retained values and continuation inputs, fixed model arrays, concurrent outputs
+and planned copies on their actual devices. Compiler-kept input metadata identifies
+which overlapping buffer spans are already represented in the compiler peak. Eliminated
+inputs stay charged as external residency. Conservative reservations may count some
+storage twice.
+
+This is an accounting convention using the backend's compiler report; it is not a
+measurement of the allocator's whole-call high-water mark. Compilation memory, non-pool
+allocations and remaining unprofiled orchestration allocations are outside a complete
+bound. Use a budget appropriate to the selected devices and measure the actual run when
+assessing capacity.
+
 A narrower candidate is compiled only after every wider one exceeded the budget. That
 selects the same candidate an exhaustive search would, at the cost of one extra lowering
 per rejected width: a core whose full extent fits compiles exactly one candidate, and a
@@ -99,15 +102,18 @@ then the next candidate of only those cells still over budget — so parallel co
 and the deduplication of identical lowerings are unchanged. A dense program has exactly
 one candidate.
 
-The budget is compile-only and fail-closed:
+Candidate measurement uses compilation, and admission fails closed:
 
 - no candidate is executed to measure it — the compiler's peak is the planning signal,
   because the runtime high-water mark of a run that dies is a truncated underestimate;
 - a budget that no candidate meets raises `ExecutionPlanningError` before backward
   induction starts, naming the regime, period, core, resident bytes, and budget — the
   smallest reported peak too, once a width has actually been compiled;
-- a budget requires JIT compilation and cannot accompany an already-solved result passed
-  to `model.simulate(solution=...)`;
+- a budget requires JIT compilation. Supplied solutions are supported; forward programs
+  and profiled host operations recheck their compiler peaks against the current retained
+  solution, inputs and growing outputs before dispatch;
+- a forward program without a profiled compiled implementation, including a host-driven
+  route, is refused under a budget;
 - the selected widths are execution choices: they enter neither the model nor the
   parameter fingerprint, and a period capture records them so `replay_period` lowers the
   same executable without planning again. The capture serializes neither sharding nor

@@ -45,6 +45,7 @@ from lcm.solver_api import (
     AxisDescriptor,
     AxisRole,
     PersistencePolicy,
+    SolverExecutionCapabilities,
     SolverIdentity,
 )
 from lcm.solvers import (
@@ -354,6 +355,16 @@ class _EqualitySpoofedMapping(
 
 @dataclass(frozen=True)
 class _ConfiguredFingerprintSolver(Solver):
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
     config: object
 
     @property
@@ -368,6 +379,16 @@ class _ConfiguredFingerprintSolver(Solver):
 
 
 class _StatelessFingerprintSolver(Solver):
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
     @property
     def identity(self) -> SolverIdentity:
         return SolverIdentity(

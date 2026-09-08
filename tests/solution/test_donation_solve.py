@@ -22,7 +22,11 @@ from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.kernel_output import ConsumedKernelOutput
 from _lcm.solution.solve_inputs import SolveInputMappings
 from lcm.exceptions import ExecutionPlanningError
-from lcm.solver_api import ArtifactKey, ContinuationCapabilities
+from lcm.solver_api import (
+    ArtifactKey,
+    ContinuationCapabilities,
+    SolverExecutionCapabilities,
+)
 from lcm.solvers import (
     ContinuationSpec,
     CoreExecutionDisposition,
@@ -97,6 +101,16 @@ def _counting_arguments(build: object) -> dict[str, object]:
 
 class _CounterSolver(Solver):
     """Reads its own next-period count and republishes it incremented."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     donation_candidates: tuple[str, ...] = ()
 

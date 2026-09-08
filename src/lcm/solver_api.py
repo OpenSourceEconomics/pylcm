@@ -24,6 +24,7 @@ from lcm._solver_api.authority import (
     _snapshot_artifact_template_once,  # noqa: F401
     _validate_axes_and_leaves,  # noqa: F401
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm._solver_api.contract import (
     ArtifactRef,
     OmissionReason,
@@ -136,6 +137,7 @@ __all__ = [
     "SolutionMetadata",
     "SolutionResult",
     "SolutionSource",
+    "SolverExecutionCapabilities",
     "SolverIdentity",
     "TreePath",
     "ValueArraySchema",

@@ -83,6 +83,7 @@ from _lcm.typing import (
     FlatParams,
     RegimeName,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, RegimeInitializationError
 from lcm.solver_api import (
@@ -151,6 +152,30 @@ class NEGM(TwoMarginSolver):
     taste-shock-ordering violation), naming the offending feature and the
     correct alternative solver.
     """
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration=(
+                "NestedConsumptionSavingsRegime with liquid and outer margins"
+            ),
+            problem_shape="DCEGM inner solve conditional on a finite outer grid",
+            prerequisites=(
+                "Inner DCEGM contract plus outer state/action, post-decision, "
+                "no-adjustment and cost roles; no EV1 taste shocks"
+            ),
+            main_tradeoff=(
+                "Exact relative to the outer candidate set; retained candidates can "
+                "dominate memory"
+            ),
+            reduced_axes=(*self.inner.capabilities.reduced_axes, "outer_candidate"),
+            tiled_axes=self.inner.capabilities.tiled_axes,
+            host_axes=(),
+            host_driven_programs=(),
+            supports_ev1_taste_shocks=False,
+            supports_nonlinear_certainty_equivalent=False,
+        )
 
     inner: DCEGM
     """The inner 1-D DC-EGM config.
