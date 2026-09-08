@@ -58,6 +58,8 @@ class MockSolutionPhase:
     `StateActionSpace` this mock hands out — a mock that claims axes the space
     does not carry makes the V topology and the rank rule disagree.
     """
+    sharded_state_names: frozenset[StateOrActionName] = frozenset()
+    """These dense fixture state axes have no declared device sharding."""
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
     artifact_authorities: MappingProxyType = dataclasses.field(
         default_factory=lambda: MappingProxyType({})

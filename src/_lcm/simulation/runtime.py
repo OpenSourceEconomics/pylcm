@@ -22,12 +22,24 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     resolve_value_transfer,
 )
-from _lcm.execution.workspace_planning import plan_workspace
+from _lcm.execution.workspace_planning import compiler_peak_bytes, plan_workspace
+from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.operand_placement import (
+    SubjectArgumentNames,
+    place_simulation_arguments,
+)
 from _lcm.simulation.program_types import (
     SUBJECT_AXIS,
     SUBJECT_WIDTH_KEYWORD,
     SimulationBuildContext,
     SimulationPrograms,
+)
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    require_transfer_headroom,
+    resident_bytes_by_device,
+    union_buffer_footprints,
 )
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_tree,
@@ -35,6 +47,11 @@ from _lcm.solution.backward_induction import (
     _lowering_key,
 )
 from lcm.exceptions import ExecutionPlanningError
+
+
+def _empty_widths() -> Mapping[str, int]:
+    """Supply an immutable empty specialization for an unbound compiler result."""
+    return MappingProxyType({})
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -47,9 +64,24 @@ class CompiledSimulationProgram:
     static_kwargs: Mapping[str, int]
     """Bindings used only by eager execution; compiled programs already bind them."""
 
+    widths: Mapping[str, int] = dataclasses.field(default_factory=_empty_widths)
+    """Concrete compiler specialization, never a cached budget admission."""
+
     def __call__(self, **arguments: object) -> object:
         """Execute with live arrays; retain no call arguments on the cache entry."""
         return self.executable(**arguments, **self.static_kwargs)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SimulationDispatchContext:
+    """Call-scoped live metadata; its provider never enters executable caches.
+
+    The outer owner must complete represented transfers before returning a
+    snapshot. A snapshot remains valid only while its actual buffer owners live.
+    """
+
+    live_footprint: Callable[[], DeviceBufferFootprint]
+    budget_devices: tuple[jax.Device, ...]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -61,6 +93,14 @@ class SimulationRuntime:
 
     enable_jit: bool
     """Whether to compile the selected body or invoke its eager form."""
+
+    subject_devices: tuple[jax.Device, ...]
+    """Actual ordered devices evaluating subjects, independent of solve placement."""
+
+    operations: ProfiledSimulationOperations = dataclasses.field(
+        default_factory=ProfiledSimulationOperations, repr=False
+    )
+    """Pure host-operation executable profiles, without call-owned arrays."""
 
     cache: dict[Hashable, CompiledSimulationProgram] = dataclasses.field(
         default_factory=dict, repr=False
@@ -87,14 +127,19 @@ class SimulationRuntime:
         arguments: Mapping[str, object],
         period: int,
         n_subjects: int,
+        residency: SimulationDispatchContext | None = None,
     ) -> object:
         """Invoke the selected executable with this call's dynamic arguments."""
-        materialized = materialize_core_program(
-            program=_with_subject_extent(program=program, n_subjects=n_subjects),
-            context=_build_context(arguments=arguments, period=period),
+        self._require_budget_context(program=program, residency=residency)
+        materialized = self._materialize(
+            program=program,
+            arguments=arguments,
+            period=period,
+            n_subjects=n_subjects,
+            residency=residency,
         )
         compiled = self._prepare_materialized(
-            program=materialized, n_subjects=n_subjects
+            program=materialized, n_subjects=n_subjects, residency=residency
         )
         return compiled(**materialized.arguments)
 
@@ -107,9 +152,13 @@ class SimulationRuntime:
         n_subjects: int,
     ) -> CompiledSimulationProgram:
         """Return the shared lazy/AOT executable without executing its body."""
-        materialized = materialize_core_program(
-            program=_with_subject_extent(program=program, n_subjects=n_subjects),
-            context=_build_context(arguments=arguments, period=period),
+        if self.execution.device_memory_bytes is not None:
+            raise ExecutionPlanningError(
+                "Budgeted prewarming is deferred until forward resident-buffer "
+                "accounting is available at live dispatch."
+            )
+        materialized = self._materialize(
+            program=program, arguments=arguments, period=period, n_subjects=n_subjects
         )
         compiled = self._prepare_materialized(
             program=materialized, n_subjects=n_subjects
@@ -119,6 +168,46 @@ class SimulationRuntime:
                 (period, program.name, _func_dedup_key(func=program.function))
             ] = compiled
         return compiled
+
+    def _materialize(
+        self,
+        *,
+        program: CoreProgram,
+        arguments: Mapping[str, object],
+        period: int,
+        n_subjects: int,
+        residency: SimulationDispatchContext | None = None,
+    ) -> MaterializedCoreProgram:
+        """Build and place one argument tree before any planner candidate runs."""
+        builder = program.argument_builder
+        if not isinstance(builder, SubjectArgumentNames):
+            raise TypeError("Simulation argument builders must declare subject names.")
+        materialized = materialize_core_program(
+            program=_with_subject_extent(program=program, n_subjects=n_subjects),
+            context=_build_context(arguments=arguments, period=period),
+        )
+        live = (
+            union_buffer_footprints(
+                footprints=(
+                    residency.live_footprint(),
+                    measure_buffer_footprint(tree=materialized.arguments),
+                )
+            )
+            if residency is not None and self.execution.device_memory_bytes is not None
+            else None
+        )
+        return dataclasses.replace(
+            materialized,
+            arguments=place_simulation_arguments(
+                arguments=materialized.arguments,
+                subject_arg_names=builder.subject_arg_names,
+                value_reads=materialized.requirements.value_reads,
+                devices=self.subject_devices,
+                budget_bytes=self.execution.device_memory_bytes,
+                live_footprint=live,
+                budget_devices=() if residency is None else residency.budget_devices,
+            ),
+        )
 
     def is_prepared(self, *, program: CoreProgram, period: int) -> bool:
         """Return whether this period's declared body has a compiled selection."""
@@ -131,22 +220,84 @@ class SimulationRuntime:
         )
 
     def _prepare_materialized(
-        self, *, program: MaterializedCoreProgram, n_subjects: int
+        self,
+        *,
+        program: MaterializedCoreProgram,
+        n_subjects: int,
+        residency: SimulationDispatchContext | None = None,
     ) -> CompiledSimulationProgram:
-        """Select an executable after the declared builder has run exactly once."""
-        if self.execution.device_memory_bytes is not None:
-            msg = (
-                "Simulation memory budgets require forward resident-buffer "
-                "accounting; this execution path does not yet support a "
-                "device_memory_bytes budget."
+        """Recheck live residency while reusing compiled candidates by width."""
+        resident = 0
+        budget = self.execution.device_memory_bytes
+        if budget is not None:
+            if residency is None:
+                raise ExecutionPlanningError(
+                    "Budgeted dispatch requires a live residency context."
+                )
+            arguments = measure_buffer_footprint(tree=program.arguments)
+            live = union_buffer_footprints(
+                footprints=(residency.live_footprint(), arguments)
             )
-            raise ExecutionPlanningError(msg)
+            require_transfer_headroom(
+                live=live,
+                destination_bytes={},
+                scratch_bytes={},
+                budget_bytes=budget,
+                devices=residency.budget_devices,
+            )
+            external = resident_bytes_by_device(
+                live=live, arguments=arguments, devices=self.subject_devices
+            )
+            resident = max(external.values())
+        plan = plan_workspace(
+            axes=program.requirements.axes,
+            fixed_widths=self.execution.axis_widths,
+            compile_candidate=_CachedSimulationCandidateCompiler(
+                runtime=self, program=program, n_subjects=n_subjects
+            ),
+            budget_bytes=budget,
+            resident_bytes=resident,
+            peak_bytes_for=_simulation_peak_bytes,
+        )
+        return plan.compiled
+
+    def _require_budget_context(
+        self, *, program: CoreProgram, residency: SimulationDispatchContext | None
+    ) -> None:
+        """Refuse unprofiled adapters before materialization can allocate operands."""
+        if self.execution.device_memory_bytes is None:
+            return
+        if residency is None:
+            raise ExecutionPlanningError(
+                "Budgeted dispatch requires a live residency context."
+            )
+        if not set(self.subject_devices).issubset(residency.budget_devices):
+            raise ExecutionPlanningError(
+                "The live budget context omits subject devices."
+            )
+        if (
+            not self.enable_jit
+            or program.disposition is CoreExecutionDisposition.HOST_DRIVEN
+        ):
+            raise ExecutionPlanningError(
+                "Budgeted simulation requires a compiled planned program; "
+                "eager and host-driven adapters have no profiled workspace bound."
+            )
+
+    def compile_candidate(
+        self,
+        *,
+        program: MaterializedCoreProgram,
+        n_subjects: int,
+        widths: Mapping[str, int],
+    ) -> CompiledSimulationProgram:
+        """Own one compilation per concrete width without retaining live arguments."""
         key = _lowering_key(
             program_identity=_func_dedup_key(func=program.function),
             arguments=program.arguments,
             specialization_key=(
                 n_subjects,
-                tuple(self.execution.axis_widths.items()),
+                tuple(widths.items()),
                 self.enable_jit,
             ),
             output_roles=program.output_roles,
@@ -174,10 +325,8 @@ class SimulationRuntime:
                     n_subjects,
                 ),
             )
-            plan = plan_workspace(
-                axes=program.requirements.axes,
-                fixed_widths=self.execution.axis_widths,
-                compile_candidate=compile_candidate,
+            compiled = dataclasses.replace(
+                compile_candidate(widths), widths=MappingProxyType(dict(widths))
             )
         except BaseException as error:
             with self.lock:
@@ -185,10 +334,29 @@ class SimulationRuntime:
                 future.set_exception(error)
             raise
         with self.lock:
-            self.cache[key] = plan.compiled
+            self.cache[key] = compiled
             del self.in_flight[key]
-            future.set_result(plan.compiled)
-        return plan.compiled
+            future.set_result(compiled)
+        return compiled
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CachedSimulationCandidateCompiler:
+    """A transient planner callback; persistent entries retain only compiled code."""
+
+    runtime: SimulationRuntime
+    program: MaterializedCoreProgram
+    n_subjects: int
+
+    def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
+        return self.runtime.compile_candidate(
+            program=self.program, n_subjects=self.n_subjects, widths=widths
+        )
+
+
+def _simulation_peak_bytes(compiled: CompiledSimulationProgram) -> int:
+    """Read the genuine underlying executable's compiler-reported memory peak."""
+    return compiler_peak_bytes(compiled=compiled.executable, widths=compiled.widths)
 
 
 def execute_simulation_program(
@@ -233,6 +401,7 @@ class _SimulationCandidateCompiler:
         """Return the executable for exactly these proposed static widths."""
         if self.program.disposition is CoreExecutionDisposition.HOST_DRIVEN:
             function = self.program.function
+            arguments = self.program.arguments
             static_kwargs = {SUBJECT_WIDTH_KEYWORD: self.subject_width}
         else:
             transfers = tuple(
@@ -255,6 +424,7 @@ class _SimulationCandidateCompiler:
                 input_transfer_plan=transfers,
             )
             function = resolved.function
+            arguments = resolved.arguments
             static_kwargs = dict(resolved.static_kwargs)
             static_kwargs.setdefault(SUBJECT_WIDTH_KEYWORD, self.subject_width)
         if not self.enable_jit:
@@ -262,7 +432,7 @@ class _SimulationCandidateCompiler:
                 executable=function, static_kwargs=MappingProxyType(static_kwargs)
             )
         lowered = jax.jit(function, static_argnames=tuple(static_kwargs)).lower(
-            **self.program.arguments, **static_kwargs
+            **arguments, **static_kwargs
         )
         _assert_lowered_output_tree(
             output_roles=self.program.output_roles,

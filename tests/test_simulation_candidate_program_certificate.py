@@ -78,7 +78,8 @@ def test_live_simulation_program_sources_are_certified(source: str):
         "aot_compile:argmax_index_shift",
         "aot_model:compiled_regime_filter",
         "simulation_index_consumer:next_candidate",
-    ],
+    ]
+    + list(direct_flow._SIMULATION_ADAPTER_MUTATIONS),
 )
 def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(
     *,

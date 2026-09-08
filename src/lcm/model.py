@@ -18,7 +18,11 @@ from beartype.roar import BeartypeCallHintViolation
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, UnsupportedReplayRoute
+from _lcm.engine import (
+    EGMPolicyRead,
+    NNBEGMPolicyRead,
+    UnsupportedReplayRoute,
+)
 from _lcm.execution.core_program import CoreProgram, core_program_graph
 from _lcm.execution.execution_plan import (
     ResolvedExecution,
@@ -64,11 +68,13 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.simulation.compile import bind_simulation_runtime, lower_simulation_programs
+from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
     pad_initial_conditions_to_multiple,
     validate_initial_conditions,
 )
+from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.artifacts import (
@@ -116,10 +122,6 @@ from _lcm.solution.result_snapshot import (
     snapshot_omissions,
     snapshot_solution_metadata,
     snapshot_value_store,
-)
-from _lcm.solution.v_topology import (
-    canonical_solution_values,
-    fail_if_a_value_is_on_a_proper_submesh,
 )
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
@@ -176,7 +178,6 @@ from lcm.solver_api import (
     OmissionReason,
     PersistencePolicy,
     ReplayMode,
-    ReplayReader,
     ReplayRouteRequirements,
     ReplayRouteSnapshot,
     ResultRetention,
@@ -216,7 +217,7 @@ def _same_exactly_typed(*, actual: object, expected: object) -> bool:
 
 
 type _PeriodToRegimeToReplayReader = MappingProxyType[
-    int, MappingProxyType[RegimeName, ReplayReader]
+    int, MappingProxyType[RegimeName, PreparedReplayReader]
 ]
 
 # Engine replay inputs resolved from one consumed solution.
@@ -1844,7 +1845,7 @@ class Model:
         instance built hands over its own buffers, any other result a validated
         private copy.
         """
-        readers: dict[int, dict[RegimeName, ReplayReader]] = {}
+        readers: dict[int, dict[RegimeName, PreparedReplayReader]] = {}
         for regime_name, regime in self._regimes.items():
             route = regime.simulation.external_replay_route
             if route is None:
@@ -1960,10 +1961,6 @@ class Model:
                 )
                 try:
                     route.validate(snapshot=snapshot, context=build_context)
-                    reader = route.build_reader(
-                        snapshot=snapshot,
-                        context=build_context,
-                    )
                 except InvalidSimulationInputError:
                     raise
                 except Exception as error:
@@ -1971,12 +1968,9 @@ class Model:
                         "External replay route rejected artifacts at "
                         f"({period}, {regime_name!r}): {error}"
                     ) from error
-                if not isinstance(reader, ReplayReader):
-                    raise InvalidSimulationInputError(
-                        "External replay route returned a non-callable reader at "
-                        f"({period}, {regime_name!r})."
-                    )
-                readers.setdefault(period, {})[regime_name] = reader
+                readers.setdefault(period, {})[regime_name] = PreparedReplayReader(
+                    route=route, snapshot=snapshot, context=build_context
+                )
         return MappingProxyType(
             {
                 period: MappingProxyType(regime_to_reader)
@@ -2236,8 +2230,11 @@ class Model:
         self._sealed_bindings.fail_if_moved()
         log = get_logger(log_level=log_level)
         self._fail_if_simulation_is_unsupported()
-        fail_if_a_value_is_on_a_proper_submesh(
-            regimes=self._regimes, device_ids=self._execution.device_ids
+        entry_inputs = capture_simulation_entry_inputs(
+            execution=self._execution,
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=solution,
         )
         # The canonical parameters bind both the supplied result preflight and an
         # automatic solve. Process them once and keep one model-authoritative seam.
@@ -2355,20 +2352,8 @@ class Model:
             or period_to_regime_to_replay_reader is None
         ):
             raise AssertionError("Simulation solution inputs were not resolved.")
-        # A solve leaves every array on its regime's own placement, while the
-        # simulate programs are lowered against the canonical layout, so both
-        # the values and the dissolution flags beside them are brought onto it
-        # before the first period dispatches.
-        period_to_regime_to_V_arr = canonical_solution_values(
-            values=period_to_regime_to_V_arr,
-            regimes=self._regimes,
-            device_ids=self._execution.device_ids,
-        )
-        period_to_regime_to_dissolution_flags = canonical_solution_values(
-            values=period_to_regime_to_dissolution_flags,
-            regimes=self._regimes,
-            device_ids=self._execution.device_ids,
-        )
+        # Values and replay artifacts retain their solve placement. The forward
+        # period owner acquires only the copies consumed by that period's units.
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             compile_batch_size=compile_batch_size,
@@ -2392,6 +2377,11 @@ class Model:
             subject_batch_size=compile_batch_size,
             original_n_subjects=original_n_subjects,
             device_ids=self._execution.device_ids,
+            retained_footprint=(
+                entry_inputs.footprint(solution=solution)
+                if entry_inputs is not None
+                else None
+            ),
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads

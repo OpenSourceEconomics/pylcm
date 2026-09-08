@@ -1524,6 +1524,7 @@ def _evaluate_edge_fold(
     same_period_mapping: Mapping[RegimeName, FloatND],
     source_flat_params: Mapping[str, object],
     reference_flat_params: Mapping[RegimeName, Mapping[str, object]],
+    shared_sharding: jax.sharding.Sharding | None = None,
 ) -> FloatND:
     """Call one edge's fold with exactly the arguments its signature declares.
 
@@ -1569,6 +1570,15 @@ def _evaluate_edge_fold(
     kwargs[SAME_PERIOD_V_ARG] = same_period_mapping
     if SAME_PERIOD_PARAMS_ARG in sig_params:
         kwargs[SAME_PERIOD_PARAMS_ARG] = reference_flat_params
+    if shared_sharding is not None:
+        # The caller owns value-copy lifetimes. Only ordinary fold operands
+        # (including the period and age just bound above) are placed here.
+        kwargs = {
+            name: value
+            if name == SAME_PERIOD_V_ARG
+            else jax.device_put(value, shared_sharding)
+            for name, value in kwargs.items()
+        }
     return surfaces(**kwargs)
 
 

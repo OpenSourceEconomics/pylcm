@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from dags.tree import qname_from_tree_path
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.engine import Regime
+from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
@@ -37,8 +37,10 @@ from _lcm.simulation.gated_routing import (
     split_population_call_args,
 )
 from _lcm.simulation.initial_conditions import subject_array_sharding
+from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import (
     _func_dedup_key,
     _iter_edge_topologies,
@@ -62,7 +64,13 @@ def bind_simulation_runtime(
     enable_jit: bool,
 ) -> MappingProxyType[RegimeName, Regime]:
     """Attach one shared executor to a call-local copy of the program bundles."""
-    executor = SimulationRuntime(execution=execution, enable_jit=enable_jit)
+    executor = SimulationRuntime(
+        execution=execution,
+        enable_jit=enable_jit,
+        subject_devices=_subject_devices(
+            regimes=regimes, device_ids=execution.device_ids
+        ),
+    )
     return MappingProxyType(
         {
             name: dataclasses.replace(
@@ -76,6 +84,20 @@ def bind_simulation_runtime(
             )
             for name, regime in regimes.items()
         }
+    )
+
+
+def _subject_devices(
+    *, regimes: Mapping[RegimeName, Regime], device_ids: tuple[int, ...]
+) -> tuple[jax.Device, ...]:
+    """Resolve the actual population devices from the canonical regime axes."""
+    devices = placed_devices_for_ids(
+        submesh_device_ids=(), visible_device_ids=device_ids
+    )
+    return (
+        devices
+        if any(regime.solution.sharded_state_names for regime in regimes.values())
+        else devices[:1]
     )
 
 
@@ -95,6 +117,16 @@ def lower_simulation_programs(
     carried states, globally addressed random keys and subject placement.
     Template arrays are released after each program has been prepared.
     """
+    if any(
+        isinstance(executor := regime.simulation.programs.executor, SimulationRuntime)
+        and executor.execution.device_memory_bytes is not None
+        for regime in regimes.values()
+    ):
+        logger.info(
+            "Deferring budgeted simulation compilation until live residency is "
+            "available at the first dispatch."
+        )
+        return regimes
     regime_V_topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
         flat_params=flat_params,
@@ -104,16 +136,21 @@ def lower_simulation_programs(
     subject_sharding = subject_array_sharding(
         regimes=regimes, n_subjects=n_subjects, device_ids=device_ids
     )
-    edge_to_V_arr = MappingProxyType(
+    subject_devices = _subject_devices(regimes=regimes, device_ids=device_ids)
+    edge_topologies = MappingProxyType(
         {
-            (source_name, target_name): _build_zero_V_arr(topology=topology)
+            (source_name, target_name): dataclasses.replace(
+                topology,
+                sharding=simulation_value_sharding(
+                    stored_sharding=topology.sharding, devices=subject_devices
+                ),
+            )
             for source_name, target_name, topology in _iter_edge_topologies(
                 regimes=regimes, flat_params=flat_params
             )
         }
     )
-    unique: dict[Hashable, tuple[Callable, dict | tuple | None, str]] = {}
-    gate_calls: dict[Hashable, tuple[Callable, int]] = {}
+    prepared_gates: set[Hashable] = set()
     worker_count = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
     )
@@ -142,7 +179,15 @@ def lower_simulation_programs(
                             for name in continuation_targets
                         }
                     ),
-                    edge_to_V_arr=edge_to_V_arr,
+                    edge_to_V_arr=MappingProxyType(
+                        {
+                            (regime_name, target): _build_zero_V_arr(
+                                topology=edge_topologies[regime_name, target]
+                            )
+                            for target in continuation_targets
+                            if (regime_name, target) in edge_topologies
+                        }
+                    ),
                 )
                 arguments = _build_argmax_args(
                     regime=regime,
@@ -194,7 +239,7 @@ def lower_simulation_programs(
                     )
                     del arguments
                     _drain_compilations(futures=futures, max_pending=worker_count - 1)
-            _collect_edge_gate_evaluators(
+            _prepare_edge_gate_evaluators(
                 regime=regime,
                 regime_name=regime_name,
                 regimes=regimes,
@@ -203,28 +248,13 @@ def lower_simulation_programs(
                 n_subjects=n_subjects,
                 regime_V_topology=regime_V_topology,
                 subject_sharding=subject_sharding,
-                unique=unique,
-                gate_calls=gate_calls,
+                subject_devices=subject_devices,
+                prepared=prepared_gates,
+                pool=pool,
+                futures=futures,
+                max_pending=worker_count - 1,
+                logger=logger,
             )
-        for key, (function, arguments, label) in unique.items():
-            lowered = cast("jax.stages.Wrapped", function).lower(
-                *cast("tuple[object, ...]", arguments)
-            )
-            unique[key] = (function, None, label)
-            evaluator, axis_size = gate_calls[key]
-            futures.add(
-                pool.submit(
-                    _compile_and_install_gate,
-                    key=key,
-                    low=lowered,
-                    label=label,
-                    logger=logger,
-                    evaluator=evaluator,
-                    axis_size=axis_size,
-                )
-            )
-            del lowered, arguments
-            _drain_compilations(futures=futures, max_pending=worker_count - 1)
         _drain_compilations(futures=futures)
     return regimes
 
@@ -295,7 +325,7 @@ def _compile_and_log(
     return key, result
 
 
-def _collect_edge_gate_evaluators(
+def _prepare_edge_gate_evaluators(
     *,
     regime: Regime,
     regime_name: RegimeName,
@@ -305,10 +335,14 @@ def _collect_edge_gate_evaluators(
     n_subjects: int,
     regime_V_topology: dict[RegimeName, _RegimeVTopology],
     subject_sharding: jax.sharding.Sharding,
-    unique: dict[Hashable, tuple[Callable, dict | tuple | None, str]],
-    gate_calls: dict[Hashable, tuple[Callable, int]],
+    subject_devices: tuple[jax.Device, ...],
+    prepared: set[Hashable],
+    pool: ThreadPoolExecutor,
+    futures: set[Future[None]],
+    max_pending: int,
+    logger: logging.Logger,
 ) -> None:
-    """Add one program per unique gate evaluator this regime's edges declare.
+    """Lower each distinct gate, dropping its templates before bounded compilation.
 
     The router recomputes each edge's gate at the realized candidate target
     state, once per edge per period, through a population call it memoizes on
@@ -338,7 +372,7 @@ def _collect_edge_gate_evaluators(
                 continue
             evaluator = edge.simulate_gate_evaluator_at(period=fold_period)
             key = ("gate", regime_name, target_name, _func_dedup_key(func=evaluator))
-            if key in gate_calls:
+            if key in prepared:
                 continue
             args = _build_gate_evaluator_args(
                 edge=edge,
@@ -353,15 +387,45 @@ def _collect_edge_gate_evaluators(
                 regime_V_topology=regime_V_topology,
                 subject_sharding=subject_sharding,
             )
-            gate_calls[key] = (evaluator, n_subjects)
-            unique[key] = (
-                population_call(func=evaluator, axis_size=n_subjects),
-                args,
-                (
-                    f"{regime_name}/gate into {target_name} "
-                    f"(age {ages.values[fold_period].item()})"
+            batched, shared = args
+            args = (
+                dict(
+                    place_simulation_arguments(
+                        arguments=batched,
+                        subject_arg_names=tuple(batched),
+                        value_reads=(),
+                        devices=subject_devices,
+                    )
+                ),
+                dict(
+                    place_simulation_arguments(
+                        arguments=shared,
+                        subject_arg_names=(),
+                        value_reads=(),
+                        devices=subject_devices,
+                    )
                 ),
             )
+            function = population_call(func=evaluator, axis_size=n_subjects)
+            lowered = cast("jax.stages.Wrapped", function).lower(*args)
+            del args, batched, shared
+            futures.add(
+                pool.submit(
+                    _compile_and_install_gate,
+                    key=key,
+                    low=lowered,
+                    label=(
+                        f"{regime_name}/gate into {target_name} "
+                        f"(age {ages.values[fold_period].item()})"
+                    ),
+                    logger=logger,
+                    evaluator=evaluator,
+                    axis_size=n_subjects,
+                )
+            )
+            del lowered
+            prepared.add(key)
+            _drain_compilations(futures=futures, max_pending=max_pending)
 
 
 def _edge_fold_periods(*, regime: Regime, ages: AgeGrid) -> tuple[int, ...]:

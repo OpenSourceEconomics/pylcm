@@ -4,14 +4,11 @@ Shared leaf: the backward-induction hot path sizes its continuation-input
 templates from it, the failure-path diagnostics rebuild the rolling V mapping
 from it, and the simulate-side AOT compile reuses the same templates.
 
-The two phases read different placements. Backward induction places a regime's
-value on the devices the planner assigned it, which can be a submesh of the
-visible devices. Simulation spreads subjects over every device, so it reads the
-canonical layout instead — the one a solve without a per-regime placement
-produces — and `canonical_solution_values` brings a solved value onto it.
+Backward induction stores values on each regime's assigned devices. Simulation
+reads period-owned replicas on the actual subject devices. This module computes
+only their shapes and destination layouts; it never relocates a stored solution.
 """
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
@@ -25,10 +22,9 @@ from _lcm.engine import (
     _RegimeSharding,
     placed_devices_for_ids,
 )
-from _lcm.execution.execution_plan import visible_device_ids
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import FlatParams, RegimeName, StateName
-from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import FloatND, ValueND
+from lcm.typing import FloatND
 
 
 @dataclass(frozen=True)
@@ -63,84 +59,6 @@ def expected_V_rank(*, regime: Regime) -> int:
         1 for name in regime.solution.state_names if name not in regime.fold_state_names
     )
     return n_state_axes + (1 if regime.stakeholders is not None else 0)
-
-
-def canonical_solution_values(
-    *,
-    values: Mapping[int, Mapping[RegimeName, ValueND]],
-    regimes: MappingProxyType[RegimeName, Regime],
-    device_ids: tuple[int, ...],
-) -> MappingProxyType[int, MappingProxyType[RegimeName, ValueND]]:
-    """Return the values on the layout the simulate programs are lowered against.
-
-    A single-device value placed off the default device is copied onto it.
-    Serves every array a solve publishes per period and regime — the value
-    functions and the collective dissolution flags beside them — since all of
-    them leave the solve on their regime's own placement.
-
-    Args:
-        values: Mapping of period to a mapping of regime name to the array the
-            solve published there.
-        regimes: Immutable mapping of regime names to canonical regimes.
-        device_ids: The model's device ids, ascending.
-
-    Returns:
-        Immutable mapping of period to an immutable mapping of regime name to
-        the array on the canonical layout.
-
-    """
-    fail_if_a_value_is_on_a_proper_submesh(regimes=regimes, device_ids=device_ids)
-    default = placed_devices_for_ids(
-        submesh_device_ids=(), visible_device_ids=device_ids
-    )[0]
-    result: dict[int, MappingProxyType[RegimeName, ValueND]] = {}
-    for period, by_regime in values.items():
-        placed: dict[RegimeName, ValueND] = {}
-        for regime_name, value in by_regime.items():
-            regime_device_ids = regimes[regime_name].solution.submesh_device_ids
-            placed[regime_name] = (
-                jax.device_put(value, default)
-                if len(regime_device_ids) == 1
-                and value.sharding.device_set != {default}
-                else value
-            )
-        result[period] = MappingProxyType(placed)
-    return MappingProxyType(result)
-
-
-def fail_if_a_value_is_on_a_proper_submesh(
-    *, regimes: MappingProxyType[RegimeName, Regime], device_ids: tuple[int, ...] = ()
-) -> None:
-    """Refuse a solve whose values simulation cannot read.
-
-    Simulation spreads its subjects over every visible device, so it reads a
-    value that is either on one device or on all of them. A value on a proper
-    submesh — a distributed extent the visible device count does not divide —
-    meets no such population and is refused rather than silently gathered.
-
-    Args:
-        regimes: Immutable mapping of regime names to canonical regimes.
-        device_ids: The model's device ids, ascending. Empty names every
-            device JAX reports.
-
-    """
-    n_devices = len(device_ids or visible_device_ids())
-    for regime_name, regime in regimes.items():
-        regime_device_ids = regime.solution.submesh_device_ids
-        if 1 < len(regime_device_ids) < n_devices:
-            extents = tuple(
-                regime.solution.grids[name].to_jax().shape[0]
-                for name in regime.solution.grids
-                if name in regime.solution.sharded_state_names
-            )
-            msg = (
-                f"Regime {regime_name!r} was solved on a submesh of "
-                f"{len(regime_device_ids)} of {n_devices} devices — device ids "
-                f"{regime_device_ids!r}, distributed extents {extents!r}; simulation "
-                "spreads subjects over every device and cannot read a value "
-                "from a proper submesh."
-            )
-            raise ExecutionPlanningError(msg)
 
 
 def placed_V_sharding(
@@ -182,17 +100,18 @@ def _get_regime_V_shapes_and_shardings(
     """Compute V-array shapes and shardings for every regime.
 
     The V-array has one dimension per state variable, sized by that state's
-    grid. When at least one state grid in a regime is distributed, the
-    V-array is sharded across the devices the phase places the regime on;
-    otherwise it is committed to the first of them.
+    grid. Solve templates use each regime's assigned placement. Simulation
+    templates replicate the value across the devices evaluating subjects;
+    deriving their shape never requires a state grid to divide the larger
+    simulation mesh.
 
     Args:
         regimes: Immutable mapping of regime names to internal regimes.
         flat_params: Regime parameters (needed for runtime grid shapes).
         phase: Which placement to build against — `"solve"` reads each
-            regime's assigned devices, `"simulate"` every device the model
-            uses, which is the canonical layout simulation's programs are
-            lowered against.
+            regime's assigned devices; `"simulate"` uses a replicated read
+            layout over the model's subject devices. With no sharded state,
+            subjects run on the model's first device.
         device_ids: The model's device ids, ascending. Empty names every
             device JAX reports.
 
@@ -232,22 +151,30 @@ def _get_regime_V_shapes_and_shardings(
             f"while the rank rule states {expected_V_rank(regime=regime)}"
         )
         devices = placed_devices_for_ids(
-            submesh_device_ids=(
-                regime.solution.submesh_device_ids if phase == "solve" else ()
-            ),
+            submesh_device_ids=regime.solution.submesh_device_ids,
             visible_device_ids=device_ids,
         )
-        topology[regime_name] = _RegimeVTopology(
-            shape=shape,
-            sharding=placed_V_sharding(
-                sharding_plan=_build_regime_sharding(
-                    grids=regime.solution.grids,
-                    sharded_state_names=regime.solution.sharded_state_names,
-                    devices=devices,
-                ),
-                state_order=state_order,
+        sharding = placed_V_sharding(
+            sharding_plan=_build_regime_sharding(
+                grids=regime.solution.grids,
+                sharded_state_names=regime.solution.sharded_state_names,
                 devices=devices,
             ),
+            state_order=state_order,
+            devices=devices,
+        )
+        if phase == "simulate":
+            simulation_devices = placed_devices_for_ids(
+                submesh_device_ids=(), visible_device_ids=device_ids
+            )
+            if not any(item.solution.sharded_state_names for item in regimes.values()):
+                simulation_devices = simulation_devices[:1]
+            sharding = simulation_value_sharding(
+                stored_sharding=sharding, devices=simulation_devices
+            )
+        topology[regime_name] = _RegimeVTopology(
+            shape=shape,
+            sharding=sharding,
         )
     return topology
 

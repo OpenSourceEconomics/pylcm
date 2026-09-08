@@ -10,6 +10,7 @@ from functools import partial
 from types import MappingProxyType
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -17,6 +18,7 @@ import pytest
 import _lcm.simulation.compile as compile_module
 import _lcm.simulation.runtime as runtime_module
 from _lcm.execution.core_program import (
+    CoreBuildContext,
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
@@ -196,7 +198,9 @@ def _program() -> CoreProgram:
     return CoreProgram(
         name="simulate_transition",
         function=_SubjectTiled(func=_increment_subject, subject_arg_names=("state",)),
-        argument_builder=_ArgumentsBoundAtDispatch(program_name="simulate_transition"),
+        argument_builder=_ArgumentsBoundAtDispatch(
+            program_name="simulate_transition", subject_arg_names=("state",)
+        ),
         requirements=CoreExecutionRequirements(
             tiled_axes=(subject_axis(state_names=("state",)),)
         ),
@@ -218,6 +222,7 @@ def _runtime(
             device_memory_bytes=budget,
         ),
         enable_jit=enable_jit,
+        subject_devices=(jax.devices()[0],),
     )
 
 
@@ -238,16 +243,28 @@ def test_subject_tiles_preserve_every_output(
     np.testing.assert_array_equal(output, np.arange(n_subjects) + 1)
 
 
-def test_dispatch_invokes_the_argument_builder_once() -> None:
-    """One invocation applies the declared argument transformation exactly once."""
-    calls = []
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _RecordingArguments:
+    """Record materializations while declaring the exact subject operand."""
 
-    def build(context: SimulationBuildContext) -> dict[str, object]:
-        calls.append(context.period)
+    calls: list[int]
+    subject_arg_names: tuple[str, ...] = ("state",)
+
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+        if not isinstance(context, SimulationBuildContext):
+            raise TypeError("This test builder requires simulation arguments.")
+        self.calls.append(context.period)
         return dict(context.call_arguments)
 
+
+def test_dispatch_invokes_the_argument_builder_once() -> None:
+    """One invocation applies the declared argument transformation exactly once."""
+    calls: list[int] = []
+
     _runtime().dispatch(
-        program=dataclasses.replace(_program(), argument_builder=build),
+        program=dataclasses.replace(
+            _program(), argument_builder=_RecordingArguments(calls=calls)
+        ),
         arguments={"state": jnp.arange(7.0)},
         period=0,
         n_subjects=7,

@@ -13,6 +13,7 @@ import dataclasses
 from types import MappingProxyType
 from typing import cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -131,7 +132,9 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     next_regime_to_V_arr = MappingProxyType(dict(period_to_regime_to_V_arr[period + 1]))
 
     executor = SimulationRuntime(
-        execution=model._execution, enable_jit=model.enable_jit
+        execution=model._execution,
+        enable_jit=model.enable_jit,
+        subject_devices=(jax.devices()[0],),
     )
     dispatched = executor.dispatch(
         program=regime.simulation.programs.decision[period],

@@ -546,6 +546,24 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations():
     assert isinstance(_parse("src/_lcm/simulation/programs.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/program_types.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/runtime.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/operand_placement.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/unit_executor.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/host_operations.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/memory.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/period_inputs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/replay_inputs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/value_reads.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/value_placement.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_inputs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/entry_inputs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/residency.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/gated_routing.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/v_topology.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/retained_buffers.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/scheduler.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/liveness.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/continuation_reads.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/workspace_planning.py"), ast.Module)
 
 
 def test_direct_flow_certificate_names_every_supported_route():
@@ -843,10 +861,18 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 386
+    original_names = {
+        name for name in names if not name.startswith("simulation_adapter:")
+    }
+    assert len(original_names) == 386
+    assert (
+        hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
+        == "ef2fd95367327acc193d97d4f9ca8c4b6627af9a763419ec9a60b73d32da812d"
+    )
+    assert len(names) == 404
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "ef2fd95367327acc193d97d4f9ca8c4b6627af9a763419ec9a60b73d32da812d"
+        == "7fb69a87daf4bd1f927d76d0c6507138d8b0d7eda25d478c3f5f551b1bdd1b61"
     )
 
 

@@ -4,7 +4,7 @@ import itertools
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -33,6 +33,7 @@ from _lcm.engine import (
     PeriodRegimeSimulationData,
     Regime,
     StateActionSpace,
+    placed_devices_for_ids,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.reachability import PhaseReachability
@@ -45,22 +46,44 @@ from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_V_ARG,
 )
 from _lcm.simulation.additional_targets import _compute_targets
+from _lcm.simulation.chunk_inputs import prepare_simulation_chunk_inputs
 from _lcm.simulation.gated_routing import (
-    route_gated_edges,
-    substitute_gated_edge_continuations,
+    simulation_gate_fold,
+    simulation_gate_route,
 )
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
     trim_pad_from_raw_results,
 )
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.period_inputs import (
+    GATE_FOLD,
+    GATE_ROUTE,
+    POLICY_SCORE,
+    acquire_decision_inputs,
+    acquire_gate_inputs,
+    decision_reads,
+    gate_reads,
+    unit_value_reads,
+)
 from _lcm.simulation.random import draw_random_seed, generate_simulation_keys
-from _lcm.simulation.runtime import execute_simulation_program
+from _lcm.simulation.replay_inputs import PreparedReplayReader, place_replay_payload
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    union_buffer_footprints,
+)
+from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
     create_regime_state_action_space,
 )
+from _lcm.simulation.unit_executor import SimulationUnitExecutor
+from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import (
     ActionName,
@@ -90,13 +113,14 @@ from _lcm.utils.logging import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
+    ExecutionPlanningError,
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
-from lcm.solver_api import ActionOutput, ReplayReader
+from lcm.solver_api import SIMULATION_POLICY, ActionOutput, ReplayReader
 from lcm.typing import (
     BoolND,
     Float1D,
@@ -108,18 +132,9 @@ from lcm.typing import (
     ScalarInt,
 )
 
-# What `substitute_gated_edge_continuations` returns for one (regime, period):
-# the substituted continuation values, and the same-period mapping each firing
-# edge was folded on.
-type _GatedEdgeFolds = tuple[
-    MappingProxyType[RegimeName, FloatND],
-    MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]],
+type _PeriodToRegimeToReplayReader = Mapping[
+    int, Mapping[RegimeName, PreparedReplayReader | ReplayReader]
 ]
-
-# Gated-edge folds already evaluated, keyed by source regime and period.
-type _GatedEdgeFoldCache = dict[tuple[RegimeName, int], _GatedEdgeFolds]
-
-type _PeriodToRegimeToReplayReader = Mapping[int, Mapping[RegimeName, ReplayReader]]
 
 
 def simulate(
@@ -145,6 +160,7 @@ def simulate(
         int, MappingProxyType[RegimeName, BoolND]
     ] = MappingProxyType({}),
     device_ids: tuple[int, ...] = (),
+    retained_footprint: DeviceBufferFootprint | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -232,6 +248,51 @@ def simulate(
         n_subjects if subject_batch_size == 0 else min(subject_batch_size, n_subjects)
     )
 
+    runtime = next(iter(regimes.values())).simulation.programs.executor
+    memory = None
+    if (
+        isinstance(runtime, SimulationRuntime)
+        and runtime.execution.device_memory_bytes is not None
+    ):
+        if retained_footprint is None:
+            raise ExecutionPlanningError(
+                "Budgeted simulation requires retained solution residency."
+            )
+        if not runtime.enable_jit or any(
+            regime.gated_edges
+            or regime.simulation.replay_route.policy_applicable
+            or regime.simulation.external_replay_route is not None
+            for regime in regimes.values()
+        ):
+            raise ExecutionPlanningError(
+                "Budgeted simulation currently requires compiled decision programs; "
+                "host gated/replay adapters require their own workspace accounting."
+            )
+        memory = SimulationMemory(
+            budget_bytes=runtime.execution.device_memory_bytes,
+            subject_devices=runtime.subject_devices,
+            operations=runtime.operations,
+            devices=placed_devices_for_ids(
+                submesh_device_ids=(), visible_device_ids=device_ids
+            ),
+            inputs=union_buffer_footprints(
+                footprints=(
+                    retained_footprint,
+                    measure_buffer_footprint(
+                        tree=(
+                            initial_conditions,
+                            flat_params,
+                            ages.values,  # noqa: PD011
+                            period_to_regime_to_V_arr,
+                            period_to_regime_to_dissolution_flags,
+                            period_to_regime_to_sim_policy,
+                        )
+                    ),
+                )
+            ),
+        )
+        memory.check_resident()
+
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
@@ -246,24 +307,6 @@ def simulate(
     # keeps results on the compute device (no memory pressure, and no host
     # round-trip for downstream targets).
     host_device = jax.devices("cpu")[0] if batch_size < n_subjects else None
-
-    # A gated edge's `Wbar` fold reads the solved value arrays, the dissolution
-    # flags, the params and the target's own period-`t + 1` grid — nothing that
-    # says which subjects are being simulated — so every chunk after the first
-    # would recompute an identical array. Memoize it per (source regime,
-    # period) and share it across chunks.
-    #
-    # The store keeps one target-V-shaped `Wbar` per (regime, period, edge)
-    # alive until the last chunk finishes, rather than letting each period's
-    # drop. A chunked run pays that to stop re-folding; a single pass visits
-    # each (regime, period) once and has nothing to save, so it keeps nothing —
-    # and neither does a model that declares no edge.
-    gated_edge_fold_cache: _GatedEdgeFoldCache | None = (
-        {}
-        if batch_size < n_subjects
-        and any(regime.gated_edges for regime in regimes.values())
-        else None
-    )
 
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
     for chunk_start in range(0, n_subjects, batch_size):
@@ -293,8 +336,8 @@ def simulate(
             ages=ages,
             seed=seed,
             logger=logger,
-            gated_edge_fold_cache=gated_edge_fold_cache,
             device_ids=device_ids,
+            memory=memory,
         )
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
@@ -302,6 +345,9 @@ def simulate(
             # chunk; the host-resident copies stay `jax.Array` (CPU-backed).
             chunk = jax.block_until_ready(jax.device_put(chunk, host_device))
         chunk_results.append(chunk)
+        if memory is not None:
+            memory.close_unit()
+            memory.replace_outputs(tree=chunk_results)
 
     simulation_results = _concatenate_chunk_results(
         chunk_results=chunk_results, regimes=regimes
@@ -383,8 +429,8 @@ def _simulate_subject_chunk(
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
-    gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
     device_ids: tuple[int, ...] = (),
+    memory: SimulationMemory | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -396,13 +442,27 @@ def _simulate_subject_chunk(
     `initial_own_stakeholder`: each subject's seeded role, already sliced to
     this chunk. It is carried through the period loop and updated wherever a
     gated edge routes a row, so a dissolution follows the row's own leg.
-    `gated_edge_fold_cache`: the caller's chunk-spanning store of gated-edge
-    folds, or `None` to evaluate each fold locally.
     `device_ids`: the model's device ids, ascending; empty names every device
     JAX reports.
 
     Returns the per-(regime, period) results for this chunk's subjects.
     """
+    chunk_inputs = prepare_simulation_chunk_inputs(
+        initial_states=initial_states,
+        initial_regime_ids=initial_regime_ids,
+        initial_own_stakeholder=initial_own_stakeholder,
+        starting_periods=starting_periods,
+        flat_params=flat_params,
+        regimes=regimes,
+        device_ids=device_ids,
+        memory=memory,
+    )
+    devices = chunk_inputs.devices
+    flat_params = chunk_inputs.flat_params
+    initial_regime_ids = chunk_inputs.initial_regime_ids
+    initial_own_stakeholder = chunk_inputs.initial_own_stakeholder
+    starting_periods = chunk_inputs.starting_periods
+    base_state_action_spaces = chunk_inputs.base_state_action_spaces
     key = jax.random.key(seed=seed)
     states = build_initial_states(
         initial_states=initial_states, regimes=regimes, device_ids=device_ids
@@ -416,19 +476,22 @@ def _simulate_subject_chunk(
         regime_name: {} for regime_name in regimes
     }
 
-    # The params-completed base space is period-invariant within one simulate
-    # call (params are fixed), so build it once per regime — runtime-grid
-    # completion (e.g. process gridpoint computation) rides on it and would
-    # otherwise rerun every period.
-    base_state_action_spaces = {
-        regime_name: regime.solution.state_action_space(
-            regime_params=flat_params[regime_name]
-        )
-        for regime_name, regime in regimes.items()
-    }
-
-    for period, age in enumerate(ages.values):
+    for period, original_age in enumerate(ages.values):
         period_start = time.monotonic()
+        if memory is not None:
+            memory.unit_inputs = (states, subject_regime_ids, own_stakeholder, key)
+        age = cast(
+            "ScalarInt | ScalarFloat",
+            place_simulation_arguments(
+                arguments={"age": original_age},
+                subject_arg_names=(),
+                value_reads=(),
+                devices=devices,
+                budget_bytes=None if memory is None else memory.budget_bytes,
+                live_footprint=None if memory is None else memory.snapshot(),
+                budget_devices=() if memory is None else memory.devices,
+            )["age"],
+        )
 
         # Activate subjects whose starting period matches the current period
         subject_regime_ids = jnp.where(
@@ -455,12 +518,53 @@ def _simulate_subject_chunk(
 
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
 
+        period_policies = (period_to_regime_to_sim_policy or {}).get(period, {})
+        period_readers = period_to_regime_to_replay_reader.get(period, {})
+        executor = next(iter(regimes.values())).simulation.programs.executor
+        owner = PeriodSimulationReads(
+            period=period,
+            devices=devices,
+            reads_by_unit={
+                name: unit_value_reads(
+                    regime=active,
+                    name=name,
+                    period=period,
+                    values=period_to_regime_to_V_arr,
+                    flags=period_to_regime_to_dissolution_flags,
+                    policy=period_policies.get(name),
+                    reader=period_readers.get(name),
+                )
+                for name, active in active_regimes.items()
+            },
+            release_enabled=isinstance(executor, SimulationRuntime)
+            and executor.enable_jit,
+            before_transfer=None if memory is None else memory.before_transfer,
+        )
+        if memory is not None:
+            memory.period_owner = owner
+
         for regime_name, regime in active_regimes.items():
+            dispatched_regime = _bind_unit_executor(
+                regime=regime,
+                memory=memory,
+                inputs=(
+                    states,
+                    subject_regime_ids,
+                    new_subject_regime_ids,
+                    own_stakeholder,
+                    new_own_stakeholder,
+                    key,
+                    age,
+                ),
+            )
             result, new_states, new_subject_regime_ids, new_own_stakeholder, key = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
-                    regime=regime,
+                    regime=dispatched_regime,
                     regimes=regimes,
+                    value_owner=owner,
+                    subject_devices=devices,
+                    memory=memory,
                     base_state_action_space=base_state_action_spaces[regime_name],
                     period=period,
                     age=age,
@@ -504,11 +608,32 @@ def _simulate_subject_chunk(
                         if period + 1 < ages.n_periods
                         else None
                     ),
-                    gated_edge_fold_cache=gated_edge_fold_cache,
                 )
             )
             states = new_states
             simulation_results[regime_name][period] = result
+            if memory is not None:
+                memory.publish(tree=result)
+            owner.commit(
+                unit=regime_name,
+                outputs=(
+                    result,
+                    states,
+                    new_subject_regime_ids,
+                    new_own_stakeholder,
+                    key,
+                ),
+            )
+            if memory is not None:
+                cast(
+                    "SimulationUnitExecutor",
+                    dispatched_regime.simulation.programs.executor,
+                ).close()
+                memory.close_unit()
+
+        owner.finish()
+        if memory is not None:
+            memory.period_owner = None
 
         _validate_period_values(
             logger=logger,
@@ -533,6 +658,32 @@ def _simulate_subject_chunk(
         log_period_timing(logger=logger, elapsed=elapsed)
 
     return simulation_results
+
+
+def _bind_unit_executor(
+    *, regime: Regime, memory: SimulationMemory | None, inputs: object
+) -> Regime:
+    """Bind live unit residency without changing any persistent regime bundle."""
+    if memory is None:
+        return regime
+    memory.unit_inputs = inputs
+    return replace(
+        regime,
+        simulation=replace(
+            regime.simulation,
+            programs=replace(
+                regime.simulation.programs,
+                executor=SimulationUnitExecutor(
+                    runtime=cast(
+                        "SimulationRuntime", regime.simulation.programs.executor
+                    ),
+                    live_footprint=memory.snapshot,
+                    budget_devices=memory.devices,
+                    on_output=memory.hold,
+                ),
+            ),
+        ),
+    )
 
 
 def _concatenate_chunk_results(
@@ -894,6 +1045,9 @@ def _simulate_regime_in_period(
     regime_name: RegimeName,
     regime: Regime,
     regimes: Mapping[RegimeName, Regime],
+    value_owner: PeriodSimulationReads,
+    subject_devices: tuple[jax.Device, ...],
+    memory: SimulationMemory | None,
     base_state_action_space: StateActionSpace,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     period: int,
@@ -922,8 +1076,7 @@ def _simulate_regime_in_period(
     sim_policy: (
         EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
     ) = None,
-    replay_reader: ReplayReader | None = None,
-    gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
+    replay_reader: PreparedReplayReader | ReplayReader | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -978,12 +1131,8 @@ def _simulate_regime_in_period(
             (`regime.simulation.egm_policy_read`).
         replay_reader: Model-preflighted external policy reader for this exact
             result cell, or ``None`` for an engine-owned replay route.
-        gated_edge_fold_cache: Store of gated-edge folds already evaluated for
-            some (regime, period), shared across subject chunks by `simulate`.
-            The fold depends on no subject, so a chunk that finds its
-            (regime, period) there reuses it instead of recomputing an
-            identical array. `None` evaluates the fold locally and keeps
-            nothing, which is what an unchunked run wants.
+        value_owner: This period's owner of addressed copies.
+        subject_devices: Actual ordered devices evaluating the population.
 
     Returns:
         Tuple containing:
@@ -1014,42 +1163,38 @@ def _simulate_regime_in_period(
         source_period=period,
     )
 
-    # The simulate value router. A regime declaring
-    # `gated_edges` must have its OWN action choice informed by the gated
-    # continuation `Wbar`, not the target's raw (ungated) value — substitute
-    # it into `next_regime_to_V_arr` exactly like the solve-side kernel does
-    # (`_with_edge_substitution`), computed here from the already-solved
-    # next-period arrays. `same_period_mappings` (the target V / `D` /
-    # reference-V arrays each firing edge was folded on, per target) feeds
-    # the REGIME-ROUTING step below, after the action and candidate
-    # next-states are known — `route_gated_edges` RECOMPUTES the gate from
-    # these rather than interpolating a baked boolean.
-    # No-op (returns the inputs unchanged) for a regime without
-    # `gated_edges`.
-    #
-    # Every input the fold reads is fixed for the whole `simulate` call, so a
-    # chunked run evaluates it once per (regime, period) and reads the rest off
-    # `gated_edge_fold_cache` (see `simulate`). Both halves of the result are
-    # immutable and consumed read-only, so sharing them across chunks is a
-    # reuse, not an aliasing hazard.
-    cache = gated_edge_fold_cache if regime.gated_edges else None
-    folds = None if cache is None else cache.get((regime_name, period))
-    if folds is None:
-        folds = substitute_gated_edge_continuations(
-            regime=regime,
-            regime_name=regime_name,
-            regimes=regimes,
-            period=period,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            base_state_action_spaces=base_state_action_spaces,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
-            flat_params=flat_params,
-            fold_age=gated_edge_fold_age,
-        )
-        if cache is not None:
-            cache[regime_name, period] = folds
-    next_regime_to_V_arr, same_period_mappings = folds
+    # Fold only this period's addressed raw values. Copies are shared across
+    # readers in the period and no fold survives into another subject chunk.
+    raw_gate_reads = gate_reads(
+        regime=regime,
+        name=regime_name,
+        period=period,
+        values=period_to_regime_to_V_arr,
+        flags=period_to_regime_to_dissolution_flags,
+    )
+    gate_values, gate_flags = acquire_gate_inputs(
+        reads=tuple(
+            read for read in raw_gate_reads if read.source.core_key == GATE_FOLD
+        ),
+        owner=value_owner,
+        name=regime_name,
+        values=period_to_regime_to_V_arr,
+        flags=period_to_regime_to_dissolution_flags,
+    )
+    next_regime_to_V_arr = simulation_gate_fold(
+        regime=regime,
+        regime_name=regime_name,
+        regimes=regimes,
+        period=period,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        base_state_action_spaces=base_state_action_spaces,
+        edge_values=gate_values,
+        edge_flags=gate_flags,
+        flat_params=flat_params,
+        fold_age=gated_edge_fold_age,
+        subject_devices=subject_devices,
+        on_derived=None if memory is None else memory.set_derived,
+    )
     referenced_value_kwargs = _referenced_value_kwargs(
         regime=regime,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
@@ -1057,14 +1202,51 @@ def _simulate_regime_in_period(
         period=period,
     )
 
+    selected_reads = decision_reads(
+        regime=regime, period=period, policy=sim_policy, reader=replay_reader
+    )
+    # All same-unit occurrences resolve from the same original source objects.
+    policy_reads = (
+        rekeyed_value_reads(
+            reads=regime.simulation.programs.decision[period].requirements.value_reads,
+            core_key=POLICY_SCORE,
+        )
+        if sim_policy is not None
+        and replay_reader is None
+        and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+        else ()
+    )
+    next_regime_to_V_arr, referenced_value_kwargs = acquire_decision_inputs(
+        reads=(*selected_reads, *policy_reads),
+        owner=value_owner,
+        name=regime_name,
+        next_values=next_regime_to_V_arr,
+        referenced=referenced_value_kwargs,
+        stored_values=period_to_regime_to_V_arr,
+    )
+    if sim_policy is not None and replay_reader is None:
+        sim_policy = place_replay_payload(
+            payload=sim_policy,
+            key=SIMULATION_POLICY,
+            period=period,
+            regime=regime_name,
+            core="simulation_policy_replay",
+            owner=value_owner,
+        )
+    built_reader = (
+        replay_reader.build(owner=value_owner, devices=subject_devices)
+        if isinstance(replay_reader, PreparedReplayReader)
+        else replay_reader
+    )
+
     n_chunk_subjects = subject_ids_in_regime.shape[0]
     replay_route = regime.simulation.replay_route
     direct_nnbegm_replay = replay_route.consumer_route == "nnbegm_finite" and (
         isinstance(sim_policy, NNBEGMSimPolicy)
     )
-    if replay_reader is not None:
+    if built_reader is not None:
         optimal_actions, V_arr = _read_external_replay(
-            reader=replay_reader,
+            reader=built_reader,
             regime_name=regime_name,
             regime=regime,
             period=period,
@@ -1104,6 +1286,7 @@ def _simulate_regime_in_period(
                 n_initial_states=n_subjects,
                 subject_slice=subject_slice,
                 original_n_subjects=original_n_subjects,
+                memory=memory,
             )
             taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
 
@@ -1134,9 +1317,14 @@ def _simulate_regime_in_period(
                 jnp.asarray(indices_optimal_actions), (n_chunk_subjects,)
             )
             V_arr = jnp.broadcast_to(V_arr[None, ...], (n_chunk_subjects, *V_arr.shape))
-        optimal_actions = _lookup_values_from_indices(
-            flat_indices=indices_optimal_actions,
-            grids=state_action_space.actions,
+        optimal_actions = run_simulation_operation(
+            memory=memory,
+            function=_lookup_values_from_indices,
+            arguments={
+                "flat_indices": indices_optimal_actions,
+                "grids": state_action_space.actions,
+            },
+            subject_arg_names=("flat_indices",),
         )
         optimal_actions, V_arr, nested_fallback = (
             _replace_continuous_action_with_policy_read(
@@ -1167,7 +1355,7 @@ def _simulate_regime_in_period(
     # this regime-period (no payload, the flat single-EGM path, passive rows,
     # the discrete-branch redecide), so no subject fell back on that path.
     nested_policy_fallback = (
-        jnp.zeros(n_chunk_subjects, dtype=bool)
+        jnp.zeros_like(subject_ids_in_regime, dtype=bool)
         if nested_fallback is None
         else nested_fallback
     )
@@ -1184,6 +1372,8 @@ def _simulate_regime_in_period(
     # Update states and regime membership for next period
     if not regime.terminal:
         next_states_key, next_regime_key, key = jax.random.split(key=key, num=3)
+        if memory is not None:
+            memory.hold(tree=(simulation_result, next_states_key, next_regime_key, key))
 
         next_states = calculate_next_states(
             regime=regime,
@@ -1198,7 +1388,10 @@ def _simulate_regime_in_period(
             n_subjects=n_subjects,
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
+            memory=memory,
         )
+        if memory is not None:
+            memory.hold(tree=next_states)
         # The realized regime draw reads current-period carried values, so it
         # runs against the pre-advance carrier; only then do the next-period
         # states replace it.
@@ -1218,6 +1411,7 @@ def _simulate_regime_in_period(
             n_subjects=n_subjects,
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
+            memory=memory,
         )
         # The value router's routing half. A gated
         # edge's target is always ALSO an ordinary declared transition
@@ -1228,21 +1422,32 @@ def _simulate_regime_in_period(
         # and OVERRIDES both — the target when open, a leg's fallback (with
         # its own projected states) when closed — for every subject in this
         # regime. No-op for a regime without `gated_edges`.
-        next_states, new_subject_regime_ids, new_own_stakeholder = route_gated_edges(
-            regime=regime,
-            # `same_period_mappings` holds the `period + 1` arrays
-            # `substitute_gated_edge_continuations` folded above, so the gate
-            # is recomputed against that period's grids.
-            fold_period=period + 1,
-            same_period_mappings=same_period_mappings,
-            next_states=next_states,
-            regime_names_to_ids=regime_names_to_ids,
-            new_subject_regime_ids=new_subject_regime_ids,
-            subjects_in_regime=subject_ids_in_regime,
-            flat_params=flat_params,
-            own_stakeholder=own_stakeholder,
-            new_own_stakeholder=new_own_stakeholder,
-            fold_age=gated_edge_fold_age,
+        route_values, route_flags = acquire_gate_inputs(
+            reads=tuple(
+                read for read in raw_gate_reads if read.source.core_key == GATE_ROUTE
+            ),
+            owner=value_owner,
+            name=regime_name,
+            values=period_to_regime_to_V_arr,
+            flags=period_to_regime_to_dissolution_flags,
+        )
+        next_states, new_subject_regime_ids, new_own_stakeholder = (
+            simulation_gate_route(
+                regime=regime,
+                subject_devices=subject_devices,
+                fold_period=period + 1,
+                edge_values=route_values,
+                edge_flags=route_flags,
+                next_states=next_states,
+                regime_names_to_ids=regime_names_to_ids,
+                new_subject_regime_ids=new_subject_regime_ids,
+                subjects_in_regime=subject_ids_in_regime,
+                flat_params=flat_params,
+                own_stakeholder=own_stakeholder,
+                new_own_stakeholder=new_own_stakeholder,
+                fold_age=gated_edge_fold_age,
+                on_derived=None if memory is None else memory.set_derived,
+            )
         )
         states = next_states
 

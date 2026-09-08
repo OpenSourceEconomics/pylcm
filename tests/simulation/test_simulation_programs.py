@@ -17,6 +17,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
 from _lcm.simulation import programs as simulation_programs
+from _lcm.simulation.period_inputs import GATE_ROUTE, gate_reads
 from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.simulation.programs import (
     SUBJECT_AXIS,
@@ -137,17 +138,63 @@ def test_ungated_route_program_declares_no_value_read() -> None:
     assert program.requirements.value_reads == ()
 
 
-def test_gated_route_program_declares_its_gate_references() -> None:
-    """A gated draw names the continuation and the projections its gate reads."""
+def test_gate_blind_probability_program_declares_no_value_reads() -> None:
+    """The realized gate owns raw reads; the probability body has none."""
     program = _program(witness=_COLLECTIVE[0], regime=_COLLECTIVE[1], family="route")
-    assert [
-        (read.target.kind.value, read.target.regime, read.target.target_regime)
+    assert program.requirements.value_reads == ()
+
+
+@pytest.mark.parametrize(
+    ("witness", "regime", "family"),
+    [(*_STREAMED, "decision"), (*_COLLECTIVE, "decision")],
+)
+def test_value_read_occurrences_name_the_simulation_program(
+    *, witness: str, regime: str, family: str
+) -> None:
+    """Each read belongs to the actual forward core that consumes its argument."""
+    programs = cast(
+        "Mapping[int, CoreProgram]",
+        getattr(_programs(witness=witness, regime=regime), family),
+    )
+    reads = [
+        (period, program, read)
+        for period, program in programs.items()
         for read in program.requirements.value_reads
-    ] == [
-        ("gated_continuation", "married", "married_with_participation"),
-        ("regime_value", "single_f", None),
-        ("regime_value", "single_m", None),
     ]
+    assert reads
+    for period, program, read in reads:
+        assert read.source.source_period == period
+        assert read.source.source_regime == regime
+        assert read.source.core_key == program.name
+
+
+def test_decision_and_routing_keep_distinct_occurrences_of_a_shared_value() -> None:
+    """Two forward cores sharing an artifact must not collapse to one reader."""
+    model, _, _ = WITNESSES[_COLLECTIVE[0]]()
+    regime = model._regimes[_COLLECTIVE[1]]
+    programs = regime.simulation.programs
+    period = min(programs.route)
+    decision = programs.decision[period].requirements.value_reads
+    # Only structural availability is needed to declare the host gate's reads.
+    values = {period + 1: {name: jnp.zeros(1) for name in model._regimes}}
+    route = tuple(
+        read
+        for read in gate_reads(
+            regime=regime, name=regime.name, period=period, values=values, flags={}
+        )
+        if read.source.core_key == GATE_ROUTE
+    )
+    shared = [
+        (left, right)
+        for left in decision
+        for right in route
+        if left.target == right.target
+    ]
+    assert shared
+    for left, right in shared:
+        assert left.source != right.source
+        assert left.source.core_key == programs.decision[period].name
+        assert right.source.core_key == GATE_ROUTE
 
 
 def test_a_simulation_program_refuses_to_bind_arguments_at_model_build() -> None:

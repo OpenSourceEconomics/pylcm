@@ -5,7 +5,7 @@ import; the pin only takes effect in a process that has not already touched a JA
 backend. CI's execution-policy launcher
 (`--ci-policy`/`--full-suite`) resolves an explicit `--hardware-profile` by querying
 `jax.default_backend()` during `pytest_configure` — before pytest imports any test
-module — so activating it ahead of either file's own invocation would initialise
+module — so activating it ahead of any such file's own invocation would initialise
 the backend first and silently skip every test in the file. Each such file's
 own-process invocation therefore carries `--policy-child --hardware-profile=cpu`
 without policy activation.
@@ -28,6 +28,9 @@ FOUR_DEVICE_TEST_FILES = (
     "tests/test_distributed_placement.py",
     "tests/test_distributed_lifetime.py",
     "tests/test_distributed_template_placement.py",
+    "tests/test_distributed_simulation_values.py",
+    "tests/test_distributed_simulation_value_reads.py",
+    "tests/simulation/test_operand_placement.py",
 )
 
 #: The configuration option a multi-device test file pins when it is imported.

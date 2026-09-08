@@ -7,7 +7,6 @@ values two placements of one model publish name the same real numbers, and a
 simulation reads them off the canonical layout either way.
 """
 
-import re
 import subprocess
 import sys
 from collections.abc import Hashable
@@ -31,7 +30,7 @@ from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building import processing
 from _lcm.simulation.initial_conditions import build_initial_states
 from _lcm.solution import backward_induction
-from _lcm.solution.v_topology import fail_if_a_value_is_on_a_proper_submesh
+from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.typing import RegimeName
 from lcm import fixed_transition
 from lcm.ages import AgeGrid
@@ -754,12 +753,20 @@ def test_the_nbegm_toy_publishes_the_same_values_under_both_placements(
 
 
 @_skip_pytest_parallel
-@pytest.mark.parametrize("fragment", ["Regime 'working'", "device ids (0, 1, 2)"])
-def test_the_submesh_refusal_names_the_regime_and_its_device_ids(
-    *, fragment: str
-) -> None:
-    """Refusing a submesh-placed solution says which regime sat on which devices."""
+def test_simulation_topology_reads_a_proper_submesh_on_all_subject_devices() -> None:
+    """The three-type value keeps its shape in a four-device replicated read."""
     model = _make_three_type_model(distributed=True)
-
-    with pytest.raises(ExecutionPlanningError, match=re.escape(fragment)):
-        fail_if_a_value_is_on_a_proper_submesh(regimes=model._regimes)
+    topologies = {
+        phase: _get_regime_V_shapes_and_shardings(
+            regimes=model._regimes,
+            flat_params=model._process_params(_PARAMS),
+            phase=phase,
+        )
+        for phase in ("solve", "simulate")
+    }
+    stored = topologies["solve"]["working"]
+    read = topologies["simulate"]["working"]
+    assert stored.shape == read.shape == (3, 12)
+    assert {device.id for device in stored.sharding.device_set} == {0, 1, 2}
+    assert {device.id for device in read.sharding.device_set} == {0, 1, 2, 3}
+    assert read.sharding.is_fully_replicated

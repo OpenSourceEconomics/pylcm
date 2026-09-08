@@ -32,6 +32,7 @@ class ValueArtifactKind(StrEnum):
     REGIME_VALUE = "regime_value"
     GATED_CONTINUATION = "gated_continuation"
     CONTINUATION_LEAF = "continuation_leaf"
+    REPLAY_ARTIFACT_LEAF = "replay_artifact_leaf"
 
 
 class ValueInputChannel(StrEnum):
@@ -41,6 +42,8 @@ class ValueInputChannel(StrEnum):
     SAME_PERIOD_VALUE = "same_period_regime_to_V_arr"
     EDGE_REFERENCE_VALUE = "edge_reference_regime_to_V_arr"
     CONTINUATION_LEAF = "next_regime_to_continuation"
+    CURRENT_REPLAY_ARTIFACT = "current_replay_artifact"
+    NEXT_REPLAY_ARTIFACT = "next_replay_artifact"
 
 
 class ValueTransferKind(StrEnum):
@@ -153,24 +156,27 @@ class ValueArtifactAddress:
         _require_period(period=self.period, label="artifact period")
         _require_name(name=self.regime, label="artifact regime")
         object.__setattr__(self, "leaf_path", tuple(self.leaf_path))
-        if self.kind is ValueArtifactKind.CONTINUATION_LEAF:
+        if self.kind in {
+            ValueArtifactKind.CONTINUATION_LEAF,
+            ValueArtifactKind.REPLAY_ARTIFACT_LEAF,
+        }:
             if self.target_regime is not None:
                 msg = (
-                    "A continuation-leaf artifact cannot name an edge target regime, "
+                    "A keyed artifact leaf cannot name an edge target regime, "
                     f"got {self.target_regime!r}."
                 )
                 raise ValueError(msg)
             if not isinstance(self.artifact_key, ArtifactKey):
                 msg = (
-                    "A continuation-leaf artifact must name its ArtifactKey, got "
+                    "A keyed artifact leaf must name its ArtifactKey, got "
                     f"{self.artifact_key!r}."
                 )
                 raise TypeError(msg)
-            if not self.leaf_path or any(
-                not isinstance(step, str) or not step for step in self.leaf_path
-            ):
+            if (
+                self.kind is ValueArtifactKind.CONTINUATION_LEAF and not self.leaf_path
+            ) or any(not isinstance(step, str) or not step for step in self.leaf_path):
                 msg = (
-                    "A continuation-leaf artifact must name a non-empty leaf_path of "
+                    "An artifact leaf_path requires supported leaf addressing with "
                     f"non-empty strings, got {self.leaf_path!r}."
                 )
                 raise ValueError(msg)
@@ -686,6 +692,9 @@ def _validate_edge_identity(
         _validate_continuation_leaf_identity(target=target, source=source)
         return
 
+    if _validate_replay_leaf_identity(target=target, source=source):
+        return
+
     if target.kind is ValueArtifactKind.GATED_CONTINUATION:
         if target.regime != source.source_regime:
             msg = (
@@ -721,6 +730,25 @@ def _validate_edge_identity(
         )
         msg = f"A regime-value artifact period must be {relation} its source period."
         raise ValueError(msg)
+
+
+def _validate_replay_leaf_identity(
+    *, target: ValueArtifactAddress, source: ValueConsumerAddress
+) -> bool:
+    """Validate a keyed replay leaf, and reject replay channels on other artifacts."""
+    offsets = {
+        ValueInputChannel.CURRENT_REPLAY_ARTIFACT: 0,
+        ValueInputChannel.NEXT_REPLAY_ARTIFACT: 1,
+    }
+    if target.kind is ValueArtifactKind.REPLAY_ARTIFACT_LEAF:
+        if source.channel not in offsets:
+            raise ValueError("A replay artifact requires a replay-artifact channel.")
+        if target.period != source.source_period + offsets[source.channel]:
+            raise ValueError("A replay artifact's period must match its read channel.")
+        return True
+    if source.channel in offsets:
+        raise ValueError("A replay-artifact channel requires a replay artifact.")
+    return False
 
 
 def _validate_continuation_leaf_identity(

@@ -16,6 +16,7 @@ from jax import numpy as jnp
 from jax import vmap
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.simulation.runtime import execute_simulation_program
 from _lcm.state_action_space import _validate_all_states_present
@@ -80,6 +81,7 @@ def calculate_next_states(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
+    memory: SimulationMemory | None = None,
 ) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
 
@@ -123,6 +125,7 @@ def calculate_next_states(
         n_initial_states=n_subjects,
         subject_slice=subject_slice,
         original_n_subjects=original_n_subjects,
+        memory=memory,
     )
 
     # Carried states are true values that the decision's state-action space
@@ -176,10 +179,19 @@ def calculate_next_states(
         }
     )
 
-    return _advance_states_for_subjects(
-        states_per_regime=states_per_regime,
-        next_states_per_regime=next_states_per_regime,
-        subject_indices=subjects_in_regime,
+    return run_simulation_operation(
+        memory=memory,
+        function=_advance_states_for_subjects,
+        arguments={
+            "states_per_regime": states_per_regime,
+            "next_states_per_regime": next_states_per_regime,
+            "subject_indices": subjects_in_regime,
+        },
+        subject_arg_names=(
+            "states_per_regime",
+            "next_states_per_regime",
+            "subject_indices",
+        ),
     )
 
 
@@ -200,6 +212,7 @@ def calculate_next_regime_membership(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
+    memory: SimulationMemory | None = None,
 ) -> Int1D:
     """Calculate next period regime membership for subjects in a regime.
 
@@ -296,15 +309,30 @@ def calculate_next_regime_membership(
         n_initial_states=n_subjects,
         subject_slice=subject_slice,
         original_n_subjects=original_n_subjects,
+        memory=memory,
     )
 
     next_regime_ids = draw_key_from_dict(
         d=active_regime_probs,
         regime_names_to_ids=regime_names_to_ids,
         keys=regime_transition_key["key_regime_transition"],
+        memory=memory,
     )
 
-    return jnp.where(subjects_in_regime, next_regime_ids, new_subject_regime_ids)
+    return run_simulation_operation(
+        memory=memory,
+        function=_update_regime_ids,
+        arguments={
+            "subjects_in_regime": subjects_in_regime,
+            "next_regime_ids": next_regime_ids,
+            "new_subject_regime_ids": new_subject_regime_ids,
+        },
+        subject_arg_names=(
+            "subjects_in_regime",
+            "next_regime_ids",
+            "new_subject_regime_ids",
+        ),
+    )
 
 
 def draw_key_from_dict(
@@ -312,6 +340,7 @@ def draw_key_from_dict(
     d: MappingProxyType[RegimeName, Float1D],
     regime_names_to_ids: RegimeNamesToIds,
     keys: PRNGKeyND,
+    memory: SimulationMemory | None = None,
 ) -> Int1D:
     """Draw a random key from a dictionary of arrays.
 
@@ -335,11 +364,25 @@ def draw_key_from_dict(
         [regime_names_to_ids[regime_name] for regime_name in regime_names],
         dtype=jnp.int32,
     )
-    return _draw_random_regime_ids(
-        keys=keys,
-        prob_rows=tuple(d[name] for name in regime_names),
-        regime_ids=regime_ids,
+    prob_rows = tuple(d[name] for name in regime_names)
+    return run_simulation_operation(
+        memory=memory,
+        function=_draw_random_regime_ids,
+        arguments={"keys": keys, "prob_rows": prob_rows, "regime_ids": regime_ids},
+        subject_arg_names=(
+            ("keys", "prob_rows") if prob_rows[0].ndim > 0 else ("keys",)
+        ),
     )
+
+
+def _update_regime_ids(
+    *,
+    subjects_in_regime: Bool1D,
+    next_regime_ids: Int1D,
+    new_subject_regime_ids: Int1D,
+) -> Int1D:
+    """Replace assignments only for subjects currently in this source regime."""
+    return jnp.where(subjects_in_regime, next_regime_ids, new_subject_regime_ids)
 
 
 @jax.jit

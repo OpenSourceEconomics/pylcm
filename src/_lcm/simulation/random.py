@@ -3,6 +3,7 @@ import os
 import jax
 import jax.numpy as jnp
 
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.typing import PRNGKeyND
 
 
@@ -13,6 +14,7 @@ def generate_simulation_keys(
     n_initial_states: int,
     subject_slice: slice | None = None,
     original_n_subjects: int | None = None,
+    memory: SimulationMemory | None = None,
 ) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
     """Generate pseudo-random number generator keys (PRNG keys) for simulation.
 
@@ -56,6 +58,32 @@ def generate_simulation_keys(
           `n_initial_states`, then sliced to `subject_slice` when given).
 
     """
+    return run_simulation_operation(
+        memory=memory,
+        function=_generate_simulation_keys,
+        arguments={"key": key},
+        static_arguments={
+            "names": tuple(names),
+            "n_initial_states": n_initial_states,
+            "original_n_subjects": original_n_subjects,
+            "subject_window": (
+                None
+                if subject_slice is None
+                else (subject_slice.start, subject_slice.stop, subject_slice.step)
+            ),
+        },
+    )
+
+
+def _generate_simulation_keys(
+    *,
+    key: PRNGKeyND,
+    names: tuple[str, ...],
+    n_initial_states: int,
+    original_n_subjects: int | None,
+    subject_window: tuple[int | None, int | None, int | None] | None,
+) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
+    """Form the existing full-population stream and select its declared window."""
     if original_n_subjects is None:
         original_n_subjects = n_initial_states
     pad = n_initial_states - original_n_subjects
@@ -69,8 +97,8 @@ def generate_simulation_keys(
             per_subject_keys = jnp.concatenate(
                 [per_subject_keys, jnp.repeat(per_subject_keys[-1:], pad, axis=0)]
             )
-        if subject_slice is not None:
-            per_subject_keys = per_subject_keys[subject_slice]
+        if subject_window is not None:
+            per_subject_keys = per_subject_keys[slice(*subject_window)]
         simulation_keys[f"key_{name}"] = per_subject_keys
     return next_key, simulation_keys
 

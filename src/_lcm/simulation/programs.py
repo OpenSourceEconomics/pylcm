@@ -54,6 +54,7 @@ from _lcm.simulation.program_types import (
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
+from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import (
     ACTION_PRODUCT_AXIS,
@@ -72,7 +73,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, IntND
 
 # Why a regime whose routing the host drives cedes its own width.
-_GATED_ROUTE_REASON = "host_driven:gated_edge_fold_cache"
+_GATED_ROUTE_REASON = "host_driven:gated_edge_adapters"
 
 
 def build_simulation_programs(
@@ -139,7 +140,10 @@ def build_simulation_programs(
         decision[period] = CoreProgram(
             name=DECISION_PROGRAM,
             function=decision_bodies[group],
-            argument_builder=_ArgumentsBoundAtDispatch(program_name=DECISION_PROGRAM),
+            argument_builder=_ArgumentsBoundAtDispatch(
+                program_name=DECISION_PROGRAM,
+                subject_arg_names=_decision_subject_arg_names(context=context),
+            ),
             requirements=CoreExecutionRequirements(
                 reduced_axes=(
                     (
@@ -156,7 +160,10 @@ def build_simulation_programs(
                     else ()
                 ),
                 tiled_axes=(subject_axis(state_names=simulation_state_names),),
-                value_reads=_decision_value_reads(context=context, period=period),
+                value_reads=rekeyed_value_reads(
+                    reads=_decision_value_reads(context=context, period=period),
+                    core_key=DECISION_PROGRAM,
+                ),
             ),
             output_roles=(ACTION_INDEX, DECISION_VALUE),
             disposition=CoreExecutionDisposition.PLANNED,
@@ -180,7 +187,10 @@ def build_simulation_programs(
         transition[period] = CoreProgram(
             name=TRANSITION_PROGRAM,
             function=transition_bodies[group],
-            argument_builder=_ArgumentsBoundAtDispatch(program_name=TRANSITION_PROGRAM),
+            argument_builder=_ArgumentsBoundAtDispatch(
+                program_name=TRANSITION_PROGRAM,
+                subject_arg_names=built.subject_arg_names,
+            ),
             requirements=CoreExecutionRequirements(
                 tiled_axes=(subject_axis(state_names=simulation_state_names),)
             ),
@@ -199,14 +209,16 @@ def build_simulation_programs(
             route[period] = CoreProgram(
                 name=ROUTE_PROGRAM,
                 function=route_body,
-                argument_builder=_ArgumentsBoundAtDispatch(program_name=ROUTE_PROGRAM),
+                argument_builder=_ArgumentsBoundAtDispatch(
+                    program_name=ROUTE_PROGRAM,
+                    subject_arg_names=per_subject_route.subject_arg_names,
+                ),
                 requirements=CoreExecutionRequirements(
                     tiled_axes=(
                         ()
                         if has_gated_edges
                         else (subject_axis(state_names=simulation_state_names),)
                     ),
-                    value_reads=_route_value_reads(context=context, period=period),
                 ),
                 output_roles=per_subject_route.output_roles,
                 disposition=(
@@ -256,48 +268,6 @@ def _fail_if_the_streamed_reduction_is_wrong(
         "this regime instead."
     )
     raise ExecutionPlanningError(msg)
-
-
-def _route_value_reads(
-    *, context: SolverBuildContext, period: int
-) -> tuple[ValueRead, ...]:
-    """Declare every stored value leaf one period's gated routing reads.
-
-    A regime with no gated edge reads none: its transition probabilities are a
-    function of the subject's own states and actions, and the realized draw
-    reads no stored value. A gated edge is different — the routing recomputes
-    the gate, which reads its target's continuation and every projected value
-    the gate names — so those addresses are declared for the periods the edge's
-    target is reachable at.
-    """
-    gated_targets = _gated_targets(context=context, period=period)
-    if not gated_targets:
-        return ()
-    return _value_reads(
-        regime_name=context.regime_name,
-        period=period,
-        target_regimes=gated_targets,
-        same_period_ref_regimes=(),
-        edge_reference_regimes=_edge_reference_regimes_for_targets(
-            context=context, target_regimes=gated_targets
-        ),
-        edge_target_regimes=context.edge_target_regimes,
-    )
-
-
-def _gated_targets(
-    *, context: SolverBuildContext, period: int
-) -> tuple[RegimeName, ...]:
-    """Return the targets reachable this period whose edge a gate drives."""
-    if period == context.solution_reachability.n_periods - 1:
-        return ()
-    return tuple(
-        target
-        for target in context.solution_reachability.targets(
-            period=period, source=context.regime_name
-        )
-        if target in context.edge_target_regimes
-    )
 
 
 def _decision_subject_arg_names(*, context: SolverBuildContext) -> tuple[str, ...]:
@@ -498,6 +468,9 @@ class _ArgumentsBoundAtDispatch:
 
     program_name: str
     """Name of the program whose arguments the caller asked to bind."""
+
+    subject_arg_names: tuple[str, ...] = ()
+    """Arguments partitioned across subjects; every other operand is shared."""
 
     def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
         """Bind complete forward arguments, refusing a model-build context."""
