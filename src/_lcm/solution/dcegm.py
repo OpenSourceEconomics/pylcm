@@ -127,12 +127,8 @@ class ExactEnvelope:
     max_runs: int = 24
     """Maximum resource-increasing runs folded into one node cell."""
 
-    cell_batch_size: int | None = None
-    """Number of independent node cells resolved in parallel; `None` is serial."""
-
     def __post_init__(self) -> None:
         _fail_if_envelope_max_runs_too_few(self.max_runs)
-        _fail_if_envelope_cell_batch_size_non_positive(self.cell_batch_size)
 
 
 @beartype(conf=REGIME_CONF)
@@ -146,13 +142,9 @@ class FUESEnvelope:
     n_points_to_scan: int | None = None
     """Forward-scan width; `None` performs the exhaustive scan."""
 
-    scan_unroll: int = 1
-    """Loop-unroll factor for the sequential candidate scan."""
-
     def __post_init__(self) -> None:
         _fail_if_fues_jump_thresh_non_positive(self.jump_thresh)
         _fail_if_fues_n_points_to_scan_too_few(self.n_points_to_scan)
-        _fail_if_fues_scan_unroll_too_few(self.scan_unroll)
 
 
 @beartype(conf=REGIME_CONF)
@@ -510,6 +502,11 @@ class DCEGM(OneMarginSolver):
                             disposition=CoreExecutionDisposition.PLANNED,
                             donation_candidates=(),
                             scope=ProgramScope.VALUES_ONLY,
+                            compiler_options=(
+                                (("scan_unroll", 1),)
+                                if isinstance(self.envelope, FUESEnvelope)
+                                else ()
+                            ),
                         ),
                         "replay": CoreProgram(
                             name="replay",
@@ -522,6 +519,11 @@ class DCEGM(OneMarginSolver):
                             disposition=CoreExecutionDisposition.PLANNED,
                             donation_candidates=(),
                             scope=ProgramScope.REPLAY,
+                            compiler_options=(
+                                (("scan_unroll", 1),)
+                                if isinstance(self.envelope, FUESEnvelope)
+                                else ()
+                            ),
                             retained_artifact_keys=(SIMULATION_POLICY,),
                             retained_artifact_payload_types={
                                 SIMULATION_POLICY: EGMSimPolicy
@@ -567,6 +569,9 @@ class _BoundDCEGM(DCEGM):
 # Planner name of the child stochastic-node mesh the DC-EGM continuation folds.
 STOCHASTIC_NODE_AXIS = "stochastic_node"
 
+# Planner name of the exact envelope's resource-node cells.
+ENVELOPE_CELL_AXIS = "envelope_cell"
+
 # Planner name of the output state cells the per-combo solve is tiled over.
 CELL_AXIS = "cell"
 
@@ -583,12 +588,13 @@ _TILED_AXIS_WIDTH_KEYWORDS = MappingProxyType(
         CELL_AXIS: "_lcm_cell_width",
         SAVINGS_POINT_AXIS: "_lcm_savings_point_width",
         EULER_POINT_AXIS: "_lcm_euler_point_width",
+        ENVELOPE_CELL_AXIS: "_lcm_envelope_cell_width",
     }
 )
 
 
 def _tiled_axes(*, build: EGMStepBuild) -> tuple[TiledOutputAxis, ...]:
-    """Declare the three loops the DC-EGM kernel runs in planner-sized tiles.
+    """Declare the loops the DC-EGM kernel runs in planner-sized tiles.
 
     Each is a loop whose per-tile results are concatenated rather than folded,
     so the axis is a tiled output axis and every width names the same result:
@@ -598,7 +604,9 @@ def _tiled_axes(*, build: EGMStepBuild) -> tuple[TiledOutputAxis, ...]:
       aggregation needs every action's value at once;
     - `savings_point` over the exogenous savings nodes of the continuation;
     - `euler_point` over the exogenous Euler nodes, which only the asset-row
-      kernel loops over.
+      kernel loops over;
+    - `envelope_cell` over adjacent candidate abscissae, which only the exact
+      envelope visits with a tiled cell scan.
 
     A loop of one cell has nothing to tile and carries no declaration, so a
     regime whose kernel does not run it — the single-post-state kernel's node
@@ -609,11 +617,13 @@ def _tiled_axes(*, build: EGMStepBuild) -> tuple[TiledOutputAxis, ...]:
         CELL_AXIS: build.cell_extent,
         SAVINGS_POINT_AXIS: build.savings_point_extent,
         EULER_POINT_AXIS: build.euler_point_extent,
+        ENVELOPE_CELL_AXIS: build.envelope_cell_extent,
     }
     state_names = {
         CELL_AXIS: build.row_discrete_state_names + build.row_passive_state_names,
         SAVINGS_POINT_AXIS: (),
         EULER_POINT_AXIS: (),
+        ENVELOPE_CELL_AXIS: (),
     }
     return tuple(
         TiledOutputAxis(
@@ -713,6 +723,9 @@ class EGMStepBuild:
 
     euler_point_extent: int
     """Number of asset-row nodes, or `0` where the kernel runs no node loop."""
+
+    envelope_cell_extent: int
+    """Number of exact-envelope node cells, or `0` for another backend."""
 
 
 def _dcegm_output_roles(
@@ -1098,16 +1111,6 @@ def _fail_if_fues_n_points_to_scan_too_few(fues_n_points_to_scan: int | None) ->
         raise RegimeInitializationError(msg)
 
 
-def _fail_if_fues_scan_unroll_too_few(fues_scan_unroll: int) -> None:
-    if fues_scan_unroll < 1:
-        msg = (
-            f"FUESEnvelope.scan_unroll must be at least 1, got "
-            f"{fues_scan_unroll}. It is the `lax.scan` unroll factor for the "
-            "FUES candidate scan; 1 means no unrolling."
-        )
-        raise RegimeInitializationError(msg)
-
-
 def _fail_if_envelope_max_runs_too_few(envelope_max_runs: int) -> None:
     if envelope_max_runs < _MIN_ENVELOPE_MAX_RUNS:
         msg = (
@@ -1115,19 +1118,6 @@ def _fail_if_envelope_max_runs_too_few(envelope_max_runs: int) -> None:
             f"got {envelope_max_runs}. It is the fold capacity of the exact "
             "upper envelope; a non-concave candidate chain folds into at "
             "least two resource-increasing runs."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_envelope_cell_batch_size_non_positive(
-    envelope_cell_batch_size: int | None,
-) -> None:
-    if envelope_cell_batch_size is not None and envelope_cell_batch_size < 1:
-        msg = (
-            f"ExactEnvelope.cell_batch_size must be at least 1, got "
-            f"{envelope_cell_batch_size}. It is how many node cells the exact "
-            "upper envelope resolves in parallel; use None to resolve them one "
-            "at a time."
         )
         raise RegimeInitializationError(msg)
 

@@ -46,7 +46,6 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
-from _lcm.solution.dcegm import ExactEnvelope, FUESEnvelope
 from _lcm.solution.nbegm import NBEGM
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
@@ -96,8 +95,6 @@ _PYTHON_IMPLEMENTATION_SEAL = (
 # the same name.
 _GRID_EXECUTION_FIELDS = frozenset({"batch_size", "distributed"})
 _BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ...] = (
-    (ExactEnvelope, frozenset({"cell_batch_size"})),
-    (FUESEnvelope, frozenset({"scan_unroll"})),
     (
         NBEGM,
         frozenset(

@@ -3567,6 +3567,7 @@ def _lowering_keys(
             output_roles=resolved.output_roles,
             donated_arguments=_donated_arguments(donations=donations[candidate]),
             placement_key=regime.solution.submesh_device_ids,
+            compiler_options=resolved.compiler_options,
         )
     return keys
 
@@ -3882,6 +3883,7 @@ def _lowering_key(
     output_roles: object | None = None,
     donated_arguments: tuple[str, ...] = (),
     placement_key: Hashable | None = None,
+    compiler_options: tuple[tuple[str, int], ...] = (),
 ) -> Hashable:
     """Identify a program's tree, specialization, layout, donations and devices."""
     return (
@@ -3892,6 +3894,7 @@ def _lowering_key(
         layout_key,
         donated_arguments,
         placement_key,
+        compiler_options,
     )
 
 

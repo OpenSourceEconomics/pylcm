@@ -173,6 +173,11 @@ a `PLANNED` core or own a `HOST_DRIVEN` core; `DENSE` programs cannot declare ho
 The configurable `axis_names` include both compiled and host axes, while `axes` contains
 only the compiled axes the workspace planner schedules.
 
+`CoreProgram.compiler_options` records fixed compiler choices already bound by the
+program's function, such as `(("scan_unroll", 1),)`. It is an immutable tuple of
+uniquely named integer settings. The engine preserves it through planning and includes
+it in the lowering key; these settings never enter the function's numerical arguments.
+
 A `ReducedAxis` is the Cartesian product of the coordinates its `coordinate_names`
 address — each names a program argument holding that coordinate's 1-D values, whether a
 declared grid or an engine-only transport key such as the outer nodes NEGM sweeps —

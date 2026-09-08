@@ -781,6 +781,7 @@ class _NEGMPeriodKernel:
             "outer_sweep": CoreProgram(
                 name="outer_sweep",
                 function=sweep_function,
+                compiler_options=adjuster.compiler_options,
                 argument_builder=_NEGMSweepArgumentBuilder(
                     adjuster_builder=adjuster.argument_builder,
                     regime_name=self.regime_name,
@@ -791,6 +792,7 @@ class _NEGMPeriodKernel:
                 ),
                 requirements=CoreExecutionRequirements(
                     reduced_axes=(
+                        *adjuster.requirements.reduced_axes,
                         ReducedAxis(
                             name=OUTER_CANDIDATE_AXIS,
                             coordinate_names=(_OUTER_NODES,),
@@ -800,6 +802,7 @@ class _NEGMPeriodKernel:
                             width_keyword=_OUTER_CANDIDATE_WIDTH_KEYWORD,
                         ),
                     ),
+                    tiled_axes=adjuster.requirements.tiled_axes,
                     internal_inputs=MappingProxyType(
                         {
                             _KEEPER_VALUE: InternalInputRef(

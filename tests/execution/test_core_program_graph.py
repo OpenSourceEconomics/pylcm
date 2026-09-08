@@ -11,6 +11,7 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -105,6 +106,40 @@ def _native_program(
         disposition=CoreExecutionDisposition.DENSE,
         disposition_reason=reason,
     )
+
+
+def test_compiler_options_survive_materialization_and_resolution() -> None:
+    """Compiler metadata survives planning without entering numerical kwargs."""
+    options = (("scan_unroll", 1),)
+    declaration = dataclasses.replace(_native_program(), compiler_options=options)
+    materialized = materialize_core_program(program=declaration, context=_context())
+    resolved = resolve_core_program(program=materialized, tile_widths={})
+    assert (
+        materialized.compiler_options,
+        resolved.compiler_options,
+        tuple(resolved.arguments),
+        dict(resolved.static_kwargs),
+    ) == (options, options, ("value",), {})
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [("scan_unroll", 1)],
+        (["scan_unroll", 1],),
+        (("", 1),),
+        (("scan_unroll", True),),
+        (("scan_unroll", 1.0),),
+        (("scan_unroll", 1), ("scan_unroll", 2)),
+    ],
+)
+def test_compiler_options_refuse_mutable_or_ambiguous_metadata(options: object) -> None:
+    """Compile identity requires immutable, uniquely named integer options."""
+    with pytest.raises(
+        (TypeError, ValueError, BeartypeCallHintParamViolation),
+        match="compiler_options",
+    ):
+        dataclasses.replace(_native_program(), compiler_options=options)
 
 
 def test_native_graph_is_snapshotted_and_materialized_through_one_builder() -> None:

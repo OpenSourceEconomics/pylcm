@@ -34,6 +34,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.solvers import (
     CELL_AXIS,
     DCEGM,
+    ENVELOPE_CELL_AXIS,
     EULER_POINT_AXIS,
     SAVINGS_POINT_AXIS,
     STOCHASTIC_NODE_AXIS,
@@ -57,15 +58,16 @@ _BYTES_PER_CELL = 1000
 N_HEALTH = 3
 N_WEALTH = 12
 N_SAVINGS = 30
-# Extents of the three tiled axes, and the bootstrap width each takes when no
+# Extents of the tiled axes, and the bootstrap width each takes when no
 # budget and no explicit width is declared.
 # The Markov `health` state is both an output state cell and the child
-# stochastic mesh the continuation folds, so this one regime declares all four.
+# stochastic mesh the continuation folds, so this regime declares every axis.
 _EXTENTS = MappingProxyType(
     {
         CELL_AXIS: N_HEALTH,
         SAVINGS_POINT_AXIS: N_SAVINGS,
         EULER_POINT_AXIS: N_WEALTH,
+        ENVELOPE_CELL_AXIS: N_SAVINGS + 8 - 1,
         STOCHASTIC_NODE_AXIS: N_HEALTH,
     }
 )
@@ -74,6 +76,7 @@ _BOOTSTRAP = MappingProxyType(
         CELL_AXIS: 2,
         SAVINGS_POINT_AXIS: 16,
         EULER_POINT_AXIS: 8,
+        ENVELOPE_CELL_AXIS: 32,
         STOCHASTIC_NODE_AXIS: 2,
     }
 )
@@ -137,7 +140,7 @@ def _ages() -> AgeGrid:
 
 
 def _model(*, execution_config: ExecutionConfig) -> Model:
-    """Asset-row DC-EGM toy declaring all three tiled axes at once."""
+    """Asset-row DC-EGM toy declaring every tiled axis at once."""
     ages = _ages()
     last_age = ages.exact_values[-1]
 

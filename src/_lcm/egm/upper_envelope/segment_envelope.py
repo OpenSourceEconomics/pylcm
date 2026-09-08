@@ -60,14 +60,6 @@ from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarBool, Scala
 # capacity, never an assumed bound: exceeding it poisons the row.
 DEFAULT_MAX_RUNS: int = 24
 
-# How many node cells to resolve in parallel. Cells are independent, so this
-# changes only the working set, never a published value. `None` scans them one
-# at a time: the smallest working set, and on the models pylcm measures also the
-# fastest, since one cell already carries enough work to occupy the device and a
-# wider step only adds intermediates. Raise it for a model whose cells are small
-# enough to leave a device idle — after measuring, not on principle.
-DEFAULT_CELL_BATCH_SIZE: int | None = None
-
 
 def refine_envelope_exact(
     *,
@@ -77,7 +69,7 @@ def refine_envelope_exact(
     n_refined: int,
     segment_id: Float1D | None = None,
     max_runs: int = DEFAULT_MAX_RUNS,
-    cell_batch_size: int | None = DEFAULT_CELL_BATCH_SIZE,
+    cell_width: int = 1,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its exact upper envelope.
 
@@ -90,10 +82,9 @@ def refine_envelope_exact(
         segment_id: Optional per-candidate branch label. Runs are always split
             where resources stop increasing; a label change splits them further.
         max_runs: Static capacity for the number of x-monotone runs.
-        cell_batch_size: How many node cells to resolve in parallel; `None`
-            resolves them one at a time, which is the smallest working set
-            available. Cells are independent, so this partitions the work
-            without changing any published value.
+        cell_width: How many node cells the execution plan resolves together.
+            The default visits one cell at a time. Cells are independent, so
+            this partitions the work without changing any published value.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each of
@@ -121,7 +112,7 @@ def refine_envelope_exact(
         value=value,
         max_runs=max_runs,
         n_refined=n_refined,
-        cell_batch_size=cell_batch_size,
+        cell_width=cell_width,
     )
 
     out_grid, out_policy, out_value, n_kept = _emit_envelope(
@@ -274,28 +265,27 @@ def _sub_cells_per_node_cell(
     value: Float1D,
     max_runs: int,
     n_refined: int,
-    cell_batch_size: int | None,
+    cell_width: int,
 ) -> _SubCells:
     """Resolve the envelope's owners across every node cell.
 
     Ownership is decided on value alone; the policy is read afterwards from the
     owning link, so it never influences which branch wins.
 
-    Cells are independent, so `cell_batch_size` partitions them without changing
+    Cells are independent, so `cell_width` partitions them without changing
     anything published. What it does change is the working set. Cells are visited
     in ascending order and each chunk's owned sub-cells are appended to the row
-    as it goes, so what is live is one chunk's `cell_batch_size * max_runs`
+    as it goes, so what is live is one chunk's `cell_width * max_runs`
     splits and the row itself — never the `n_cells * max_runs` product, which is
-    what the row count then multiplies. `None` resolves one cell at a time and so
-    holds a single cell's worth, the floor.
+    what the row count then multiplies. Width one holds a single cell's worth.
 
     Appending in cell order needs no sort: node cells ascend, and each cell's
     sub-cells ascend within it. Slots past the row's capacity are dropped while
     the count keeps rising, so an overflow is still visible to the caller.
     """
     n_slots = n_refined
-    chunk = max(1, cell_batch_size or 1)
     n_cells = cell_left.shape[0]
+    chunk = min(max(1, cell_width), max(1, n_cells))
     n_chunks = -(-n_cells // chunk)
     n_padding = n_chunks * chunk - n_cells
 

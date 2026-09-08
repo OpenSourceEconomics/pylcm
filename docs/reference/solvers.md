@@ -166,7 +166,11 @@ processes make plain `EGM` ineligible.
 
 The supported typed envelope configurations are `ExactEnvelope`, `FUESEnvelope`,
 `RFCEnvelope`, `LTMEnvelope`, and `MSSEnvelope`. String selectors are not part of the
-public API. See [Upper envelopes](envelopes.md) for their distinct contracts.
+public API. Exact-envelope node cells are tiled through the model's
+`ExecutionConfig(axis_widths={"envelope_cell": width})`; the axis is exported as
+`ENVELOPE_CELL_AXIS`. FUES uses a fixed scan unroll factor of one, recorded in the
+compiled program identity. See [Upper envelopes](envelopes.md) for their distinct
+contracts.
 
 `refined_grid_factor` provides NaN-padded storage headroom for ownership changes in each
 envelope row. A row that needs more slots is reported as overflow and NaN-poisoned; this
@@ -186,8 +190,10 @@ value and replay programs declare, and the width is fixed with
 - `savings_point` tiles the per-savings-node continuation, the dominant working buffer.
 - `euler_point` tiles the per-node solve of the asset-row kernel, which runs when a
   savings-stage function reads the current Euler state.
+- `envelope_cell` tiles adjacent-candidate resource cells inside the exact envelope;
+  other envelope backends declare no such loop.
 
-The last three concatenate their tiles rather than folding them, so every width names
+The last four concatenate their tiles rather than folding them, so every width names
 the same result. A loop of a single cell has nothing to tile and carries no
 declaration, so its name is refused for such a model. A `batch_size` on a grid of a
 DC-EGM regime is refused at model build, since none of these loops reads one.

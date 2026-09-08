@@ -154,6 +154,17 @@ def test_lowering_key_separates_distinct_program_identities() -> None:
     assert first != second
 
 
+def test_lowering_key_carries_compiler_options() -> None:
+    """A compiler option distinguishes otherwise identical lowerings."""
+    plain = _lowering_key(program_identity=_IDENTITY, layout_key=("layout",))
+    configured = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        compiler_options=(("scan_unroll", 1),),
+    )
+    assert plain != configured
+
+
 def test_program_identity_separates_distinct_solver_group_keys() -> None:
     """A solver grouping finer than the engine's splits the identity."""
     common = {

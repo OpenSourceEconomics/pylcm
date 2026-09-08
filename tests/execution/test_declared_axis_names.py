@@ -23,6 +23,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import (
     ACTION_PRODUCT_AXIS,
     CELL_AXIS,
+    ENVELOPE_CELL_AXIS,
     EULER_POINT_AXIS,
     OUTER_CANDIDATE_AXIS,
     SAVINGS_POINT_AXIS,
@@ -39,8 +40,14 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 # this table to what the programs actually declare.
 _DECLARED_AXIS_NAMES = {
     "grid_search": (ACTION_PRODUCT_AXIS,),
-    "dcegm": (CELL_AXIS, EULER_POINT_AXIS, SAVINGS_POINT_AXIS, STOCHASTIC_NODE_AXIS),
-    "negm": (CELL_AXIS, OUTER_CANDIDATE_AXIS, SAVINGS_POINT_AXIS),
+    "dcegm": (
+        CELL_AXIS,
+        ENVELOPE_CELL_AXIS,
+        EULER_POINT_AXIS,
+        SAVINGS_POINT_AXIS,
+        STOCHASTIC_NODE_AXIS,
+    ),
+    "negm": (CELL_AXIS, ENVELOPE_CELL_AXIS, OUTER_CANDIDATE_AXIS, SAVINGS_POINT_AXIS),
     "nnbegm": (),
 }
 _HOST_AXIS_NAMES = {"nnbegm": (OUTER_CANDIDATE_AXIS,)}

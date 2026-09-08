@@ -65,6 +65,7 @@ def _get_solve_one_combo_asset_rows(
     euler_point_width: int | None,
     savings_point_width: int | None,
     stochastic_node_width: int | None,
+    envelope_cell_width: int,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
@@ -98,6 +99,7 @@ def _get_solve_one_combo_asset_rows(
         euler_point_width=euler_point_width,
         savings_point_width=savings_point_width,
         stochastic_node_width=stochastic_node_width,
+        envelope_cell_width=envelope_cell_width,
         resolved_process_grids=resolved_process_grids,
     )
 
@@ -130,6 +132,9 @@ class _SolveOneComboAssetRows:
 
     stochastic_node_width: int | None
     """Block width of the streamed node expectation; `None` folds one block."""
+
+    envelope_cell_width: int
+    """Number of exact-envelope node cells resolved together."""
 
     resolved_process_grids: Mapping[StateName, FloatND]
     """Solve-time grids of runtime-resolved process states."""
@@ -173,6 +178,7 @@ class _SolveOneComboAssetRows:
             resolved_process_grids=self.resolved_process_grids,
         )
         solve_one_node = _SolveOneNode(
+            envelope_cell_width=self.envelope_cell_width,
             pieces=pieces,
             combo_pool=combo_pool,
             discount_factor=discount_factor,
@@ -248,6 +254,9 @@ class _SolveOneNode:
 
     stochastic_node_width: int | None
     """Block width of the streamed node expectation; `None` folds one block."""
+
+    envelope_cell_width: int
+    """Number of exact-envelope node cells resolved together."""
 
     resolved_process_grids: Mapping[StateName, FloatND]
     """Solve-time grids of runtime-resolved process states."""
@@ -333,6 +342,7 @@ class _SolveOneNode:
         # `(V, policy)` is a full-envelope-then-interpolate. A sub-`n_pad`
         # streamed finder is future work for all backends.
         bracket = pieces.refine_to_bracket(
+            cell_width=self.envelope_cell_width,
             endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
             policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
             value=jnp.where(candidate_dead, jnp.nan, candidate_value),

@@ -141,6 +141,7 @@ def _get_solve_one_combo(
     euler_point_width: int | None,
     savings_point_width: int | None,
     stochastic_node_width: int | None,
+    envelope_cell_width: int,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
     [tuple[ScalarInt | ScalarFloat, ...]],
@@ -164,6 +165,7 @@ def _get_solve_one_combo(
         next_regime_to_continuation=next_regime_to_continuation,
         savings_point_width=savings_point_width,
         stochastic_node_width=stochastic_node_width,
+        envelope_cell_width=envelope_cell_width,
         resolved_process_grids=resolved_process_grids,
     )
 
@@ -193,6 +195,9 @@ class _SolveOneCombo:
 
     stochastic_node_width: int | None
     """Block width of the streamed node expectation; `None` folds one block."""
+
+    envelope_cell_width: int
+    """Number of exact-envelope node cells resolved together."""
 
     resolved_process_grids: Mapping[StateName, FloatND]
     """Solve-time grids of runtime-resolved process states."""
@@ -300,6 +305,7 @@ class _SolveOneCombo:
         # four-element row and the read is treated as supported; only a backend
         # that computes the flag can withhold it.
         refined = pieces.refine(
+            cell_width=self.envelope_cell_width,
             endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
             policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
             value=jnp.where(candidate_dead, jnp.nan, candidate_value),

@@ -348,6 +348,25 @@ class CoreBuildContext:
 
 type CoreArgumentBuilder = Callable[[CoreBuildContext], Mapping[str, object]]
 
+_COMPILER_OPTION_ARITY = 2
+
+
+def _validate_compiler_options(options: tuple[tuple[str, int], ...]) -> None:
+    """Require immutable, uniquely named integer compilation choices."""
+    if not isinstance(options, tuple) or any(
+        not isinstance(option, tuple)
+        or len(option) != _COMPILER_OPTION_ARITY
+        or not isinstance(option[0], str)
+        or not option[0]
+        or type(option[1]) is not int
+        for option in options
+    ):
+        msg = "compiler_options must be a tuple of (non-empty name, integer) tuples."
+        raise TypeError(msg)
+    if len({name for name, _value in options}) != len(options):
+        msg = "compiler_options must name each compiler option only once."
+        raise ValueError(msg)
+
 
 @dataclass(frozen=True, kw_only=True)
 class CoreProgram:
@@ -369,9 +388,12 @@ class CoreProgram:
     replaces_program: str | None = None
     internal_outputs: tuple[InternalOutputSpec, ...] = ()
     """Outputs another program of the same graph may name as an input."""
+    compiler_options: tuple[tuple[str, int], ...] = ()
+    """Fixed compiler choices bound by the function, separate from its arguments."""
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences."""
+        _validate_compiler_options(self.compiler_options)
         if not isinstance(self.retained_artifact_payload_types, Mapping):
             msg = "CoreProgram retained_artifact_payload_types must be a mapping."
             raise TypeError(msg)
@@ -404,9 +426,12 @@ class MaterializedCoreProgram:
     replaces_program: str | None = None
     internal_outputs: tuple[InternalOutputSpec, ...] = ()
     """Outputs another program of the same graph may name as an input."""
+    compiler_options: tuple[tuple[str, int], ...] = ()
+    """Fixed compiler choices inherited from the declaration."""
 
     def __post_init__(self) -> None:
         """Snapshot the exact dynamic argument tree."""
+        _validate_compiler_options(self.compiler_options)
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
         object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
@@ -877,6 +902,7 @@ def materialize_core_program(
         retained_artifact_keys=program.retained_artifact_keys,
         replaces_program=program.replaces_program,
         internal_outputs=program.internal_outputs,
+        compiler_options=program.compiler_options,
     )
     missing_donations = set(materialized.donation_candidates) - set(
         materialized.arguments
@@ -912,9 +938,12 @@ class ResolvedCoreProgram:
     replaces_program: str | None = None
     internal_outputs: tuple[InternalOutputSpec, ...] = ()
     """Outputs another program of the same graph may name as an input."""
+    compiler_options: tuple[tuple[str, int], ...] = ()
+    """Fixed compiler choices included in the engine's lowering identity."""
 
     def __post_init__(self) -> None:
         """Snapshot the materialized argument and planning containers."""
+        _validate_compiler_options(self.compiler_options)
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
         object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(
@@ -1019,6 +1048,7 @@ def resolve_core_program(
         retained_artifact_keys=program.retained_artifact_keys,
         replaces_program=program.replaces_program,
         internal_outputs=program.internal_outputs,
+        compiler_options=program.compiler_options,
         tile_widths=resolved_widths,
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(

@@ -172,12 +172,6 @@ def test_fues_zero_points_to_scan_is_rejected():
         FUESEnvelope(n_points_to_scan=0)
 
 
-def test_fues_zero_scan_unroll_is_rejected():
-    """The FUES `lax.scan` unroll factor must be at least 1 (no unrolling)."""
-    with pytest.raises(RegimeInitializationError, match="scan_unroll"):
-        FUESEnvelope(scan_unroll=0)
-
-
 def test_backend_specific_controls_are_not_fields_on_other_backends():
     """A backend configuration cannot carry controls belonging to another backend."""
     with pytest.raises(TypeError, match="n_points_to_scan"):

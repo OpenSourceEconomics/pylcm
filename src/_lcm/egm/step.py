@@ -183,7 +183,7 @@ from _lcm.regime_building.age_normalization import (
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
-from _lcm.solution.dcegm import EGMStepBuild, _BoundDCEGM
+from _lcm.solution.dcegm import EGMStepBuild, ExactEnvelope, _BoundDCEGM
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -501,6 +501,11 @@ def build_egm_step_functions(
         cell_extent=math.prod(leading_shape[:n_cell_axes]),
         savings_point_extent=n_savings_nodes,
         euler_point_extent=n_euler_nodes if asset_row_mode else 0,
+        envelope_cell_extent=(
+            solver.n_constrained_points + n_savings_nodes - 1
+            if isinstance(solver.envelope, ExactEnvelope)
+            else 0
+        ),
     )
 
 
@@ -646,6 +651,7 @@ class _EGMStep:
         _lcm_cell_width: int | None = None,
         _lcm_savings_point_width: int | None = None,
         _lcm_euler_point_width: int | None = None,
+        _lcm_envelope_cell_width: int = 1,
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         """Run the DC-EGM step and publish V on the exogenous grid.
@@ -661,6 +667,8 @@ class _EGMStep:
                 per-savings-node loop at; `None` runs it in one tile.
             _lcm_euler_point_width: Tile width the plan runs the asset-row
                 per-node loop at; `None` runs it in one tile.
+            _lcm_envelope_cell_width: Number of exact-envelope node cells the
+                plan resolves together; defaults to a serial scan.
             **kwargs: The regime's state grids, flat params, `period`, and
                 `age`.
 
@@ -698,6 +706,7 @@ class _EGMStep:
             next_regime_to_continuation=next_regime_to_continuation,
             euler_point_width=_lcm_euler_point_width,
             savings_point_width=_lcm_savings_point_width,
+            envelope_cell_width=_lcm_envelope_cell_width,
             stochastic_node_width=_lcm_stochastic_node_width,
             resolved_process_grids=resolved_process_grids,
         )

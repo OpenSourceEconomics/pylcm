@@ -18,7 +18,7 @@ import jax.scipy as jsp
 import numpy as np
 import pytest
 
-import _lcm.solution.dcegm as dcegm_declarations
+import _lcm.grids.continuous as grid_declarations
 import lcm.model as lcm_model
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
@@ -48,7 +48,6 @@ from lcm.solver_api import (
     SolverIdentity,
 )
 from lcm.solvers import (
-    FUESEnvelope,
     SolutionKernels,
     Solver,
     SolverBuildContext,
@@ -779,12 +778,12 @@ _SolverModuleNeighbor.__module__ = "_lcm.solution.nbegm"
 
 
 @dataclass(frozen=True)
-class _ExactEnvelopeNominalTwin:
-    cell_batch_size: int
+class _LinSpacedGridNominalTwin:
+    batch_size: int
 
 
-_ExactEnvelopeNominalTwin.__module__ = "_lcm.solution.dcegm"
-_ExactEnvelopeNominalTwin.__qualname__ = "ExactEnvelope"
+_LinSpacedGridNominalTwin.__module__ = "_lcm.grids.continuous"
+_LinSpacedGridNominalTwin.__qualname__ = "LinSpacedGrid"
 
 
 class _SlotCallable:
@@ -863,37 +862,41 @@ def test_grid_execution_policy_does_not_change_semantic_fingerprint() -> None:
 
 def test_builtin_execution_fields_are_excluded_only_on_their_owner_types() -> None:
     assert fingerprints._semantic_fingerprint(
-        FUESEnvelope(scan_unroll=1)
-    ) == fingerprints._semantic_fingerprint(FUESEnvelope(scan_unroll=4))
+        LinSpacedGrid(start=0, stop=1, n_points=3, batch_size=1)
+    ) == fingerprints._semantic_fingerprint(
+        LinSpacedGrid(start=0, stop=1, n_points=3, batch_size=2)
+    )
 
+
+def test_a_solver_module_neighbor_keeps_its_semantic_field() -> None:
     assert fingerprints._semantic_fingerprint(
         _SolverModuleNeighbor(batch_size=1)
     ) != fingerprints._semantic_fingerprint(_SolverModuleNeighbor(batch_size=2))
 
 
 def test_execution_field_exclusion_requires_exact_owner_type_identity() -> None:
-    left = fingerprints._semantic_fingerprint(_ExactEnvelopeNominalTwin(1))
-    right = fingerprints._semantic_fingerprint(_ExactEnvelopeNominalTwin(2))
+    left = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(1))
+    right = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(2))
 
     assert left != right
 
 
 def test_execution_field_exclusion_ignores_module_rebinding(*, monkeypatch) -> None:
-    original_envelope_type = dcegm_declarations.ExactEnvelope
+    original_grid_type = grid_declarations.LinSpacedGrid
 
     monkeypatch.setattr(
-        dcegm_declarations,
-        "ExactEnvelope",
-        _ExactEnvelopeNominalTwin,
+        grid_declarations,
+        "LinSpacedGrid",
+        _LinSpacedGridNominalTwin,
     )
 
     assert fingerprints._exclude_field(
-        owner=original_envelope_type(),
-        field_name="cell_batch_size",
+        owner=original_grid_type(start=0, stop=1, n_points=3),
+        field_name="batch_size",
     )
 
-    left = fingerprints._semantic_fingerprint(_ExactEnvelopeNominalTwin(1))
-    right = fingerprints._semantic_fingerprint(_ExactEnvelopeNominalTwin(2))
+    left = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(1))
+    right = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(2))
     assert left != right
 
 

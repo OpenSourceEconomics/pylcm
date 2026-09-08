@@ -13,13 +13,13 @@ from lcm.solvers import DCEGM, LTMEnvelope
 solver = DCEGM(savings_grid=..., envelope=LTMEnvelope())
 ```
 
-| Configuration   | Contract                                                                               | Main controls                                    |
-| --------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `ExactEnvelope` | Certified finite-candidate ownership using pylcm's packaged native exact-affine kernel | `max_runs`, `cell_batch_size`                    |
-| `FUESEnvelope`  | Fast upper-envelope scan approximation                                                 | `jump_thresh`, `n_points_to_scan`, `scan_unroll` |
-| `RFCEnvelope`   | Roof-cutting approximation                                                             | `jump_thresh`, `search_radius`                   |
-| `LTMEnvelope`   | Query-side line/segment evaluation                                                     | none                                             |
-| `MSSEnvelope`   | Multi-segment scan with a selectable comparison arithmetic                             | `arithmetic`                                     |
+| Configuration   | Contract                                                                               | Main controls                     |
+| --------------- | -------------------------------------------------------------------------------------- | --------------------------------- |
+| `ExactEnvelope` | Certified finite-candidate ownership using pylcm's packaged native exact-affine kernel | `max_runs`                        |
+| `FUESEnvelope`  | Fast upper-envelope scan approximation                                                 | `jump_thresh`, `n_points_to_scan` |
+| `RFCEnvelope`   | Roof-cutting approximation                                                             | `jump_thresh`, `search_radius`    |
+| `LTMEnvelope`   | Query-side line/segment evaluation                                                     | none                              |
+| `MSSEnvelope`   | Multi-segment scan with a selectable comparison arithmetic                             | `arithmetic`                      |
 
 These five typed objects are the supported strategies. `EnvelopeConfig` is their union;
 string selectors are invalid.
@@ -51,9 +51,17 @@ target environment after supplying the required compiler; source-install details
 explicit no-kernel installation option are in
 [Installation](../getting_started/installation.md#the-compiled-kernel-and-installing-without-a-c-compiler).
 
-`max_runs` bounds supported envelope topology. `cell_batch_size` sets how many
-independent state cells the exact native operation resolves in parallel; `None` selects
-serial resolution.
+`max_runs` bounds supported envelope topology. The execution plan sizes the exact
+envelope's independent node-cell loop through `ENVELOPE_CELL_AXIS` (`"envelope_cell"`,
+exported by `lcm.solvers`). For example,
+`Model(..., execution_config=ExecutionConfig(axis_widths={"envelope_cell": 3}))`
+resolves three adjacent-candidate cells together. These are cells of the endogenous
+resource grid, distinct from the regime's output-state `cell` axis. Width changes the
+working set while preserving candidate ownership and published quantities.
+
+FUES uses a fixed scan unroll factor of one. This compiler choice is recorded in
+compilation identity and is not a field on `FUESEnvelope`. A model using only FUES has
+no `envelope_cell` loop and rejects that axis name.
 
 (api-approximate-envelope-backends)=
 
