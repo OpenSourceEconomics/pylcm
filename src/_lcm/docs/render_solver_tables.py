@@ -126,8 +126,10 @@ def main() -> None:
     rendered = render_solver_tables(solvers=default_solvers())
     if arguments.write:
         path = Path(__file__).resolve().parents[3] / "docs/reference/solvers.md"
-        text = path.read_text()
-        path.write_text(text.replace(table_region(text=text), rendered))
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            text.replace(table_region(text=text), rendered), encoding="utf-8"
+        )
     else:
         print(rendered)  # noqa: T201
 

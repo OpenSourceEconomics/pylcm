@@ -169,7 +169,9 @@ def test_reference_tables_are_generated_from_public_metadata() -> None:
     """The checked-in tables match the configured solver properties exactly."""
     assert importlib.util.find_spec("_lcm.docs") is not None
     renderer = importlib.import_module("_lcm.docs.render_solver_tables")
-    text = (Path(__file__).parents[1] / "docs/reference/solvers.md").read_text()
+    text = (Path(__file__).parents[1] / "docs/reference/solvers.md").read_text(
+        encoding="utf-8"
+    )
     assert renderer.table_region(text=text) == renderer.render_solver_tables(
         solvers=_SOLVERS
     )
