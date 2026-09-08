@@ -104,12 +104,12 @@ parity. The harness also requires non-empty HLO and compiler-memory status for e
 compiled core, host high-water-mark evidence, and measured peak device memory on GPU
 (with an explicit not-applicable record on CPU). It verifies the native execution
 declaration for every named target: singleton hard max, distributed co-map, and folded
-hard max are planned and streamed; EV1 is deliberately dense to preserve canonical
-reduction order; and collective GridSearch is deliberately dense because streaming is
-resource-adverse. It also rejects communication collectives in the distributed co-map
-head. Raw timings, compiler and device memory, HLO files and digests, layout manifests,
-and the base/head ratios are retained under the output directory; `summary.json` is the
-entry point for review.
+hard max stream `action_product`; EV1 and collective GridSearch keep canonical dense
+action reducers while the planner tiles their state cells. The reported `streamed` flag
+means action reduction, so a planned core can have `streamed=False`. It also rejects
+communication collectives in the distributed co-map head. Raw timings, compiler and
+device memory, HLO files and digests, layout manifests, and the base/head ratios are
+retained under the output directory; `summary.json` is the entry point for review.
 
 ## Benchmark Scenarios
 

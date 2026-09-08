@@ -203,8 +203,8 @@ value and replay programs declare, and the width is fixed with
 
 The last four concatenate their tiles rather than folding them, so every width names
 the same result. A loop of a single cell has nothing to tile and carries no
-declaration, so its name is refused for such a model. A `batch_size` on a grid of a
-DC-EGM regime is refused at model build, since none of these loops reads one.
+declaration, so its name is refused for such a model. Grids declare economic support;
+execution widths belong in `ExecutionConfig.axis_widths`.
 
 :::{important} Solved and simulated continuous actions
 A solve can expose an off-grid

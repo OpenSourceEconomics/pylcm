@@ -81,9 +81,9 @@ are merged into every regime under three rules:
 Pruning means a model-level state costs nothing in regimes that never touch it — the
 grid axis simply does not appear there. To spread a state's grid axis over the devices,
 declare the state in `ExecutionConfig.sharded_states` on the `Model`. Two restrictions
-keep the device layout coherent: `distributed=True` (sharding) is legal only on
-model-level states, and a sharded state pruned from a non-terminal regime is an error
-(unshard it or make the regime use it).
+keep the device layout coherent: sharding is legal only on model-level states, and a
+sharded state pruned from a non-terminal regime is an error (unshard it or make the
+regime use it).
 
 ## Regime ID Classes
 

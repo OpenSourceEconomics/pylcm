@@ -329,8 +329,16 @@ def _kernel_execution_metadata(kernel: Any) -> dict[str, Any]:
         program = programs["main"]
         raw_disposition = program.disposition
         disposition = getattr(raw_disposition, "value", raw_disposition)
+        reduced_axes = getattr(program.requirements, "reduced_axes", None)
+        # Before explicit reduced axes, a planned GridSearch core always
+        # streamed actions. Current cores may plan only their state cells.
+        streamed = (
+            disposition == "planned"
+            if reduced_axes is None
+            else any(axis.name == "action_product" for axis in reduced_axes)
+        )
         return {
-            "streamed": disposition == "planned",
+            "streamed": streamed,
             "execution_disposition": disposition,
             "disposition_reason": program.disposition_reason,
         }
@@ -366,10 +374,15 @@ def _route_metadata(model: Any) -> dict[str, Any]:
             collective_regimes.append(regime_name)
         if regime.same_period_ref_regimes or regime.gated_edges:
             gs_vd_regimes.append(regime_name)
-        if any(
-            bool(getattr(grid, "distributed", False))
-            for grid in regime.solution.grids.values()
-        ):
+        sharded_state_names = getattr(regime.solution, "sharded_state_names", None)
+        if sharded_state_names is None:
+            # Historical checkouts predate model-owned placement metadata.
+            sharded_state_names = tuple(
+                name
+                for name, grid in regime.solution.grids.items()
+                if getattr(grid, "distributed", False)
+            )
+        if sharded_state_names:
             distributed_regimes.append(regime_name)
         for period, kernel in sorted(regime.solution.period_kernels.items()):
             execution = _kernel_execution_metadata(kernel)

@@ -78,9 +78,13 @@ def _kernel(
 
 
 def _set_execution(
-    *, row: dict[str, Any], disposition: str, reason: str | None
+    *,
+    row: dict[str, Any],
+    disposition: str,
+    reason: str | None,
+    streams_actions: bool = True,
 ) -> None:
-    row["streamed"] = disposition == "planned"
+    row["streamed"] = disposition == "planned" and streams_actions
     row["execution_disposition"] = disposition
     row["disposition_reason"] = reason
 
@@ -251,16 +255,12 @@ def test_scenario_registry_contains_closure_and_aca_frontier_rows() -> None:
     assert SCENARIOS["singleton-hard-max"].expected_head_disposition == "planned"
     assert SCENARIOS["distributed-co-map"].expected_head_disposition == "planned"
     assert SCENARIOS["folded-hard-max"].expected_head_disposition == "planned"
-    assert SCENARIOS["singleton-ev1"].expected_head_disposition == "dense"
-    assert (
-        SCENARIOS["singleton-ev1"].expected_head_disposition_reason
-        == "deliberately_dense:ev1_canonical_reduction_order"
-    )
-    assert SCENARIOS["collective-gs-vd"].expected_head_disposition == "dense"
-    assert (
-        SCENARIOS["collective-gs-vd"].expected_head_disposition_reason
-        == "deliberately_dense:collective_resource_regression"
-    )
+    assert SCENARIOS["singleton-ev1"].expected_head_disposition == "planned"
+    assert SCENARIOS["singleton-ev1"].expected_head_disposition_reason is None
+    assert not SCENARIOS["singleton-ev1"].expected_head_streamed
+    assert SCENARIOS["collective-gs-vd"].expected_head_disposition == "planned"
+    assert SCENARIOS["collective-gs-vd"].expected_head_disposition_reason is None
+    assert not SCENARIOS["collective-gs-vd"].expected_head_streamed
     assert {
         name: (spec.aca_assets_n_points, spec.aca_consumption_n_points)
         for name, spec in SCENARIOS.items()
@@ -348,6 +348,7 @@ def test_execution_disposition_must_cover_every_named_nontrivial_target_kernel(
         row=head["kernels"][0],
         disposition=spec.expected_head_disposition,
         reason=spec.expected_head_disposition_reason,
+        streams_actions=spec.expected_head_streamed,
     )
     head["streamed_kernel_count"] = sum(row["streamed"] for row in head["kernels"])
     with pytest.raises(RuntimeError, match="required execution disposition"):
@@ -361,6 +362,7 @@ def test_execution_disposition_must_cover_every_named_nontrivial_target_kernel(
         row=head["kernels"][1],
         disposition=spec.expected_head_disposition,
         reason=spec.expected_head_disposition_reason,
+        streams_actions=spec.expected_head_streamed,
     )
     head["streamed_kernel_count"] = sum(row["streamed"] for row in head["kernels"])
     _assert_scenario_execution_target(
@@ -368,6 +370,17 @@ def test_execution_disposition_must_cover_every_named_nontrivial_target_kernel(
         base_routes=base,
         head_routes=head,
     )
+    wrong_action_reduction = deepcopy(head)
+    wrong_action_reduction["kernels"][0]["streamed"] = not spec.expected_head_streamed
+    wrong_action_reduction["streamed_kernel_count"] = sum(
+        row["streamed"] for row in wrong_action_reduction["kernels"]
+    )
+    with pytest.raises(RuntimeError, match="required execution disposition"):
+        _assert_scenario_execution_target(
+            scenario=scenario,
+            base_routes=base,
+            head_routes=wrong_action_reduction,
+        )
 
 
 def test_measurement_identity_allows_only_streaming_and_cache_path_differences() -> (
@@ -558,6 +571,13 @@ for name, spec in SCENARIOS.items():
         for row in routes["kernels"]
         if row["action_names"] and prod(row["action_extents"]) > 1
     ]
+    if name in {"singleton-ev1", "collective-gs-vd"}:
+        dense_targets = [
+            row for row in nontrivial if row["has_taste_shocks"] or row["collective"]
+        ]
+        assert dense_targets and all(not row["streamed"] for row in dense_targets), (
+            name, routes
+        )
     assert any(
         row["execution_disposition"] == spec.expected_head_disposition
         and row["disposition_reason"] == spec.expected_head_disposition_reason

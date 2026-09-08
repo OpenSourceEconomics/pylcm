@@ -152,9 +152,9 @@ the dispatch that closed it.
 
 On several devices every regime is placed before anything is compiled:
 
-- a regime with a `distributed=True` state runs on a mesh of as many devices as the
-  largest divisor of that state's extent that fits — a three-valued type on four devices
-  runs on three;
+- a regime with a state named in `ExecutionConfig.sharded_states` runs on a mesh of as
+  many devices as the largest divisor of that state's extent that fits — a three-valued
+  type on four devices runs on three;
 - a regime without one runs on one device, taking a device the meshes leave idle in the
   periods it is active, or else the device with the smallest planned footprint;
 - regimes of one period that read nothing of each other within the period and sit on

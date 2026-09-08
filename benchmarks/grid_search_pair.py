@@ -540,7 +540,7 @@ def _validate_route_execution_metadata(*, side: str, routes: Mapping[str, Any]) 
             raise RuntimeError(
                 f"{side} kernel has unknown execution disposition {disposition!r}."
             )
-        if bool(row["streamed"]) != (disposition == "planned"):
+        if row["streamed"] and disposition != "planned":
             raise RuntimeError(
                 f"{side} kernel streamed flag disagrees with its disposition."
             )
@@ -576,10 +576,12 @@ def _assert_scenario_execution_target(
             row["period"],
             row["execution_disposition"],
             row["disposition_reason"],
+            row["streamed"],
         )
         for row in eligible
         if row["execution_disposition"] != spec.expected_head_disposition
         or row["disposition_reason"] != spec.expected_head_disposition_reason
+        or row["streamed"] != spec.expected_head_streamed
     ]
     if mismatched:
         raise RuntimeError(

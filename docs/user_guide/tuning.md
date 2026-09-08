@@ -74,7 +74,7 @@ Which axis names exist depends on which solver a regime uses; each solver's sect
 | ----------------- | ----------------------------------------------------------------------------------------- |
 | `action_product`  | the flattened Cartesian action product of a streamed `GridSearch` core                    |
 | `stochastic_node` | the declared child stochastic-node mesh a `DCEGM` or ride-along `NBEGM` expectation folds |
-| `cell`            | the independent output cells a `DCEGM` or ride-along `NBEGM` solve tiles                  |
+| `cell`            | the independent state cells a `GridSearch`, `DCEGM`, or ride-along `NBEGM` solve tiles    |
 | `interval`        | liquid intervals a ride-along `NBEGM` continuation reads and folds                        |
 | `branch`          | the discrete-action product a ride-along `NBEGM` solves before its maximum                |
 | `savings_point`   | the exogenous savings nodes a `DCEGM` continuation is tiled over                          |
@@ -86,18 +86,18 @@ runtime against the whole-axis setting on the model and backend you will use. Le
 axis out of the mapping lets the planner choose, which is what a device-memory budget
 asks it to do.
 
-## Stream work with solver-owned batch widths
+## Choose execution widths independently of grids
 
-Some controls a solver owns itself reduce live intermediates. Grid `batch_size`,
-`subject_batch_size`, and any solver field whose Reference contract explicitly says it
-streams an evaluation axis can lower temporary workspace. The exact effect still depends
-on retained banks and downstream folds; for example, the `outer_candidate` width can
-lower a nested solver's temporary evaluation memory without capping the retained
-candidate bank.
+Grids specify economic support and interpolation. Set execution widths on the model with
+`ExecutionConfig(axis_widths=...)`. The effect depends on retained arrays and downstream
+folds; for example, `outer_candidate` can lower a nested solver's temporary evaluation
+memory without capping its retained candidate bank.
 
-A `DCEGM` regime owns none of these: each loop it could stream is one of the axes in the
-table above, so a `batch_size` on one of its grids is refused at model build and the
-width is fixed with `ExecutionConfig(axis_widths=...)` instead.
+For `GridSearch`, `cell` tiles the flattened product of the states evaluated inside each
+sharded slice. Sharded states stay outside this product. `action_product` separately
+streams eligible hard-max action reductions; EV1 and collective models keep their
+canonical dense action reductions while tiling state cells. `DCEGM` uses the applicable
+axes listed above.
 
 NBEGM also owns no compiled-width fields. Use its applicable axes in the table above:
 `interval` streams the continuation read together with the stable-identity candidate
@@ -108,19 +108,22 @@ Smaller widths can reduce live intermediates at the cost of sequential execution
 do not cap surrounding arrays, retained candidate banks, compilation memory, or total
 device memory.
 
-Choose the largest batch that meets the measured memory target, then verify values and
-runtime against the whole-axis setting on the model and backend you will use.
-
 Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 [Upper envelopes](../reference/envelopes.md), and
 [Outer search](../reference/outer_search.md).
 
 ## Distribute independent discrete state work
 
-`distributed=True` shards a supported discrete grid over visible devices. Continuous
-grids reject distribution because their interpolation needs the full coordinate axis. A
-grid cannot be both batched and distributed; if a shard remains too large, batch a
-different axis.
+Declare a discrete state at model level, then name it in
+`ExecutionConfig(sharded_states=("preference",))` to shard its axis. Select devices with
+`ExecutionConfig(devices=(0, 1, 2, 3), ...)`; omitting `devices` uses all devices
+visible to JAX. Continuous states cannot be sharded because interpolation reads their
+full coordinate axis. Solver-specific restrictions also apply; see
+[Solvers and capabilities](../reference/solvers.md).
+
+If a shard remains too large, reduce an applicable execution width. For example,
+`ExecutionConfig(sharded_states=("preference",), axis_widths={"cell": 32})` keeps the
+preference axis sharded and tiles the remaining GridSearch state product.
 
 Before solving, verify the resources actually visible to JAX:
 
