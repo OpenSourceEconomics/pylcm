@@ -80,6 +80,39 @@ _RANDOM_HELPER_MUTATIONS = {
 }
 
 _PROFILED_HELPER_MUTATIONS = {
+    "simulation_preflight:initial_feasibility_bypassed": (
+        "src/_lcm/simulation/initial_conditions.py",
+        "            _collect_feasibility_errors(",
+        "            (lambda **kwargs: None)(",
+    ),
+    "simulation_preflight:transition_validation_bypassed": (
+        "src/_lcm/simulation/initial_conditions.py",
+        "            validate_transitions(",
+        "            (lambda **kwargs: None)(",
+    ),
+    "simulation_preflight:admission_refusal_retried": (
+        "src/_lcm/simulation/initial_conditions.py",
+        "except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:",
+        "except MemoryError, jax.errors.JaxRuntimeError:",
+    ),
+    "simulation_preflight:entry_residency_omitted": (
+        "src/lcm/model.py",
+        (
+            "retained_footprint=(\n"
+            "                entry_inputs.footprint(solution=solution)\n"
+            "                if entry_inputs is not None and validation_enabled(log)"
+        ),
+        (
+            "retained_footprint=(\n"
+            "                None\n"
+            "                if entry_inputs is not None and validation_enabled(log)"
+        ),
+    ),
+    "simulation_preflight:invalid_discrete_cohort_accepted": (
+        "src/_lcm/simulation/initial_conditions.py",
+        "or host[age_stop:].any()",
+        "or False",
+    ),
     "simulation_taste_stream:namespace_changed": (
         "src/_lcm/simulation/taste_stream.py",
         '"pylcm.taste-stream.v1",',

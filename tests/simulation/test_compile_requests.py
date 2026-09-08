@@ -6,9 +6,8 @@ level. The host-time rows say what runtime validation costs once nothing
 compiles any more: the `progress` path must stay within half again the host
 time of the validation-free `off` path.
 
-That bar is met by the forward-simulation loop and not yet by the whole
-`Model.simulate` call, which also runs `validate_transitions` and
-`validate_initial_conditions` once before the loop.
+The bar applies to both the forward-simulation loop and the whole
+`Model.simulate` call, including its `validate_simulation_inputs` preflight.
 """
 
 import contextlib
@@ -48,12 +47,9 @@ HOST_TIME_BAR = 1.5
 # both medians together rather than the ratio.
 HOST_TIME_REPEATS = 9
 
-# The validators `Model.simulate` runs once before the period loop, which the
-# loop row holds out. Both must reach the seam or the measurement is not the
-# loop's.
-_PREFLIGHT_VALIDATORS = frozenset(
-    {"validate_transitions", "validate_initial_conditions"}
-)
+# The coordinator `Model.simulate` runs before the period loop. The recording
+# stub must observe it, or the measurement no longer isolates the loop.
+_PREFLIGHT_VALIDATORS = frozenset({"validate_simulation_inputs"})
 
 
 def _double(x: FloatND) -> FloatND:
@@ -281,30 +277,7 @@ def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
     assert ratio <= HOST_TIME_BAR, f"progress/off host time is {ratio:.3f}x"
 
 
-_PREFLIGHT_REASON = (
-    "The forward-simulation loop is at parity between the two levels; what "
-    "remains above `off` is the pre-flight transition and initial-condition "
-    "validation `Model.simulate` runs once before the loop, which these small "
-    "witnesses are dominated by."
-)
-
-
-@pytest.mark.parametrize(
-    "witness",
-    [
-        # This witness's whole-call ratio sits at the bar rather than above it:
-        # it exceeds 1.5 on a loaded box and falls under it on a quiet one, so
-        # the row is recorded and not enforced in either direction.
-        pytest.param(
-            "dissolution",
-            marks=pytest.mark.xfail(strict=False, reason=_PREFLIGHT_REASON),
-        ),
-        pytest.param(
-            "multi_regime",
-            marks=pytest.mark.xfail(strict=True, reason=_PREFLIGHT_REASON),
-        ),
-    ],
-)
+@pytest.mark.parametrize("witness", sorted(WITNESSES))
 def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
     *,
     witness: str,
@@ -313,8 +286,7 @@ def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
     """A whole simulate call at `progress` costs at most half again its `off` host time.
 
     Same estimator as the loop row above, with nothing stubbed, so the ratio
-    covers `validate_transitions` and `validate_initial_conditions` as well as
-    the period loop.
+    covers the complete `validate_simulation_inputs` preflight and period loop.
     """
     off_seconds, progress_seconds = _median_host_times(
         witness=witness,
@@ -329,14 +301,11 @@ def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
 
 @contextlib.contextmanager
 def _preflight_validation_stubbed() -> Iterator[list[str]]:
-    """Hold out the two validators `Model.simulate` runs before the period loop.
+    """Hold out the complete preflight coordinator before the period loop.
 
-    `validate_transitions` and `validate_initial_conditions` carry no switch of
-    their own: each is gated on the log level and on nothing else, which is the
-    very variable a host-time ratio varies, so there is no public way to hold
-    them out while measuring. The seam is therefore the two names as
-    `lcm.model` binds them, replaced by a recording no-op for the duration of
-    the block and restored afterwards.
+    Its logger policy is the variable being timed, so a recording no-op at the
+    actual Model-bound coordinator isolates loop cost without changing the
+    separate, unstubbed whole-call timing rows.
 
     Yields the list of validator names the stub actually absorbed, so a caller
     can tell a seam that held from one that silently stopped holding --- which
@@ -344,29 +313,16 @@ def _preflight_validation_stubbed() -> Iterator[list[str]]:
     qualified path instead of the bare name.
     """
     absorbed: list[str] = []
-    saved_transitions = lcm.model.validate_transitions
-    saved_initial_conditions = lcm.model.validate_initial_conditions
 
-    def stub_transitions(**kwargs: object) -> None:  # noqa: ARG001
-        """Stand in for `validate_transitions`, absorbing whatever it is passed."""
-        absorbed.append("validate_transitions")
-
-    def stub_initial_conditions(**kwargs: object) -> None:  # noqa: ARG001
-        """Stand in for `validate_initial_conditions`, absorbing its arguments."""
-        absorbed.append("validate_initial_conditions")
+    def stub(**kwargs: object) -> None:  # noqa: ARG001
+        """Record entry into the full preflight, absorbing its arguments."""
+        absorbed.append("validate_simulation_inputs")
 
     # Bound by name: a stub takes any keyword arguments, which is wider than
-    # either validator declares, so a direct assignment would be off-signature.
-    for name, stub in (
-        ("validate_transitions", stub_transitions),
-        ("validate_initial_conditions", stub_initial_conditions),
-    ):
-        setattr(lcm.model, name, stub)
-    try:
+    # the coordinator declares, so a direct assignment would be off-signature.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(lcm.model, "validate_simulation_inputs", stub)
         yield absorbed
-    finally:
-        lcm.model.validate_transitions = saved_transitions
-        lcm.model.validate_initial_conditions = saved_initial_conditions
 
 
 @contextlib.contextmanager

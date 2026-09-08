@@ -72,7 +72,7 @@ from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
     pad_initial_conditions_to_multiple,
-    validate_initial_conditions,
+    validate_simulation_inputs,
 )
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.result_metadata import _get_output_dtypes
@@ -144,7 +144,6 @@ from _lcm.utils.containers import (
 from _lcm.utils.logging import (
     LogLevel,
     get_logger,
-    raise_or_warn,
     validation_enabled,
     validation_raises,
 )
@@ -152,7 +151,6 @@ from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
     ExecutionPlanningError,
-    InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     ModelInitializationError,
@@ -2144,7 +2142,7 @@ class Model:
         raise UnsupportedOperationError(msg)
 
     @beartype(conf=PARAMS_CONF)
-    def simulate(  # noqa: C901, PLR0912, PLR0915
+    def simulate(  # noqa: C901
         self,
         *,
         params: UserParams,
@@ -2307,22 +2305,19 @@ class Model:
                 ),
                 flat_params=flat_params,
             )
-        if validation_enabled(log):
-            try:
-                validate_initial_conditions(
-                    initial_conditions=initial_conditions,
-                    regimes=self._regimes,
-                    regime_names_to_ids=self.regime_names_to_ids,
-                    flat_params=flat_params,
-                    ages=self.ages,
-                )
-            except InvalidInitialConditionsError as error:
-                raise_or_warn(logger=log, error=error)
-        validate_transitions(
+        validate_simulation_inputs(
+            initial_conditions=initial_conditions,
             regimes=self._regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
             ages=self.ages,
             logger=log,
+            execution=self._execution,
+            retained_footprint=(
+                entry_inputs.footprint(solution=solution)
+                if entry_inputs is not None and validation_enabled(log)
+                else None
+            ),
         )
         # `actual_n_subjects` is the user's real population (matched against the
         # declared `n_subjects`); `padded_n_subjects` is the leading axis the

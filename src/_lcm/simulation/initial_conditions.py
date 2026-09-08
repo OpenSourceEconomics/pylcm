@@ -7,6 +7,7 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 import dataclasses
 import functools
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import NoReturn, cast
@@ -16,6 +17,7 @@ import numpy as np
 import pandas as pd
 from dags import get_ancestors
 from jax import numpy as jnp
+from numpy.typing import NDArray
 
 from _lcm.dtypes import (
     canonical_float_dtype,
@@ -23,8 +25,22 @@ from _lcm.dtypes import (
     safe_to_int_dtype,
 )
 from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_ids
+from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.Q_and_F import _get_feasibility
+from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    union_buffer_footprints,
+)
+from _lcm.transition_checks import (
+    _SerialValidationRequired,
+    _validate_transition_sequence,
+    _ValidationSummary,
+    validate_transitions,
+)
 from _lcm.typing import (
     ActionName,
     FlatParams,
@@ -39,8 +55,13 @@ from _lcm.typing import (
 from _lcm.utils.containers import invert_regime_ids
 from _lcm.utils.error_messages import format_messages
 from _lcm.utils.functools import get_union_of_args
+from _lcm.utils.logging import raise_or_warn, validation_enabled
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidInitialConditionsError, PyLCMError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    InvalidInitialConditionsError,
+    PyLCMError,
+)
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserInitialConditions
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
@@ -51,6 +72,294 @@ MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 # Names that behave like states in initial conditions but are not declared on
 # any `Regime.states`. `age` is required for every subject regardless of regime.
 PSEUDO_STATE_NAMES: frozenset[str] = frozenset({"age"})
+
+# Only module-level numerical operation identities and abstract signatures are
+# cached here. Each validation call owns its input bindings and admission.
+_PREFLIGHT_OPERATIONS = ProfiledSimulationOperations()
+
+type _DiscreteInitialSpec = tuple[str, tuple[int, ...], tuple[int, ...]]
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _InitialCohorts:
+    """Lossless call-local host metadata needed before composing feasibility."""
+
+    indices: Mapping[RegimeName, tuple[int, ...]]
+    periods: tuple[int, ...]
+
+
+def validate_simulation_inputs(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    logger: logging.Logger,
+    execution: ResolvedExecution | None = None,
+    retained_footprint: DeviceBufferFootprint | None = None,
+) -> None:
+    """Validate a complete call with two host summaries and ordered diagnostics.
+
+    The first read supplies exact cohort metadata and discrete validity before
+    any constraint is composed. The second reads reduced feasibility and
+    transition flags. Invalid data or user-law errors select the original
+    serial diagnostic path; admission and backend resource failures propagate.
+    """
+    if not validation_enabled(logger):
+        return
+    memory = _preflight_memory(
+        execution=execution,
+        retained_footprint=retained_footprint,
+        initial_conditions=initial_conditions,
+        flat_params=flat_params,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+    )
+    summary = _ValidationSummary(memory=memory)
+    try:
+        try:
+            cohorts = _read_initial_cohorts(
+                initial_conditions=initial_conditions,
+                regimes=regimes,
+                regime_names_to_ids=regime_names_to_ids,
+                ages=ages,
+                memory=memory,
+            )
+            if memory is not None:
+                memory.close_unit()
+            _collect_feasibility_errors(
+                initial_states={
+                    name: value
+                    for name, value in initial_conditions.items()
+                    if name not in {"regime_id", "own_stakeholder"}
+                },
+                regime_id_arr=initial_conditions["regime_id"],
+                regime_names_to_ids=regime_names_to_ids,
+                regimes=regimes,
+                flat_params=flat_params,
+                ages=ages,
+                cohorts=cohorts,
+                summary=summary,
+            )
+            validate_transitions(
+                regimes=regimes,
+                flat_params=flat_params,
+                ages=ages,
+                logger=logger,
+                summary=summary,
+            )
+            accepted = summary.valid()
+        except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
+            raise
+        # Re-evaluate user-law failures in legacy order; resource failures above
+        # must never enter this diagnostic retry.
+        except Exception:  # noqa: BLE001
+            accepted = False
+    finally:
+        summary.close()
+    if accepted:
+        return
+    try:
+        validate_initial_conditions(
+            initial_conditions=initial_conditions,
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            flat_params=flat_params,
+            ages=ages,
+        )
+    except InvalidInitialConditionsError as error:
+        raise_or_warn(logger=logger, error=error)
+    _validate_transition_sequence(
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        logger=logger,
+        summary=None,
+    )
+
+
+def _preflight_memory(
+    *,
+    execution: ResolvedExecution | None,
+    retained_footprint: DeviceBufferFootprint | None,
+    initial_conditions: InitialConditions,
+    flat_params: FlatParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    ages: AgeGrid,
+) -> SimulationMemory | None:
+    """Admit new summary buffers against explicit entry and model-owned roots."""
+    if execution is None or execution.device_memory_bytes is None:
+        return None
+    if retained_footprint is None:
+        raise ExecutionPlanningError("Budgeted preflight requires entry residency.")
+    devices = placed_devices_for_ids(
+        submesh_device_ids=(), visible_device_ids=execution.device_ids
+    )
+    fixed = tuple(
+        (
+            regime.resolved_fixed_params,
+            regime.solution.resolved_fixed_params,
+            regime.solution._base_state_action_space.states,  # noqa: SLF001
+            regime.solution._base_state_action_space.actions,  # noqa: SLF001
+        )
+        for regime in regimes.values()
+    )
+    memory = SimulationMemory(
+        budget_bytes=execution.device_memory_bytes,
+        devices=devices,
+        subject_devices=devices[:1],
+        operations=_PREFLIGHT_OPERATIONS,
+        inputs=union_buffer_footprints(
+            footprints=(
+                retained_footprint,
+                measure_buffer_footprint(
+                    tree=(
+                        initial_conditions,
+                        flat_params,
+                        regime_names_to_ids,
+                        ages.values,  # noqa: PD011
+                        fixed,
+                    )
+                ),
+            )
+        ),
+    )
+    memory.check_resident()
+    return memory
+
+
+def _discrete_initial_specs(
+    *, regimes: MappingProxyType[RegimeName, Regime], names: tuple[RegimeName, ...]
+) -> tuple[_DiscreteInitialSpec, ...]:
+    """Describe the legacy code unions without converting scalar regime IDs."""
+    info: dict[str, tuple[set[int], set[int]]] = {}
+    for regime_name, regime in regimes.items():
+        for state_name in regime.simulation.discrete_state_names:
+            grid = regime.simulation.grids[state_name]
+            if isinstance(grid, DiscreteGrid):
+                codes, owners = info.setdefault(state_name, (set(), set()))
+                codes.update(grid.codes)
+                owners.add(names.index(regime_name))
+    return tuple(
+        (name, tuple(sorted(codes)), tuple(sorted(owners)))
+        for name, (codes, owners) in info.items()
+    )
+
+
+@functools.partial(jax.jit, static_argnames=("discrete_specs",))
+def _pack_initial_summary(
+    *,
+    regime_ids: Int1D,
+    age_values: Float1D,
+    canonical_ids: tuple[jax.Array, ...],
+    discrete_values: tuple[jax.Array, ...],
+    discrete_specs: tuple[_DiscreteInitialSpec, ...],
+) -> Int1D:
+    """Pack exact regime/age words and cohort-restricted discrete failure flags."""
+    flags = []
+    for values, (_, codes, owners) in zip(discrete_values, discrete_specs, strict=True):
+        relevant = jnp.isin(regime_ids, jnp.stack([canonical_ids[i] for i in owners]))
+        invalid = ~jnp.isin(values, jnp.array(codes, dtype=jnp.int32))
+        flags.append(jnp.any(relevant & invalid))
+    return jnp.concatenate(
+        (
+            jnp.stack(canonical_ids).astype(jnp.int32),
+            regime_ids,
+            jax.lax.bitcast_convert_type(age_values, jnp.int32).reshape(-1),
+            jnp.stack(flags).astype(jnp.int32)
+            if flags
+            else jnp.empty(0, dtype=jnp.int32),
+        )
+    )
+
+
+def _read_initial_cohorts(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    ages: AgeGrid,
+    memory: SimulationMemory | None,
+) -> _InitialCohorts:
+    """Read one lossless metadata vector before any feasibility composition."""
+    regime_ids = initial_conditions.get("regime_id")
+    age_values = initial_conditions.get("age")
+    if (
+        not isinstance(regime_ids, jax.Array)
+        or regime_ids.dtype != jnp.int32
+        or not isinstance(age_values, jax.Array)
+        or age_values.dtype != canonical_float_dtype()
+        or regime_ids.ndim != 1
+        or not regime_ids.size
+        or any(
+            not isinstance(value, jax.Array)
+            or value.shape != regime_ids.shape
+            or value.dtype not in (jnp.dtype(jnp.int32), canonical_float_dtype())
+            for value in initial_conditions.values()
+        )
+    ):
+        raise _SerialValidationRequired
+    names = tuple(regime_names_to_ids)
+    specs = tuple(
+        spec
+        for spec in _discrete_initial_specs(regimes=regimes, names=names)
+        if spec[0] in initial_conditions
+    )
+    packed = run_simulation_operation(
+        memory=memory,
+        function=_pack_initial_summary,
+        arguments={
+            "regime_ids": regime_ids,
+            "age_values": age_values,
+            "canonical_ids": tuple(regime_names_to_ids.values()),
+            "discrete_values": tuple(initial_conditions[name] for name, _, _ in specs),
+        },
+        static_arguments={"discrete_specs": specs},
+    )
+    # Copy metadata to host-owned storage before dropping the device summary.
+    host = np.asarray(packed).copy()
+    count = regime_ids.size
+    ids = host[: len(names)]
+    subjects = host[len(names) : len(names) + count]
+    age_start = len(names) + count
+    age_stop = (
+        age_start + count * age_values.dtype.itemsize // np.dtype(np.int32).itemsize
+    )
+    host_ages = host[age_start:age_stop].view(age_values.dtype)
+    if not np.isin(subjects, ids).all():
+        raise _SerialValidationRequired
+    indices = {
+        name: tuple(np.flatnonzero(subjects == code).tolist())
+        for name, code in zip(names, ids, strict=True)
+    }
+    required = set(PSEUDO_STATE_NAMES)
+    known = set(PSEUDO_STATE_NAMES)
+    for name, regime in regimes.items():
+        known.update(regime.simulation.state_names)
+        if indices[name]:
+            required.update(regime.simulation.state_names)
+    provided = set(initial_conditions) - {"regime_id", "own_stakeholder"}
+    if required - provided or provided - known:
+        raise _SerialValidationRequired
+    valid_ages = np.array(
+        [float(age) for age in ages.exact_values], dtype=age_values.dtype
+    )
+    if not np.isin(host_ages, valid_ages).all():
+        raise _SerialValidationRequired
+    periods = tuple(ages.age_to_period(age.item()) for age in host_ages)
+    if (
+        any(
+            periods[index] not in regimes[name].active_periods
+            for name, members in indices.items()
+            for index in members
+        )
+        or host[age_stop:].any()
+    ):
+        raise _SerialValidationRequired
+    return _InitialCohorts(indices=MappingProxyType(indices), periods=periods)
 
 
 def canonicalize_initial_conditions(
@@ -627,6 +936,8 @@ def _collect_feasibility_errors(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
+    cohorts: _InitialCohorts | None = None,
+    summary: _ValidationSummary | None = None,
 ) -> list[str]:
     """Collect errors about action feasibility for each subject.
 
@@ -645,9 +956,12 @@ def _collect_feasibility_errors(
     """
     errors: list[str] = []
     for regime_name, regime in regimes.items():
-        regime_id = regime_names_to_ids[regime_name]
-        idx_arr = jnp.where(regime_id_arr == regime_id)[0].astype(jnp.int32)
-        subject_indices = idx_arr.tolist() if idx_arr.size > 0 else []
+        if cohorts is None:
+            regime_id = regime_names_to_ids[regime_name]
+            idx_arr = jnp.where(regime_id_arr == regime_id)[0].astype(jnp.int32)
+            subject_indices = idx_arr.tolist() if idx_arr.size > 0 else []
+        else:
+            subject_indices = list(cohorts.indices[regime_name])
         if not subject_indices:
             continue
 
@@ -663,6 +977,8 @@ def _collect_feasibility_errors(
             subject_indices=subject_indices,
             regime_params=regime_params,
             ages=ages,
+            cohorts=cohorts,
+            summary=summary,
         )
         if msg is not None:
             errors.append(msg)
@@ -804,6 +1120,7 @@ def _age_specialized_feasibility_message(
     initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
     ages: AgeGrid,
+    cohorts: _InitialCohorts | None = None,
 ) -> str | None:
     """Return an error message if a subject's feasibility check would silently
     read a policy-specialized function resolved at the wrong age, else `None`.
@@ -832,8 +1149,15 @@ def _age_specialized_feasibility_message(
 
     representative_period = regime.active_periods[0]
     idx_arr = np.asarray(subject_indices)
-    subject_ages = np.asarray(initial_states["age"])[idx_arr]
-    subject_periods = np.array([ages.age_to_period(age.item()) for age in subject_ages])
+    if cohorts is None:
+        subject_ages = np.asarray(initial_states["age"])[idx_arr]
+        subject_periods = np.array(
+            [ages.age_to_period(age.item()) for age in subject_ages]
+        )
+    else:
+        subject_periods = np.array(
+            [cohorts.periods[index] for index in subject_indices]
+        )
     off_representative = subject_periods != representative_period
     if not np.any(off_representative):
         return None
@@ -851,7 +1175,7 @@ def _age_specialized_feasibility_message(
     )
 
 
-def _check_regime_feasibility(  # noqa: C901
+def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
     *,
     regime: Regime,
     regime_name: RegimeName,
@@ -859,6 +1183,8 @@ def _check_regime_feasibility(  # noqa: C901
     subject_indices: list[int],
     regime_params: Mapping[str, object],
     ages: AgeGrid,
+    cohorts: _InitialCohorts | None = None,
+    summary: _ValidationSummary | None = None,
 ) -> str | None:
     """Check whether all subjects in a regime have at least one feasible action.
 
@@ -880,8 +1206,11 @@ def _check_regime_feasibility(  # noqa: C901
         initial_states=initial_states,
         subject_indices=subject_indices,
         ages=ages,
+        cohorts=cohorts,
     )
     if age_specialized_message is not None:
+        if summary is not None:
+            raise _SerialValidationRequired
         return age_specialized_message
 
     feasibility_func = _get_feasibility(
@@ -898,8 +1227,11 @@ def _check_regime_feasibility(  # noqa: C901
     # substituted. The base grid's `to_jax()` raises for runtime-supplied
     # `IrregSpacedGrid`s declared with `pass_points_at_runtime=True`, so the
     # validator must read points from `state_action_space(regime_params=...)`.
-    state_action_space = regime.solution.state_action_space(
-        regime_params=cast("FlatRegimeParams", MappingProxyType(dict(regime_params))),
+    flat_regime_params = cast("FlatRegimeParams", MappingProxyType(dict(regime_params)))
+    state_action_space = (
+        regime.solution.state_action_space(regime_params=flat_regime_params)
+        if summary is None
+        else summary.state_action_space(regime=regime, params=flat_regime_params)
     )
     action_grids: dict[ActionName, FloatND | IntND] = {
         **state_action_space.discrete_actions,
@@ -919,19 +1251,37 @@ def _check_regime_feasibility(  # noqa: C901
     needs_period = "period" in accepted
 
     # Build per-subject state arrays
-    idx_arr = jnp.array(subject_indices, dtype=jnp.int32)
-    subject_states: dict[StateName, FloatND | IntND] = {}
-    for sn in state_names:
-        if sn in accepted:
-            subject_states[sn] = initial_states[sn][idx_arr]
-
-    if needs_age:
-        subject_states["age"] = initial_states["age"][idx_arr]
-    if needs_period:
-        subject_states["period"] = jnp.array(
-            [ages.age_to_period(a.item()) for a in initial_states["age"][idx_arr]],
-            dtype=jnp.int32,
+    if cohorts is not None and summary is not None:
+        selected_names = [name for name in state_names if name in accepted]
+        if needs_age:
+            selected_names.append("age")
+        subject_states = run_simulation_operation(
+            memory=summary.memory,
+            function=_gather_feasibility_inputs,
+            arguments={
+                "states": {name: initial_states[name] for name in selected_names},
+                "indices": np.array(subject_indices, dtype=np.int32),
+                "periods": np.array(
+                    cohorts.periods if needs_period else (), dtype=np.int32
+                ),
+            },
+            static_arguments={"needs_period": needs_period},
         )
+        idx_arr = None
+    else:
+        idx_arr = jnp.array(subject_indices, dtype=jnp.int32)
+        subject_states: dict[StateName, FloatND | IntND] = {}
+        for sn in state_names:
+            if sn in accepted:
+                subject_states[sn] = initial_states[sn][idx_arr]
+
+        if needs_age:
+            subject_states["age"] = initial_states["age"][idx_arr]
+        if needs_period:
+            subject_states["period"] = jnp.array(
+                [ages.age_to_period(a.item()) for a in initial_states["age"][idx_arr]],
+                dtype=jnp.int32,
+            )
 
     # Split actions and params — actions are vmapped over, params are not
     action_kwargs: dict[str, FloatND | IntND] = {
@@ -954,6 +1304,12 @@ def _check_regime_feasibility(  # noqa: C901
                 regime=regime,
                 subject_states=subject_states,
             )
+        if summary is not None:
+            summary.append(
+                function=_subject_feasibility_flag,
+                arguments={"feasible": any_feasible},
+            )
+            return None
         infeasible_mask = np.asarray(~any_feasible)
         infeasible_indices = np.asarray(idx_arr)[infeasible_mask].tolist()
     else:
@@ -968,17 +1324,24 @@ def _check_regime_feasibility(  # noqa: C901
             )(action_kwargs)
         else:
             result = feasibility_func(**filtered_params)  # ty: ignore[invalid-argument-type]
+        if summary is not None:
+            summary.append(
+                function=_constant_feasibility_flag,
+                arguments={"feasible": result},
+            )
+            return None
         infeasible_indices = [] if jnp.any(result) else subject_indices
 
     if not infeasible_indices:
         return None
 
+    # The summary route returned before diagnostics, leaving the serial index array.
     per_constraint_admits_any = _per_constraint_feasibility(
         regime=regime,
         subject_states=subject_states,
         regime_params=regime_params,
         flat_actions=flat_actions,
-        idx_arr=idx_arr,
+        idx_arr=cast("Int1D", idx_arr),
         infeasible_indices=infeasible_indices,
     )
 
@@ -990,6 +1353,33 @@ def _check_regime_feasibility(  # noqa: C901
         state_names=state_names,
         per_constraint_admits_any=per_constraint_admits_any,
     )
+
+
+@functools.partial(jax.jit, static_argnames=("needs_period",))
+def _gather_feasibility_inputs(
+    *,
+    states: Mapping[str, jax.Array],
+    indices: Int1D | NDArray[np.int32],
+    periods: Int1D | NDArray[np.int32],
+    needs_period: bool,
+) -> dict[str, jax.Array]:
+    """Gather the host-selected cohort without dynamic-size device reads."""
+    selected = {name: values[indices] for name, values in states.items()}
+    if needs_period:
+        selected["period"] = jnp.asarray(periods)[indices]
+    return selected
+
+
+@jax.jit
+def _subject_feasibility_flag(*, feasible: BoolND) -> jax.Array:
+    """Flag a subject lacking every action, retaining no subject-sized mask."""
+    return ~jnp.all(feasible)
+
+
+@jax.jit
+def _constant_feasibility_flag(*, feasible: BoolND | bool) -> jax.Array:
+    """Flag absence of every action when feasibility is cohort-constant."""
+    return ~jnp.any(feasible)
 
 
 def _admits_any_action(

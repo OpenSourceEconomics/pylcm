@@ -30,23 +30,28 @@ inspect grids, signatures, and Python source) are a separate concern.
 import inspect
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import partial
 from types import MappingProxyType
 from typing import Any, no_type_check
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 from dags.tree import tree_path_from_qname
 
 from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
+from _lcm.simulation.host_operations import StaticArgument
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.transition_plans import LotteryLifetime
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
+    ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
     InvalidStateTransitionProbabilitiesError,
     RegimeInitializationError,
@@ -56,12 +61,130 @@ from lcm.typing import BoolND, FloatND, IntND, ScalarFloat, ScalarInt
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
 
 
+class _SerialValidationRequired(Exception):  # noqa: N818
+    """Select the original diagnostic route before publishing any warning."""
+
+
+@dataclass(kw_only=True)
+class _ValidationSummary:
+    """Call-owned reduced flags, never parameters or cached validity."""
+
+    memory: SimulationMemory | None = None
+    flags: list[jax.Array] = field(default_factory=list)
+    spaces: dict[tuple[RegimeName, tuple[tuple[str, int], ...]], StateActionSpace] = (
+        field(default_factory=dict, repr=False)
+    )
+
+    def state_action_space(
+        self, *, regime: Regime, params: FlatRegimeParams
+    ) -> StateActionSpace:
+        """Reuse one concrete space only within this call and exact binding."""
+        key = (
+            regime.name,
+            tuple(sorted((name, id(value)) for name, value in params.items())),
+        )
+        if key not in self.spaces:
+            space = regime.solution.state_action_space(regime_params=params)
+            self.spaces[key] = space
+            if self.memory is not None:
+                self.memory.hold(tree=(space.states, space.actions))
+        return self.spaces[key]
+
+    def append(
+        self,
+        *,
+        function: Callable[..., jax.Array],
+        arguments: Mapping[str, object],
+        static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
+    ) -> None:
+        """Admit and retain only one check's reduced output."""
+        self.flags.append(
+            run_simulation_operation(
+                memory=self.memory,
+                function=function,
+                arguments=arguments,
+                static_arguments=static_arguments,
+            )
+        )
+
+    def valid(self) -> bool:
+        """Read the packed reduced flags once on the valid numerical path."""
+        if not self.flags:
+            return True
+        packed = run_simulation_operation(
+            memory=self.memory,
+            function=_pack_validation_flags,
+            arguments={"flags": tuple(self.flags)},
+        )
+        return not np.asarray(packed).any()
+
+    def close(self) -> None:
+        """Release all concrete temporary roots after validation completes."""
+        jax.block_until_ready(self.flags)
+        self.flags.clear()
+        self.spaces.clear()
+        if self.memory is not None:
+            self.memory.close_unit()
+
+
+@jax.jit
+def _pack_validation_flags(*, flags: tuple[jax.Array, ...]) -> jax.Array:
+    """Concatenate reduced flags in legacy diagnostic order."""
+    return jnp.concatenate([jnp.atleast_1d(flag).astype(jnp.int32) for flag in flags])
+
+
+@partial(jax.jit, static_argnames=("inactive_indices",))
+def _regime_probability_flags(
+    *, probabilities: tuple[jax.Array, ...], inactive_indices: tuple[int, ...]
+) -> jax.Array:
+    """Use exactly the regime validator's existing numerical predicates."""
+    all_probs = jnp.stack(probabilities)
+    return jnp.stack(
+        (
+            jnp.any(~jnp.isfinite(all_probs)),
+            jnp.any((all_probs < 0) | (all_probs > 1)),
+            jnp.any(_unit_mass_violations(jnp.sum(all_probs, axis=0))),
+            *(jnp.any(probabilities[index] > 0) for index in inactive_indices),
+        )
+    )
+
+
+@jax.jit
+def _state_probability_flags(*, probabilities: jax.Array) -> jax.Array:
+    """Keep the separate state-law mass rule, including its existing rtol."""
+    return jnp.stack(
+        (
+            jnp.any((probabilities < 0) | (probabilities > 1)),
+            ~jnp.allclose(jnp.sum(probabilities, axis=-1), 1.0, atol=1e-6),
+        )
+    )
+
+
+@jax.jit
+def _joint_probability_flags(*, probabilities: jax.Array) -> jax.Array:
+    """Reduce joint numerical failures without retaining the probability grid."""
+    return jnp.stack(
+        (
+            jnp.any(~jnp.isfinite(probabilities)),
+            jnp.any((probabilities < 0) | (probabilities > 1)),
+            jnp.any(_unit_mass_violations(jnp.sum(probabilities, axis=-1))),
+        )
+    )
+
+
+@jax.jit
+def _support_finiteness_flags(*, leaves: tuple[jax.Array, ...]) -> jax.Array:
+    """Report each concrete support leaf without reading its payload on the host."""
+    return jnp.stack([~jnp.all(jnp.isfinite(leaf)) for leaf in leaves])
+
+
 def validate_transitions(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
     logger: logging.Logger,
+    summary: _ValidationSummary | None = None,
 ) -> None:
     """Validate regime and state transition probabilities before solve / simulate.
 
@@ -76,15 +199,67 @@ def validate_transitions(
         logger: Logger carrying the runtime-validation policy.
 
     """
-    validate_regime_transitions_all_periods(
-        regimes=regimes, flat_params=flat_params, ages=ages, logger=logger
-    )
-    validate_state_transitions_all_periods(
-        regimes=regimes, flat_params=flat_params, ages=ages, logger=logger
-    )
-    validate_joint_transitions_all_periods(
-        regimes=regimes, flat_params=flat_params, ages=ages, logger=logger
-    )
+    if not validation_enabled(logger):
+        return
+    if summary is not None:
+        _validate_transition_sequence(
+            regimes=regimes,
+            flat_params=flat_params,
+            ages=ages,
+            logger=logger,
+            summary=summary,
+        )
+        return
+    pending = _ValidationSummary()
+    try:
+        try:
+            _validate_transition_sequence(
+                regimes=regimes,
+                flat_params=flat_params,
+                ages=ages,
+                logger=logger,
+                summary=pending,
+            )
+            accepted = pending.valid()
+        except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
+            raise
+        # Speculation publishes nothing; the serial retry preserves the first
+        # user-law diagnostic while resource failures above propagate directly.
+        except Exception:  # noqa: BLE001
+            accepted = False
+    finally:
+        pending.close()
+    if not accepted:
+        _validate_transition_sequence(
+            regimes=regimes,
+            flat_params=flat_params,
+            ages=ages,
+            logger=logger,
+            summary=None,
+        )
+
+
+def _validate_transition_sequence(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    logger: logging.Logger,
+    summary: _ValidationSummary | None,
+) -> None:
+    """Preserve family and item ordering for collection and serial diagnostics."""
+    for validator in (
+        validate_regime_transitions_all_periods,
+        validate_state_transitions_all_periods,
+        validate_joint_transitions_all_periods,
+    ):
+        validator(
+            regimes=regimes,
+            flat_params=flat_params,
+            ages=ages,
+            logger=logger,
+            summary=summary,
+        )
 
 
 def _params_callable_for_state_transition(
@@ -152,6 +327,7 @@ def validate_regime_transitions_all_periods(
     flat_params: FlatParams,
     ages: AgeGrid,
     logger: logging.Logger,
+    summary: _ValidationSummary | None = None,
 ) -> None:
     """Validate regime transition probabilities for all periods before solve.
 
@@ -188,6 +364,8 @@ def validate_regime_transitions_all_periods(
         if not regime.terminal and last_period in regime.active_periods
     ]
     if non_terminal_active_at_last:
+        if summary is not None:
+            raise _SerialValidationRequired
         raise_or_warn(
             logger=logger,
             error=InvalidRegimeTransitionProbabilitiesError(
@@ -218,8 +396,11 @@ def validate_regime_transitions_all_periods(
                     regime_name=regime_name,
                     period=period,
                     ages=ages,
+                    summary=summary,
                 )
             except InvalidRegimeTransitionProbabilitiesError as error:
+                if summary is not None:
+                    raise _SerialValidationRequired from error
                 raise_or_warn(logger=logger, error=error)
 
 
@@ -231,6 +412,7 @@ def _validate_regime_transition_single(
     regime_name: RegimeName,
     period: int,
     ages: AgeGrid,
+    summary: _ValidationSummary | None = None,
 ) -> None:
     """Validate regime transition probabilities for a single regime and period.
 
@@ -242,8 +424,10 @@ def _validate_regime_transition_single(
     # Non-None guaranteed: only called for non-terminal regimes
     regime_transition_func = regime.solution.validation_regime_transition_probs
 
-    state_action_space = regime.solution.state_action_space(
-        regime_params=regime_params,
+    state_action_space = (
+        regime.solution.state_action_space(regime_params=regime_params)
+        if summary is None
+        else summary.state_action_space(regime=regime, params=regime_params)
     )
 
     # Filter params to only those accepted by the transition function
@@ -297,6 +481,7 @@ def _validate_regime_transition_single(
         next_age=ages.values[period + 1],  # noqa: PD011
         period=period,
         state_action_values=MappingProxyType(point),
+        summary=summary,
     )
 
 
@@ -310,6 +495,7 @@ def _validate_regime_transition_probs(
     period: int | None = None,
     state_action_values: MappingProxyType[StateOrActionName, FloatND | IntND]
     | None = None,
+    summary: _ValidationSummary | None = None,
 ) -> None:
     """Validate regime transition probabilities.
 
@@ -333,6 +519,17 @@ def _validate_regime_transition_probs(
             regimes.
 
     """
+    if summary is not None:
+        names = tuple(regime_transition_probs)
+        inactive = set(names) - set(active_regimes_next_period)
+        summary.append(
+            function=_regime_probability_flags,
+            arguments={"probabilities": tuple(regime_transition_probs.values())},
+            static_arguments={
+                "inactive_indices": tuple(names.index(name) for name in inactive)
+            },
+        )
+        return
     all_probs = jnp.stack(list(regime_transition_probs.values()))
 
     if jnp.any(~jnp.isfinite(all_probs)):
@@ -423,6 +620,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
     flat_params: FlatParams,
     ages: AgeGrid,
     logger: logging.Logger,
+    summary: _ValidationSummary | None = None,
 ) -> None:
     """Validate every `MarkovTransition` state transition before solve.
 
@@ -468,8 +666,14 @@ def validate_state_transitions_all_periods(  # noqa: C901
             if not regime.stochastic_state_transitions:
                 continue
 
-            state_action_space = regime.solution.state_action_space(
-                regime_params=flat_params[regime_name],
+            state_action_space = (
+                regime.solution.state_action_space(
+                    regime_params=flat_params[regime_name]
+                )
+                if summary is None
+                else summary.state_action_space(
+                    regime=regime, params=flat_params[regime_name]
+                )
             )
             age = ages.values[period]  # noqa: PD011
             for transition in regime.stochastic_state_transitions.values():
@@ -492,17 +696,21 @@ def validate_state_transitions_all_periods(  # noqa: C901
                         age=age,
                         period=period,
                         logger=logger,
+                        summary=summary,
                     )
                 except InvalidStateTransitionProbabilitiesError as error:
+                    if summary is not None:
+                        raise _SerialValidationRequired from error
                     raise_or_warn(logger=logger, error=error)
 
 
-def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
+def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
     logger: logging.Logger,
+    summary: _ValidationSummary | None = None,
 ) -> None:
     """Validate every transition-local lottery before solve or simulation."""
     if not validation_enabled(logger):
@@ -524,8 +732,14 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
         for regime_name, regime in regimes.items():
             if regime.terminal or period not in regime.active_periods:
                 continue
-            state_action_space = regime.solution.state_action_space(
-                regime_params=flat_params[regime_name]
+            state_action_space = (
+                regime.solution.state_action_space(
+                    regime_params=flat_params[regime_name]
+                )
+                if summary is None
+                else summary.state_action_space(
+                    regime=regime, params=flat_params[regime_name]
+                )
             )
             # A carried state has no solve grid axis, so a simulate-phase law
             # reading one is not resolvable on the solution state-action space.
@@ -577,6 +791,7 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                         regime_name=regime_name,
                         phase_name=phase_name,
                         logger=logger,
+                        summary=summary,
                     )
                     if evaluated is None:
                         continue
@@ -599,6 +814,7 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                             phase_name=phase_name,
                             target=target,
                             logger=logger,
+                            summary=summary,
                         )
                         if support is not None:
                             leaves, tree = jax.tree_util.tree_flatten(support)
@@ -626,6 +842,8 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                                     tree != previous_tree
                                     or leaf_schema != previous_leaves
                                 ):
+                                    if summary is not None:
+                                        raise _SerialValidationRequired
                                     changed_support = (
                                         "Joint transition "
                                         f"{kernel_name}.support changed its "
@@ -653,6 +871,8 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                             else (n_cells, law.support_signature.size)
                         )
                         if probs.shape != expected_shape:
+                            if summary is not None:
+                                raise _SerialValidationRequired
                             owes = (
                                 "reads no grid variable, so it owes exactly one "
                                 "probability vector"
@@ -672,6 +892,12 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                                     "row of it can be attributed to a source cell."
                                 ),
                             )
+                        if summary is not None:
+                            summary.append(
+                                function=_joint_probability_flags,
+                                arguments={"probabilities": probs},
+                            )
+                            continue
                         invalid_values = (
                             jnp.any(~jnp.isfinite(probs))
                             or jnp.any(probs < 0)
@@ -691,7 +917,7 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                             )
 
 
-def _evaluate_joint_support(
+def _evaluate_joint_support(  # noqa: C901
     *,
     func: Callable[..., Any],
     regime_params: FlatRegimeParams,
@@ -703,6 +929,7 @@ def _evaluate_joint_support(
     phase_name: str,
     target: RegimeName,
     logger: logging.Logger,
+    summary: _ValidationSummary | None = None,
 ) -> Any:  # noqa: ANN401
     """Evaluate and validate one parameter-bound joint-support provider."""
     kwargs: dict[str, object] = {}
@@ -714,6 +941,8 @@ def _evaluate_joint_support(
         elif name in regime_params:
             kwargs[name] = regime_params[name]
         else:
+            if summary is not None:
+                raise _SerialValidationRequired
             raise_or_warn(
                 logger=logger,
                 error=RegimeInitializationError(
@@ -732,6 +961,8 @@ def _evaluate_joint_support(
         if not hasattr(leaf, "shape") or not leaf.shape or leaf.shape[0] != support_size
     ]
     if not leaves or invalid_shapes:
+        if summary is not None:
+            raise _SerialValidationRequired
         raise_or_warn(
             logger=logger,
             error=RegimeInitializationError(
@@ -745,6 +976,12 @@ def _evaluate_joint_support(
         # pytree here would make the comparison itself dereference missing shapes.
         return None
 
+    if summary is not None:
+        summary.append(
+            function=_support_finiteness_flags,
+            arguments={"leaves": tuple(leaves)},
+        )
+        return support
     try:
         has_nonfinite = any(
             not bool(jax.numpy.all(jax.numpy.isfinite(leaf))) for leaf in leaves
@@ -774,6 +1011,7 @@ def _evaluate_joint_weights(
     regime_name: RegimeName,
     phase_name: str,
     logger: logging.Logger,
+    summary: _ValidationSummary | None = None,
 ) -> tuple[Mapping[str, FloatND | IntND], int | None] | None:
     """Evaluate one compiled probability DAG on its accepted grids.
 
@@ -806,6 +1044,8 @@ def _evaluate_joint_weights(
         elif name in regime_params:
             scalar_kwargs[name] = regime_params[name]
         else:
+            if summary is not None:
+                raise _SerialValidationRequired
             raise_or_warn(
                 logger=logger,
                 error=InvalidStateTransitionProbabilitiesError(
@@ -862,6 +1102,7 @@ def _validate_state_transition_single(
     age: float | ScalarInt | ScalarFloat,
     period: int,
     logger: logging.Logger,
+    summary: _ValidationSummary | None = None,
 ) -> None:
     """Evaluate one MarkovTransition on its grid args and validate the output."""
     func = transition.func
@@ -889,6 +1130,8 @@ def _validate_state_transition_single(
             # the real error the solve step surfaces. Warn so the skip is
             # not silent. Name the phase: a `Phased` law has two variants under
             # one state name, and only one of them may be hitting this branch.
+            if summary is not None:
+                raise _SerialValidationRequired
             phase_suffix = (
                 f" ({transition.phase} phase)" if transition.phase is not None else ""
             )
@@ -922,6 +1165,7 @@ def _validate_state_transition_single(
         transition=transition,
         regime_name=regime_name,
         age=age,
+        summary=summary,
     )
 
 
@@ -931,6 +1175,7 @@ def _check_state_probs(
     transition: _StochasticStateTransition,
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
+    summary: _ValidationSummary | None = None,
 ) -> None:
     """Assert outcome-axis size, [0, 1] range, and sum-to-1 on a probs array."""
     qualifiers = []
@@ -945,6 +1190,8 @@ def _check_state_probs(
         state_label += f" ({', '.join(qualifiers)})"
 
     if probs.shape[-1] != transition.n_outcomes:
+        if summary is not None:
+            raise _SerialValidationRequired
         raise InvalidStateTransitionProbabilitiesError(
             f"MarkovTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned an outcome axis of size "
@@ -952,6 +1199,12 @@ def _check_state_probs(
             f"state's DiscreteGrid."
         )
 
+    if summary is not None:
+        summary.append(
+            function=_state_probability_flags,
+            arguments={"probabilities": probs},
+        )
+        return
     if jnp.any(probs < 0) or jnp.any(probs > 1):
         raise InvalidStateTransitionProbabilitiesError(
             f"MarkovTransition for {state_label} in regime '{regime_name}' "
@@ -991,9 +1244,9 @@ class _GridPointCall:
 
     names: tuple[str, ...]
     """Grid variable names, in the order the positional values arrive."""
-    scalar_kwargs: Mapping[str, object]
+    scalar_kwargs: Mapping[str, object] = field(repr=False)
     """Arguments held fixed across grid points."""
-    func: Callable[..., Any]
+    func: Callable[..., Any] = field(repr=False)
     """The transition function."""
 
     # The kernel is traced with whatever leaves its caller supplies -- tracers,

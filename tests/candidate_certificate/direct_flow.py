@@ -287,11 +287,11 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "6215536d5dfe2c2dc32639280c591abf54df561c303dc85e4231138ed8212818",
     SIMULATION_TRANSITIONS_SOURCE: "18f53b35a8a11536f9e3df03cfc48cec357bbc2fa11308d04091620d02e179a6",
     SIMULATION_COMPILE_SOURCE: "3ca1959d612dbfbf323e523fee496a56390ddaa1f509f607803a111d728899d2",
-    MODEL_SOURCE: "dca4df85fd7ad5ccf7a4b5ce2ec655a635fcacce12ff53cf7c1b30fefe0b422f",
+    MODEL_SOURCE: "8ef3cdf76aa2ba621c0d556c9bbd51ef336f645b0d6a94759f73d01cbb927cab",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "320d88ecb4959c19274da453a5bacd7995b5e7d54a6da76d47d0fe24f583809d",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
-    INITIAL_CONDITIONS_SOURCE: "16c40f2ec9626d9134b336ed3d61f911ed54cac7c86f17b5dd5a61dbe5fb134e",
+    INITIAL_CONDITIONS_SOURCE: "7017df18560acd35178c29f24c87977bcf2eda20eb16f1dccc28dfe417f4757f",
     RESULT_SOURCE: "bfc4b1f19bf1852c86c4f5b87d40abed2521d0519af99ff613975fb8d3ab09f0",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
@@ -3048,12 +3048,12 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "23b219f6c9c6544a395bcace03190a8d6553ece411c040f45c4de841a866ecce",
+            "6c848dbfdd6217204bb3b50b1e45b0de9328aabb4fdb596ac32ddf70af6ffc1a",
             {
                 "Model._resolve_simulate_regimes": "5a11f26e52496d8210ae0ab2b9846d5ca234569764f82d47e871f26e33751ee2",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model._ensure_simulate_compiled": "2e59224333ce9bd7453608d05359e933217971dbf8867e3f9851b9f503a2df86",
-                "Model.simulate": "71a0b10d4da31b3f882ea235a11e8ff66b234b6a7073ee0757733d0d46b46f76",
+                "Model.simulate": "03aae0b664add4294cb63aac980e9446afc5dfa5d16a64492039312191b8cd0e",
                 "Model._build_external_replay_readers": "33c41f2c3f7bd300f3e0b4ac042f7371b93efbfe1762e5fe639fc854b19f1f5f",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
             },
@@ -3087,6 +3087,25 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
 
 
 _SIMULATION_ADAPTER_CONTRACTS = {
+    # The entry coordinator preserves both validation families and passes the
+    # real retained inventory to each newly profiled summary allocation.
+    INITIAL_CONDITIONS_SOURCE: (
+        "eb55929b8e8ee3b0ef22e204e7110331435f523ecbab40af05d93292d933126f",
+        {
+            "validate_simulation_inputs": "db221b7a09a394ea9d6eb5e1c0329d4ff61a78737de85ea604b5467ba9179f86",
+            "_preflight_memory": "24af3b888fd7f85f2f580b19b08c0ed565ed2bc3da34ed883c4e7982f5bc5caf",
+            "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
+            "_pack_initial_summary": "504e89911be3016190066e13c8acebdb890328a4a7d40c4f9e8afd6a6f0b748a",
+            "_read_initial_cohorts": "c2de600ad5640aabae10671db6123ec1dcd7dac80b9bf50a8a21e022d30838ad",
+            "validate_initial_conditions": "41eb24fe5620d7482a6e5d35e9b02d23b85b9a4a253e28bd14f170340ea64d70",
+            "_collect_feasibility_errors": "4b3f79dc5f3eabc418e9a22cfbd8bb19d215c2bb7a27364ce36e20e35e022307",
+            "_age_specialized_feasibility_message": "1eefe701cada0b668ab2eab2e404120b47d2c65ff390afeb1e726ae420fde174",
+            "_check_regime_feasibility": "75a10480a8c9f5d9eb249295ad232dd2d42e1b8d91985b86e3f16a9a8b27c1be",
+            "_gather_feasibility_inputs": "042f8474176d738b9219516fd96c3d09c5ccc3e4ce18d0641bede57a8ce7d40e",
+            "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
+            "_constant_feasibility_flag": "f7b994fa04576c7157f8bab30ef0e17126c181ba874cbe493c1e19e6be056f17",
+        },
+    ),
     SIMULATION_TASTE_STREAM_SOURCE: (
         "947474b7e88fd4664df411678ada61eaf7c026cf7bed0abb6fb348057809bc93",
         {
