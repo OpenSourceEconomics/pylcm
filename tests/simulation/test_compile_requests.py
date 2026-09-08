@@ -24,7 +24,7 @@ import pytest
 
 import lcm.model
 from _lcm.utils.logging import LogLevel
-from benchmarks.asv._compile_counters import count_compile_requests
+from benchmarks.asv._compile_counters import COMPILE_EVENT, count_compile_requests
 from benchmarks.asv._simulation_witnesses import (
     MULTI_INITIAL_CONDITIONS,
     WITNESSES,
@@ -135,13 +135,40 @@ def _raise_from_a_block_whose_listeners_were_cleared() -> None:
         raise _BlockError
 
 
-def test_a_counting_block_stops_counting_once_its_listener_cannot_be_removed() -> None:
+def test_a_counting_block_stops_counting_once_its_listener_cannot_be_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A listener the teardown could not remove contributes to no later block."""
-    with count_compile_requests() as stranded:
-        jax.monitoring.clear_event_listeners()
-    with count_compile_requests():
-        jax.jit(_double)(jnp.arange(4.0))
-    assert stranded.compile_requests == 0
+    before = tuple(jax._src.monitoring.get_event_duration_listeners())
+    with monkeypatch.context() as teardown:
+        teardown.setattr(
+            jax.monitoring,
+            "unregister_event_duration_listener",
+            _refuse_listener_removal,
+        )
+        with count_compile_requests() as stranded:
+            pass
+    retained = tuple(
+        listener
+        for listener in jax._src.monitoring.get_event_duration_listeners()
+        if listener not in before
+    )
+    try:
+        with count_compile_requests() as active:
+            jax.monitoring.record_event_duration_secs(COMPILE_EVENT, 0.001)
+        assert (len(retained), stranded.compile_requests, active.compile_requests) == (
+            1,
+            0,
+            1,
+        )
+    finally:
+        for listener in retained:
+            jax.monitoring.unregister_event_duration_listener(listener)
+
+
+def _refuse_listener_removal(_listener: Callable[..., None]) -> None:
+    """Report that unregistering failed while keeping the listener registered."""
+    raise AssertionError("listener remains registered")
 
 
 def test_cold_simulate_call_compiles() -> None:
