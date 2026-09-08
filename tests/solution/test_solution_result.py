@@ -10,6 +10,7 @@ from types import MappingProxyType, ModuleType
 from typing import cast
 
 import cloudpickle
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -718,13 +719,24 @@ def test_obsolete_solve_and_simulate_interfaces_are_absent() -> None:
     assert "period_to_regime_to_dissolution_flags" not in simulate_parameters
 
 
-def test_unmeetable_execution_budget_fails_closed_before_solving() -> None:
-    """A one-byte device budget fits no compiled core and raises before induction."""
+def _refuse_unadmitted_compiled_dispatch(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError("A one-byte budget reached compiled core dispatch")
+
+
+def test_unmeetable_execution_budget_fails_closed_before_solving(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Known resident inputs already exceed one byte, before any core executes."""
     model, params, _initial_conditions = _small_grid_search_inputs(
         execution_config=ExecutionConfig(device_memory_bytes=1)
     )
 
-    with pytest.raises(ExecutionPlanningError, match="No workspace-width candidate"):
+    monkeypatch.setattr(
+        jax.stages.Compiled, "__call__", _refuse_unadmitted_compiled_dispatch
+    )
+    with pytest.raises(
+        ExecutionPlanningError, match=r"keeps \d+ bytes resident.*1-byte budget"
+    ):
         model.solve(params=params, log_level="off")
 
 

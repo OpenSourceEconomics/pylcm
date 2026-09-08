@@ -5,7 +5,7 @@ import gc
 import logging
 import weakref
 from collections.abc import Callable, Mapping
-from functools import partial
+from functools import partial, partialmethod
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
@@ -55,21 +55,37 @@ def _runtime(*, budget: int, enable_jit: bool = True) -> SimulationRuntime:
     )
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class _ProfiledExecutable:
-    """A controlled compiler report makes the admitted candidate observable."""
+def _controlled_width_output(*, state: jax.Array, width: int) -> jax.Array:
+    """Make a selected test width visible through a genuine compiled output."""
+    return jnp.full_like(state, width)
 
-    width: int
-    executions: list[int]
 
-    def memory_analysis(self) -> object:
-        return SimpleNamespace(peak_memory_in_bytes={4: 80, 2: 67, 1: 40}[self.width])
+# keyword-only-exempt: library-callback=functools.partialmethod
+def _controlled_memory_analysis(
+    self: jax.stages.Compiled,
+    *,
+    original: Callable[..., object],
+    executable_widths: dict[int, int],
+) -> object:
+    width = executable_widths.get(id(self))
+    if width is None:
+        return original(self)
+    return SimpleNamespace(peak_memory_in_bytes={4: 80, 2: 67, 1: 40}[width])
 
-    def __call__(self, **arguments: object) -> object:
-        self.executions.append(self.width)
-        state = arguments["state"]
-        assert isinstance(state, jax.Array)
-        return jnp.full_like(state, self.width)
+
+# keyword-only-exempt: library-callback=functools.partialmethod
+def _observe_controlled_execution(
+    self: jax.stages.Compiled,
+    *args: Any,
+    original: Callable[..., object],
+    executable_widths: dict[int, int],
+    executions: list[int],
+    **kwargs: Any,
+) -> object:
+    width = executable_widths.get(id(self))
+    if width is not None:
+        executions.append(width)
+    return original(self, *args, **kwargs)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -80,13 +96,21 @@ class _ControlledCompiler:
     enable_jit: bool
     subject_width: int
     compilations: list[int]
-    executions: list[int]
+    executable_widths: dict[int, int]
 
     def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
         width = widths["subject"]
         self.compilations.append(width)
+        # The controlled peak includes this still-owned shape-only state operand.
+        # A real Compiled object publishes its actual kept input-sharding tree.
+        compiled = (
+            jax.jit(partial(_controlled_width_output, width=width), keep_unused=True)
+            .lower(state=self.program.arguments["state"])
+            .compile()
+        )
+        self.executable_widths[id(compiled)] = width
         return CompiledSimulationProgram(
-            executable=_ProfiledExecutable(width=width, executions=self.executions),
+            executable=compiled,
             static_kwargs=MappingProxyType({}),
         )
 
@@ -97,10 +121,34 @@ def test_cached_candidates_are_rechecked_after_retained_outputs_grow(
     """Wider cached code cannot reuse an admission made before outputs accumulated."""
     compilations: list[int] = []
     executions: list[int] = []
+    executable_widths: dict[int, int] = {}
     monkeypatch.setattr(
         runtime_module,
         "_SimulationCandidateCompiler",
-        partial(_ControlledCompiler, compilations=compilations, executions=executions),
+        partial(
+            _ControlledCompiler,
+            compilations=compilations,
+            executable_widths=executable_widths,
+        ),
+    )
+    monkeypatch.setattr(
+        jax.stages.Compiled,
+        "memory_analysis",
+        partialmethod(
+            _controlled_memory_analysis,
+            original=jax.stages.Compiled.memory_analysis,
+            executable_widths=executable_widths,
+        ),
+    )
+    monkeypatch.setattr(
+        jax.stages.Compiled,
+        "__call__",
+        partialmethod(
+            _observe_controlled_execution,
+            original=jax.stages.Compiled.__call__,
+            executable_widths=executable_widths,
+            executions=executions,
+        ),
     )
     runtime = _runtime(budget=100)
     program = _program()
