@@ -212,8 +212,16 @@ jobs:
             --timeout=600 --timeout-method=thread -v \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp64-test-distributed-lifetime.xml \
+            --cov=./ --cov-append --cov-report= -n 0 \
+          && check_population reports/junit-cpu-fp64-test-distributed-lifetime.xml \
+          && pixi run -e tests-cpu pytest tests/test_distributed_template_placement.py \
+            -p no:randomly --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp64-test-distributed-template-placement.xml \
             --cov=./ --cov-append --cov-report=xml -n 0 \
-          && check_population reports/junit-cpu-fp64-test-distributed-lifetime.xml
+          && check_population \
+            reports/junit-cpu-fp64-test-distributed-template-placement.xml
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload JUnit reports
         # `always()` so a failing run still publishes its report: the XML is how
@@ -405,7 +413,15 @@ jobs:
             --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp32-test-distributed-lifetime.xml -n 0 \
-          && check_population reports/junit-cpu-fp32-test-distributed-lifetime.xml
+          && check_population reports/junit-cpu-fp32-test-distributed-lifetime.xml \
+          && pixi run -e tests-cpu pytest tests/test_distributed_template_placement.py \
+            --precision=32 -p no:randomly --policy-child \
+            --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp32-test-distributed-template-placement.xml \
+            -n 0 \
+          && check_population \
+            reports/junit-cpu-fp32-test-distributed-template-placement.xml
       - name: Upload JUnit reports
         # `always()` so a failing run still publishes its report: the XML is how
         # a run's counts are read back, and a run that failed is exactly when

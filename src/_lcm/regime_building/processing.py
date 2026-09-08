@@ -47,6 +47,7 @@ from _lcm.engine import (
     SolutionPhase,
     StateActionSpace,
     Variables,
+    _fail_if_template_is_misplaced,
     placed_devices_for_ids,
 )
 from _lcm.execution.core_program import CoreProgram, CoreProgramGraphAware
@@ -3034,7 +3035,7 @@ class _SolutionBuild:
     """The context the kernels were built under; its continuation specs are empty."""
 
 
-def _build_solution_phase(
+def _build_solution_phase(  # noqa: PLR0915
     *,
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
@@ -3434,6 +3435,12 @@ def _build_solution_phase(
             template=egm_carry_template,
             layout=solver.egm_continuation_layout,
         )
+
+    _fail_if_template_is_misplaced(
+        regime_name=regime_name,
+        template=None if continuation_spec is None else continuation_spec.template,
+        expected_device_ids=submesh_device_ids,
+    )
 
     # The published function set is consumed unresolved by feasibility checks and
     # additional-target computation, so resolve any `PeriodizedEconFunction` to its

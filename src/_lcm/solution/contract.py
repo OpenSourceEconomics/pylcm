@@ -51,7 +51,12 @@ from _lcm.continuation import (
     EGMContinuationLayout,
 )
 from _lcm.egm.branch_aggregation import OuterBranchAggregator
-from _lcm.engine import ParamCheck, StateActionSpace, Variables
+from _lcm.engine import (
+    ParamCheck,
+    StateActionSpace,
+    Variables,
+    place_template_on_regime_devices,
+)
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
@@ -446,6 +451,24 @@ class SolverBuildContext:
     its lowering arguments. Empty for every other regime, whose kernel
     signatures are unchanged.
     """
+
+    def place_on_regime_devices[Template](self, *, template: Template) -> Template:
+        """Return a continuation template placed like this regime's stored values.
+
+        Array leaves whose leading shape matches the stored-value state axes
+        are partitioned along the regime's sharded states. Folded states are
+        omitted from that shape; trailing axes stay unsharded. Other array
+        leaves replicate across the same devices. An unsharded regime places
+        every array on its assigned single device. Non-array leaves and the
+        pytree structure are preserved.
+        """
+        return place_template_on_regime_devices(
+            template=template,
+            grids=self.grids,
+            states=self.state_action_space.states,
+            fold_state_names=self.fold_state_names,
+            submesh_device_ids=self.submesh_device_ids,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)

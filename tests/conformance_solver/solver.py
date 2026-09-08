@@ -354,7 +354,7 @@ class TerminalCounterSolver(Solver):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one dense terminal program and its counter authority."""
         zero = jnp.asarray(0.0)
-        counter_template = Counter(count=zero)
+        counter_template = context.place_on_regime_devices(template=Counter(count=zero))
         counter_authority = _counter_authority(template=counter_template)
         program = CoreProgram(
             name="values",
@@ -600,7 +600,9 @@ class ReferenceSolver(Solver):
             axis_names=("wealth", "productivity"),
         )
 
-        counter_template = Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
+        counter_template = context.place_on_regime_devices(
+            template=Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
+        )
         counter_authority = _counter_authority(
             template=counter_template,
         )
@@ -868,7 +870,9 @@ class TargetValueSolver(Solver):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one values program per period with its target-value accesses."""
         state_nodes = context.state_action_space.states["wealth"]
-        counter_template = Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
+        counter_template = context.place_on_regime_devices(
+            template=Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
+        )
         counter_authority = _counter_authority(template=counter_template)
         last_period = context.solution_reachability.n_periods - 1
         kernels: dict[int, _PeriodKernel] = {}

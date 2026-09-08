@@ -1395,6 +1395,82 @@ def _build_regime_sharding(
     return _RegimeSharding(mesh=mesh, distributed_state_names=state_names)
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _TemplateLeafPlacement:
+    """Place state-shaped leaves by state axes and replicate other array leaves."""
+
+    state_shape: tuple[int, ...]
+    """Leading extents in the regime's stored-value state order."""
+
+    state_sharding: jax.sharding.Sharding
+    """Partitioning for a leaf whose leading axes match the state shape."""
+
+    replicated_sharding: jax.sharding.Sharding
+    """Placement for scalars and leaves with another leading shape."""
+
+    def __call__[Leaf](self, leaf: Leaf) -> Leaf:
+        """Preserve non-array leaves and place each array on the assigned devices."""
+        if not isinstance(leaf, Array):
+            return leaf
+        sharding = (
+            self.state_sharding
+            if leaf.shape[: len(self.state_shape)] == self.state_shape
+            else self.replicated_sharding
+        )
+        return cast("Leaf", jax.device_put(leaf, sharding))
+
+
+def place_template_on_regime_devices[Template](
+    *,
+    template: Template,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    states: Mapping[StateName, FloatND | IntND],
+    fold_state_names: tuple[StateName, ...],
+    submesh_device_ids: tuple[int, ...],
+) -> Template:
+    """Place a continuation pytree using the regime's stored-value layout."""
+    devices = placed_devices_for_ids(submesh_device_ids=submesh_device_ids)
+    plan = _build_regime_sharding(grids=grids, devices=devices)
+    state_order = tuple(name for name in states if name not in fold_state_names)
+    replicated = (
+        jax.sharding.SingleDeviceSharding(devices[0])
+        if plan is None
+        else jax.NamedSharding(plan.mesh, jax.P())
+    )
+    return jax.tree.map(
+        _TemplateLeafPlacement(
+            state_shape=tuple(states[name].size for name in state_order),
+            state_sharding=(
+                replicated if plan is None else plan.V_arr_sharding(state_order)
+            ),
+            replicated_sharding=replicated,
+        ),
+        template,
+    )
+
+
+def _fail_if_template_is_misplaced(
+    *, regime_name: RegimeName, template: object, expected_device_ids: tuple[int, ...]
+) -> None:
+    """Require every continuation array leaf to use the regime's assigned devices."""
+    expected = tuple(
+        sorted(
+            device.id
+            for device in placed_devices_for_ids(submesh_device_ids=expected_device_ids)
+        )
+    )
+    for leaf in jax.tree.leaves(template):
+        if not isinstance(leaf, Array):
+            continue
+        found = tuple(sorted(device.id for device in leaf.sharding.device_set))
+        if found != expected:
+            raise ExecutionPlanningError(
+                f"Regime {regime_name!r} published a continuation template leaf on "
+                f"devices {found!r}; its placement is {expected!r}. Place it with "
+                "SolverBuildContext.place_on_regime_devices."
+            )
+
+
 def _distribute_states_to_devices(
     *,
     states: MappingProxyType[StateName, FloatND | IntND],

@@ -40,6 +40,7 @@ from lcm.execution import ExecutionConfig
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import ContinuationReader
+from lcm.solvers import GridSearch, Solver
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 
@@ -83,6 +84,7 @@ def _make_three_type_model(
     distributed: bool,
     sharded: tuple[str, ...] = (),
     devices: tuple[int, ...] | None = None,
+    solver: Solver | None = None,
 ) -> Model:
     """A working regime over a three-valued type beside a single-device terminal one.
 
@@ -93,6 +95,7 @@ def _make_three_type_model(
     `devices` restricts the model to a subset of the four.
     """
     working = UserRegime(
+        solver=GridSearch() if solver is None else solver,
         functions={
             "utility": lambda wealth, consumption, type1: (
                 (jnp.log(consumption) + wealth * 0.001) * (type1 + 1)

@@ -27,6 +27,7 @@ FOUR_DEVICE_TEST_FILES = (
     "tests/execution/test_transfer_catalogue.py",
     "tests/test_distributed_placement.py",
     "tests/test_distributed_lifetime.py",
+    "tests/test_distributed_template_placement.py",
 )
 
 #: The configuration option a multi-device test file pins when it is imported.
