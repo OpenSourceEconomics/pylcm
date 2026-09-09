@@ -1457,8 +1457,13 @@ def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
     copies_made: list[jax.Array] = []
     apply = transfers_module.apply_value_transfer
 
-    def observe(*, value: object, transfer: ResolvedValueTransfer) -> jax.Array:
-        result = apply(value=value, transfer=transfer)
+    def observe(
+        *,
+        value: object,
+        transfer: ResolvedValueTransfer,
+        on_materialized: MaterializedTransferObserver | None = None,
+    ) -> jax.Array:
+        result = apply(value=value, transfer=transfer, on_materialized=on_materialized)
         copies_made.append(result)
         return result
 
