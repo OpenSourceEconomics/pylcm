@@ -291,7 +291,9 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: junit-cpu-fp64-${{ runner.os }}-${{ matrix.python-version }}
-          path: reports/junit-cpu-*.xml
+          path: |
+            reports/junit-cpu-*.xml
+            reports/simulation-timings/*.json
           if-no-files-found: warn
       - name: Upload exact-kernel capability diagnostics
         # Kept out of the JUnit artifact above on purpose. The matrix's `broken`
@@ -547,7 +549,9 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: junit-cpu-fp32
-          path: reports/junit-cpu-*.xml
+          path: |
+            reports/junit-cpu-*.xml
+            reports/simulation-timings/*.json
           if-no-files-found: warn
       - name: Upload exact-kernel capability diagnostics
         # Separate from the JUnit artifact for the same reason as the fp64 leg:

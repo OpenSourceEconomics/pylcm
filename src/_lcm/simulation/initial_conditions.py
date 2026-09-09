@@ -5,6 +5,7 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 """
 
+import contextlib
 import dataclasses
 import functools
 import logging
@@ -30,6 +31,7 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.Q_and_F import _get_feasibility
+from _lcm.simulation.action_grids import PreflightActionGrids
 from _lcm.simulation.assembly import slice_array
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
@@ -121,73 +123,78 @@ def validate_simulation_inputs(
         regime_names_to_ids=regime_names_to_ids,
         ages=ages,
     )
-    summary = _ValidationSummary(
-        memory=memory, process_grid_resolver=process_grid_resolver
-    )
-    try:
+    with contextlib.closing(
+        PreflightActionGrids(memory=memory, build=_build_flat_action_grid)
+    ) as action_grid_resolver:
+        summary = _ValidationSummary(
+            memory=memory, process_grid_resolver=process_grid_resolver
+        )
         try:
-            cohorts = _read_initial_cohorts(
+            try:
+                cohorts = _read_initial_cohorts(
+                    initial_conditions=initial_conditions,
+                    regimes=regimes,
+                    regime_names_to_ids=regime_names_to_ids,
+                    ages=ages,
+                    memory=memory,
+                )
+                if memory is not None:
+                    memory.close_unit()
+                _collect_feasibility_errors(
+                    initial_states={
+                        name: value
+                        for name, value in initial_conditions.items()
+                        if name not in {"regime_id", "own_stakeholder"}
+                    },
+                    regime_id_arr=initial_conditions["regime_id"],
+                    regime_names_to_ids=regime_names_to_ids,
+                    regimes=regimes,
+                    flat_params=flat_params,
+                    ages=ages,
+                    cohorts=cohorts,
+                    summary=summary,
+                    process_grid_resolver=process_grid_resolver,
+                    action_grid_resolver=action_grid_resolver,
+                )
+                validate_transitions(
+                    regimes=regimes,
+                    flat_params=flat_params,
+                    ages=ages,
+                    logger=logger,
+                    summary=summary,
+                    process_grid_resolver=process_grid_resolver,
+                )
+                accepted = summary.valid()
+            except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
+                raise
+            # Re-evaluate user-law failures in legacy order; resource failures above
+            # must never enter this diagnostic retry.
+            except Exception:  # noqa: BLE001
+                accepted = False
+        finally:
+            summary.close()
+        if accepted:
+            return
+        try:
+            validate_initial_conditions(
                 initial_conditions=initial_conditions,
                 regimes=regimes,
                 regime_names_to_ids=regime_names_to_ids,
-                ages=ages,
-                memory=memory,
-            )
-            if memory is not None:
-                memory.close_unit()
-            _collect_feasibility_errors(
-                initial_states={
-                    name: value
-                    for name, value in initial_conditions.items()
-                    if name not in {"regime_id", "own_stakeholder"}
-                },
-                regime_id_arr=initial_conditions["regime_id"],
-                regime_names_to_ids=regime_names_to_ids,
-                regimes=regimes,
                 flat_params=flat_params,
                 ages=ages,
-                cohorts=cohorts,
-                summary=summary,
                 process_grid_resolver=process_grid_resolver,
+                action_grid_resolver=action_grid_resolver,
             )
-            validate_transitions(
-                regimes=regimes,
-                flat_params=flat_params,
-                ages=ages,
-                logger=logger,
-                summary=summary,
-                process_grid_resolver=process_grid_resolver,
-            )
-            accepted = summary.valid()
-        except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
-            raise
-        # Re-evaluate user-law failures in legacy order; resource failures above
-        # must never enter this diagnostic retry.
-        except Exception:  # noqa: BLE001
-            accepted = False
-    finally:
-        summary.close()
-    if accepted:
-        return
-    try:
-        validate_initial_conditions(
-            initial_conditions=initial_conditions,
+        except InvalidInitialConditionsError as error:
+            raise_or_warn(logger=logger, error=error)
+        _validate_transition_sequence(
             regimes=regimes,
-            regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             ages=ages,
+            logger=logger,
+            summary=None,
             process_grid_resolver=process_grid_resolver,
         )
-    except InvalidInitialConditionsError as error:
-        raise_or_warn(logger=logger, error=error)
-    _validate_transition_sequence(
-        regimes=regimes,
-        flat_params=flat_params,
-        ages=ages,
-        logger=logger,
-        summary=None,
-        process_grid_resolver=process_grid_resolver,
-    )
 
 
 def _preflight_memory(
@@ -756,6 +763,7 @@ def validate_initial_conditions(
     flat_params: FlatParams,
     ages: AgeGrid,
     process_grid_resolver: ProcessGridResolver | None = None,
+    action_grid_resolver: PreflightActionGrids | None = None,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
@@ -845,6 +853,7 @@ def validate_initial_conditions(
         flat_params=flat_params,
         ages=ages,
         process_grid_resolver=process_grid_resolver,
+        action_grid_resolver=action_grid_resolver,
     )
     if feasibility_errors:
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
@@ -1053,6 +1062,7 @@ def _collect_feasibility_errors(
     cohorts: _InitialCohorts | None = None,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    action_grid_resolver: PreflightActionGrids | None = None,
 ) -> list[str]:
     """Collect errors about action feasibility for each subject.
 
@@ -1095,6 +1105,7 @@ def _collect_feasibility_errors(
             cohorts=cohorts,
             summary=summary,
             process_grid_resolver=process_grid_resolver,
+            action_grid_resolver=action_grid_resolver,
         )
         if msg is not None:
             errors.append(msg)
@@ -1302,6 +1313,7 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
     cohorts: _InitialCohorts | None = None,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    action_grid_resolver: PreflightActionGrids | None = None,
 ) -> str | None:
     """Check whether all subjects in a regime have at least one feasible action.
 
@@ -1357,9 +1369,16 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
     }
-    flat_actions = _build_flat_action_grid(
-        action_names=action_names,
-        grids=MappingProxyType(action_grids),
+    flat_actions = (
+        _build_flat_action_grid(
+            action_names=action_names, grids=MappingProxyType(action_grids)
+        )
+        if action_grid_resolver is None
+        else action_grid_resolver.resolve(
+            action_names=tuple(action_names),
+            grids=MappingProxyType(action_grids),
+            retained_arrays=(state_action_space.states, state_action_space.actions),
+        )
     )
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
@@ -1753,13 +1772,13 @@ def _format_infeasibility_message(
 
 def _build_flat_action_grid(
     *,
-    action_names: list[ActionName],
+    action_names: Sequence[ActionName],
     grids: MappingProxyType[str, FloatND | IntND],
 ) -> dict[str, FloatND | IntND]:
     """Build a flat array of all action combinations from action grids.
 
     Args:
-        action_names: List of action variable names.
+        action_names: Ordered sequence of action variable names.
         grids: Immutable mapping of variable names to grid arrays.
 
     Returns:

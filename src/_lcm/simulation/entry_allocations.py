@@ -13,6 +13,7 @@ Artifact and arbitrary lazy materializers require separate allocation profiles.
 
 import dataclasses
 import weakref
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -20,6 +21,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.engine import Regime
 from _lcm.simulation.entry_inputs import SimulationEntryInputs
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -30,7 +32,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.solution_copies import copy_solution_leaf
-from _lcm.typing import InitialConditions
+from _lcm.typing import FlatParams, FlatRegimeParams, InitialConditions, RegimeName
 
 
 @dataclasses.dataclass(kw_only=True, eq=False)
@@ -110,6 +112,35 @@ class SimulationEntryAllocations:
             tuple(self._foreign_copies),
             self.process_grid_resolver.array_roots,
         )
+
+    def place_solve_parameters(
+        self, *, flat_params: FlatParams, regimes: Mapping[RegimeName, Regime]
+    ) -> FlatParams:
+        """Admit replicated parameters on each consuming solve regime's devices.
+
+        Entry staging and caller inputs remain owned alongside every completed
+        regime copy. Each transfer reserves destination payload and scratch before
+        allocation; the automatic solve inventories these same physical owners.
+        """
+        placed: dict[RegimeName, FlatRegimeParams] = {}
+        self._stages["solve_params"] = placed
+        for name, parameters in flat_params.items():
+            phase = regimes[name].solution
+            devices = phase.placed_devices()
+            if not phase.sharded_state_names:
+                devices = devices[:1]
+            live = self.snapshot()
+            arguments = place_simulation_arguments(
+                arguments={"solve_params": parameters},
+                subject_arg_names=(),
+                value_reads=(),
+                devices=devices,
+                budget_bytes=self.budget_bytes,
+                live_footprint=live,
+                budget_devices=tuple(dict.fromkeys((*self.devices, *live.spans))),
+            )
+            placed[name] = cast("FlatRegimeParams", arguments["solve_params"])
+        return MappingProxyType(placed)
 
     def copy_solution_leaf(self, *, leaf: jax.Array, label: str) -> jax.Array:
         """Admit and own a private copy in its original source layout."""

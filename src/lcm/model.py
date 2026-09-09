@@ -2496,8 +2496,15 @@ class Model:
         actual_n_subjects = original_n_subjects
         padded_n_subjects = len(next(iter(initial_conditions.values())))
         if solution is None:
+            solve_params = (
+                flat_params
+                if entry_allocations is None
+                else entry_allocations.place_solve_parameters(
+                    flat_params=flat_params, regimes=self._regimes
+                )
+            )
             solution = self._solve_from_flat_params(
-                flat_params=flat_params,
+                flat_params=solve_params,
                 params=params,
                 log=log,
                 retention=ResultRetention.VALUES_AND_REPLAY,

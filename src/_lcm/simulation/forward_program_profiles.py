@@ -255,13 +255,15 @@ def profile_forward_unit(
                 (n_subjects,), indices.dtype, sharding=subject
             )
         decoder_arguments = {
-            "flat_indices": _placed_abstract(leaf=indices, sharding=subject),
+            "flat_indices": _placed_abstract(
+                leaf=indices, sharding=subject if indices.ndim else shared
+            ),
             "grids": _shared_tree(tree=base.actions, devices=devices),
         }
         decoded = runtime.operations.prepare_abstract(
             function=_lookup_values_from_indices,
             arguments=decoder_arguments,
-            subject_arg_names=("flat_indices",),
+            subject_arg_names=("flat_indices",) if indices.ndim else (),
             devices=devices,
         )
         profiles = {

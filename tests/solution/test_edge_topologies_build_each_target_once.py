@@ -18,9 +18,11 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import EdgeChannels
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _iter_edge_topologies
+from _lcm.typing import FlatRegimeParams
 
 
 @dataclasses.dataclass(frozen=True)
@@ -42,7 +44,13 @@ class _MockSolutionPhase:
     def placed_devices(self) -> tuple[jax.Device, ...]:
         return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
 
-    def state_action_space(self, regime_params):  # noqa: ARG002
+    def state_action_space(
+        self,
+        *,
+        regime_params: FlatRegimeParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
+    ) -> StateActionSpace:
+        del regime_params, process_grid_resolver
         return StateActionSpace(
             discrete_actions=MappingProxyType({}),
             continuous_actions=MappingProxyType({}),

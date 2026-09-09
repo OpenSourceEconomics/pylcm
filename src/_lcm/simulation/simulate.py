@@ -1567,7 +1567,7 @@ def _simulate_regime_in_period(
                 "flat_indices": indices_optimal_actions,
                 "grids": state_action_space.actions,
             },
-            subject_arg_names=("flat_indices",),
+            subject_arg_names=("flat_indices",) if indices_optimal_actions.ndim else (),
         )
         optimal_actions, V_arr, nested_fallback = (
             _replace_continuous_action_with_policy_read(

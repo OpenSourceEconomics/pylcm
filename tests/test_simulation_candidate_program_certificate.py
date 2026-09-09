@@ -83,6 +83,44 @@ _RANDOM_HELPER_MUTATIONS = {
 }
 
 _PROFILED_HELPER_MUTATIONS = {
+    "automatic_params:consumer_devices_ignored": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "devices = phase.placed_devices()",
+        "devices = self.devices[:1]",
+    ),
+    "automatic_params:copies_not_owned": (
+        "src/_lcm/simulation/entry_allocations.py",
+        'self._stages["solve_params"] = placed',
+        'self._stages["solve_params"] = {}',
+    ),
+    "automatic_params:transfer_budget_omitted": (
+        "src/_lcm/simulation/entry_allocations.py",
+        (
+            "                devices=devices,\n"
+            "                budget_bytes=self.budget_bytes,"
+        ),
+        "                devices=devices,\n                budget_bytes=None,",
+    ),
+    "automatic_params:placed_binding_omitted": (
+        "src/lcm/model.py",
+        "                flat_params=solve_params,",
+        "                flat_params=flat_params,",
+    ),
+    "simulation_index:scalar_profile_subject_sharding": (
+        "src/_lcm/simulation/forward_program_profiles.py",
+        "sharding=subject if indices.ndim else shared",
+        "sharding=subject",
+    ),
+    "simulation_index:scalar_profile_subject_role": (
+        "src/_lcm/simulation/forward_program_profiles.py",
+        'subject_arg_names=("flat_indices",) if indices.ndim else (),',
+        'subject_arg_names=("flat_indices",),',
+    ),
+    "simulation_index:scalar_runtime_subject_role": (
+        "src/_lcm/simulation/simulate.py",
+        'subject_arg_names=("flat_indices",) if indices_optimal_actions.ndim else (),',
+        'subject_arg_names=("flat_indices",),',
+    ),
     "simulation_pandas:dataframe_writer_omitted": (
         "src/lcm/model.py",
         (
@@ -1339,6 +1377,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     assert {spec["path"] for spec in (registered | supplemental).values()} == (
         set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
         - set(direct_flow._UNIFORM_PROCESS_SOURCES)
+        - set(direct_flow._ACTION_GRID_SOURCES)
     )
 
 

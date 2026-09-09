@@ -61,6 +61,7 @@ from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building import processing
+from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.initial_conditions import build_initial_states
 from _lcm.simulation.process_grids import SimulationProcessGrids
 from _lcm.simulation.residency import (
@@ -1522,7 +1523,8 @@ def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
 
 @_skip_pytest_parallel
 @pytest.mark.parametrize(
-    ("sharded", "supplied"), [(False, False), (False, True), (True, True)]
+    ("sharded", "supplied"),
+    [(False, False), (False, True), (True, True), (True, False)],
 )
 @pytest.mark.parametrize("log_level", ["off", "debug"])
 def test_uniform_entry_grid_uses_selected_device_and_keeps_source_owners(
@@ -1564,10 +1566,23 @@ def test_uniform_entry_grid_uses_selected_device_and_keeps_source_owners(
             grids=grids,
         ),
     )
+    solve_calls: list[bool] = []
+    monkeypatch.setattr(
+        Model,
+        "_solve_from_flat_params",
+        functools.partialmethod(
+            _observe_placed_solve_parameters,
+            original=Model._solve_from_flat_params,
+            selected=selected,
+            sources=sources,
+            calls=solve_calls,
+        ),
+    )
     result = model.simulate(
         params=params, initial_conditions=initial, solution=values, log_level=log_level
     )
     assert len(grids) == 1
+    assert len(solve_calls) == (0 if supplied else 1)
     np.testing.assert_array_equal(grids[0], [1.0, 1.5, 2.0, 2.5, 3.0])
     assert result.raw_results["alive"][0].V_arr.sharding.device_set == {
         jax.devices()[device] for device in selected
@@ -1579,6 +1594,96 @@ def test_uniform_entry_grid_uses_selected_device_and_keeps_source_owners(
         ].to_numpy(),
         [[2.0, 1.0, 3.0], [2.0, 1.0, 3.0]],
     )
+    for leaf in jax.tree.leaves((params, initial)):
+        if isinstance(leaf, jax.Array):
+            assert not leaf.is_deleted()
+
+
+# keyword-only-exempt: library-callback=functools.partialmethod
+def _observe_placed_solve_parameters(
+    self: Model,
+    *,
+    original: Callable[..., object],
+    selected: tuple[int, ...],
+    sources: DeviceBufferFootprint,
+    calls: list[bool],
+    **kwargs: Any,
+) -> object:
+    """Check parameter contents and ownership at the public automatic-solve seam."""
+    flat = kwargs["flat_params"]["alive"]
+    for leaf in jax.tree.leaves(flat):
+        assert leaf.devices() == {jax.devices()[device] for device in selected}
+        assert leaf.is_fully_replicated
+    np.testing.assert_array_equal(flat["income__start"], 1.0)
+    np.testing.assert_array_equal(flat["income__stop"], 3.0)
+    retained = measure_buffer_footprint(tree=kwargs["retained_input_arrays"])
+    for expected in (sources, measure_buffer_footprint(tree=kwargs["flat_params"])):
+        missing = resident_bytes_by_device(
+            live=expected, arguments=retained, devices=tuple(expected.spans)
+        )
+        assert not any(missing.values()), "Automatic solve omitted parameter owners"
+    calls.append(True)
+    return original(self, **kwargs)
+
+
+@_skip_pytest_parallel
+def test_automatic_parameter_transfer_refuses_before_allocating_a_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exhausted entry budget refuses replication while keeping caller owners."""
+    model = _uniform_placement_model(selected=(1, 3), sharded=True)
+    params = {
+        "alive": {
+            "income": {"start": jnp.asarray(1.0), "stop": jnp.asarray(3.0)},
+            "koopmans_aggregator": {"discount_factor": 0.9},
+        },
+        "done": {},
+    }
+    initial = {
+        "income": jnp.asarray([2.0, 2.0]),
+        "kind": jnp.asarray([0, 1]),
+        "age": jnp.asarray([0.0, 0.0]),
+        "regime_id": jnp.asarray([0, 0]),
+    }
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        SimulationEntryAllocations,
+        "place_solve_parameters",
+        functools.partialmethod(
+            _exhaust_solve_parameter_budget,
+            original=SimulationEntryAllocations.place_solve_parameters,
+            monkeypatch=monkeypatch,
+            calls=calls,
+        ),
+    )
+    with pytest.raises(ExecutionPlanningError):
+        model.simulate(params=params, initial_conditions=initial, log_level="off")
+    assert calls == [True]
+    for leaf in jax.tree.leaves((params, initial)):
+        if isinstance(leaf, jax.Array):
+            assert not leaf.is_deleted()
+    np.testing.assert_array_equal(params["alive"]["income"]["start"], 1.0)
+    np.testing.assert_array_equal(initial["income"], [2.0, 2.0])
+
+
+# keyword-only-exempt: library-callback=functools.partialmethod
+def _exhaust_solve_parameter_budget(
+    self: SimulationEntryAllocations,
+    *,
+    original: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[bool],
+    **kwargs: Any,
+) -> object:
+    calls.append(True)
+    self.budget_bytes = 0
+    with monkeypatch.context() as probe:
+        probe.setattr(jax, "device_put", _forbid_solve_parameter_copy)
+        return original(self, **kwargs)
+
+
+def _forbid_solve_parameter_copy(*_args: Any, **_kwargs: Any) -> object:
+    raise AssertionError("Parameter copy allocated before transfer admission")
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
@@ -1620,6 +1725,56 @@ def _uniform_placement_terminal(*, kind: ScalarInt) -> ScalarFloat:
     return 0.0 * kind
 
 
+def _stateless_placement_terminal(*, bequest: ScalarFloat) -> ScalarFloat:
+    return bequest
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("selected", [(2,), (1, 3)])
+@pytest.mark.parametrize("log_level", ["off", "debug"])
+@pytest.mark.parametrize("supplied", [False, True])
+def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
+    *, selected: tuple[int, ...], log_level: LogLevel, supplied: bool
+) -> None:
+    """A shared terminal payoff retains one published value per actual subject."""
+    model = _uniform_placement_model(
+        selected=selected, sharded=len(selected) > 1, stateless_terminal=True
+    )
+    params = {
+        "alive": {
+            "income": {"start": 1.0, "stop": 3.0},
+            "koopmans_aggregator": {"discount_factor": 0.5},
+        },
+        "done": {"utility": {"bequest": 4.0}},
+    }
+    initial = {
+        "income": jnp.asarray([1.0, 2.0, 3.0]),
+        "kind": jnp.asarray([0, 1, 0]),
+        "age": jnp.zeros(3),
+        "regime_id": jnp.zeros(3, dtype=jnp.int32),
+    }
+    solution = model.solve(params=params, log_level=log_level) if supplied else None
+    if solution is not None:
+        assert solution.values[1]["done"].shape == ()
+        np.testing.assert_array_equal(solution.values[1]["done"], 4.0)
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=solution,
+        log_level=log_level,
+    )
+    rows = result.to_dataframe(use_labels=False)
+    np.testing.assert_array_equal(
+        rows.loc[rows["regime_name"] == "alive", ["saving", "value"]].to_numpy(),
+        [[1.0, 4.0], [1.0, 5.0], [1.0, 6.0]],
+    )
+    terminal = result.raw_results["done"][1]
+    assert terminal.V_arr.shape == (3,)
+    assert not terminal.actions
+    np.testing.assert_array_equal(terminal.V_arr, [4.0, 4.0, 4.0])
+    assert terminal.V_arr.devices() == {jax.devices()[device] for device in selected}
+
+
 def _uniform_placement_transition() -> ScalarInt:
     return _UniformPlacementRegimeId.done
 
@@ -1632,7 +1787,9 @@ def _uniform_placement_terminal_age(age: float) -> bool:
     return age == 1
 
 
-def _uniform_placement_model(*, selected: tuple[int, ...], sharded: bool) -> Model:
+def _uniform_placement_model(
+    *, selected: tuple[int, ...], sharded: bool, stateless_terminal: bool = False
+) -> Model:
     from lcm import UniformIIDProcess  # noqa: PLC0415
 
     return Model(
@@ -1647,7 +1804,11 @@ def _uniform_placement_model(*, selected: tuple[int, ...], sharded: bool) -> Mod
             "done": UserRegime(
                 transition=None,
                 active=_uniform_placement_terminal_age,
-                functions={"utility": _uniform_placement_terminal},
+                functions={
+                    "utility": _stateless_placement_terminal
+                    if stateless_terminal
+                    else _uniform_placement_terminal
+                },
             ),
         },
         states={"kind": DiscreteGrid(_TwoValuedType)},

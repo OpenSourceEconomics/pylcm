@@ -541,6 +541,11 @@ def test_uniform_process_sources_have_literal_inventory_obligations() -> None:
     assert isinstance(_parse("src/_lcm/transition_checks.py"), ast.Module)
 
 
+def test_action_grid_admission_has_a_literal_inventory_obligation() -> None:
+    """Include the call-owned Cartesian preflight producer and its cleanup."""
+    assert isinstance(_parse("src/_lcm/simulation/action_grids.py"), ast.Module)
+
+
 def test_finite_policy_diagnostic_is_a_literal_certificate_obligation():
     """Include the profiled live-versus-represented candidate diagnostic."""
     assert isinstance(_parse("src/_lcm/simulation/policy_diagnostics.py"), ast.Module)

@@ -12,7 +12,6 @@ The bar applies to both the forward-simulation loop and the whole
 
 import contextlib
 import logging
-import statistics
 import time
 from collections.abc import Callable, Iterator
 
@@ -30,6 +29,7 @@ from benchmarks.asv._simulation_witnesses import (
 )
 from lcm import Model
 from lcm.typing import FloatND, UserInitialConditions, UserParams
+from tests.ci.simulation_timings import TimingMeasurement
 from tests.test_models.processes import (
     MultiRegimeId,
     get_multi_regime_model,
@@ -243,7 +243,7 @@ def test_repeating_a_subject_width_at_debug_compiles_nothing(*, witness: str) ->
 def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
     *,
     witness: str,
-    record_testsuite_property: Callable[[str, object], None],
+    request: pytest.FixtureRequest,
 ) -> None:
     """The simulation loop at `progress` costs at most half again its `off` host time.
 
@@ -262,21 +262,27 @@ def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
     cost rather than a measurement of it in isolation. The two medians are
     recorded alongside the ratio so a reader can see how much room there is.
     """
-    off_seconds, progress_seconds = _median_host_times(
+    measurement = _median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
         stub_preflight=True,
     )
-    ratio = progress_seconds / off_seconds
-    record_testsuite_property(f"loop_off_ms[{witness}]", round(off_seconds * 1e3, 4))
-    record_testsuite_property(
-        f"loop_progress_ms[{witness}]", round(progress_seconds * 1e3, 4)
+    receipt = measurement.write_receipt(
+        directory=request.config.rootpath / "reports" / "simulation-timings",
+        nodeid=request.node.nodeid,
+        witness=witness,
+        stub_preflight=True,
     )
-    record_testsuite_property(f"loop_progress_over_off[{witness}]", round(ratio, 4))
+    off_seconds, progress_seconds = (
+        measurement.off_seconds,
+        measurement.progress_seconds,
+    )
+    ratio = progress_seconds / off_seconds
     assert ratio <= HOST_TIME_BAR, (
         f"progress/off host time is {ratio:.3f}x "
-        f"(off={off_seconds:.6f}s, progress={progress_seconds:.6f}s)"
+        f"(off={off_seconds:.6f}s, progress={progress_seconds:.6f}s); "
+        f"TIMING_RECEIPT={receipt}"
     )
 
 
@@ -284,24 +290,34 @@ def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
 def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
     *,
     witness: str,
-    record_testsuite_property: Callable[[str, object], None],
+    request: pytest.FixtureRequest,
 ) -> None:
     """A whole simulate call at `progress` costs at most half again its `off` host time.
 
     Same estimator as the loop row above, with nothing stubbed, so the ratio
     covers the complete `validate_simulation_inputs` preflight and period loop.
     """
-    off_seconds, progress_seconds = _median_host_times(
+    measurement = _median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
         stub_preflight=False,
     )
+    receipt = measurement.write_receipt(
+        directory=request.config.rootpath / "reports" / "simulation-timings",
+        nodeid=request.node.nodeid,
+        witness=witness,
+        stub_preflight=False,
+    )
+    off_seconds, progress_seconds = (
+        measurement.off_seconds,
+        measurement.progress_seconds,
+    )
     ratio = progress_seconds / off_seconds
-    record_testsuite_property(f"call_progress_over_off[{witness}]", round(ratio, 4))
     assert ratio <= HOST_TIME_BAR, (
         f"progress/off host time is {ratio:.3f}x "
-        f"(off={off_seconds:.6f}s, progress={progress_seconds:.6f}s)"
+        f"(off={off_seconds:.6f}s, progress={progress_seconds:.6f}s); "
+        f"TIMING_RECEIPT={receipt}"
     )
 
 
@@ -379,8 +395,8 @@ def _host_time(
 
 def _median_host_times(
     *, witness: str, log_level: LogLevel, repeats: int, stub_preflight: bool
-) -> tuple[float, float]:
-    """Return the median host time at `off` and at `log_level`, in seconds.
+) -> TimingMeasurement:
+    """Retain ordered wall times and compile counts for the warm timing batch.
 
     Both levels are warmed at this witness's subject width before any call is
     timed, and the timed calls alternate between the levels.
@@ -393,7 +409,7 @@ def _median_host_times(
     model, params, initial_conditions = WITNESSES[witness]()
     solution = model.solve(params=params, log_level="off")
     levels: tuple[LogLevel, ...] = ("off", log_level)
-    timings: dict[LogLevel, list[float]] = {level: [] for level in levels}
+    samples: list[tuple[str, float]] = []
     absorbed: list[str] = []
     with contextlib.ExitStack() as stack:
         stack.enter_context(_lcm_log_output_held_fixed())
@@ -407,17 +423,17 @@ def _median_host_times(
                 solution=solution,
                 log_level=warm_level,
             )
-        for _ in range(repeats):
-            for measured_level in levels:
-                timings[measured_level].append(
-                    _host_time(
+        with count_compile_requests() as counts:
+            for _ in range(repeats):
+                for measured_level in levels:
+                    seconds = _host_time(
                         model=model,
                         params=params,
                         initial_conditions=initial_conditions,
                         solution=solution,
                         log_level=measured_level,
                     )
-                )
+                    samples.append((measured_level, seconds))
         missing = _PREFLIGHT_VALIDATORS - set(absorbed)
         if stub_preflight and missing:
             msg = (
@@ -426,4 +442,9 @@ def _median_host_times(
                 "bare name `lcm.model` binds"
             )
             raise RuntimeError(msg)
-    return statistics.median(timings["off"]), statistics.median(timings[log_level])
+    return TimingMeasurement(
+        samples=tuple(samples),
+        trace_requests=counts.trace_requests,
+        lowering_requests=counts.lowering_requests,
+        compile_requests=counts.compile_requests,
+    )

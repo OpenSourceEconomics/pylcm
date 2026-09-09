@@ -235,12 +235,13 @@ def test_unstubbed_warm_full_call_progress_meets_existing_time_bar(
 ) -> None:
     """Keep the original paired nine-repeat whole-call 1.5x acceptance bar."""
     start = time.perf_counter()
-    off, progress = _median_host_times(
+    measurement = _median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
         stub_preflight=False,
     )
+    off, progress = measurement.off_seconds, measurement.progress_seconds
     record_property("off_ms", off * 1000)
     record_property("progress_ms", progress * 1000)
     record_property("progress_over_off", progress / off)

@@ -395,3 +395,67 @@ def _forbid_source_overflow_dispatch(**kwargs: object) -> object:
     """Detect any public execution after the deliberately overflowing source bank."""
     del kwargs
     raise AssertionError("An overflowing source reservation reached simulation")
+
+
+@pytest.mark.parametrize("selected", [(1,), (3, 1)])
+def test_preflight_action_products_use_the_selected_entry_device(
+    *, monkeypatch: pytest.MonkeyPatch, selected: tuple[int, ...]
+) -> None:
+    """Cartesian products land on the selected entry device beside live source grids."""
+    from typing import Any  # noqa: PLC0415
+
+    from _lcm.simulation.action_grids import PreflightActionGrids  # noqa: PLC0415
+    from _lcm.simulation.host_operations import (  # noqa: PLC0415
+        ProfiledSimulationOperations,
+    )
+    from _lcm.simulation.residency import (  # noqa: PLC0415
+        measure_buffer_footprint,
+        resident_bytes_by_device,
+    )
+    from tests.simulation.test_action_grid_entry_admission import (  # noqa: PLC0415
+        _inputs,
+    )
+
+    model, params, initial = _inputs(budget=2**28, devices=selected)
+    entry_device = jax.devices()[min(selected)]
+    solution = model.solve(params=params, log_level="off")
+    original_resolve = PreflightActionGrids.resolve
+    original_dispatch = ProfiledSimulationOperations.dispatch
+    products: list[Mapping[str, jax.Array]] = []
+    source_checks: list[int] = []
+
+    def dispatch(self: ProfiledSimulationOperations, **kwargs: Any) -> object:
+        arguments = kwargs["arguments"]
+        if tuple(arguments) == ("grids",):
+            sources = measure_buffer_footprint(tree=arguments)
+            missing = resident_bytes_by_device(
+                live=sources,
+                arguments=kwargs["live_footprint"](),
+                devices=tuple(sources.spans),
+            )
+            assert not any(missing.values())
+            assert kwargs["devices"] == (entry_device,)
+            source_checks.append(len(sources.spans))
+        return original_dispatch(self, **kwargs)
+
+    def resolve(self: PreflightActionGrids, **kwargs: Any) -> Mapping[str, jax.Array]:
+        product = original_resolve(self, **kwargs)
+        products.append(product)
+        return product
+
+    monkeypatch.setattr(ProfiledSimulationOperations, "dispatch", dispatch)
+    monkeypatch.setattr(PreflightActionGrids, "resolve", resolve)
+    result = model.simulate(
+        params=params, initial_conditions=initial, solution=solution, log_level="debug"
+    )
+    assert source_checks == [1]
+    assert len(products) == 1
+    assert all(array.devices() == {entry_device} for array in products[0].values())
+    np.testing.assert_array_equal(products[0]["choice"], [0, 0, 0, 1, 1, 1])
+    np.testing.assert_array_equal(products[0]["saving"], [0, 1, 2, 0, 1, 2])
+    np.testing.assert_array_equal(
+        result.to_dataframe(use_labels=False)
+        .iloc[0][["choice", "saving", "value"]]
+        .to_numpy(dtype=float),
+        [1, 1, 6],
+    )

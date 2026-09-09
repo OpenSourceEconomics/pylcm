@@ -24,6 +24,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
 from _lcm.engine import Regime as EngineRegime
 from _lcm.identity_transition import _IdentityTransition
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.functools import _PositionalAdapter, allow_args
@@ -1606,8 +1607,13 @@ def test_execution_like_field_name_on_user_callable_remains_semantic() -> None:
     )
 
 
-def _fingerprint_space(*, regime_params: object) -> SimpleNamespace:  # noqa: ARG001
+def _fingerprint_space(
+    *,
+    regime_params: object,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> SimpleNamespace:
     """Return one fixed representative space for the focused fingerprint test."""
+    del regime_params, process_grid_resolver
     return SimpleNamespace(
         states={"wealth": np.asarray([1.0, 2.0])},
         discrete_actions={},

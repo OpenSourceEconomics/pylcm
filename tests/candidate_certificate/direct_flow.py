@@ -102,6 +102,7 @@ MODEL_SOURCE = "src/lcm/model.py"
 SOLVER_API_SOURCE = "src/lcm/_solver_api/replay.py"
 BACKWARD_INDUCTION_SOURCE = "src/_lcm/solution/backward_induction.py"
 PERIOD_REPLAY_SOURCE = "src/_lcm/solution/period_replay.py"
+ACTION_GRID_SOURCE = "src/_lcm/simulation/action_grids.py"
 INITIAL_CONDITIONS_SOURCE = "src/_lcm/simulation/initial_conditions.py"
 RESULT_SOURCE = "src/lcm/result.py"
 RESULT_DATAFRAME_SOURCE = "src/_lcm/simulation/result_dataframe.py"
@@ -201,6 +202,8 @@ SOLVE_PENDING_WORK_SOURCE = "src/_lcm/execution/pending_work.py"
 NATIVE_VALUES_SOURCE = "src/_lcm/solution/native_values.py"
 NATIVE_ARCHIVE_SOURCE = "src/_lcm/persistence/solution.py"
 
+_ACTION_GRID_SOURCES = (ACTION_GRID_SOURCE,)
+
 _UNIFORM_PROCESS_SOURCES = (
     PROCESS_GRID_RESOLUTION_SOURCE,
     UNIFORM_PROCESS_GRID_SOURCE,
@@ -213,6 +216,7 @@ _UNIFORM_PROCESS_SOURCES = (
 
 
 _CERTIFIED_CORRIDOR_SOURCES = (
+    *_ACTION_GRID_SOURCES,
     *_UNIFORM_PROCESS_SOURCES,
     NATIVE_VALUES_SOURCE,
     NATIVE_ARCHIVE_SOURCE,
@@ -328,6 +332,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
+    ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
     SUPPORT_TRANSITION_CHECKS_SOURCE: "4e0ee701b107d0195215bd2f44fbc5c622bc7419d24414819ad35e55e2ff4b57",
     SUPPORT_DIAGNOSTICS_SOURCE: "031dc0d584faec8d055d25b3099d71e4f76c71cbb4670ad8e85cb2a4746bbb09",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
@@ -350,7 +355,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "530f4ff6cb61120d052d1993e0b0265799f5b81f4c4a8a21b473137c593cedb3",
     COMBINED_CHUNK_PROFILES_SOURCE: "88c16b60ce3cf7fc90c8b2ecbaca049e5c9324eeae4aa027c07f9d806884030e",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "e2307fd782e6de6d6adc351129b2487017f369161f77597500469c2646c2f4d8",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "11bd98abce6007610e4bc38a5386dd7beb2ce881df91ca956fdc07a5e38eaf3c",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32",
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "01e626e177210d9638ce1d359f67de44cdb950b63155f6c6f643173147570fbc",
     COMBINED_SOLUTION_COPIES_SOURCE: "4fb09ef5993a4e351397b0e342f7debfee9e583201066c03a31021964a1c4a2d",
@@ -362,7 +367,7 @@ _SOURCE_SEALS = {
     COMBINED_STORES_SOURCE: "d7dc416f94bb09fad9dcc7df3a543935f965b4ebfb4184d621de15f0a1408d96",
     SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
-    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "94d771f8622719277675539cfb3a8bb787d00e2ad00d2c8b03c35a73dc046ad1",
+    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "a0832b09f6eee730722564fc2ad5c337f7a2bc09510a5e03b4945653067bd0e6",
     NBEGM_SOURCE: "32037ec1fc4e67cf7523d4a574e0172b91e1e600bfdacfbd2f8afa987319c0a4",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
@@ -411,14 +416,14 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "847f9bfa7d51281347cb02c9654348f688e6751632d8985082739f34839773ee",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "3f39fbdb281a034d0376481a8cd82e12a1c551b76fd39893fdbe068ae842a268",
+    SIMULATION_SOURCE: "270a91775a45a16d3e195b2d4a9f1f808f5da1d6d3931783b5c7b7ae86931f2b",
     SIMULATION_TRANSITIONS_SOURCE: "76ba02db6b40070033d1c6b3fd5769a675ff8c1d27e2bb8b179246c06be8066e",
     SIMULATION_COMPILE_SOURCE: "e8e766d55bf0367827170fb6a8210c076197827f8fe8bb32f89bfc536d50c073",
-    MODEL_SOURCE: "660573171e3e28bbf803557f678bf616eb719f4d819bc2d0cbe057e0fc0552b1",
+    MODEL_SOURCE: "302ab30af028df87d7e4d04ec7c02899b417fd4e5a563e9386152d00eac78cce",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "1f7b4f611a42a1d80e80dbb80f65399b5907822d5d763f20ae39b7ba63094faf",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
-    INITIAL_CONDITIONS_SOURCE: "97a1f25eae6bebd45128e1a3da2d24bb5274c2715cfa7a0aa53a772310b2a0dd",
+    INITIAL_CONDITIONS_SOURCE: "4fced3517018b012adf40cb4167c45d73b9774186b134797231155a969ae3cd7",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
@@ -3173,7 +3178,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
         SIMULATION_SOURCE: (
             "41410e952f1e4ef46fd72e6a01c24f349e7d5980e9f325cd3f66a4e16e0afea4",
             {
-                "_simulate_regime_in_period": "0ca0d03e7d0b5df8a5f7fecac4ba93c96b7e992c7a0fb6768c5dfdb5dfa42895",
+                "_simulate_regime_in_period": "35f1f24d46ba123e1ab8cb1b8cc8611feacb23eb835077042baa194643b7d78c",
                 "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
                 "simulate": "10adc45314d6d082ef948ab863bbc445d6d23bcff73b96fd9e9c21768884dbfd",
                 "_simulate_subject_chunk": "9d5963990b016b3c84ac403330a3211eedcc8b93e6f384e8677e2b2e9d6d0e4f",
@@ -3202,7 +3207,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
                 "Model._resolve_simulate_regimes": "20f6a28c67270f2dea7e234644a48df726afaad3bb68e0d41b0be9bde2fd4953",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model._ensure_simulate_compiled": "9286fc6c1e441c181fdf85cb6c8353156e55509aeac16d5ad82feeb0920551cd",
-                "Model.simulate": "2b9143d2f513fbafc71368c2357fee94779969aecdedf0bdba42c0a8c1424664",
+                "Model.simulate": "2f97194b64eac04c0be0ccb7c27ecafb7c775a9e3e07f36edda0fc99bc2a3aa8",
                 # Fixed caller owners flow through both private automatic-solve
                 # boundaries without becoming numerical operands or cache keys.
                 "Model._solve_from_flat_params": "289c7ee9091c1db802dd0e242f466f058f7dc045c2d07a9dedf8741262f3bb27",
@@ -3275,7 +3280,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: (
-        "f9b48ff3e853703137491b7d2c577e6cb90538b7231a98c8c3df2f8c6da078e3",
+        "4ca5cec2657cf85fb865f2d3bbf66ef99b59bd5e8f0d93b3484c548c1fdedc26",
         {
             "SimulationEntryAllocations.snapshot": "3d6f0df5cbf4a49bbcb305a4db03698b5d6190b148c2f9eade3944db0f9d3367",
             "SimulationEntryAllocations.solve_input_roots": "f07a0bebb0c5ae4103acff0f791c0529072096bd043f67af6db801b34f765369",
@@ -3285,22 +3290,23 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "SimulationEntryAllocations.update_solution": "c0b444df24bb2bc44e0d3db1253353b129ca4c881063066a59fcb7c6a37d7972",
             "SimulationEntryAllocations.close": "b662848316cdc45090e3e37b26aa4f1f6a3bbd7afbc3fddde351f8bb8c20ef08",
             "_pad_initial_leaf": "b5ce0e61085c360e97280d593948a3e8e775e10424620a905c038f34142dd7a0",
+            "SimulationEntryAllocations.place_solve_parameters": "1a3cf57127857cb1dc8a154de9aedfa3f07aba9eab142a0af5424a0588891297",
         },
     ),
     # The entry coordinator preserves both validation families and passes the
     # real retained inventory to each newly profiled summary allocation.
     INITIAL_CONDITIONS_SOURCE: (
-        "8cb0ae7c5e1fbb6acd4f772a2e072a5e535a93c4113206fc4ea710ee7468633b",
+        "61cf36bdbe630e4df313028e18e15ab977cd19069b84719428113dc698bba8ed",
         {
-            "validate_simulation_inputs": "0261cbb3b2cafe007942e910d042007b654c913bdd49c266d334d2621f0efc68",
+            "validate_simulation_inputs": "154f5934643fb3b43fbccc40604cbfdee392fe463ac9d8ff2281680949c30344",
             "_preflight_memory": "24af3b888fd7f85f2f580b19b08c0ed565ed2bc3da34ed883c4e7982f5bc5caf",
             "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
             "_pack_initial_summary": "504e89911be3016190066e13c8acebdb890328a4a7d40c4f9e8afd6a6f0b748a",
             "_read_initial_cohorts": "c2de600ad5640aabae10671db6123ec1dcd7dac80b9bf50a8a21e022d30838ad",
-            "validate_initial_conditions": "79fe5318660983098e643fecb990286d688e26be60aff91af4f5f19723a4de4d",
-            "_collect_feasibility_errors": "a036b455cf0ce9b7ee5c61f2a9fed63d45c903f9b5edbf326358fcad2cea963a",
+            "validate_initial_conditions": "9164574849bb0804f9315310b3fb656102761d6c6e41d1778f75daa834652098",
+            "_collect_feasibility_errors": "3fef89c11ff904192cfde03bb04608d4e41c4c02c9a1c7f1048f2ded2f0f4eac",
             "_age_specialized_feasibility_message": "1eefe701cada0b668ab2eab2e404120b47d2c65ff390afeb1e726ae420fde174",
-            "_check_regime_feasibility": "ba11b4813b48c67ec36a2fc32197edcfe164d17bde57a6e2538c09ce3f806c72",
+            "_check_regime_feasibility": "4a1a2f8e04834624a5c49c9aaa1b177a11943ce1f4a9367c99a7481f88d08443",
             "_gather_feasibility_inputs": "042f8474176d738b9219516fd96c3d09c5ccc3e4ce18d0641bede57a8ce7d40e",
             "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
             "_constant_feasibility_flag": "f7b994fa04576c7157f8bab30ef0e17126c181ba874cbe493c1e19e6be056f17",
@@ -3764,7 +3770,7 @@ _FINITE_BUDGET_CONTRACTS = {
         "7211de8026853ac60d65e174bc2951d958351a035188e74a504aeaa1002361af",
         {
             "profile_forward_programs": "9fec9838321544ee2dc2db2eea3f52ca1ff17e2a55de08959eacefb6204b4f79",
-            "profile_forward_unit": "24c122e4bc4abc5e53ee25d028e7c6345468355a5f2fa0064063b8a1e3154b2a",
+            "profile_forward_unit": "537ea91ec4c7fe6300ec89d3ab2dd3ad4d8ce6ee642c9d9f90d73da2a5da560c",
             "_profile_finite_decision": "25c0274cffcc2b261463404beb0a1ad6e4b70bed6f6b8bd873c764429567bcbe",
             "_abstract_policy_leaf": "96e133ac576cd9b40afbf10907084378253b43bf9376d39d0faa3743d58b0cd2",
         },
@@ -3780,7 +3786,7 @@ _FINITE_BUDGET_CONTRACTS = {
         "41410e952f1e4ef46fd72e6a01c24f349e7d5980e9f325cd3f66a4e16e0afea4",
         {
             "simulate": "10adc45314d6d082ef948ab863bbc445d6d23bcff73b96fd9e9c21768884dbfd",
-            "_simulate_regime_in_period": "0ca0d03e7d0b5df8a5f7fecac4ba93c96b7e992c7a0fb6768c5dfdb5dfa42895",
+            "_simulate_regime_in_period": "35f1f24d46ba123e1ab8cb1b8cc8611feacb23eb835077042baa194643b7d78c",
             "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
             "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
@@ -3795,7 +3801,7 @@ _FINITE_BUDGET_CONTRACTS = {
     "src/lcm/model.py": (
         "b2e3f95aa9414d6f533e8ac61ec9724ff8b91e7b2149fc0e6aacb64d0fd8f07d",
         {
-            "Model.simulate": "2b9143d2f513fbafc71368c2357fee94779969aecdedf0bdba42c0a8c1424664",
+            "Model.simulate": "2f97194b64eac04c0be0ccb7c27ecafb7c775a9e3e07f36edda0fc99bc2a3aa8",
         },
     ),
 }
@@ -4059,7 +4065,7 @@ _COMBINED_INPUT_CONTRACTS = {
         {
             "AbstractSimulationProfile.__post_init__": "363e5274bc77382335a7ac5d5200ed644324ff361f578889d29dfac63bf3aa31",
             "profile_forward_programs": "9fec9838321544ee2dc2db2eea3f52ca1ff17e2a55de08959eacefb6204b4f79",
-            "profile_forward_unit": "24c122e4bc4abc5e53ee25d028e7c6345468355a5f2fa0064063b8a1e3154b2a",
+            "profile_forward_unit": "537ea91ec4c7fe6300ec89d3ab2dd3ad4d8ce6ee642c9d9f90d73da2a5da560c",
             "_profile_program": "51bac868a7c4c43b1ccca2253420be8107ac39fb85e86e12a8c1e91a22ef66c5",
             "_stochastic_keys": "dee659c1811c43e460e7e3d77191d61166c7df35b322128400244b3cbe07aa36",
             "_shared_tree": "69d4bc1f7c0f179d2c31bbb7fc5bae56005e713c5213b0c44cd262158d7fb858",
@@ -4192,7 +4198,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/entry_allocations.py": (
-        "f9b48ff3e853703137491b7d2c577e6cb90538b7231a98c8c3df2f8c6da078e3",
+        "4ca5cec2657cf85fb865f2d3bbf66ef99b59bd5e8f0d93b3484c548c1fdedc26",
         {
             "SimulationEntryAllocations.copy_solution_leaf": "e4a19117088da19af2513976ccb2673f23fb21799ef5893dd6559ae091628de0",
             "SimulationEntryAllocations.release_foreign_copies": "096914c39bdc6f0f1668cbbad08d7d4b389d79448df16888ef471573b827e06f",
@@ -4208,7 +4214,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "8cb0ae7c5e1fbb6acd4f772a2e072a5e535a93c4113206fc4ea710ee7468633b",
+        "61cf36bdbe630e4df313028e18e15ab977cd19069b84719428113dc698bba8ed",
         {
             "_CarrierWriter.__call__": "697bae0eaa97d3806c3079466e8c3de66ce08eec331d66402da3fa02958a573e",
             "_build_admitted_initial_states": "ca3e5c754d9c86385c7302441e2199c338239d89edde06c5620874793afc68ec",
@@ -5165,6 +5171,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         tree = parsed.get(relative)
         if tree is not None:
             new_errors = _simulation_program_corridor_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _ACTION_GRID_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _action_grid_errors(tree=tree, source=relative)
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
@@ -6192,7 +6205,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/entry_allocations.py": (
-        "f9b48ff3e853703137491b7d2c577e6cb90538b7231a98c8c3df2f8c6da078e3",
+        "4ca5cec2657cf85fb865f2d3bbf66ef99b59bd5e8f0d93b3484c548c1fdedc26",
         {
             "SimulationEntryAllocations.__post_init__": "ffa19e8bc72ec7fc9d0382c3cc4f6c7a501059dec278e6e3b7a1c5cc1fb27e18",
             "SimulationEntryAllocations.snapshot": "3d6f0df5cbf4a49bbcb305a4db03698b5d6190b148c2f9eade3944db0f9d3367",
@@ -6202,12 +6215,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "8cb0ae7c5e1fbb6acd4f772a2e072a5e535a93c4113206fc4ea710ee7468633b",
+        "61cf36bdbe630e4df313028e18e15ab977cd19069b84719428113dc698bba8ed",
         {
-            "validate_simulation_inputs": "0261cbb3b2cafe007942e910d042007b654c913bdd49c266d334d2621f0efc68",
-            "validate_initial_conditions": "79fe5318660983098e643fecb990286d688e26be60aff91af4f5f19723a4de4d",
-            "_collect_feasibility_errors": "a036b455cf0ce9b7ee5c61f2a9fed63d45c903f9b5edbf326358fcad2cea963a",
-            "_check_regime_feasibility": "ba11b4813b48c67ec36a2fc32197edcfe164d17bde57a6e2538c09ce3f806c72",
+            "validate_simulation_inputs": "154f5934643fb3b43fbccc40604cbfdee392fe463ac9d8ff2281680949c30344",
+            "validate_initial_conditions": "9164574849bb0804f9315310b3fb656102761d6c6e41d1778f75daa834652098",
+            "_collect_feasibility_errors": "3fef89c11ff904192cfde03bb04608d4e41c4c02c9a1c7f1048f2ded2f0f4eac",
+            "_check_regime_feasibility": "4a1a2f8e04834624a5c49c9aaa1b177a11943ce1f4a9367c99a7481f88d08443",
         },
     ),
     "src/_lcm/simulation/simulate.py": (
@@ -6289,7 +6302,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "Model._consume_foreign_solution": "4f4323aed83b0f722f019a80320d29f223a6c6d0d9432e84c39b9e2f0976c0f3",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
-            "Model.simulate": "2b9143d2f513fbafc71368c2357fee94779969aecdedf0bdba42c0a8c1424664",
+            "Model.simulate": "2f97194b64eac04c0be0ccb7c27ecafb7c775a9e3e07f36edda0fc99bc2a3aa8",
             "Model._resolve_compile_batch_size": "5594312f8a99395d2b674b017abcbbaf67349b25c129a11deff6949dce4156ac",
             "Model._ensure_simulate_compiled": "9286fc6c1e441c181fdf85cb6c8353156e55509aeac16d5ad82feeb0920551cd",
         },
@@ -6319,6 +6332,130 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
 }
+
+
+_ACTION_GRID_CONTRACTS = {
+    "src/_lcm/simulation/action_grids.py": (
+        "a7380cbf9a3a4b2359f02bc759260ec57981908a673736a067fc0ac69837ac59",
+        {
+            "PreflightActionGrids.resolve": "7a7cd711bce8db510ff03af04d1c992f1671d9b2060846b53d5f39041692c451",
+            "PreflightActionGrids.close": "9551fdaca558706aeb32a670e27daf66e9e1ae0fddce3242be2a02b67c6b7ee9",
+        },
+    ),
+    "src/_lcm/simulation/initial_conditions.py": (
+        "61cf36bdbe630e4df313028e18e15ab977cd19069b84719428113dc698bba8ed",
+        {
+            "validate_simulation_inputs": "154f5934643fb3b43fbccc40604cbfdee392fe463ac9d8ff2281680949c30344",
+            "validate_initial_conditions": "9164574849bb0804f9315310b3fb656102761d6c6e41d1778f75daa834652098",
+            "_collect_feasibility_errors": "3fef89c11ff904192cfde03bb04608d4e41c4c02c9a1c7f1048f2ded2f0f4eac",
+            "_check_regime_feasibility": "4a1a2f8e04834624a5c49c9aaa1b177a11943ce1f4a9367c99a7481f88d08443",
+            "_build_flat_action_grid": "65b4591dd17c07ed9e30c5ddf8f89ead9a2899c2af663b9a1d1286fb9e990e0a",
+        },
+    ),
+}
+
+
+def _action_grid_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Pin preflight producer admission, reuse and cleanup independently of byte seals."""
+    surface, callables = _ACTION_GRID_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="action grid admission", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append("action grid admission: module bindings or owner schema changed")
+    return errors
+
+
+_ACTION_GRID_MUTATIONS = {
+    "action_grid:budget_guard_bypassed": (
+        "src/_lcm/simulation/action_grids.py",
+        "PreflightActionGrids.resolve",
+        "expression",
+        "self.memory is None",
+        "True",
+        1,
+    ),
+    "action_grid:input_identity_layout_omitted": (
+        "src/_lcm/simulation/action_grids.py",
+        "PreflightActionGrids.resolve",
+        "expression",
+        (
+            "(action_names, tuple((id(grids[name]), "
+            "grids[name].sharding) for name in action_names))"
+        ),
+        "(action_names,)",
+        1,
+    ),
+    "action_grid:input_owners_omitted": (
+        "src/_lcm/simulation/action_grids.py",
+        "PreflightActionGrids.resolve",
+        "expression",
+        "(grids, flat)",
+        "({}, flat)",
+        2,
+    ),
+    "action_grid:current_roots_omitted": (
+        "src/_lcm/simulation/action_grids.py",
+        "PreflightActionGrids.resolve",
+        "expression",
+        "self.memory.set_derived(retained_arrays)",
+        "None",
+        1,
+    ),
+    "action_grid:cumulative_publication_omitted": (
+        "src/_lcm/simulation/action_grids.py",
+        "PreflightActionGrids.resolve",
+        "expression",
+        "self.memory.publish(tree=(grids, flat))",
+        "None",
+        1,
+    ),
+    "action_grid:entry_and_retry_resolver_omitted": (
+        "src/_lcm/simulation/initial_conditions.py",
+        "validate_simulation_inputs",
+        "keyword",
+        "action_grid_resolver",
+        "None",
+        2,
+    ),
+    "action_grid:exit_cleanup_omitted": (
+        "src/_lcm/simulation/initial_conditions.py",
+        "validate_simulation_inputs",
+        "expression",
+        "contextlib.closing",
+        "contextlib.nullcontext",
+        1,
+    ),
+    "action_grid:binding_release_omitted": (
+        "src/_lcm/simulation/action_grids.py",
+        "PreflightActionGrids.close",
+        "expression",
+        "self.bindings.clear()",
+        "None",
+        1,
+    ),
+    "action_grid:publication_release_omitted": (
+        "src/_lcm/simulation/action_grids.py",
+        "PreflightActionGrids.close",
+        "expression",
+        "self.memory.replace_outputs(tree=())",
+        "None",
+        1,
+    ),
+    "action_grid:cartesian_order_changed": (
+        "src/_lcm/simulation/initial_conditions.py",
+        "_build_flat_action_grid",
+        "keyword",
+        "indexing",
+        "'xy'",
+        1,
+    ),
+}
+
+EXPECTED_ACTION_GRID_MUTATION_COUNT = 10
+EXPECTED_ACTION_GRID_MUTATION_NAMES_SHA256 = (
+    "7e488a937dac3679ca20bb050837c968cd491e53f431ddea0ffab388a2d19d50"
+)
 
 
 def _uniform_process_errors(*, tree: ast.Module, source: str) -> list[str]:
@@ -6637,6 +6774,22 @@ _UNIFORM_PROCESS_MUTATIONS = {
 
 def uniform_process_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     """Build named producer controls without altering either historical population."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_UNIFORM_PROCESS_MUTATIONS
+    )
+
+
+def action_grid_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build the independent Cartesian preflight admission mutation population."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_ACTION_GRID_MUTATIONS
+    )
+
+
+def _callable_mutation_specs(
+    *, repo_root: Path, mutations: dict[str, tuple[str, str, str, str, str, int]]
+) -> dict[str, dict[str, str]]:
+    """Apply exact, named source mutations within one reviewed callable."""
     result: dict[str, dict[str, str]] = {}
     for name, (
         relative,
@@ -6645,7 +6798,7 @@ def uniform_process_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, st
         old,
         new,
         count,
-    ) in _UNIFORM_PROCESS_MUTATIONS.items():
+    ) in mutations.items():
         source = (repo_root / relative).read_text(encoding="utf-8")
         tree = ast.parse(source, filename=relative)
         if "." in qualname:
@@ -9701,7 +9854,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     if set(specs) & set(supplemental):
         raise ValueError("Supplemental mutation names overlap the pinned registry")
     mutated_paths = {spec["path"] for spec in (*specs.values(), *supplemental.values())}
-    certified_paths = set(_CERTIFIED_CORRIDOR_SOURCES) - set(_UNIFORM_PROCESS_SOURCES)
+    certified_paths = (
+        set(_CERTIFIED_CORRIDOR_SOURCES)
+        - set(_UNIFORM_PROCESS_SOURCES)
+        - set(_ACTION_GRID_SOURCES)
+    )
     if mutated_paths != certified_paths:
         raise ValueError(
             "mutation-source coverage differs from the certified corridor: "
@@ -9736,6 +9893,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     registered = direct_flow_mutation_specs(repo_root=root)
     supplemental = supplemental_direct_flow_mutation_specs(repo_root=root)
     uniform = uniform_process_mutation_specs(repo_root=root)
+    action_grid = action_grid_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -9743,7 +9901,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             target = temp_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(source, encoding="utf-8")
-        for name, spec in (registered | supplemental | uniform).items():
+        for name, spec in (registered | supplemental | uniform | action_grid).items():
             relative = spec["path"]
             target = temp_root / relative
             target.write_text(spec["source"], encoding="utf-8")
@@ -9755,6 +9913,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+    action_grid_cases = {name: cases.pop(name) for name in action_grid}
+    action_grid_admitted = sorted(
+        name for name, result in action_grid_cases.items() if not result["rejected"]
+    )
+    action_grid_names_match = (
+        len(action_grid_cases) == EXPECTED_ACTION_GRID_MUTATION_COUNT
+        and _mutation_name_digest(tuple(action_grid_cases))
+        == EXPECTED_ACTION_GRID_MUTATION_NAMES_SHA256
+    )
     uniform_cases = {name: cases.pop(name) for name in uniform}
     uniform_admitted = sorted(
         name for name, result in uniform_cases.items() if not result["rejected"]
@@ -9789,6 +9956,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "expected_mutation_names_sha256": (EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256),
         "mutation_names_match_expected": names_match_expected,
         "admitted_mutations": admitted,
+        "action_grid_mutations": action_grid_cases,
+        "action_grid_mutation_count": len(action_grid_cases),
+        "action_grid_names_match_expected": action_grid_names_match,
+        "admitted_action_grid_mutations": action_grid_admitted,
         "uniform_process_mutations": uniform_cases,
         "uniform_process_mutation_count": len(uniform_cases),
         "uniform_process_names_match_expected": uniform_names_match,
@@ -9802,6 +9973,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             and not admitted
             and not supplemental_admitted
             and not uniform_admitted
+            and not action_grid_admitted
+            and action_grid_names_match
             and supplemental_names_match
             and uniform_names_match
             and count_matches_expected
