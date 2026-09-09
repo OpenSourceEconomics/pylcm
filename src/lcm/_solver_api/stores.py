@@ -10,6 +10,7 @@ from typing import (
     cast,
 )
 
+from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import (
     ArtifactRef,
     _same_exact_artifact_contract,
@@ -25,6 +26,7 @@ from lcm._solver_api.identity import (
     ArtifactKey,
     LoadState,
 )
+from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
@@ -141,6 +143,7 @@ def _admit_value_entry(
     value: object,
     entries: dict[tuple[int, RegimeName], object],
     regimes_by_period: dict[int, list[RegimeName]],
+    array_copier: _ArrayCopier | None = None,
 ) -> None:
     """Check one raw coordinate exactly and for uniqueness, then own its value."""
     coordinate = (
@@ -152,7 +155,7 @@ def _admit_value_entry(
     entries[coordinate] = (
         value
         if isinstance(value, _LazyEntry) and type(value) is not _CanonicalValueEntry
-        else _canonical_value_entry(value=value)
+        else _canonical_value_entry(value=value, array_copier=array_copier)
     )
     regimes_by_period.setdefault(coordinate[0], []).append(coordinate[1])
 
@@ -172,6 +175,19 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     )
 
     def __post_init__(self) -> None:
+        self._initialize()
+
+    @staticmethod
+    def _from_entries_with_copy(
+        *, entries: Mapping[object, object], array_copier: _ArrayCopier
+    ) -> ValueStore:
+        """Use the public constructor's checks with an ephemeral copy dependency."""
+        store = object.__new__(ValueStore)
+        object.__setattr__(store, "_entries", entries)
+        store._initialize(array_copier=array_copier)  # noqa: SLF001
+        return store
+
+    def _initialize(self, *, array_copier: _ArrayCopier | None = None) -> None:
         # The mapping is read through exactly one item traversal. Its form — flat
         # ``(period, regime)`` tuples or ``period -> regime -> value`` — is decided
         # from those same items, and every raw coordinate is checked exactly and for
@@ -201,6 +217,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                     period=typed_coordinate[0],
                     regime=typed_coordinate[1],
                     value=value,
+                    array_copier=array_copier,
                 )
         else:
             for period, regime_to_value in items:
@@ -220,6 +237,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                         period=exact_period,
                         regime=regime,
                         value=value,
+                        array_copier=array_copier,
                     )
         object.__setattr__(self, "_entries", MappingProxyType(entries))
         object.__setattr__(
@@ -256,15 +274,28 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         *,
         period: _ValuePeriodBoundary,
         regime: _RegimeNameBoundary,
+        array_copier: _ArrayCopier | None = None,
     ) -> _FloatValueBoundary:
         period = _require_exact_value_period(period)
         regime = _require_exact_regime_name(regime)
         entry = self._entries[(period, regime)]
-        value = _materialize_entry(entry=entry)
+        if array_copier is not None and isinstance(entry, _LazyEntry):
+            if type(entry) is not _CanonicalValueEntry:
+                raise ExecutionPlanningError(
+                    "Budgeted foreign value materialization requires an eager "
+                    "canonical value; lazy decoder uploads are not profiled."
+                )
+            value = entry._fresh(array_copier=array_copier)  # noqa: SLF001
+        else:
+            value = _materialize_entry(entry=entry)
         if type(entry) is not _CanonicalValueEntry:
-            value = _copy_solution_value(
-                value=value,
-                label=f"Solution value at period={period}, regime={regime!r}",
+            label = f"Solution value at period={period}, regime={regime!r}"
+            value = (
+                _copy_solution_value(value=value, label=label)
+                if array_copier is None
+                else _copy_solution_value(
+                    value=value, label=label, array_copier=array_copier
+                )
             )
         return cast("FloatND", value)
 
@@ -287,11 +318,19 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
 
     def materialize(self) -> _MaterializedValuesBoundary:
         """Return an exact immutable built-in snapshot of every value entry."""
+        return self._materialize_with_copy()
+
+    def _materialize_with_copy(
+        self, *, array_copier: _ArrayCopier | None = None
+    ) -> _MaterializedValuesBoundary:
+        """Materialize through a call-local copy dependency without retaining it."""
         return MappingProxyType(
             {
                 period: MappingProxyType(
                     {
-                        regime: self._load(period=period, regime=regime)
+                        regime: self._load(
+                            period=period, regime=regime, array_copier=array_copier
+                        )
                         for regime in view
                     }
                 )

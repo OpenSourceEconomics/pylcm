@@ -387,8 +387,19 @@ excluded. Padding profiles the unchanged last-row repeat and concatenate operati
 against its actual compiler peak. Completed leaves remain owned and charged before the
 next leaf is admitted; the full canonical input mapping remains live throughout padding.
 Subsequent subject placement uses the ordered simulation devices after padding. Series
-and DataFrame conversion, foreign result copying and automatic-solve overlap remain
-separate accounting boundaries.
+and DataFrame values are assembled on the host and use the same upload admission.
+Automatic solves retain and charge these simulation inputs alongside their solve inputs.
+
+Foreign eager value stores use an explicit call-local allocator for every private JAX
+copy. Each copy preserves the source shape, dtype, sharding and device order, and admits
+the exact compiled copy's memory report against the originals and earlier copies. The
+entry owner retains intermediate copies until validation commits the resolved values;
+failure releases that transient bank. A remembered validated view needs no new copies.
+Source devices outside the simulation subset still count when they use the same backend.
+Mixed CPU/accelerator foreign copies are refused before copying; an accelerator device
+ceiling is not a host-memory budget. Budgeted foreign artifact authorities and native
+archive materializers remain unprofiled and are refused before their copying or upload
+callbacks. Their unbudgeted behavior is unchanged.
 
 ## The solver seam: keys and routes
 

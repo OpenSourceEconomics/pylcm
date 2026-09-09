@@ -70,8 +70,11 @@ _RANDOM_HELPER_MUTATIONS = {
         ),
     ),
     "simulation_random:population_split_context_ignored": (
-        '"partitionable": jax.config.jax_threefry_partitionable,',
-        '"partitionable": False,',
+        (
+            '"partitionable": jax.config.jax_threefry_partitionable,\n'
+            '            "subject_window":'
+        ),
+        '"partitionable": False,\n            "subject_window":',
     ),
     "simulation_random:declared_population_mode_ignored": (
         "with jax.threefry_partitionable(partitionable):\n        for name in names:",
@@ -453,6 +456,358 @@ _PROFILED_HELPER_MUTATIONS = {
 }
 
 
+_COMBINED_INPUT_MUTATIONS = {
+    "foreign_copy:mixed_backend_admitted": (
+        "src/_lcm/simulation/solution_copies.py",
+        (
+            "if len(platforms) != 1 or any(\n"
+            "        device.platform not in platforms for device in lea"
+            "f.sharding.device_set\n"
+            "    ):"
+        ),
+        "if False:",
+    ),
+    "foreign_copy:source_devices_omitted": (
+        "src/_lcm/simulation/solution_copies.py",
+        "dict.fromkeys((*budget_devices, *live.spans, *devices))",
+        "dict.fromkeys(budget_devices)",
+    ),
+    "foreign_copy:cache_layout_omitted": (
+        "src/_lcm/simulation/solution_copies.py",
+        'layout_key=("foreign_solution_copy", leaf.sharding),',
+        'layout_key=("foreign_solution_copy",),',
+    ),
+    "foreign_copy:resident_bank_ignored": (
+        "src/_lcm/simulation/solution_copies.py",
+        "resident_bytes=max(external.values()),",
+        "resident_bytes=0,",
+    ),
+    "foreign_copy:budget_ignored": (
+        "src/_lcm/simulation/solution_copies.py",
+        "        budget_bytes=budget_bytes,\n        resident_bytes=",
+        "        budget_bytes=None,\n        resident_bytes=",
+    ),
+    "foreign_copy:source_returned": (
+        "src/_lcm/simulation/solution_copies.py",
+        "return jnp.array(value, copy=True)",
+        "return value",
+    ),
+    "foreign_copy:physical_isolation_ignored": (
+        "src/_lcm/simulation/solution_copies.py",
+        "exclusive[device] != sum(stop - start for start, stop in spans)",
+        "False",
+    ),
+    "foreign_owner:copy_not_retained": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "self._foreign_copies.append(result)",
+        "self._foreign_copies.extend(())",
+    ),
+    "foreign_owner:copy_bank_not_inventoried": (
+        "src/_lcm/simulation/entry_allocations.py",
+        "                        tuple(self._foreign_copies),",
+        "                        (),",
+    ),
+    "foreign_model:foreign_copy_dependency_omitted": (
+        "src/lcm/model.py",
+        "array_copier=entry_allocations.copy_solution_leaf,",
+        "array_copier=None,",
+    ),
+    "foreign_model:copy_released_before_publication": (
+        "src/lcm/model.py",
+        (
+            "                entry_allocations.update_solution(\n"
+            "                    solution=solution,"
+        ),
+        (
+            "                entry_allocations.release_foreign_copies()"
+            "\n"
+            "                entry_allocations.update_solution(\n"
+            "                    solution=solution,"
+        ),
+    ),
+    "foreign_model:owner_persisted_in_memo": (
+        "src/lcm/model.py",
+        "consumed_views[memo_key] = resolved",
+        "consumed_views[memo_key] = (resolved, entry_allocations)",
+    ),
+    "foreign_model:artifact_route_guard_bypassed": (
+        "src/lcm/model.py",
+        (
+            "if array_copier is not None:\n"
+            "            for regime_name, regime in self._regimes.items"
+            "():"
+        ),
+        (
+            "if False and array_copier is not None:\n"
+            "            for regime_name, regime in self._regimes.items"
+            "():"
+        ),
+    ),
+    "foreign_model:envelope_copy_dependency_omitted": (
+        "src/lcm/model.py",
+        "solution=solution, array_copier=array_copier\n        )",
+        "solution=solution, array_copier=None\n        )",
+    ),
+    "foreign_model:materialization_dependency_omitted": (
+        "src/lcm/model.py",
+        (
+            "else value_store._materialize_with_copy(  # noqa: SLF001\n"
+            "                    array_copier=array_copier"
+        ),
+        (
+            "else value_store._materialize_with_copy(  # noqa: SLF001\n"
+            "                    array_copier=None"
+        ),
+    ),
+    "foreign_snapshot:host_upload_admitted": (
+        "src/_lcm/solution/result_snapshot.py",
+        "if not isinstance(entry.value, jax.Array):",
+        "if False and not isinstance(entry.value, jax.Array):",
+    ),
+    "foreign_entry:source_copy_dependency_omitted": (
+        "src/lcm/_solver_api/entries.py",
+        "else value._fresh(array_copier=array_copier)",
+        "else value._fresh(array_copier=None)",
+    ),
+    "foreign_entry:owner_stored": (
+        "src/lcm/_solver_api/entries.py",
+        "return _CanonicalValueEntry(value=private)",
+        "return _CanonicalValueEntry(value=(private, array_copier))",
+    ),
+    "foreign_store:load_dependency_omitted": (
+        "src/lcm/_solver_api/stores.py",
+        "value = entry._fresh(array_copier=array_copier)",
+        "value = entry._fresh(array_copier=None)",
+    ),
+    "solve_descriptors:metadata_validation_bypassed": (
+        "src/_lcm/execution/abstract_program_inputs.py",
+        (
+            "_validate_transfer_argument_metadata(\n"
+            "            program=program, read=read, transfer=transfer\n"
+            "        )"
+        ),
+        "pass",
+    ),
+    "solve_descriptors:source_occurrences_conflated": (
+        "src/_lcm/execution/abstract_program_inputs.py",
+        "occurrence = _value_read_argument_leaf(program=described, read=read)",
+        "occurrence = _value_read_argument_leaf(program=program, read=read)",
+    ),
+    "solve_descriptors:concrete_inputs_retained": (
+        "src/_lcm/execution/abstract_program_inputs.py",
+        "return replace(program, arguments=required)",
+        "return program",
+    ),
+    "solve_descriptors:weak_type_ignored": (
+        "src/_lcm/execution/abstract_program_inputs.py",
+        "weak_type=abstract.weak_type,",
+        "weak_type=False,",
+    ),
+    "solve_descriptors:planning_transfer_executed": (
+        "src/_lcm/solution/backward_induction.py",
+        "input_transfer_plan=transfer_plan,\n                abstract_inputs=True,",
+        "input_transfer_plan=transfer_plan,\n                abstract_inputs=False,",
+    ),
+    "abstract_core:concrete_operand_admitted": (
+        "src/_lcm/execution/core_program.py",
+        "if abstract_inputs:\n        _validate_abstract_inputs(program=program)",
+        (
+            "if False and abstract_inputs:\n"
+            "        _validate_abstract_inputs(program=program)"
+        ),
+    ),
+    "chunk_model:resolved_input_inventory_omitted": (
+        "src/lcm/model.py",
+        (
+            "retained_footprint=entry_allocations.snapshot(),\n"
+            "                independent_taste="
+        ),
+        (
+            "retained_footprint=DeviceBufferFootprint(spans={}),\n"
+            "                independent_taste="
+        ),
+    ),
+    "chunk_model:selected_profile_not_dispatched": (
+        "src/lcm/model.py",
+        "prepared_chunks=prepared_chunks,",
+        "prepared_chunks=None,",
+    ),
+    "chunk_admission:retained_values_ignored": (
+        "src/_lcm/simulation/chunk_admission.py",
+        "                retained_footprint,",
+        "                DeviceBufferFootprint(spans={}),",
+    ),
+    "chunk_admission:unpublished_reservation_fulfilled": (
+        "src/_lcm/simulation/chunk_admission.py",
+        "device: value - min(value, outputs.get(device, 0))",
+        "device: 0",
+    ),
+    "chunk_admission:all_inner_choices_skipped": (
+        "src/_lcm/simulation/chunk_admission.py",
+        "for widths in choices:",
+        "for widths in choices[:1]:",
+    ),
+    "chunk_planning:compiler_devices_not_checked": (
+        "src/_lcm/simulation/chunk_planning.py",
+        "if set(self.devices) != compiled_devices:",
+        "if False and set(self.devices) != compiled_devices:",
+    ),
+    "chunk_inventory:logical_aliases_deduplicated": (
+        "src/_lcm/simulation/chunk_profile_inventory.py",
+        "for leaf in jax.tree.leaves(tree):",
+        "for leaf in {id(item): item for item in jax.tree.leaves(tree)}.values():",
+    ),
+    "chunk_profiles:publication_slots_omitted": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        "add_bytes(target=published, source=payload_bytes(tree=record))",
+        "add_bytes(target=published, source={})",
+    ),
+    "chunk_profiles:whole_population_rng_changed": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        '"n_initial_states": population,',
+        '"n_initial_states": width,',
+    ),
+    "chunk_profiles:ordinary_taste_dtype_conflated": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        'impl="threefry2x32")',
+        "impl=jax.config.jax_default_prng_impl)",
+    ),
+    "chunk_profiles:period_transfer_reservation_omitted": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        "required.device_set, transfer.cost.per_device_bytes",
+        "required.device_set, 0",
+    ),
+    "chunk_profiles:outer_storage_omitted": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        "output_reservation=output_bank,",
+        "output_reservation={},",
+    ),
+    "chunk_dispatch:reserved_width_remaximized": (
+        "src/_lcm/simulation/runtime.py",
+        "fixed[axis.name] = selected",
+        "fixed[axis.name] = axis.extent",
+    ),
+    "chunk_dispatch:explicit_width_conflict_ignored": (
+        "src/_lcm/simulation/runtime.py",
+        (
+            "axis.name in configured\n"
+            "            and min(configured[axis.name], axis.extent) !="
+            " selected"
+        ),
+        "False",
+    ),
+    "chunk_dispatch:unit_width_handoff_omitted": (
+        "src/_lcm/simulation/unit_executor.py",
+        "axis_widths=self.axis_widths,",
+        "axis_widths={},",
+    ),
+    "chunk_dispatch:readmission_before_slice_omitted": (
+        "src/_lcm/simulation/simulate.py",
+        (
+            "prepared_chunks.require_chunk(\n"
+            "                memory=memory, completed_setup=completed_s"
+            "etup\n"
+            "            )"
+        ),
+        "pass",
+    ),
+    "chunk_dispatch:published_chunks_not_owned": (
+        "src/_lcm/simulation/simulate.py",
+        "memory.replace_outputs(tree=chunk_results)",
+        "memory.replace_outputs(tree=())",
+    ),
+    "chunk_diagnostics:live_carry_dropped": (
+        "src/_lcm/simulation/simulate.py",
+        (
+            "                prev_regime_ids,\n"
+            "                subject_regime_ids,\n"
+            "                new_subject_regime_ids,"
+        ),
+        "                (),\n                (),\n                (),",
+    ),
+    "chunk_diagnostics:profiled_nonfinite_bypassed": (
+        "src/_lcm/simulation/simulate.py",
+        "non_finite_by_regime(**arguments)\n        if memory is None",
+        "non_finite_by_regime(**arguments)\n        if True",
+    ),
+    "chunk_abstract:operation_concrete_operand_admitted": (
+        "src/_lcm/simulation/host_operations.py",
+        "if not isinstance(tree, jax.ShapeDtypeStruct):",
+        "if False and not isinstance(tree, jax.ShapeDtypeStruct):",
+    ),
+    "foreign_model:supplied_resolution_owner_omitted": (
+        "src/lcm/model.py",
+        (
+            "entry_allocations=entry_allocations,\n"
+            "            )\n"
+            "        else:\n"
+            "            period_to_regime_to_V_arr = None"
+        ),
+        (
+            "entry_allocations=None,\n"
+            "            )\n"
+            "        else:\n"
+            "            period_to_regime_to_V_arr = None"
+        ),
+    ),
+    "foreign_model:automatic_resolution_owner_omitted": (
+        "src/lcm/model.py",
+        (
+            "entry_allocations=entry_allocations,\n"
+            "            )\n"
+            "        if (\n"
+            "            period_to_regime_to_V_arr is None"
+        ),
+        (
+            "entry_allocations=None,\n"
+            "            )\n"
+            "        if (\n"
+            "            period_to_regime_to_V_arr is None"
+        ),
+    ),
+    "foreign_model:value_snapshot_dependency_omitted": (
+        "src/lcm/model.py",
+        'cast("ValueStore", supplied_values), array_copier=array_copier',
+        'cast("ValueStore", supplied_values), array_copier=None',
+    ),
+    "foreign_snapshot:store_dependency_omitted": (
+        "src/_lcm/solution/result_snapshot.py",
+        'entries=cast("Mapping[object, object]", entries), array_copier=array_copier',
+        'entries=cast("Mapping[object, object]", entries), array_copier=None',
+    ),
+    "foreign_entry:owned_read_dependency_omitted": (
+        "src/lcm/_solver_api/entries.py",
+        'value=self.value, label="Owned solution value", array_copier=array_copier',
+        'value=self.value, label="Owned solution value", array_copier=None',
+    ),
+    "foreign_entry:leaf_dependency_omitted": (
+        "src/lcm/_solver_api/entries.py",
+        "leaf=value, label=label, array_copier=array_copier",
+        "leaf=value, label=label, array_copier=None",
+    ),
+    "foreign_store:admission_dependency_omitted": (
+        "src/lcm/_solver_api/stores.py",
+        "else _canonical_value_entry(value=value, array_copier=array_copier)",
+        "else _canonical_value_entry(value=value, array_copier=None)",
+    ),
+    "foreign_store:flat_coordinate_dependency_omitted": (
+        "src/lcm/_solver_api/stores.py",
+        "value=value,\n                    array_copier=array_copier,",
+        "value=value,\n                    array_copier=None,",
+    ),
+    "foreign_store:nested_coordinate_dependency_omitted": (
+        "src/lcm/_solver_api/stores.py",
+        "value=value,\n                        array_copier=array_copier,",
+        "value=value,\n                        array_copier=None,",
+    ),
+    "foreign_store:materialize_dependency_omitted": (
+        "src/lcm/_solver_api/stores.py",
+        "period=period, regime=regime, array_copier=array_copier",
+        "period=period, regime=regime, array_copier=None",
+    ),
+}
+
+
 _FINITE_POLICY_MUTATIONS = {
     "finite_policy:discrete_leaf_omitted": (
         "src/_lcm/simulation/policy_programs.py",
@@ -577,7 +932,9 @@ def program_mutations() -> dict[str, dict[str, str]]:
         assert source.count(old) == 1, name
         mutations[name] = {"path": relative, "source": source.replace(old, new)}
     for name, (relative, old, new) in (
-        _PROFILED_HELPER_MUTATIONS | _FINITE_POLICY_MUTATIONS
+        _PROFILED_HELPER_MUTATIONS
+        | _FINITE_POLICY_MUTATIONS
+        | _COMBINED_INPUT_MUTATIONS
     ).items():
         source = (root / relative).read_text(encoding="utf-8")
         assert source.count(old) == 1, name
@@ -603,6 +960,25 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
 
     assert set(supplemental) == {
+        "solve_descriptors:required_layout_replaced",
+        "chunk_assembly:cpu_budget_exclusion_broadened",
+        "chunk_admission:setup_fulfilled_by_unrelated_inputs",
+        "chunk_offload:source_scratch_omitted",
+        "chunk_operations:population_window_shifted",
+        "chunk_planning:published_output_reservation_omitted",
+        "chunk_inventory:compiler_output_owners_omitted",
+        "chunk_profiles:action_decoder_profile_omitted",
+        "chunk_diagnostics:ownership_mask_ignored",
+        "forward_profiles:current_carrier_ignored",
+        "population_operations:entry_period_shifted",
+        "program_arguments:continuous_actions_omitted",
+        "foreign_copy:source_layout_ignored",
+        "foreign_snapshot:lazy_materializer_admitted",
+        "diagnostic_error:partial_solution_owner_omitted",
+        "diagnostic_logging:profiled_callback_bypassed",
+        "foreign_authority:copy_admission_bypassed",
+        "foreign_entry:canonical_copy_dependency_omitted",
+        "foreign_store:copy_constructor_dependency_omitted",
         "simulation_finite_policy:consumer_locator_shifted",
         "simulation_finite_policy:producer_leaf_order_changed",
         "donation:unsupported_scope_admitted",
@@ -663,6 +1039,7 @@ def test_live_simulation_program_sources_are_certified(source: str):
     + list(_RANDOM_HELPER_MUTATIONS)
     + list(_PROFILED_HELPER_MUTATIONS)
     + list(_FINITE_POLICY_MUTATIONS)
+    + list(_COMBINED_INPUT_MUTATIONS)
     + list(direct_flow._SUPPLEMENTAL_SOURCE_MUTATIONS),
 )
 def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(

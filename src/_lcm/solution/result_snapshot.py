@@ -12,6 +12,10 @@ from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+import jax
+
+from lcm._solver_api.authority import _ArrayCopier
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
     ArtifactAuthority,
     ArtifactChannel,
@@ -222,8 +226,11 @@ def own_value_store(
     return store
 
 
-def snapshot_value_store(store: _ValueStoreBoundary) -> _ValueStoreBoundary:
-    """Copy value coordinates without materializing any payload."""
+# keyword-only-exempt: primary-argument=store
+def snapshot_value_store(
+    store: _ValueStoreBoundary, *, array_copier: _ArrayCopier | None = None
+) -> _ValueStoreBoundary:
+    """Own value coordinates and detach eager payloads before later lazy reads."""
     if type(store) is not ValueStore:
         raise TypeError("Solution values must be an exact ValueStore.")
     entries = capture_exact_mapping(
@@ -232,6 +239,18 @@ def snapshot_value_store(store: _ValueStoreBoundary) -> _ValueStoreBoundary:
         snapshot_key=_snapshot_value_coordinate,
         snapshot_value=_keep_payload,
     )
+    if array_copier is not None:
+        for entry in entries.values():
+            if type(entry) is not _CanonicalValueEntry:
+                raise ExecutionPlanningError(
+                    "Budgeted foreign value materialization requires eager canonical "
+                    "values; native archive and other lazy uploads are not profiled."
+                )
+            if not isinstance(entry.value, jax.Array):
+                raise TypeError("Model solution values must contain JAX arrays.")
+        return ValueStore._from_entries_with_copy(  # noqa: SLF001 — trusted store boundary
+            entries=cast("Mapping[object, object]", entries), array_copier=array_copier
+        )
     return ValueStore(cast("Mapping[object, object]", entries))
 
 

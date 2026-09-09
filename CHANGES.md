@@ -114,6 +114,18 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   Without a budget, streamed solve axes use their bootstrap widths, capped at 64,
   unless an explicit width is supplied. An omitted width requests planning, and zero
   is not a full-width sentinel in `axis_widths`.
+- Configure subject chunks with `ExecutionConfig(axis_widths={"subject": width})`;
+  `Model.simulate(subject_batch_size=...)` is removed. Device alignment can increase
+  the outer chunk extent while preserving the requested inner width. With a budget
+  and no fixed subject width, complete chunk profiles include retained results,
+  numerical programs, RNG, diagnostics, padding and assembly. Chunk boundaries
+  preserve each original subject's random stream. `Model(n_subjects=...)` remains a
+  prewarm hint.
+- Solve candidate preparation uses shape and layout descriptors instead of allocating
+  transfer copies for each width. Budgeted foreign eager solution values use compiled
+  copy admission and retain intermediate copies through validation. Native archive
+  materialization, artifact copies and mixed-backend foreign copies remain unsupported
+  under a budget.
 - Supplied solutions on regime submeshes are accepted by simulation. Forward programs
   and profiled allocation operations recheck current retained inputs and growing
   results at dispatch. Unprofiled eager or host-driven programs fail visibly under a

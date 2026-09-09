@@ -968,6 +968,7 @@ def resolve_core_program(
     program: MaterializedCoreProgram,
     tile_widths: Mapping[str, object] | None = None,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
+    abstract_inputs: bool = False,
 ) -> ResolvedCoreProgram:
     """Validate and bind planner-owned tile widths into program.
 
@@ -978,14 +979,25 @@ def resolve_core_program(
     a streaming declaration into full materialization. This runs once per program build,
     before any period dispatch, so the input transfer plan it applies here takes no
     `cache`: there is no per-period consumer to share a copy with yet.
+
+    With `abstract_inputs=True`, every dynamic leaf must be a shape descriptor
+    carrying its required destination layout. The same read, width and transfer
+    metadata checks run, but no physical transfer is applied. The original source
+    transfer plan remains attached to the resolved program for cost accounting.
     """
     _validate_core_program(program=program)
+    if type(abstract_inputs) is not bool:
+        raise TypeError("abstract_inputs must be a bool.")
+    if abstract_inputs:
+        _validate_abstract_inputs(program=program)
     requested_widths = {} if tile_widths is None else dict(tile_widths)
     if program.disposition is CoreExecutionDisposition.PLANNED:
         (
             resolved_input_transfer_plan,
             input_transfer_specialization_key,
-        ) = _resolve_input_transfer_plan(program=program, plan=input_transfer_plan)
+        ) = _resolve_input_transfer_plan(
+            program=program, plan=input_transfer_plan, abstract_inputs=abstract_inputs
+        )
     else:
         if input_transfer_plan:
             msg = (
@@ -1034,9 +1046,13 @@ def resolve_core_program(
     return ResolvedCoreProgram(
         name=program.name,
         function=program.function,
-        arguments=apply_value_transfer_plan(
-            arguments=program.arguments,
-            plan=resolved_input_transfer_plan,
+        arguments=(
+            program.arguments
+            if abstract_inputs
+            else apply_value_transfer_plan(
+                arguments=program.arguments,
+                plan=resolved_input_transfer_plan,
+            )
         ),
         static_kwargs=width_bindings,
         requirements=program.requirements,
@@ -1162,6 +1178,7 @@ def _resolve_input_transfer_plan(
     *,
     program: MaterializedCoreProgram,
     plan: tuple[ResolvedValueTransfer, ...],
+    abstract_inputs: bool = False,
 ) -> tuple[tuple[ResolvedValueTransfer, ...], tuple[Hashable, ...]]:
     """Match resolved transfers to declarations and derive lowering-only identity."""
     transfers = tuple(plan)
@@ -1198,7 +1215,10 @@ def _resolve_input_transfer_plan(
     specialization_keys: list[Hashable] = []
     for read, transfer in zip(program.requirements.value_reads, ordered, strict=True):
         _validate_transfer_argument_metadata(
-            program=program, read=read, transfer=transfer
+            program=program,
+            read=read,
+            transfer=transfer,
+            abstract_inputs=abstract_inputs,
         )
         try:
             hash(transfer.specialization_key)
@@ -1291,6 +1311,7 @@ def _validate_transfer_argument_metadata(
     program: MaterializedCoreProgram,
     read: ValueRead,
     transfer: ResolvedValueTransfer,
+    abstract_inputs: bool = False,
 ) -> None:
     """Reject a correctly addressed transfer resolved from a stale template."""
     leaf = _value_read_argument_leaf(program=program, read=read)
@@ -1311,12 +1332,29 @@ def _validate_transfer_argument_metadata(
         raise TypeError(msg)
 
     actual_sharding = getattr(leaf, "sharding", None)
-    if actual_sharding != transfer.stored_sharding:
+    expected_sharding = (
+        transfer.source_sharding if abstract_inputs else transfer.stored_sharding
+    )
+    if actual_sharding != expected_sharding:
+        layout_role = "required" if abstract_inputs else "stored"
         msg = (
-            f"Input transfer stored-sharding mismatch at {read.source!r}: "
-            f"argument has {actual_sharding}, plan expects {transfer.stored_sharding}."
+            f"Input transfer {layout_role}-sharding mismatch at {read.source!r}: "
+            f"argument has {actual_sharding}, plan expects {expected_sharding}."
         )
         raise ValueError(msg)
+
+
+def _validate_abstract_inputs(*, program: MaterializedCoreProgram) -> None:
+    """Require explicit abstract layouts for all operands, including dead ones."""
+    if any(
+        not isinstance(leaf, jax.ShapeDtypeStruct)
+        or not isinstance(leaf.sharding, jax.sharding.Sharding)
+        for leaf in jax.tree.leaves(program.arguments)
+    ):
+        raise ExecutionPlanningError(
+            "Abstract core inputs require only ShapeDtypeStruct leaves with "
+            "explicit JAX shardings."
+        )
 
 
 def _fail_if_axis_name_invalid(*, name: object) -> None:

@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from typing import Literal
 
 import jax
@@ -236,6 +237,7 @@ def log_regime_transitions(
     prev_regime_ids: Int1D,
     new_regime_ids: Int1D,
     regime_ids_to_names: RegimeIdsToNames,
+    counts_factory: Callable[[], list[list[int]]] | None = None,
 ) -> None:
     """Log regime transition counts at debug level.
 
@@ -249,17 +251,22 @@ def log_regime_transitions(
         prev_regime_ids: Regime IDs before the transition.
         new_regime_ids: Regime IDs after the transition.
         regime_ids_to_names: Immutable mapping of regime integer IDs to regime names.
+        counts_factory: Optional call-local admitted count operation. Called only
+            at debug level; the default retains the ordinary count path.
 
     """
     if not logger.isEnabledFor(logging.DEBUG):
         return
 
     sorted_ids = sorted(regime_ids_to_names.keys())
-    id_array = jnp.array(sorted_ids)
-    from_one_hot = prev_regime_ids[:, None] == id_array[None, :]
-    to_one_hot = new_regime_ids[:, None] == id_array[None, :]
-    counts = (from_one_hot[:, :, None] & to_one_hot[:, None, :]).sum(axis=0)
-    counts_host = counts.tolist()
+    if counts_factory is None:
+        id_array = jnp.array(sorted_ids)
+        from_one_hot = prev_regime_ids[:, None] == id_array[None, :]
+        to_one_hot = new_regime_ids[:, None] == id_array[None, :]
+        counts = (from_one_hot[:, :, None] & to_one_hot[:, None, :]).sum(axis=0)
+        counts_host = counts.tolist()
+    else:
+        counts_host = counts_factory()
 
     parts: list[str] = []
     for i, from_id in enumerate(sorted_ids):

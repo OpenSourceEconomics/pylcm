@@ -17,7 +17,7 @@ from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.simulation import compile as simulation_compile
 from _lcm.simulation.simulate import _replay_nnbegm_candidates
 from _lcm.utils.logging import get_logger
-from lcm import LinSpacedGrid
+from lcm import ExecutionConfig, LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.typing import ContinuousAction, ContinuousState
@@ -46,7 +46,15 @@ def _simulate_rows(
     *, wealth: np.ndarray, illiquid: np.ndarray, subject_batch_size: int = 0
 ):
     n_subjects = len(wealth)
-    result = toy.build_model(variant="n_nbegm", n_periods=2).simulate(
+    result = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        execution_config=ExecutionConfig(
+            axis_widths={}
+            if subject_batch_size == 0
+            else {"subject": subject_batch_size}
+        ),
+    ).simulate(
         params=_PARAMS,
         initial_conditions={
             "wealth": jnp.asarray(wealth),
@@ -56,7 +64,6 @@ def _simulate_rows(
         },
         log_level="debug",
         seed=17,
-        subject_batch_size=subject_batch_size,
     )
     return (
         result.to_dataframe()
@@ -619,9 +626,20 @@ def test_candidate_ranking_is_invariant_to_subject_batching(
     """Chunk widths preserve bank identity and bound emitted floating-point levels."""
     wealth = np.array([1.0467, 0.83, 1.37, 2.21, 3.42, 4.73, 7.11])
     illiquid = np.array([2.04, 1.31, 2.63, 3.79, 5.27, 7.41, 10.13])
-    model = toy.build_model(variant="n_nbegm", n_periods=2)
-    solution = model.solve(params=_PARAMS, log_level="off")
     monkeypatch.setattr(simulation_compile, "SimulationRuntime", _RecordingRuntime)
+    width_models = {
+        width: toy.build_model(
+            variant="n_nbegm",
+            n_periods=2,
+            execution_config=ExecutionConfig(axis_widths={"subject": width}),
+        )
+        for width in (7, 3, 1)
+    }
+    # In-memory results belong to their model instance; each arm owns its solve.
+    solutions = {
+        width: width_model.solve(params=_PARAMS, log_level="off")
+        for width, width_model in width_models.items()
+    }
     for scale, shift in ((1.0, 0.0), (1.0, 0.25), (1.25, 0.0)):
         initial = {
             "wealth": wealth * scale + shift,
@@ -630,21 +648,20 @@ def test_candidate_ranking_is_invariant_to_subject_batching(
             "regime_id": np.zeros(7, dtype=np.int32),
         }
         observations = {}
-        for width in (7, 3, 1):
-            result = model.simulate(
+        for width, width_model in width_models.items():
+            result = width_model.simulate(
                 params=_PARAMS,
-                solution=solution,
+                solution=solutions[width],
                 initial_conditions=initial,
                 log_level="off",
                 seed=17,
-                subject_batch_size=width,
             )
             frame = (
                 result.to_dataframe()
                 .query("regime_name == 'alive' and period == 0")
                 .sort_index()
             )
-            runtime = model._runtime_regimes_for_shape(compile_batch_size=width)[
+            runtime = width_model._runtime_regimes_for_shape(compile_batch_size=width)[
                 "alive"
             ].simulation.programs.executor
             assert isinstance(runtime, _RecordingRuntime)

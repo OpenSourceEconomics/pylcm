@@ -83,6 +83,7 @@ from _lcm.solution import grid_search as grid_search_module
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -527,6 +528,39 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
 
     assert result["ok"], "\n".join(result["errors"])
     assert tuple(sorted(result["certified_corridor_sources"])) == CERTIFIED_SOURCES
+
+
+def test_copy_and_chunk_dependencies_are_literal_certificate_obligations():
+    """Inventory each new live dependency in the reviewed copy/profile corridor."""
+    assert isinstance(
+        _parse("src/_lcm/execution/abstract_program_inputs.py"), ast.Module
+    )
+    assert isinstance(_parse("src/_lcm/simulation/assembly.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_admission.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_offload.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_operations.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_planning.py"), ast.Module)
+    assert isinstance(
+        _parse("src/_lcm/simulation/chunk_profile_inventory.py"), ast.Module
+    )
+    assert isinstance(_parse("src/_lcm/simulation/chunk_profiles.py"), ast.Module)
+    assert isinstance(
+        _parse("src/_lcm/simulation/diagnostic_operations.py"), ast.Module
+    )
+    assert isinstance(
+        _parse("src/_lcm/simulation/forward_program_profiles.py"), ast.Module
+    )
+    assert isinstance(
+        _parse("src/_lcm/simulation/population_operations.py"), ast.Module
+    )
+    assert isinstance(_parse("src/_lcm/simulation/program_arguments.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/solution_copies.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/result_snapshot.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/validate_V.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/utils/logging.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/_solver_api/authority.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/_solver_api/entries.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/_solver_api/stores.py"), ast.Module)
 
 
 def test_streamed_reducer_sources_are_literal_certificate_obligations():
@@ -1069,6 +1103,7 @@ def _build_model(
     terminal_utility: Callable[..., FloatND] | CollectiveUtility,
     taste_shocks: bool = False,
     n_subjects: int | None = None,
+    subject_width: int | None = None,
 ) -> Model:
     """Build the one-decision model the sweeps solve.
 
@@ -1078,6 +1113,7 @@ def _build_model(
         terminal_utility: The terminal regime's utility declaration.
         taste_shocks: Whether the acting singleton declares EV1 taste shocks.
         n_subjects: Subject count to precompile, or ``None`` for the lazy path.
+        subject_width: Optional explicit forward subject width.
 
     Returns:
         The built model.
@@ -1108,6 +1144,9 @@ def _build_model(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
         n_subjects=n_subjects,
+        execution_config=ExecutionConfig(
+            axis_widths={} if subject_width is None else {"subject": subject_width}
+        ),
     )
 
 
@@ -1147,7 +1186,9 @@ def _dedup_terminal_utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _build_dedup_collision_model(*, n_subjects: int | None = 2) -> Model:
+def _build_dedup_collision_model(
+    *, n_subjects: int | None = 2, subject_width: int | None = None
+) -> Model:
     """Build same-shaped regimes whose AOT argmax partials must remain distinct."""
     wealth_grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
@@ -1175,6 +1216,9 @@ def _build_dedup_collision_model(*, n_subjects: int | None = 2) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=DedupRegimeId,
         n_subjects=n_subjects,
+        execution_config=ExecutionConfig(
+            axis_widths={} if subject_width is None else {"subject": subject_width}
+        ),
     )
 
 
@@ -1914,7 +1958,9 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned(
     compiled_n_subjects: int | None,
 ):
     """Padding and trimming preserve each subject's selected candidate."""
-    model = _build_dedup_collision_model(n_subjects=compiled_n_subjects)
+    model = _build_dedup_collision_model(
+        n_subjects=compiled_n_subjects, subject_width=2
+    )
     result = model.simulate(
         params=_dedup_params(model),
         initial_conditions={
@@ -1923,7 +1969,6 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned(
             "regime_id": jnp.full(3, DedupRegimeId.left, dtype=jnp.int32),
         },
         log_level="debug",
-        subject_batch_size=2,
     )
 
     raw = result.raw_results["left"][0]
@@ -2107,9 +2152,7 @@ _RNG_RANKS = (2.0, 1.0, 0.0, 2.0, 1.0, 0.0)
 _RNG_MASK = tuple(True for _ in _CANDIDATES)
 
 
-def _simulate_seeded_taste_routing(
-    *, model: Model, subject_batch_size: int
-) -> tuple[list[int], list[int]]:
+def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int]]:
     """Publish raw and DataFrame choices for one fixed subject-key stream."""
     result = model.simulate(
         params=_params_for_mask(model=model, mask=_RNG_MASK, ranks=_RNG_RANKS),
@@ -2120,7 +2163,6 @@ def _simulate_seeded_taste_routing(
         },
         log_level="debug",
         seed=409,
-        subject_batch_size=subject_batch_size,
     )
     raw = result.raw_results["acting"][0].actions["work"].tolist()
     frame = result.to_dataframe(additional_targets=["utility"], use_labels=False)
@@ -2135,16 +2177,18 @@ def test_seeded_taste_keys_preserve_subject_identity_across_batching(
     compiled_n_subjects: int | None,
 ):
     """A fixed subject keeps its taste draw under chunking and AOT dispatch."""
-    model = _build_model(
-        utility=_ranked_utility,
-        constraints={"candidate_mask": _candidate_mask},
-        terminal_utility=lambda: jnp.array(0.0),
-        taste_shocks=True,
-        n_subjects=compiled_n_subjects,
-    )
-    unbatched = _simulate_seeded_taste_routing(model=model, subject_batch_size=0)
-    chunked = _simulate_seeded_taste_routing(
-        model=model, subject_batch_size=_RNG_SUBJECT_BATCH_SIZE
+    unbatched, chunked = (
+        _simulate_seeded_taste_routing(
+            model=_build_model(
+                utility=_ranked_utility,
+                constraints={"candidate_mask": _candidate_mask},
+                terminal_utility=lambda: jnp.array(0.0),
+                taste_shocks=True,
+                n_subjects=compiled_n_subjects,
+                subject_width=width,
+            )
+        )
+        for width in (None, _RNG_SUBJECT_BATCH_SIZE)
     )
 
     assert unbatched == chunked
@@ -2161,10 +2205,9 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
         constraints={"candidate_mask": _candidate_mask},
         terminal_utility=lambda: jnp.array(0.0),
         taste_shocks=True,
+        subject_width=_RNG_SUBJECT_BATCH_SIZE,
     )
-    baseline = _simulate_seeded_taste_routing(
-        model=model, subject_batch_size=_RNG_SUBJECT_BATCH_SIZE
-    )
+    baseline = _simulate_seeded_taste_routing(model=model)
     original = taste_stream_module.generate_simulation_keys
 
     def reassigned_keys(**kwargs: Any) -> tuple[Any, dict[str, Any]]:
@@ -2176,9 +2219,7 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
     monkeypatch.setattr(
         taste_stream_module, "generate_simulation_keys", reassigned_keys
     )
-    shifted = _simulate_seeded_taste_routing(
-        model=model, subject_batch_size=_RNG_SUBJECT_BATCH_SIZE
-    )
+    shifted = _simulate_seeded_taste_routing(model=model)
 
     assert shifted[0] == shifted[1]
     assert shifted[0] != baseline[0]

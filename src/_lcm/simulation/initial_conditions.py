@@ -29,6 +29,7 @@ from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_i
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.Q_and_F import _get_feasibility
+from _lcm.simulation.assembly import slice_array
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.residency import (
@@ -425,6 +426,7 @@ def build_initial_states(
     initial_states: Mapping[StateName, Float1D | Int1D],
     regimes: MappingProxyType[RegimeName, Regime],
     device_ids: tuple[int, ...] = (),
+    memory: SimulationMemory | None = None,
 ) -> StatesPerRegime:
     """Build the regime-keyed state carrier from user-provided initial states.
 
@@ -444,6 +446,10 @@ def build_initial_states(
         Nested immutable mapping `{regime_name: {state_name: array}}`.
 
     """
+    if memory is not None:
+        return _build_admitted_initial_states(
+            initial_states=initial_states, regimes=regimes, memory=memory
+        )
     n_subjects = len(next(iter(initial_states.values())))
     states_per_regime: dict[
         RegimeName, MappingProxyType[StateName, Float1D | Int1D]
@@ -487,6 +493,83 @@ def build_initial_states(
         states_per_regime[regime_name] = MappingProxyType(regime_states)
 
     return MappingProxyType(states_per_regime)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CarrierWriter:
+    """Preserve boundary range checks before an admitted canonical carrier cast."""
+
+    memory: SimulationMemory
+
+    def __call__(
+        self, *, value: np.ndarray | jax.Array, dtype: np.dtype, name: str
+    ) -> jax.Array:
+        """Canonicalize on the host, then admit its selected-layout device upload."""
+        del name
+        return self.memory.run(
+            function=_cast_carrier,
+            arguments={"value": np.asarray(value, dtype=dtype)},
+            subject_arg_names=("value",),
+            static_arguments={"dtype": dtype.str},
+            subject_outputs=True,
+        )
+
+
+def _build_admitted_initial_states(
+    *,
+    initial_states: Mapping[StateName, Float1D | Int1D],
+    regimes: MappingProxyType[RegimeName, Regime],
+    memory: SimulationMemory,
+) -> StatesPerRegime:
+    """Build only after known owners fit; each fill/cast has its actual profile."""
+    memory.hold(tree=initial_states)
+    memory.check_resident()
+    template = next(iter(initial_states.values()))
+    writer = _CarrierWriter(memory=memory)
+    states_per_regime = {}
+    for regime_name, regime in regimes.items():
+        columns = {}
+        for name in regime.simulation.state_names:
+            discrete = isinstance(regime.simulation.grids[name], DiscreteGrid)
+            dtype = np.dtype(jnp.int32 if discrete else canonical_float_dtype())
+            if name not in initial_states:
+                column = memory.run(
+                    function=_fill_carrier,
+                    arguments={"template": template},
+                    subject_arg_names=("template",),
+                    static_arguments={
+                        "dtype": dtype.str,
+                        "fill_value": MISSING_CAT_CODE if discrete else float("nan"),
+                    },
+                    subject_outputs=True,
+                )
+            elif discrete:
+                column = memory.run(
+                    function=_cast_carrier,
+                    arguments={"value": initial_states[name]},
+                    subject_arg_names=("value",),
+                    static_arguments={"dtype": dtype.str},
+                    subject_outputs=True,
+                )
+            else:
+                column = safe_to_float_dtype(
+                    value=initial_states[name],
+                    name=f"initial_states.{name}",
+                    array_writer=writer,
+                )
+            columns[name] = column
+        states_per_regime[regime_name] = MappingProxyType(columns)
+    return MappingProxyType(states_per_regime)
+
+
+def _cast_carrier(*, value: jax.Array, dtype: str) -> jax.Array:
+    """Preserve the canonical column cast inside its admitted executable."""
+    return value.astype(np.dtype(dtype))
+
+
+def _fill_carrier(*, template: jax.Array, dtype: str, fill_value: float) -> jax.Array:
+    """Allocate one missing column at the exact subject extent and canonical dtype."""
+    return jnp.full(template.shape[0], fill_value, dtype=np.dtype(dtype))
 
 
 def pad_initial_conditions_to_multiple(
@@ -540,6 +623,7 @@ def trim_pad_from_raw_results(
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     original_n_subjects: int,
+    memory: SimulationMemory | None = None,
 ) -> MappingProxyType[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]]:
     """Slice every per-subject array in `raw_results` back to `original_n_subjects`.
 
@@ -584,10 +668,20 @@ def trim_pad_from_raw_results(
                 # field is a per-subject array with subjects on the leading axis.
                 if isinstance(value, Mapping):
                     sliced[name] = MappingProxyType(
-                        {k: v[:original_n_subjects] for k, v in value.items()}
+                        {
+                            k: slice_array(
+                                array=v,
+                                start=0,
+                                stop=original_n_subjects,
+                                memory=memory,
+                            )
+                            for k, v in value.items()
+                        }
                     )
                 else:
-                    sliced[name] = value[:original_n_subjects]
+                    sliced[name] = slice_array(
+                        array=value, start=0, stop=original_n_subjects, memory=memory
+                    )
             new_periods[period] = dataclasses.replace(data, **sliced)
         trimmed[regime_name] = MappingProxyType(new_periods)
     return MappingProxyType(trimmed)

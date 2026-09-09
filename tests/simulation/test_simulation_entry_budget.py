@@ -58,7 +58,9 @@ def test_original_inputs_survive_and_remain_charged_after_conversion_and_padding
 ) -> None:
     """Physical source buffers remain in admission while distinct copies execute."""
     model, base_params, _ = _small_grid_search_inputs(
-        execution_config=ExecutionConfig(device_memory_bytes=2**32)
+        execution_config=ExecutionConfig(
+            device_memory_bytes=2**32, axis_widths={"subject": 2}
+        )
     )
     original_refs: list[weakref.ReferenceType[jax.Array]] = []
     observed: list[int] = []
@@ -117,7 +119,6 @@ def test_original_inputs_survive_and_remain_charged_after_conversion_and_padding
         params=user_params(),
         initial_conditions=initial_inputs(),
         log_level="off",
-        subject_batch_size=2,
     )
     assert result.n_subjects == 3
     assert observed

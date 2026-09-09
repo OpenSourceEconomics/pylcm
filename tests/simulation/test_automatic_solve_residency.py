@@ -52,12 +52,14 @@ def _inspect_fixed_inventory(
 
 
 @pytest.mark.parametrize("omit_owners", [False, True])
-def test_automatic_solve_charges_original_and_padded_inputs(
+def test_automatic_solve_charges_original_and_canonical_inputs(
     *, omit_owners: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Inspect the actual compiler inventory, with an owner-dropping control."""
     model, params, initial = _small_grid_search_inputs(
-        execution_config=ExecutionConfig(device_memory_bytes=2**28)
+        execution_config=ExecutionConfig(
+            device_memory_bytes=2**28, axis_widths={"subject": 2}
+        )
     )
     initial = {name: jnp.repeat(value, 3) for name, value in initial.items()}
     # Accepted integer wealth owns different bytes from its canonical float copy.
@@ -93,7 +95,6 @@ def test_automatic_solve_charges_original_and_padded_inputs(
             model.simulate(
                 params=params,
                 initial_conditions=initial,
-                subject_batch_size=2,
                 log_level="off",
             )
         assert not calls
@@ -101,12 +102,12 @@ def test_automatic_solve_charges_original_and_padded_inputs(
         result = model.simulate(
             params=params,
             initial_conditions=initial,
-            subject_batch_size=2,
             log_level="off",
         )
         assert result.n_subjects == 3
         assert calls == [True]
-    assert len(normalized[0]["wealth"]) == 4
+    # Automatic solve precedes outer-chunk padding; canonical entry has three rows.
+    assert len(normalized[0]["wealth"]) == 3
     assert normalized[0]["wealth"].dtype.kind == "f"
     assert not shares_a_buffer(first=original_wealth, second=normalized[0]["wealth"])
     np.testing.assert_array_equal(original_wealth, [1, 2, 3])

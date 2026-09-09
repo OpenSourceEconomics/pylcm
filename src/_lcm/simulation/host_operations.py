@@ -28,6 +28,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import _lowering_key
 from lcm.exceptions import ExecutionPlanningError
 
@@ -68,32 +69,12 @@ class ProfiledSimulationOperations:
         subject_outputs: bool = False,
     ) -> object:
         """Place once, inspect current residency, and execute the admitted code."""
-        if type(subject_outputs) is not bool:
-            raise ExecutionPlanningError("Subject-output metadata must be a bool.")
-        original = inspect.unwrap(function)
-        if not isinstance(original, FunctionType) or original.__closure__:
-            raise ExecutionPlanningError(
-                "Profiled simulation operations require module-level pure functions."
-            )
-        if "<locals>" in original.__qualname__:
-            raise ExecutionPlanningError(
-                "Profiled simulation operations require module-level pure functions."
-            )
-        for default in (
-            *tuple(original.__defaults__ or ()),
-            *tuple((original.__kwdefaults__ or {}).values()),
-        ):
-            _static_identity(default)
-        if any(type(name) is not str for name in (*arguments, *static_arguments)):
-            raise ExecutionPlanningError("Operation argument names must be strings.")
-        static = MappingProxyType(dict(sorted(static_arguments.items())))
-        static_key = tuple(
-            (name, _static_identity(value)) for name, value in static.items()
+        static = _validated_static_arguments(
+            function=function,
+            arguments=arguments,
+            static_arguments=static_arguments,
+            subject_outputs=subject_outputs,
         )
-        if arguments.keys() & static.keys():
-            raise ExecutionPlanningError(
-                "Dynamic and static operation arguments overlap."
-            )
         if not devices or not set(devices).issubset(budget_devices):
             raise ExecutionPlanningError(
                 "The operation budget omits executing devices."
@@ -125,14 +106,14 @@ class ProfiledSimulationOperations:
         external = resident_bytes_by_device(
             live=live, arguments=argument_buffers, devices=devices
         )
-        key = _lowering_key(
-            program_identity=function,
-            arguments=placed,
-            specialization_key=static_key,
-            layout_key=("simulation_host_operation", subject_outputs),
-            placement_key=devices,
-        )
         abstract = jax.tree.map(_abstract_operand, dict(placed))
+        key = _operation_key(
+            function=function,
+            arguments=abstract,
+            static_arguments=static,
+            subject_outputs=subject_outputs,
+            devices=devices,
+        )
         plan = plan_workspace(
             axes=(),
             compile_candidate=_OperationCompiler(
@@ -154,6 +135,51 @@ class ProfiledSimulationOperations:
         result = plan.compiled.executable(**placed)
         jax.block_until_ready(result)
         return result
+
+    def prepare_abstract(
+        self,
+        *,
+        function: Callable[..., object],
+        arguments: Mapping[str, object],
+        subject_arg_names: tuple[str, ...],
+        devices: tuple[jax.Device, ...],
+        static_arguments: Mapping[str, object] = MappingProxyType({}),
+        subject_outputs: bool = False,
+    ) -> _ProfiledOperation:
+        """Profile already-placed shape descriptors without allocating or admitting.
+
+        Each operand must declare its exact required layout. Concrete inputs are
+        refused; shared containers are canonicalized exactly as at dispatch. Only
+        executable code and its compiler peak enter the shared cache.
+        """
+        static = _validated_static_arguments(
+            function=function,
+            arguments=arguments,
+            static_arguments=static_arguments,
+            subject_outputs=subject_outputs,
+        )
+        subject = subject_operand_sharding(devices=devices)
+        shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
+        abstract = {
+            name: _abstract_operation_tree(
+                tree=value,
+                required=subject if name in subject_arg_names else shared,
+            )
+            for name, value in sorted(arguments.items())
+        }
+        return self.compile_candidate(
+            key=_operation_key(
+                function=function,
+                arguments=abstract,
+                static_arguments=static,
+                subject_outputs=subject_outputs,
+                devices=devices,
+            ),
+            function=function,
+            arguments=abstract,
+            static_arguments=static,
+            output_sharding=subject if subject_outputs else None,
+        )
 
     def compile_candidate(
         self,
@@ -240,6 +266,98 @@ def _abstract_operand(value: object) -> object:
             weak_type=getattr(value, "weak_type", False),
         )
     return value
+
+
+def _validated_static_arguments(
+    *,
+    function: Callable[..., object],
+    arguments: Mapping[str, object],
+    static_arguments: Mapping[str, object],
+    subject_outputs: bool,
+) -> Mapping[str, object]:
+    """Use one pure-function and immutable-binding contract for both entry paths."""
+    if type(subject_outputs) is not bool:
+        raise ExecutionPlanningError("Subject-output metadata must be a bool.")
+    original = inspect.unwrap(function)
+    if (
+        not isinstance(original, FunctionType)
+        or original.__closure__
+        or "<locals>" in original.__qualname__
+    ):
+        raise ExecutionPlanningError(
+            "Profiled simulation operations require module-level pure functions."
+        )
+    for default in (
+        *tuple(original.__defaults__ or ()),
+        *tuple((original.__kwdefaults__ or {}).values()),
+    ):
+        _static_identity(default)
+    if any(type(name) is not str for name in (*arguments, *static_arguments)):
+        raise ExecutionPlanningError("Operation argument names must be strings.")
+    static = MappingProxyType(dict(sorted(static_arguments.items())))
+    for value in static.values():
+        _static_identity(value)
+    if arguments.keys() & static.keys():
+        raise ExecutionPlanningError("Dynamic and static operation arguments overlap.")
+    return static
+
+
+def _operation_key(
+    *,
+    function: Callable[..., object],
+    arguments: Mapping[str, object],
+    static_arguments: Mapping[str, object],
+    subject_outputs: bool,
+    devices: tuple[jax.Device, ...],
+) -> Hashable:
+    """Identify the same abstract executable at preparation and concrete dispatch."""
+    return _lowering_key(
+        program_identity=function,
+        arguments=arguments,
+        specialization_key=tuple(
+            (name, _static_identity(value)) for name, value in static_arguments.items()
+        ),
+        layout_key=("simulation_host_operation", subject_outputs),
+        placement_key=devices,
+    )
+
+
+def _abstract_operation_tree(
+    *, tree: object, required: jax.sharding.Sharding
+) -> object:
+    """Mirror placed containers while verifying every abstract leaf's layout."""
+    if isinstance(tree, Mapping):
+        return MappingProxyType(
+            {
+                name: _abstract_operation_tree(tree=value, required=required)
+                for name, value in tree.items()
+            }
+        )
+    if isinstance(tree, tuple | list):
+        values = [
+            _abstract_operation_tree(tree=value, required=required) for value in tree
+        ]
+        return tuple(values) if isinstance(tree, tuple) else values
+    if dataclasses.is_dataclass(tree) and not isinstance(tree, type):
+        return dataclasses.replace(
+            tree,
+            **{
+                field.name: _abstract_operation_tree(
+                    tree=getattr(tree, field.name), required=required
+                )
+                for field in dataclasses.fields(tree)
+                if field.init
+            },
+        )
+    if not isinstance(tree, jax.ShapeDtypeStruct):
+        raise ExecutionPlanningError(
+            "Abstract operation operands must be shape descriptors."
+        )
+    if tree.sharding != required:
+        raise ExecutionPlanningError(
+            "Abstract operation operand has the wrong required sharding."
+        )
+    return tree
 
 
 def _static_identity(value: object) -> Hashable:

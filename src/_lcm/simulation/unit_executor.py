@@ -2,6 +2,7 @@
 
 import dataclasses
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 
 import jax
 
@@ -30,6 +31,9 @@ class SimulationUnitExecutor:
     runtime: SimulationRuntime
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
+    axis_widths: Mapping[str, int] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
     on_output: Callable[[object], None] | None = None
     _outputs: list[DeviceBufferFootprint] = dataclasses.field(
         default_factory=list, init=False, repr=False
@@ -65,7 +69,9 @@ class SimulationUnitExecutor:
             n_subjects=n_subjects,
             residency=(
                 SimulationDispatchContext(
-                    live_footprint=self._live, budget_devices=self.budget_devices
+                    live_footprint=self._live,
+                    budget_devices=self.budget_devices,
+                    axis_widths=self.axis_widths,
                 )
                 if budgeted
                 else None

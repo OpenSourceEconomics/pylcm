@@ -35,6 +35,7 @@ class SimulationMemory:
     subject_devices: tuple[jax.Device, ...]
     operations: ProfiledSimulationOperations
     inputs: DeviceBufferFootprint
+    axis_widths: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     outputs: DeviceBufferFootprint = field(
         default_factory=lambda: DeviceBufferFootprint(spans={})
     )
@@ -44,6 +45,10 @@ class SimulationMemory:
     unit_inputs: object = ()
     derived: object = ()
     period_owner: PeriodSimulationReads | None = None
+
+    def __post_init__(self) -> None:
+        """Own the call's selected common specialization independently of its caller."""
+        self.axis_widths = MappingProxyType(dict(self.axis_widths))
 
     def snapshot(self, *, additional: object = ()) -> DeviceBufferFootprint:
         """Drain known transfers and inventory the current explicit live roots."""

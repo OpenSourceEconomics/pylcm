@@ -234,7 +234,7 @@ def test_nnbegm_phase_replay_boundary_is_linked_across_docs() -> None:
 
 
 def test_certified_nbegm_and_batch_widths_have_actionable_user_contracts() -> None:
-    """User docs separate native capability from mapped batch widths."""
+    """User docs separate native capability from model-owned execution widths."""
     installation = " ".join(
         (_DOCS / "getting_started" / "installation.md")
         .read_text(encoding="utf-8")
@@ -256,8 +256,10 @@ def test_certified_nbegm_and_batch_widths_have_actionable_user_contracts() -> No
     assert "during an NBEGM solve" not in installation
     assert "ExactAffineKernelUnavailableError" in installation
     assert "installed exact-affine CPU/CUDA payload" in solver_reference
-    assert "compiled batch widths" in tuning
-    assert "bounds how many entries are evaluated together" in tuning
+    assert "ExecutionConfig(axis_widths=...)" in tuning
+    assert "compiled program or host-dispatch loop" in tuning
+    assert "bounds how many entries are processed together" in tuning
+    assert "a host-dispatch axis bounds pending node calls" in tuning
     assert "They do not cap surrounding arrays" in tuning
     assert "explicit paper-mode scheduling profile" not in paper_source
     assert "Commit one `labor_supply` branch" not in paper_source

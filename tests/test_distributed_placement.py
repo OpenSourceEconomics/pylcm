@@ -11,6 +11,7 @@ import dataclasses
 import logging
 import subprocess
 import sys
+import weakref
 from collections.abc import Hashable, Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -109,6 +110,8 @@ def _make_three_type_model(
     sharded: tuple[str, ...] = (),
     devices: tuple[int, ...] | None = None,
     solver: Solver | None = None,
+    budget_bytes: int | None = None,
+    enable_jit: bool = True,
 ) -> Model:
     """A working regime over a three-valued type beside a single-device terminal one.
 
@@ -142,14 +145,132 @@ def _make_three_type_model(
         regimes={"working": working, "retired": retired},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_ThreeTypeRegimeId,
+        enable_jit=enable_jit,
         states={"type1": DiscreteGrid(category_class=_Type)},
         state_transitions={"type1": fixed_transition("type1")},
         execution_config=ExecutionConfig(
+            device_memory_bytes=budget_bytes,
             sharded_states=tuple(
                 dict.fromkeys((*sharded, *(("type1",) if distributed else ())))
             ),
             devices=devices,
         ),
+    )
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(
+    ("budget_bytes", "enable_jit", "devices"),
+    [
+        (None, True, None),
+        (128 * 1024 * 1024, True, None),
+        (None, True, (3, 1, 2, 0)),
+        (128 * 1024 * 1024, True, (3, 1, 2, 0)),
+        (None, False, (0,)),
+    ],
+)
+def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    budget_bytes: int | None,
+    devices: tuple[int, ...] | None,
+    enable_jit: bool,
+) -> None:
+    """All width candidates resolve before admission without copying real values."""
+    model = _make_three_type_model(
+        distributed=enable_jit,
+        budget_bytes=budget_bytes,
+        devices=devices,
+        enable_jit=enable_jit,
+    )
+    original_resolve = backward_induction._resolve_output_layouts_and_lowering_keys
+    original_transfer = transfers_module.apply_value_transfer
+    original_peak = backward_induction.compiler_peak_bytes
+    planning = False
+    peak_calls: list[object] = []
+    planning_copies: list[tuple[weakref.ReferenceType[jax.Array], int]] = []
+    runtime_copies: list[ResolvedValueTransfer] = []
+    runtime_reads: list[ResolvedValueTransfer] = []
+    candidate_counts: list[int] = []
+
+    def observe_peak(**kwargs: Any) -> int:
+        peak_calls.append(kwargs["compiled"])
+        return original_peak(**kwargs)
+
+    def observe_transfer(
+        *, value: object, transfer: ResolvedValueTransfer
+    ) -> jax.Array:
+        copied = original_transfer(value=value, transfer=transfer)
+        if not planning:
+            assert isinstance(value, jax.Array)
+            runtime_reads.append(transfer)
+        if transfer.kind is not ValueTransferKind.ALIGNED_LOCAL:
+            assert isinstance(value, jax.Array)
+            if planning:
+                assert not shares_a_buffer(first=value, second=copied)
+                assert copied.sharding == transfer.source_sharding
+                planning_copies.append((weakref.ref(copied), copied.nbytes))
+            else:
+                runtime_copies.append(transfer)
+        return copied
+
+    def observe_planning(**kwargs: Any) -> Any:
+        nonlocal planning
+        planning = True
+        try:
+            result = original_resolve(**kwargs)
+        finally:
+            planning = False
+        programs = result[2]
+        candidate_counts.append(len(programs))
+        assert not peak_calls, "Compiler admission must follow candidate resolution."
+        _assert_only_planning_descriptors(programs=programs, copies=planning_copies)
+        return result
+
+    monkeypatch.setattr(backward_induction, "compiler_peak_bytes", observe_peak)
+    monkeypatch.setattr(transfers_module, "apply_value_transfer", observe_transfer)
+    monkeypatch.setattr(
+        backward_induction,
+        "_resolve_output_layouts_and_lowering_keys",
+        observe_planning,
+    )
+
+    solution = model.solve(params=_PARAMS, log_level="off")
+
+    assert candidate_counts
+    assert candidate_counts[0] > 1
+    assert runtime_reads, "Real dispatch must still consume concrete value operands."
+    if enable_jit:
+        assert runtime_copies, "The compiled solve still needs cross-mesh value copies."
+    for values in solution.values.values():
+        if "retired" in values:
+            expected = np.linspace(1.0, 100.0, 12) * 0.5
+            assert_agrees_to_ulp(got=values["retired"], expected=expected, n_ulp=8)
+
+
+def _assert_only_planning_descriptors[Key: Hashable](
+    *,
+    programs: Mapping[Key, ResolvedCoreProgram],
+    copies: list[tuple[weakref.ReferenceType[jax.Array], int]],
+) -> None:
+    """Check the real pre-admission candidate tree and any copied buffers."""
+    retained = {
+        id(leaf)
+        for program in programs.values()
+        for leaf in jax.tree.leaves(program.arguments)
+        if isinstance(leaf, jax.Array)
+    }
+    live = [(ref(), size) for ref, size in copies]
+    assert all(array is not None and id(array) in retained for array, _ in live)
+    assert not live, (
+        f"Solve planning allocated and retained {len(live)} concrete copies "
+        f"({sum(size for _, size in live)} global bytes) across "
+        f"{len(programs)} candidates before width admission."
+    )
+    assert all(
+        isinstance(leaf, jax.ShapeDtypeStruct)
+        for program in programs.values()
+        for leaf in jax.tree.leaves(program.arguments)
     )
 
 

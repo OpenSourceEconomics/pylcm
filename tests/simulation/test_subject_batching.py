@@ -1,6 +1,6 @@
 """Simulating subjects in chunks must not change any simulated value.
 
-`subject_batch_size` controls how many subjects are pushed through the forward
+The ExecutionConfig subject width controls how many subjects enter the forward
 simulation at once. It is a pure memory knob: the `to_dataframe()` output must be
 identical whether subjects run in a single pass (`0`) or in chunks (`> 0`). The model
 used here has both a categorical `MarkovTransition` (health) and a continuous shock
@@ -15,7 +15,7 @@ import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import Model
+from lcm import ExecutionConfig, Model
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.processes import (
     MultiRegimeId,
@@ -39,26 +39,25 @@ def _simulate_df(
     n_subjects: int | None = None,
 ) -> pd.DataFrame:
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
-    if n_subjects is None:
-        model = base
-    else:
-        # Setting `n_subjects` makes `simulate` AOT-compile the simulate functions
-        # for the chunk shape. Rebuild the same model with it so the chunked path
-        # runs through the compiled programs rather than the lazy fallback.
-        model = Model(
-            regimes=dict(base.user_regimes),
-            regime_id_class=MultiRegimeId,
-            ages=base.ages,
-            fixed_params=dict(base.fixed_params),
-            n_subjects=n_subjects,
-        )
+    # The optional population hint prewarms the selected chunk shape.
+    model = Model(
+        regimes=dict(base.user_regimes),
+        regime_id_class=MultiRegimeId,
+        ages=base.ages,
+        fixed_params=dict(base.fixed_params),
+        n_subjects=n_subjects,
+        execution_config=ExecutionConfig(
+            axis_widths={}
+            if subject_batch_size == 0
+            else {"subject": subject_batch_size}
+        ),
+    )
     params = get_multi_regime_params("normal")
     result = model.simulate(
         log_level="debug",
         params=params,
         initial_conditions=_INITIAL_CONDITIONS,
         seed=42,
-        subject_batch_size=subject_batch_size,
     )
     return (
         result.to_dataframe(additional_targets=additional_targets)
@@ -140,14 +139,20 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
     Each chunk is offloaded to host as it completes, so the leaves stay `jax.Array`
     (not numpy) and live on the CPU device.
     """
-    model = get_multi_regime_model(n_periods=6, distribution_type="normal")
+    base = get_multi_regime_model(n_periods=6, distribution_type="normal")
+    model = Model(
+        regimes=dict(base.user_regimes),
+        regime_id_class=MultiRegimeId,
+        ages=base.ages,
+        fixed_params=dict(base.fixed_params),
+        execution_config=ExecutionConfig(axis_widths={"subject": 2}),
+    )
     params = get_multi_regime_params("normal")
     result = model.simulate(
         log_level="debug",
         params=params,
         initial_conditions=_INITIAL_CONDITIONS,
         seed=42,
-        subject_batch_size=2,
     )
 
     v_arr = result.raw_results["work"][0].V_arr

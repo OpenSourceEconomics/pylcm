@@ -4,7 +4,9 @@ Host validation and target-dtype conversion precede explicit first-selected-devi
 staging. Upload admission uses the existing destination-payload plus declared
 transfer-scratch convention; it does not invent a zero-workspace device cast.
 Pandas labels and scattered values are assembled on the host before the same numeric
-upload boundary. Foreign solution copying remains a separate operation.
+upload boundary. Foreign eager values use exact-layout compiled copies with cumulative
+ownership.
+Artifact and archive materializers require separate allocation profiles.
 """
 
 import dataclasses
@@ -23,6 +25,7 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     union_buffer_footprints,
 )
+from _lcm.simulation.solution_copies import copy_solution_leaf
 from _lcm.typing import InitialConditions
 
 
@@ -50,6 +53,10 @@ class SimulationEntryAllocations:
     """Ready outputs not yet handed to a complete stage mapping."""
     _resolved_inputs: tuple[object, ...] = dataclasses.field(default=(), init=False)
     """Validated value/policy/flag/reader trees beside the original solution."""
+    _foreign_copies: list[jax.Array] = dataclasses.field(
+        default_factory=list, init=False
+    )
+    """Ready private copies retained until foreign resolution commits or fails."""
 
     def snapshot(self) -> DeviceBufferFootprint:
         """Observe original, completed and intermediate owners without allocating."""
@@ -64,6 +71,7 @@ class SimulationEntryAllocations:
                         tuple(self._stages.values()),
                         tuple(self._pending),
                         self._resolved_inputs,
+                        tuple(self._foreign_copies),
                     )
                 ),
             )
@@ -84,7 +92,25 @@ class SimulationEntryAllocations:
             tuple(self._stages.values()),
             tuple(self._pending),
             self._resolved_inputs,
+            tuple(self._foreign_copies),
         )
+
+    def copy_solution_leaf(self, *, leaf: jax.Array, label: str) -> jax.Array:
+        """Admit and own a private copy in its original source layout."""
+        del label  # The caller owns its exact copy-validation error labels.
+        result = copy_solution_leaf(
+            leaf=leaf,
+            operations=self.operations,
+            live_footprint=self.snapshot,
+            budget_devices=self.devices,
+            budget_bytes=self.budget_bytes,
+        )
+        self._foreign_copies.append(result)
+        return result
+
+    def release_foreign_copies(self) -> None:
+        """Release temporary copy owners after resolution hands off or fails."""
+        self._foreign_copies.clear()
 
     def __call__(
         self, *, value: np.ndarray | jax.Array, dtype: np.dtype, name: str
@@ -164,6 +190,7 @@ class SimulationEntryAllocations:
         self.solution = None
         self.model_roots = ()
         self._resolved_inputs = ()
+        self._foreign_copies.clear()
         self.original_inputs = None
 
 

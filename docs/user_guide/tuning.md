@@ -144,9 +144,27 @@ Measure occupancy and memory rather than extrapolating from device memory alone.
 
 ## Batch forward simulation
 
-`model.simulate(subject_batch_size=k, ...)` bounds the subject workspace and offloads
-completed chunks to host. Random keys are assigned by global subject index, so changing
-the batch size does not change simulated draws.
+Set `ExecutionConfig(axis_widths={"subject": k})` on the model to process subjects in
+chunks. The inner compiled subject width remains fixed at `k`; the outer chunk is
+clamped to the population and rounded up to a multiple of the subject-device count. For
+example, width three uses outer chunks of four on four devices while retaining an inner
+width of three. Completed chunks are offloaded to host. Random keys retain their
+original population and global subject indices, so changing the width does not change
+simulated draws.
+
+With a device-memory budget and no fixed subject width, simulation selects the widest
+outer candidate whose complete retained storage and compiled stages fit. It tries the
+available inner widths before shrinking a chunk. The bound includes the retained
+solution, full-population inputs and RNG workspace, pending period owners, published
+results, padding, and final assembly. It is conservative about future aliases; it does
+not estimate an allocator optimum. On CPU, retaining all chunks and assembling the final
+result can impose a floor that narrower chunks cannot remove. CPU assembly after GPU
+offload uses host RAM outside the GPU ceiling.
+
+Parameterized grids and user entry laws can still allocate eagerly while shared inputs
+are completed. Their resulting arrays are counted, but this entry work is not
+pre-admitted by the chunk profiles. Budgeted host replay routes remain refused until
+their complete stages and owners have profiles.
 
 The same fixed `seed` also gives the same EV1 taste-shock choices in lazy and
 ahead-of-time simulation. Subject chunking and `Model(n_subjects=...)` change

@@ -26,6 +26,7 @@ from _lcm.engine import (
     _build_regime_sharding,
     placed_devices_for_ids,
 )
+from _lcm.execution.abstract_program_inputs import abstract_program_inputs
 from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -3872,6 +3873,11 @@ def _resolve_output_layouts_and_lowering_keys(
         )
         materialized = materialize_core_program(program=declaration, context=context)
         templates = internal_input_templates(program=materialized, producers=producers)
+        materialized, transfer_plan = _prepare_abstract_program(
+            program=materialized,
+            source_value_template=next_regime_to_V_arr[regime_name],
+            source=triple,
+        )
         width_candidates = workspace_width_candidates(
             axes=materialized.requirements.axes,
             fixed_widths=fixed_widths,
@@ -3889,6 +3895,8 @@ def _resolve_output_layouts_and_lowering_keys(
                 tile_widths=widths,
                 source_value_template=next_regime_to_V_arr[regime_name],
                 source=triple,
+                input_transfer_plan=transfer_plan,
+                abstract_inputs=True,
             )
             layout = layouts.get(triple)
             if layout is None:
@@ -4160,9 +4168,36 @@ def _resolve_program_for_execution(
     tile_widths: Mapping[str, int],
     source_value_template: object,
     source: _CoreTriple,
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...] | None = None,
+    abstract_inputs: bool = False,
 ) -> ResolvedCoreProgram:
     """Resolve the one program contract shared by eager, AOT, and replay."""
-    input_transfer_plan = (
+    if input_transfer_plan is None:
+        input_transfer_plan = (
+            _resolve_value_input_transfer_plan(
+                program=program,
+                source_value_template=source_value_template,
+                source=source,
+            )
+            if program.disposition is CoreExecutionDisposition.PLANNED
+            else ()
+        )
+    return resolve_core_program(
+        program=program,
+        tile_widths=tile_widths,
+        input_transfer_plan=input_transfer_plan,
+        abstract_inputs=abstract_inputs,
+    )
+
+
+def _prepare_abstract_program(
+    *,
+    program: MaterializedCoreProgram,
+    source_value_template: FloatND,
+    source: _CoreTriple,
+) -> tuple[MaterializedCoreProgram, tuple[ResolvedValueTransfer, ...]]:
+    """Resolve one core's exact read destinations before enumerating widths."""
+    transfers = (
         _resolve_value_input_transfer_plan(
             program=program,
             source_value_template=source_value_template,
@@ -4171,10 +4206,13 @@ def _resolve_program_for_execution(
         if program.disposition is CoreExecutionDisposition.PLANNED
         else ()
     )
-    return resolve_core_program(
-        program=program,
-        tile_widths=tile_widths,
-        input_transfer_plan=input_transfer_plan,
+    return (
+        abstract_program_inputs(
+            program=program,
+            transfers=transfers,
+            execution_sharding=source_value_template.sharding,
+        ),
+        transfers,
     )
 
 
@@ -4368,7 +4406,9 @@ def _abstract_leaf_key(*, leaf: object) -> Hashable:
         None if raw_shape is None else tuple(int(dimension) for dimension in raw_shape)
     )
     return (
-        type(leaf),
+        jax.Array
+        if isinstance(leaf, (jax.Array, jax.ShapeDtypeStruct))
+        else type(leaf),
         shape,
         _hashable_metadata(getattr(leaf, "dtype", None)),
         getattr(leaf, "weak_type", None),

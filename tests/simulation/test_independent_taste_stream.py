@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.program_types import SimulationPrograms
+from lcm import ExecutionConfig
 from lcm.exceptions import InvalidSimulationInputError
 from tests.test_models import taste_shocks_toy
 
@@ -90,17 +91,20 @@ def test_independent_seed_is_effective_and_subject_window_is_stable(
 ) -> None:
     """Chunking preserves real-row keys and changing the taste seed changes them."""
     captured = _capture_decision_keys(monkeypatch=monkeypatch)
-    model = taste_shocks_toy.get_model()
     params = taste_shocks_toy.get_params(scale=0.2)
-    solution = model.solve(params=params, log_level="debug")
     for taste_seed, count, batch in ((12, 24, 0), (12, 27, 8), (13, 24, 0)):
+        model = taste_shocks_toy.get_model(
+            execution_config=ExecutionConfig(
+                axis_widths={} if batch == 0 else {"subject": batch}
+            )
+        )
+        solution = model.solve(params=params, log_level="debug")
         model.simulate(
             params=params,
             initial_conditions=_initial_conditions(count=count),
             solution=solution,
             seed=11,
             taste_shock_seed=taste_seed,
-            subject_batch_size=batch,
             log_level="debug",
         )
     assert len(captured) == 6
@@ -141,4 +145,48 @@ def test_boolean_taste_seed_is_rejected_before_solving() -> None:
             initial_conditions=_initial_conditions(),
             taste_shock_seed=True,
             log_level="debug",
+        )
+
+
+@pytest.mark.parametrize("impl", ["threefry2x32", "rbg"])
+@pytest.mark.parametrize("partitionable", [False, True])
+def test_budgeted_padded_chunks_preserve_independent_taste_keys_and_choices(
+    *, monkeypatch: pytest.MonkeyPatch, impl: str, partitionable: bool
+) -> None:
+    """Admitted chunks keep each original row's addressed key and actual action."""
+    captured = _capture_decision_keys(monkeypatch=monkeypatch)
+    frames = []
+    params = taste_shocks_toy.get_params(scale=0.2)
+    with jax.default_prng_impl(impl), jax.threefry_partitionable(partitionable):
+        for width in (0, 3):
+            model = taste_shocks_toy.get_model(
+                execution_config=ExecutionConfig(
+                    axis_widths={} if width == 0 else {"subject": width},
+                    device_memory_bytes=None if width == 0 else 2**30,
+                )
+            )
+            solution = model.solve(params=params, log_level="off")
+            result = model.simulate(
+                params=params,
+                initial_conditions=_initial_conditions(count=7),
+                solution=solution,
+                seed=11,
+                taste_shock_seed=721,
+                log_level="off",
+            )
+            frames.append(result.to_dataframe(use_labels=False))
+    assert len(captured) == 4
+    np.testing.assert_array_equal(captured[0], np.concatenate(captured[1:])[:7])
+    # This control owns exact RNG, state and selected-action semantics. Value
+    # arithmetic remains covered by the separate width-comparison contracts.
+    for column in (
+        "subject_id",
+        "period",
+        "regime_name",
+        "wealth",
+        "work",
+        "consumption",
+    ):
+        pd.testing.assert_series_equal(
+            frames[0][column], frames[1][column], check_exact=True
         )

@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lcm import ExecutionConfig
 from tests.test_models import taste_shocks_toy
 
 pytestmark = pytest.mark.slow
@@ -85,7 +86,6 @@ def test_taste_shock_draws_are_invariant_to_subject_chunking():
     subject's simulated choices.
     """
     n_subjects = 64
-    model = taste_shocks_toy.get_model()
     params = taste_shocks_toy.get_params(scale=0.2, discount_factor=0.95)
     initial_conditions = {
         "age": jnp.full(n_subjects, 40.0),
@@ -96,13 +96,18 @@ def test_taste_shock_draws_are_invariant_to_subject_chunking():
     }
 
     results = {
-        batch_size: model.simulate(
+        batch_size: taste_shocks_toy.get_model(
+            execution_config=ExecutionConfig(
+                axis_widths={} if batch_size == 0 else {"subject": batch_size}
+            )
+        )
+        .simulate(
             params=params,
             initial_conditions=initial_conditions,
             log_level="debug",
             seed=5471,
-            subject_batch_size=batch_size,
-        ).to_dataframe(use_labels=False)
+        )
+        .to_dataframe(use_labels=False)
         for batch_size in (0, 16)
     }
 

@@ -68,6 +68,7 @@ from _lcm.regime_building.processing import (
     compute_active_periods_by_regime,
     prepare_model_structure,
 )
+from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime, lower_simulation_programs
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
@@ -149,6 +150,7 @@ from _lcm.utils.logging import (
     validation_enabled,
     validation_raises,
 )
+from lcm._solver_api.authority import _ArrayCopier
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
@@ -435,10 +437,10 @@ class Model:
     Dispatch by call shape:
 
     - `None`: purely lazy behaviour, no AOT.
-    - First `simulate(...)` with `actual_n == n_subjects`: AOT-compiles all
-      simulate functions for the chunk shape (`subject_batch_size`, clamped to
-      the population, or the whole population when unbatched), blocking before
-      solve runs, and caches them.
+    - First `simulate(...)` with `actual_n == n_subjects`: prepares simulation
+      programs for the resolved outer chunk shape after solution resolution.
+      Unbudgeted calls use the compile pool; budgeted calls compile the complete
+      chunk profile before admission. Both paths cache executable code.
     - Subsequent `simulate(...)` with the same population and chunk shape:
       reuses the cached compiled programs.
     - `simulate(...)` with a mismatching population size: warns once per size
@@ -461,8 +463,7 @@ class Model:
     """
 
     _simulate_compile_cache: dict[int, MappingProxyType[RegimeName, Regime]]
-    """AOT-compiled `regimes` keyed by chunk shape (`subject_batch_size`, or the
-    full population when unbatched)."""
+    """AOT-compiled regimes keyed by the device-aligned outer chunk shape."""
 
     _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
     """Program executors shared by lazy dispatch and prewarming for each shape."""
@@ -1088,6 +1089,12 @@ class Model:
             return self._runtime_regimes_for_shape(
                 compile_batch_size=compile_batch_size
             )
+        if self._execution.device_memory_bytes is not None:
+            # Budgeted prewarming is the abstract complete-chunk profile, prepared
+            # after solution ownership is known. It shares this runtime's code cache.
+            return self._runtime_regimes_for_shape(
+                compile_batch_size=compile_batch_size
+            )
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[compile_batch_size]
 
@@ -1107,7 +1114,11 @@ class Model:
             return self._simulate_runtime_regimes[compile_batch_size]
 
     def _resolve_solution_result(
-        self, *, solution: _SolutionResultBoundary, flat_params: FlatParams
+        self,
+        *,
+        solution: _SolutionResultBoundary,
+        flat_params: FlatParams,
+        entry_allocations: SimulationEntryAllocations | None = None,
     ) -> _ResolvedSolution:
         """Resolve one labelled result into engine replay inputs.
 
@@ -1146,12 +1157,26 @@ class Model:
                 engine_view=engine_view,
                 flat_params=flat_params,
             )
-        else:
+        elif entry_allocations is None:
             resolved = self._consume_foreign_solution(
                 solution=solution,
                 flat_params=flat_params,
                 expected_fingerprint=expected_fingerprint,
             )
+        else:
+            try:
+                resolved = self._consume_foreign_solution(
+                    solution=solution,
+                    flat_params=flat_params,
+                    expected_fingerprint=expected_fingerprint,
+                    array_copier=entry_allocations.copy_solution_leaf,
+                )
+                entry_allocations.update_solution(
+                    solution=solution,
+                    resolved_inputs=resolved,
+                )
+            finally:
+                entry_allocations.release_foreign_copies()
         consumed_views[memo_key] = resolved
         return resolved
 
@@ -1200,15 +1225,32 @@ class Model:
         solution: _SolutionResultBoundary,
         flat_params: FlatParams,
         expected_fingerprint: str,
+        array_copier: _ArrayCopier | None = None,
     ) -> _ResolvedSolution:
         """Copy and validate a result from elsewhere against model authority."""
-        solution = self._snapshot_solution_envelope(solution=solution)
+        if array_copier is not None:
+            for regime_name, regime in self._regimes.items():
+                if (
+                    regime.simulation.replay_route.policy_applicable
+                    or regime.simulation.external_replay_route is not None
+                    or regime.stakeholders is not None
+                    or regime.solution.artifact_authorities
+                ):
+                    raise ExecutionPlanningError(
+                        f"Budgeted foreign solution for regime {regime_name!r} "
+                        "requires unprofiled artifact authority or payload copies; "
+                        "only eager canonical value materialization is admitted."
+                    )
+        solution = self._snapshot_solution_envelope(
+            solution=solution, array_copier=array_copier
+        )
         metadata = solution.metadata
         authority, values, solution = self._check_solution_result_structure(
             solution=solution,
             metadata=metadata,
             flat_params=flat_params,
             expected_fingerprint=expected_fingerprint,
+            array_copier=array_copier,
         )
         policies, dissolution_flags = self._check_solution_result_artifacts(
             solution=solution,
@@ -1251,6 +1293,7 @@ class Model:
         metadata: SolutionMetadata,
         flat_params: FlatParams,
         expected_fingerprint: str,
+        array_copier: _ArrayCopier | None = None,
     ) -> tuple[
         SolutionAuthority,
         PeriodToRegimeToVArr,
@@ -1354,7 +1397,14 @@ class Model:
                 f"SolutionResult artifact payloads cannot be detached: {error}"
             ) from error
         try:
-            values = cast("ValueStore", solution.values).materialize()
+            value_store = cast("ValueStore", solution.values)
+            values = (
+                value_store.materialize()
+                if array_copier is None
+                else value_store._materialize_with_copy(  # noqa: SLF001
+                    array_copier=array_copier
+                )
+            )
         except (TypeError, ValueError) as error:
             raise InvalidSimulationInputError(
                 f"SolutionResult values cannot be materialized: {error}"
@@ -1369,7 +1419,7 @@ class Model:
 
     @staticmethod
     def _snapshot_solution_envelope(
-        *, solution: _SolutionResultBoundary
+        *, solution: _SolutionResultBoundary, array_copier: _ArrayCopier | None = None
     ) -> _SolutionResultBoundary:
         """Own exact result stores and metadata before any lazy callback can run."""
         supplied_metadata = solution.metadata
@@ -1384,7 +1434,9 @@ class Model:
             raise InvalidSimulationInputError(msg)
         try:
             snapshot = SolutionResult(
-                values=snapshot_value_store(cast("ValueStore", supplied_values)),
+                values=snapshot_value_store(
+                    cast("ValueStore", supplied_values), array_copier=array_copier
+                ),
                 metadata=snapshot_solution_metadata(supplied_metadata),
                 retained_continuations=snapshot_artifact_store(
                     store=supplied_retained_continuations
@@ -2162,7 +2214,6 @@ class Model:
         log_level: LogLevel,
         seed: int | None = None,
         taste_shock_seed: int | None = None,
-        subject_batch_size: int = 0,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
@@ -2172,6 +2223,10 @@ class Model:
         When ``solution`` is omitted, the model is solved before simulation. Pass
         the complete result from ``solve()`` to replay a separate solve without
         splitting values from solver-specific artifacts.
+
+        The model's execution configuration controls subject chunking through
+        ``axis_widths['subject']``. Per-subject random streams use the original
+        population and global row positions, independently of chunk boundaries.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -2211,15 +2266,6 @@ class Model:
                 resizing that discrete domain changes the stream. Uses Threefry;
                 comparisons require matching precision/backend and JAX random
                 configuration. `None` preserves the ordinary seeded stream.
-            subject_batch_size: How to partition the subject axis of the forward
-                simulation. Results are invariant to this knob — per-subject RNG
-                keys are drawn for the full population and sliced by global index.
-                - `0` (default): one pass over the whole (padded) population.
-                - `> 0`: chunk the subjects into passes of this size, bounding the
-                  per-period device workspace. Under distributed grids each chunk
-                  is placed onto the subject mesh axis (the size is rounded up to
-                  a device multiple); the value-function arrays stay sharded
-                  throughout.
             log_level: Verbosity, and the runtime-validation policy it implies.
                 Required — pick deliberately for the situation:
                 - `"off"` — silent; initial-condition, transition-probability,
@@ -2294,7 +2340,9 @@ class Model:
                 period_to_regime_to_dissolution_flags,
                 period_to_regime_to_replay_reader,
             ) = self._resolve_solution_result(
-                solution=solution, flat_params=flat_params
+                solution=solution,
+                flat_params=flat_params,
+                entry_allocations=entry_allocations,
             )
         else:
             period_to_regime_to_V_arr = None
@@ -2327,25 +2375,12 @@ class Model:
         )
         if entry_allocations is not None:
             entry_allocations.publish(stage="initial", tree=initial_conditions)
-        # Align the subject axis to the block size the simulate path needs.
-        # Every chunk must match the AOT-compiled shape, and under distributed
-        # grids each chunk is additionally placed onto the subject mesh axis,
-        # so the chunk itself is rounded up to a device multiple (mirroring
-        # `_resolve_compile_batch_size`) before the subject axis is padded to
-        # a multiple of it. Without chunking, distribution alone needs a
-        # device multiple. Pad rows duplicate the last real subject and are
-        # trimmed inside `simulate`; a multiple of 1 (single pass) is a no-op.
+        # Validate canonical device-aligned inputs before automatic solving.
+        # Additional chunk padding follows selection with actual solution owners.
+        subject_batch_size = self._execution.axis_widths.get("subject", 0)
         n_devices = len(self._execution.device_ids)
         distributes = self._distributes_subjects() and n_devices > 1
-        if subject_batch_size > 0:
-            raw_n_subjects = len(next(iter(initial_conditions.values())))
-            alignment = min(subject_batch_size, raw_n_subjects)
-            if distributes:
-                alignment = -(-alignment // n_devices) * n_devices
-        elif distributes:
-            alignment = n_devices
-        else:
-            alignment = 1
+        alignment = n_devices if distributes else 1
         if entry_allocations is None:
             initial_conditions, original_n_subjects = (
                 pad_initial_conditions_to_multiple(
@@ -2389,14 +2424,6 @@ class Model:
         # dispatch actually sees. They are equal unless distributed padding ran.
         actual_n_subjects = original_n_subjects
         padded_n_subjects = len(next(iter(initial_conditions.values())))
-        compile_batch_size = self._resolve_compile_batch_size(
-            subject_batch_size=subject_batch_size,
-            padded_n_subjects=padded_n_subjects,
-            actual_n_subjects=actual_n_subjects,
-            flat_params=flat_params,
-            max_compilation_workers=max_compilation_workers,
-            log=log,
-        )
         if solution is None:
             solution = self._solve_from_flat_params(
                 flat_params=flat_params,
@@ -2418,7 +2445,9 @@ class Model:
                 period_to_regime_to_dissolution_flags,
                 period_to_regime_to_replay_reader,
             ) = self._resolve_solution_result(
-                solution=solution, flat_params=flat_params
+                solution=solution,
+                flat_params=flat_params,
+                entry_allocations=entry_allocations,
             )
         if (
             period_to_regime_to_V_arr is None
@@ -2440,11 +2469,47 @@ class Model:
             entry_allocations.publish(stage="initial", tree=initial_conditions)
         # Values and replay artifacts retain their solve placement. The forward
         # period owner acquires only the copies consumed by that period's units.
-        simulate_regimes = self._resolve_simulate_regimes(
-            actual_n_subjects=actual_n_subjects,
-            compile_batch_size=compile_batch_size,
-            log=log,
-        )
+        prepared_chunks = None
+        if entry_allocations is not None:
+            simulate_regimes = self._resolve_simulate_regimes(
+                actual_n_subjects=actual_n_subjects,
+                compile_batch_size=padded_n_subjects,
+                log=log,
+            )
+            prepared_chunks = prepare_simulation_chunks(
+                regimes=simulate_regimes,
+                flat_params=flat_params,
+                values=period_to_regime_to_V_arr,
+                ages=self.ages,
+                initial_conditions=initial_conditions,
+                regime_names_to_ids=self.regime_names_to_ids,
+                original_population=original_n_subjects,
+                retained_footprint=entry_allocations.snapshot(),
+                independent_taste=taste_shock_seed is not None,
+                log_level=log_level,
+            )
+            compile_batch_size = prepared_chunks.plan.profile.n_subjects
+            initial_conditions, _ = entry_allocations.pad(
+                initial_conditions=initial_conditions, multiple=compile_batch_size
+            )
+            entry_allocations.publish(stage="initial", tree=initial_conditions)
+        else:
+            compile_batch_size = self._resolve_compile_batch_size(
+                subject_batch_size=subject_batch_size,
+                padded_n_subjects=padded_n_subjects,
+                actual_n_subjects=actual_n_subjects,
+                flat_params=flat_params,
+                max_compilation_workers=max_compilation_workers,
+                log=log,
+            )
+            initial_conditions, _ = pad_initial_conditions_to_multiple(
+                initial_conditions=initial_conditions, multiple=compile_batch_size
+            )
+            simulate_regimes = self._resolve_simulate_regimes(
+                actual_n_subjects=actual_n_subjects,
+                compile_batch_size=compile_batch_size,
+                log=log,
+            )
         result = simulate(
             flat_params=flat_params,
             initial_conditions=initial_conditions,
@@ -2464,6 +2529,7 @@ class Model:
             subject_batch_size=compile_batch_size,
             original_n_subjects=original_n_subjects,
             device_ids=self._execution.device_ids,
+            prepared_chunks=prepared_chunks,
             retained_footprint=(
                 entry_allocations.snapshot() if entry_allocations is not None else None
             ),
@@ -2500,15 +2566,17 @@ class Model:
         max_compilation_workers: int | None,
         log: logging.Logger,
     ) -> int:
-        """Map the `subject_batch_size` knob to a concrete chunk shape.
+        """Resolve an unbudgeted ExecutionConfig subject width to an outer chunk.
 
         - `0` ⇒ the whole padded population (single pass).
-        - `> 0` ⇒ that size, clamped to the population. Under multi-device
+        - `> 0` ⇒ the configured width, clamped to the population. Under multi-device
           distribution the chunk is additionally rounded up to the next multiple
           of the device count: every chunk is placed onto the subject mesh axis
           (see `subject_array_sharding`), so its leading axis must divide evenly
-          across the devices. The value-function arrays stay sharded throughout —
-          chunking never gathers them.
+          across the devices. This alignment changes only the outer extent;
+          compiled subject tiles retain the configured inner width. Value arrays
+          retain their original solve placement, with required reads copied only
+          for the current period.
 
         Also AOT-compiles (and caches) the simulate functions for the resolved
         shape when `n_subjects` matches the population.

@@ -44,6 +44,7 @@ class _Call:
     program: CoreProgram
     arguments: Mapping[str, object]
     result: object
+    n_subjects: int
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -68,7 +69,12 @@ class _RecordingRuntime(SimulationRuntime):
         )
         if program.name in (POLICY_PREPARE, POLICY_RANK):
             self.calls.append(
-                _Call(program=program, arguments=arguments, result=result)
+                _Call(
+                    program=program,
+                    arguments=arguments,
+                    result=result,
+                    n_subjects=n_subjects,
+                )
             )
         return result
 
@@ -81,10 +87,14 @@ class _ProducedCase:
     ranking: _Call
 
 
-@pytest.fixture(scope="module", params=(False, True), ids=("smooth", "discrete"))
+@pytest.fixture(
+    scope="module",
+    params=((False, 0), (False, 1), (True, 0), (True, 1)),
+    ids=("smooth-row0", "smooth-row1", "discrete-row0", "discrete-row1"),
+)
 def produced_case(request: pytest.FixtureRequest) -> _ProducedCase:
     """Obtain real producer arrays and arguments from actual public dispatch."""
-    discrete = request.param
+    discrete, row = request.param
     factory = discrete_toy if discrete else smooth_toy
     base = factory.build_model(variant="n_nbegm", n_periods=2)
     model = Model(
@@ -114,13 +124,18 @@ def produced_case(request: pytest.FixtureRequest) -> _ProducedCase:
             log_level="off",
             seed=17,
         )
-    runtime = model._runtime_regimes_for_shape(compile_batch_size=2)[
+    runtime = model._runtime_regimes_for_shape(compile_batch_size=1)[
         "alive"
     ].simulation.programs.executor
     assert isinstance(runtime, _RecordingRuntime)
-    preparation, ranking = runtime.calls
-    assert preparation.program.name == POLICY_PREPARE
-    assert ranking.program.name == POLICY_RANK
+    assert [call.program.name for call in runtime.calls] == [
+        POLICY_PREPARE,
+        POLICY_RANK,
+        POLICY_PREPARE,
+        POLICY_RANK,
+    ]
+    assert [call.n_subjects for call in runtime.calls] == [1, 1, 1, 1]
+    preparation, ranking = runtime.calls[2 * row : 2 * row + 2]
     runtime.calls.clear()
     return _ProducedCase(
         policy=policy, runtime=runtime, preparation=preparation, ranking=ranking
@@ -223,14 +238,23 @@ def _dispatch_same_executable(
     *, case: _ProducedCase, call: _Call, arguments: Mapping[str, object]
 ) -> object:
     original = case.runtime.prepare(
-        program=call.program, arguments=call.arguments, period=0, n_subjects=2
+        program=call.program,
+        arguments=call.arguments,
+        period=0,
+        n_subjects=call.n_subjects,
     )
     replacement = case.runtime.prepare(
-        program=call.program, arguments=arguments, period=0, n_subjects=2
+        program=call.program,
+        arguments=arguments,
+        period=0,
+        n_subjects=call.n_subjects,
     )
     assert replacement is original
     return case.runtime.dispatch(
-        program=call.program, arguments=arguments, period=0, n_subjects=2
+        program=call.program,
+        arguments=arguments,
+        period=0,
+        n_subjects=call.n_subjects,
     )
 
 
@@ -275,7 +299,9 @@ def test_replacement_payload_changes_cached_prepare_and_rank(
             np.testing.assert_array_equal(action, -jnp.ones_like(action))
         else:
             assert np.all(np.isnan(np.asarray(action)))
-    np.testing.assert_array_equal(ranked[2], [False, False])
+    np.testing.assert_array_equal(
+        ranked[2], np.zeros(case.ranking.n_subjects, dtype=bool)
+    )
     for call in (case.preparation, case.ranking):
         restored = _dispatch_same_executable(
             case=case, call=call, arguments=call.arguments
@@ -291,7 +317,12 @@ def test_replacement_payload_changes_cached_prepare_and_rank(
             np.testing.assert_array_equal(actual, expected)
 
 
-@pytest.mark.parametrize("produced_case", [True], indirect=True, ids=("discrete",))
+@pytest.mark.parametrize(
+    "produced_case",
+    [(True, 0), (True, 1)],
+    indirect=True,
+    ids=("discrete-row0", "discrete-row1"),
+)
 def test_replacement_discrete_codes_remain_dynamic_in_cached_rank(
     produced_case: _ProducedCase,
 ) -> None:
@@ -318,7 +349,9 @@ def test_replacement_discrete_codes_remain_dynamic_in_cached_rank(
         ),
     )
     assert np.all(np.isfinite(np.asarray(ranked[1])))
-    np.testing.assert_array_equal(ranked[0][name], np.full(2, replacement_code))
+    np.testing.assert_array_equal(
+        ranked[0][name], np.full(call.n_subjects, replacement_code)
+    )
     assert int(ranked[0][name][0]) != int(original[0][name][0])
 
 
@@ -375,17 +408,18 @@ def test_actual_rank_program_keeps_first_tie_and_ignores_dropped_candidates(
         )
         winner = 0 if first_live else next_candidate
         np.testing.assert_array_equal(
-            ranked[0][case.policy.inner_action_name], [1.0, 1.0]
+            ranked[0][case.policy.inner_action_name], np.ones(call.n_subjects)
         )
         np.testing.assert_array_equal(
             ranked[0][case.policy.outer_action_name], original_bank[1][:, winner]
         )
-        np.testing.assert_array_equal(ranked[1], [1.0, 1.0])
+        np.testing.assert_array_equal(ranked[1], np.ones(call.n_subjects))
         if case.policy.candidate_discrete_actions is not None:
             for index, name in enumerate(case.policy.discrete_action_names):
                 np.testing.assert_array_equal(
                     ranked[0][name],
                     jnp.broadcast_to(
-                        case.policy.candidate_discrete_actions[winner, index], (2,)
+                        case.policy.candidate_discrete_actions[winner, index],
+                        (call.n_subjects,),
                     ),
                 )

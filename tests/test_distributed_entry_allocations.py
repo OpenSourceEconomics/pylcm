@@ -88,3 +88,88 @@ def test_retained_source_on_an_excluded_device_still_consumes_its_budget() -> No
             value=np.array([1], dtype=np.int64), name="small", array_writer=owner
         )
     np.testing.assert_array_equal(source, np.arange(16, dtype=np.int32))
+
+
+@pytest.mark.parametrize("order", [(3, 1, 2), (2, 3, 1)])
+def test_foreign_value_copies_preserve_ordered_source_mesh(
+    order: tuple[int, ...],
+) -> None:
+    """Private copies keep the solve layout even when simulation selects a subset."""
+    devices = tuple(jax.devices()[index] for index in order)
+    sharding = jax.NamedSharding(
+        jax.make_mesh((3,), ("source",), devices=devices), jax.P("source")
+    )
+    levels = np.arange(12, dtype=np.float64 if jax.config.x64_enabled else np.float32)
+    source = jax.device_put(levels, sharding)
+    owner = SimulationEntryAllocations(
+        original_inputs=SimulationEntryInputs(arrays=(source,)),
+        solution=None,
+        model_roots=(),
+        devices=tuple(jax.devices()[1:3]),
+        budget_bytes=2**20,
+    )
+    first = owner.copy_solution_leaf(leaf=source, label="first")
+    second = owner.copy_solution_leaf(leaf=source, label="second")
+    assert len(owner.operations.cache) == 1
+    for array in (first, second):
+        assert array.sharding == sharding
+        assert isinstance(array.sharding, jax.NamedSharding)
+        assert tuple(array.sharding.mesh.devices.flat) == devices
+        np.testing.assert_array_equal(array, levels)
+    owner.release_foreign_copies()
+    first.delete()
+    np.testing.assert_array_equal(source, levels)
+    np.testing.assert_array_equal(second, levels)
+    owner.close()
+
+
+def test_foreign_copy_peak_is_charged_on_excluded_source_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty simulation-device budget cannot hide a copy executing on CPU0."""
+    source = jax.device_put(np.arange(257, dtype=np.float32), jax.devices()[0])
+    owner = SimulationEntryAllocations(
+        original_inputs=SimulationEntryInputs(arrays=(source,)),
+        solution=None,
+        model_roots=(),
+        devices=tuple(jax.devices()[1:]),
+        budget_bytes=2**20,
+    )
+    copied = owner.copy_solution_leaf(leaf=source, label="profile")
+    assert copied.devices() == {jax.devices()[0]}
+    compiled = next(iter(owner.operations.cache.values()))
+    owner.release_foreign_copies()
+    copied.delete()
+    owner.budget_bytes = compiled.peak_bytes - 1
+    assert owner.budget_bytes >= source.nbytes
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("Unadmitted copy reached its excluded source device")
+
+    monkeypatch.setattr(jax.stages.Compiled, "__call__", forbidden)
+    with pytest.raises(ExecutionPlanningError, match="budget"):
+        owner.copy_solution_leaf(leaf=source, label="rejected")
+    np.testing.assert_array_equal(source, np.arange(257, dtype=np.float32))
+
+
+def test_foreign_copy_cache_distinguishes_source_device_order() -> None:
+    """Equal shapes and device sets with different ordering need separate profiles."""
+    owner = SimulationEntryAllocations(
+        original_inputs=SimulationEntryInputs(arrays=()),
+        solution=None,
+        model_roots=(),
+        devices=tuple(jax.devices()[1:]),
+        budget_bytes=2**20,
+    )
+    for order in ((3, 1, 2), (2, 3, 1)):
+        devices = tuple(jax.devices()[index] for index in order)
+        layout = jax.NamedSharding(
+            jax.make_mesh((3,), ("source",), devices=devices), jax.P("source")
+        )
+        source = jax.device_put(np.arange(12, dtype=np.float32), layout)
+        copy = owner.copy_solution_leaf(leaf=source, label="ordered")
+        assert copy.sharding == layout
+        np.testing.assert_array_equal(copy, np.arange(12, dtype=np.float32))
+    assert len(owner.operations.cache) == 2
+    owner.close()

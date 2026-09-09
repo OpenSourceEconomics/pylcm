@@ -274,7 +274,10 @@ def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
         f"loop_progress_ms[{witness}]", round(progress_seconds * 1e3, 4)
     )
     record_testsuite_property(f"loop_progress_over_off[{witness}]", round(ratio, 4))
-    assert ratio <= HOST_TIME_BAR, f"progress/off host time is {ratio:.3f}x"
+    assert ratio <= HOST_TIME_BAR, (
+        f"progress/off host time is {ratio:.3f}x "
+        f"(off={off_seconds:.6f}s, progress={progress_seconds:.6f}s)"
+    )
 
 
 @pytest.mark.parametrize("witness", sorted(WITNESSES))
@@ -296,7 +299,10 @@ def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
     )
     ratio = progress_seconds / off_seconds
     record_testsuite_property(f"call_progress_over_off[{witness}]", round(ratio, 4))
-    assert ratio <= HOST_TIME_BAR, f"progress/off host time is {ratio:.3f}x"
+    assert ratio <= HOST_TIME_BAR, (
+        f"progress/off host time is {ratio:.3f}x "
+        f"(off={off_seconds:.6f}s, progress={progress_seconds:.6f}s)"
+    )
 
 
 @contextlib.contextmanager

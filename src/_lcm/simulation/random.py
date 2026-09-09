@@ -114,6 +114,21 @@ def generate_simulation_keys(
           `n_initial_states`, then sliced to `subject_slice` when given).
 
     """
+    if memory is not None and subject_slice is not None:
+        start, width = _validated_chunk_window(
+            subject_slice=subject_slice, n_initial_states=n_initial_states
+        )
+        return memory.run(
+            function=_generate_windowed_simulation_keys,
+            arguments={"key": key, "start": np.int32(start)},
+            static_arguments={
+                "names": tuple(names),
+                "n_initial_states": n_initial_states,
+                "original_n_subjects": original_n_subjects,
+                "partitionable": jax.config.jax_threefry_partitionable,
+                "width": width,
+            },
+        )
     return run_simulation_operation(
         memory=memory,
         function=_generate_simulation_keys,
@@ -130,6 +145,50 @@ def generate_simulation_keys(
             ),
         },
     )
+
+
+def _validated_chunk_window(
+    *, subject_slice: slice, n_initial_states: int
+) -> tuple[int, int]:
+    """Refuse invalid dynamic-slice bounds before an allocation can clamp them."""
+    start = 0 if subject_slice.start is None else subject_slice.start
+    stop = n_initial_states if subject_slice.stop is None else subject_slice.stop
+    if (
+        type(start) is not int
+        or type(stop) is not int
+        or subject_slice.step not in (None, 1)
+        or not 0 <= start < stop <= n_initial_states <= np.iinfo(np.int32).max
+    ):
+        raise ExecutionPlanningError(
+            "A budgeted RNG chunk window needs in-range increasing bounds "
+            "and unit step."
+        )
+    return start, stop - start
+
+
+def _generate_windowed_simulation_keys(
+    *,
+    key: PRNGKeyND,
+    start: Int[Scalar, ""],
+    names: tuple[str, ...],
+    n_initial_states: int,
+    original_n_subjects: int | None,
+    partitionable: bool,
+    width: int,
+) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
+    """Select a dynamic start from the identical full split and duplicate-last pad."""
+    next_key, full_keys = _generate_simulation_keys(
+        key=key,
+        names=names,
+        n_initial_states=n_initial_states,
+        original_n_subjects=original_n_subjects,
+        partitionable=partitionable,
+        subject_window=None,
+    )
+    return next_key, {
+        name: jax.lax.dynamic_slice_in_dim(keys, start, width, axis=0)
+        for name, keys in full_keys.items()
+    }
 
 
 def _generate_simulation_keys(

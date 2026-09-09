@@ -1,4 +1,4 @@
-"""Prepare call-invariant operands for one forward subject chunk."""
+"""Own exact shared inputs once, then place only each chunk's narrow operands."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,6 +12,70 @@ from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.typing import FlatParams, RegimeName, StateOrActionName
 from lcm.typing import Float1D, Int1D, IntND
+
+
+@dataclass(frozen=True, kw_only=True)
+class SimulationCallInputs:
+    """Actual parameter/grid owners shared by profiles and every dispatched chunk."""
+
+    devices: tuple[jax.Device, ...]
+    flat_params: FlatParams
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace]
+
+    @property
+    def array_roots(self) -> object:
+        """Expose transient concrete roots without rebuilding a parameterized grid."""
+        return (
+            self.flat_params,
+            tuple(
+                (space.states, space.actions)
+                for space in self.base_state_action_spaces.values()
+            ),
+        )
+
+
+def prepare_simulation_call_inputs(
+    *,
+    flat_params: FlatParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    device_ids: tuple[int, ...],
+    memory: SimulationMemory | None,
+) -> SimulationCallInputs:
+    """Complete spaces once and keep their real arrays for the entire call.
+
+    Parameter placement is admitted. Parameter-dependent user/grid evaluation
+    remains the existing eager entry boundary; its outputs are charged immediately,
+    without claiming those computations were pre-admitted by a compiler profile.
+    """
+    devices = placed_devices_for_ids(
+        submesh_device_ids=(), visible_device_ids=device_ids
+    )
+    if not any(regime.solution.sharded_state_names for regime in regimes.values()):
+        devices = devices[:1]
+    shared = place_simulation_arguments(
+        arguments={"params": flat_params},
+        subject_arg_names=(),
+        value_reads=(),
+        devices=devices,
+        budget_bytes=None if memory is None else memory.budget_bytes,
+        live_footprint=None if memory is None else memory.snapshot(),
+        budget_devices=() if memory is None else memory.devices,
+    )
+    flat_params = cast("FlatParams", shared["params"])
+    if memory is not None:
+        memory.hold(tree=flat_params)
+    spaces = {}
+    for name, regime in regimes.items():
+        space = regime.solution.state_action_space(regime_params=flat_params[name])
+        spaces[name] = space
+        if memory is not None:
+            memory.hold(tree=(space.states, space.actions))
+            memory.check_resident()
+    return SimulationCallInputs(
+        devices=devices,
+        flat_params=flat_params,
+        base_state_action_spaces=MappingProxyType(spaces),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -42,13 +106,9 @@ def prepare_simulation_chunk_inputs(
     regimes: MappingProxyType[RegimeName, Regime],
     device_ids: tuple[int, ...],
     memory: SimulationMemory | None,
+    call_inputs: SimulationCallInputs | None = None,
 ) -> SimulationChunkInputs:
-    """Place initial operands and complete grids once for this subject chunk."""
-    devices = placed_devices_for_ids(
-        submesh_device_ids=(), visible_device_ids=device_ids
-    )
-    if not any(regime.solution.sharded_state_names for regime in regimes.values()):
-        devices = devices[:1]
+    """Place narrow initial operands while reusing the call's completed spaces."""
     if memory is not None:
         memory.unit_inputs = (
             initial_states,
@@ -56,16 +116,15 @@ def prepare_simulation_chunk_inputs(
             initial_own_stakeholder,
             starting_periods,
         )
-    shared = place_simulation_arguments(
-        arguments={"params": flat_params},
-        subject_arg_names=(),
-        value_reads=(),
-        devices=devices,
-        budget_bytes=None if memory is None else memory.budget_bytes,
-        live_footprint=None if memory is None else memory.snapshot(),
-        budget_devices=() if memory is None else memory.devices,
-    )
-    flat_params = cast("FlatParams", shared["params"])
+    if call_inputs is None:
+        call_inputs = prepare_simulation_call_inputs(
+            flat_params=flat_params,
+            regimes=regimes,
+            device_ids=device_ids,
+            memory=memory,
+        )
+    devices = call_inputs.devices
+    flat_params = call_inputs.flat_params
     if memory is not None:
         memory.hold(tree=flat_params)
     subject_inputs = place_simulation_arguments(
@@ -84,12 +143,7 @@ def prepare_simulation_chunk_inputs(
     initial_regime_ids = cast("Int1D", subject_inputs["regime_ids"])
     initial_own_stakeholder = cast("Int1D", subject_inputs["roles"])
     starting_periods = cast("Int1D", subject_inputs["starting_periods"])
-    base_state_action_spaces = MappingProxyType(
-        {
-            name: regime.solution.state_action_space(regime_params=flat_params[name])
-            for name, regime in regimes.items()
-        }
-    )
+    base_state_action_spaces = call_inputs.base_state_action_spaces
     if memory is not None:
         memory.set_chunk_inputs(
             tree=(

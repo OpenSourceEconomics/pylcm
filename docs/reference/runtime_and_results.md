@@ -73,6 +73,13 @@ does not donate; standalone NB-EGM can select `main` even under the default rete
 when its policy is not applicable. Retained continuation leaves remain ineligible. This
 feature promises no particular workflow speedup or backend buffer reuse.
 
+The ceiling applies to the selected compute devices. During GPU simulation, completed
+subject chunks can be transferred to CPU storage for final assembly. That host RAM is
+outside the GPU ceiling; it must be sized separately for the retained chunks and final
+result. GPU source buffers remain live until their transfer completes. During CPU
+simulation, retained chunks, concatenation and trimming occupy the budgeted CPU device
+and remain part of its accounted payload. CPU0 and GPU0 are distinct devices.
+
 An unknown state, an unknown axis name, or an invisible device id raises
 `ExecutionPlanningError` at model build, naming the offender and the legal set.
 `model.execution_devices` reports the device ids the model resolved.
@@ -405,8 +412,14 @@ recoverable from values, but fails closed before forward simulation when a requi
 replay artifact is absent or invalid. Use the default
 `ResultRetention.VALUES_AND_REPLAY` when the model may require such artifacts.
 
-`subject_batch_size` streams subjects without changing results. `seed` controls random
-draws. A collective model may require an addressed dissolution replay artifact and
+`ExecutionConfig(axis_widths={"subject": width})` controls the model's subject chunks
+and fixes their inner compiled width. The outer chunk is aligned to the selected subject
+devices; this alignment does not increase the fixed inner width. With a memory budget
+and no explicit width, complete chunk profiles select the widest fitting candidate.
+Retained full-population inputs and result assembly remain part of the bound even when
+chunks shrink. `Model(n_subjects=...)` is a prewarm hint; it does not choose the chunk
+extent. `seed` controls random draws independently of those chunk boundaries. A
+collective model may require an addressed dissolution replay artifact and
 `own_stakeholder`; see [Collective regimes](collective_regimes.md).
 
 Initial conditions are a mapping of state names plus `regime_id` to equal-length arrays,

@@ -17,7 +17,14 @@ Importable only once `lcm.taste_shocks` exists.
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
@@ -100,12 +107,17 @@ done = UserRegime(
 )
 
 
-def get_model(*, n_subjects: int | None = None) -> Model:
+def get_model(
+    *, n_subjects: int | None = None, execution_config: ExecutionConfig | None = None
+) -> Model:
     return Model(
         regimes={"alive": alive, "done": done},
         ages=AgeGrid(start=40, stop=41, step="Y"),
         regime_id_class=ToyRegimeId,
         n_subjects=n_subjects,
+        execution_config=ExecutionConfig()
+        if execution_config is None
+        else execution_config,
     )
 
 

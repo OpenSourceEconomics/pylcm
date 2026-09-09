@@ -114,6 +114,7 @@ def _make_correct_distributed_model(
     retirement_reads_type2: bool = True,
     move_type2: bool = False,
     cell_width: int | None = None,
+    subject_width: int | None = None,
 ) -> Model:
     @categorical(ordered=False)
     class RegimeId:
@@ -196,7 +197,10 @@ def _make_correct_distributed_model(
         },
         n_subjects=n_subjects,
         execution_config=ExecutionConfig(
-            axis_widths={"cell": cell_width} if cell_width is not None else {},
+            axis_widths={
+                **({"cell": cell_width} if cell_width is not None else {}),
+                **({"subject": subject_width} if subject_width is not None else {}),
+            },
             sharded_states=(
                 *(("type1",) if distributed else ()),
                 *(
@@ -1112,12 +1116,13 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    chunked = correct_distributed_model.simulate(
+    chunked = _make_correct_distributed_model(
+        subject_width=subject_batch_size
+    ).simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
         seed=12345,
-        subject_batch_size=subject_batch_size,
     )
     pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
 
@@ -1146,12 +1151,11 @@ def test_distributed_aot_simulation_pads_subjects_to_a_chunk_multiple():
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    chunked = model.simulate(
+    chunked = _make_correct_distributed_model(n_subjects=12, subject_width=8).simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
         seed=12345,
-        subject_batch_size=8,
     )
     assert chunked.n_subjects == 12
     pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())

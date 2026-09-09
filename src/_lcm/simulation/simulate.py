@@ -4,7 +4,7 @@ import itertools
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -45,8 +45,21 @@ from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
 )
+from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
-from _lcm.simulation.chunk_inputs import prepare_simulation_chunk_inputs
+from _lcm.simulation.assembly import concatenate_arrays
+from _lcm.simulation.chunk_admission import PreparedSimulationChunks
+from _lcm.simulation.chunk_inputs import (
+    SimulationCallInputs,
+    prepare_simulation_call_inputs,
+    prepare_simulation_chunk_inputs,
+)
+from _lcm.simulation.chunk_offload import chunk_host_device, offload_chunk
+from _lcm.simulation.diagnostic_operations import (
+    owned_value_nan_count,
+    period_value_flags,
+    profiled_transition_counts,
+)
 from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
     simulation_gate_route,
@@ -72,6 +85,7 @@ from _lcm.simulation.period_inputs import (
     unit_value_reads,
 )
 from _lcm.simulation.policy_programs import ReplayPayload
+from _lcm.simulation.program_arguments import decision_arguments
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
@@ -97,7 +111,7 @@ from _lcm.simulation.transitions import (
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.continuation_reads import rekeyed_value_reads
-from _lcm.solution.validate_V import validate_V
+from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.typing import (
     ActionName,
     EconFunctionArg,
@@ -150,7 +164,7 @@ type _PeriodToRegimeToReplayReader = Mapping[
 ]
 
 
-def simulate(
+def simulate(  # noqa: C901, PLR0915
     *,
     flat_params: FlatParams,
     initial_conditions: InitialConditions,
@@ -175,6 +189,7 @@ def simulate(
     ] = MappingProxyType({}),
     device_ids: tuple[int, ...] = (),
     retained_footprint: DeviceBufferFootprint | None = None,
+    prepared_chunks: PreparedSimulationChunks | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -207,9 +222,9 @@ def simulate(
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
         taste_shock_seed: Independent taste seed, or None for the ordinary stream.
-        subject_batch_size: Concrete subject chunk size, already resolved by the
-            caller (`Model.simulate` maps the user-facing `0`/`>0` knob to
-            an int here). `0` or a value `>= n_subjects` simulates the whole
+        subject_batch_size: Concrete outer subject chunk extent, resolved by
+            `Model.simulate` from ExecutionConfig and whole-chunk admission.
+            `0` or a value `>= n_subjects` simulates the whole
             population in a single pass; a smaller value chunks the subjects,
             bounding the per-period device workspace at the cost of re-running the
             period loop per chunk. Results are invariant to this knob: per-subject
@@ -264,17 +279,12 @@ def simulate(
         for k, v in initial_conditions.items()
         if k not in {"regime_id", "own_stakeholder"}
     }
-    initial_own_stakeholder = _initial_own_stakeholder(
-        initial_conditions=initial_conditions,
-        regimes=regimes,
-        regime_names_to_ids=regime_names_to_ids,
-    )
 
     # Forward-simulate one subject chunk at a time. Subjects are independent across
     # the forward path (no cross-subject reduction), so each chunk runs the full
     # period loop on its own slice and the per-chunk results are concatenated on the
     # subject axis. Chunking bounds the per-period device workspace; the chunk size
-    # is `subject_batch_size` (the whole population in one pass when `None`).
+    # is `subject_batch_size` (the whole population in one pass when zero).
     n_subjects = int(initial_conditions["regime_id"].shape[0])
     batch_size = (
         n_subjects if subject_batch_size == 0 else min(subject_batch_size, n_subjects)
@@ -302,6 +312,9 @@ def simulate(
             )
         memory = SimulationMemory(
             budget_bytes=runtime.execution.device_memory_bytes,
+            axis_widths=MappingProxyType({})
+            if prepared_chunks is None
+            else prepared_chunks.plan.profile.axis_widths,
             subject_devices=runtime.subject_devices,
             operations=runtime.operations,
             devices=placed_devices_for_ids(
@@ -325,9 +338,46 @@ def simulate(
         )
         memory.check_resident()
 
-    starting_periods = _compute_starting_periods(
-        initial_ages=initial_states["age"], ages=ages
+    call_inputs = (
+        prepare_simulation_call_inputs(
+            flat_params=flat_params,
+            regimes=regimes,
+            device_ids=device_ids,
+            memory=memory,
+        )
+        if prepared_chunks is None
+        else prepared_chunks.call_inputs
     )
+    if memory is not None:
+        memory.inputs = union_buffer_footprints(
+            footprints=(
+                memory.inputs,
+                measure_buffer_footprint(tree=call_inputs.array_roots),
+            )
+        )
+        memory.close_unit()
+
+    initial_own_stakeholder = _initial_own_stakeholder(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        memory=memory,
+    )
+    starting_periods = _compute_starting_periods(
+        initial_ages=initial_states["age"], ages=ages, memory=memory
+    )
+    if memory is not None:
+        # These arrays survive every chunk. Transfer their metadata to the
+        # permanent inventory before releasing setup's temporary summaries.
+        memory.inputs = union_buffer_footprints(
+            footprints=(
+                memory.inputs,
+                measure_buffer_footprint(
+                    tree=(initial_own_stakeholder, starting_periods)
+                ),
+            )
+        )
+        memory.close_unit()
     # Build reverse lookup for regime transition logging. `regime_names_to_ids`
     # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict keys
     # directly; `invert_regime_ids` coerces them to Python `int`.
@@ -338,10 +388,29 @@ def simulate(
     # device residency to a single chunk. A single pass (batch_size == n_subjects)
     # keeps results on the compute device (no memory pressure, and no host
     # round-trip for downstream targets).
-    host_device = jax.devices("cpu")[0] if batch_size < n_subjects else None
+    host_device = (
+        chunk_host_device(subject_devices=call_inputs.devices)
+        if batch_size < n_subjects
+        else None
+    )
 
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
+    completed_setup = (
+        None
+        if prepared_chunks is None
+        else measure_buffer_footprint(
+            tree=(initial_conditions, initial_own_stakeholder, starting_periods)
+        )
+    )
     for chunk_start in range(0, n_subjects, batch_size):
+        if prepared_chunks is not None:
+            if memory is None:
+                raise ExecutionPlanningError(
+                    "A prepared chunk requires its live memory owner."
+                )
+            prepared_chunks.require_chunk(
+                memory=memory, completed_setup=completed_setup
+            )
         # `n_subjects` is padded up to a multiple of `batch_size` upstream (see
         # `pad_initial_conditions_to_multiple`), so every chunk — including the
         # last — is exactly `batch_size` rows; the trailing pad rows are dropped
@@ -349,11 +418,29 @@ def simulate(
         subject_slice = slice(chunk_start, chunk_start + batch_size)
         chunk = _simulate_subject_chunk(
             initial_states={
-                name: array[subject_slice] for name, array in initial_states.items()
+                name: chunk_operations.slice_population(
+                    array=array, start=chunk_start, width=batch_size, memory=memory
+                )
+                for name, array in initial_states.items()
             },
-            initial_regime_ids=initial_conditions["regime_id"][subject_slice],
-            initial_own_stakeholder=initial_own_stakeholder[subject_slice],
-            starting_periods=starting_periods[subject_slice],
+            initial_regime_ids=chunk_operations.slice_population(
+                array=initial_conditions["regime_id"],
+                start=chunk_start,
+                width=batch_size,
+                memory=memory,
+            ),
+            initial_own_stakeholder=chunk_operations.slice_population(
+                array=initial_own_stakeholder,
+                start=chunk_start,
+                width=batch_size,
+                memory=memory,
+            ),
+            starting_periods=chunk_operations.slice_population(
+                array=starting_periods,
+                start=chunk_start,
+                width=batch_size,
+                memory=memory,
+            ),
             n_subjects=n_subjects,
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
@@ -372,19 +459,21 @@ def simulate(
             logger=logger,
             device_ids=device_ids,
             memory=memory,
+            call_inputs=call_inputs,
         )
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
             # continues, so the chunk's device buffers become free for the next
             # chunk; the host-resident copies stay `jax.Array` (CPU-backed).
-            chunk = jax.block_until_ready(jax.device_put(chunk, host_device))
+            chunk = offload_chunk(tree=chunk, host_device=host_device, memory=memory)
         chunk_results.append(chunk)
         if memory is not None:
             memory.close_unit()
+            memory.set_chunk_inputs(tree=())
             memory.replace_outputs(tree=chunk_results)
 
     simulation_results = _concatenate_chunk_results(
-        chunk_results=chunk_results, regimes=regimes
+        chunk_results=chunk_results, regimes=regimes, memory=memory
     )
 
     # Drain the per-period compute graph before returning. Mirrors solve's
@@ -414,6 +503,7 @@ def simulate(
         wrapped_results = trim_pad_from_raw_results(
             raw_results=wrapped_results,
             original_n_subjects=original_n_subjects,
+            memory=memory,
         )
 
     # Which regimes can publish a nested continuous-outer read. Their declared
@@ -450,7 +540,10 @@ def _initialize_chunk_state(
     """Build a chunk's carriers, enrolling completed arrays before the next step."""
     key = create_simulation_key(seed=seed, memory=memory)
     states = build_initial_states(
-        initial_states=initial_states, regimes=regimes, device_ids=device_ids
+        initial_states=initial_states,
+        regimes=regimes,
+        device_ids=device_ids,
+        memory=memory,
     )
     if memory is not None:
         memory.hold(tree=(states, key))
@@ -490,6 +583,7 @@ def _simulate_subject_chunk(
     ),
     device_ids: tuple[int, ...] = (),
     memory: SimulationMemory | None = None,
+    call_inputs: SimulationCallInputs | None = None,
     taste_shock_seed: int | None = None,
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
@@ -519,6 +613,7 @@ def _simulate_subject_chunk(
         regimes=regimes,
         device_ids=device_ids,
         memory=memory,
+        call_inputs=call_inputs,
     )
     devices = chunk_inputs.devices
     flat_params = chunk_inputs.flat_params
@@ -546,7 +641,7 @@ def _simulate_subject_chunk(
         regime_name: {} for regime_name in regimes
     }
 
-    for period, original_age in enumerate(ages.values):
+    for period in range(ages.n_periods):
         period_start = time.monotonic()
         if memory is not None:
             memory.unit_inputs = (
@@ -556,6 +651,9 @@ def _simulate_subject_chunk(
                 key,
                 taste_key,
             )
+        original_age = chunk_operations.period_age(
+            values=ages.values, period=period, memory=memory
+        )
         age = cast(
             "ScalarInt | ScalarFloat",
             place_simulation_arguments(
@@ -683,7 +781,7 @@ def _simulate_subject_chunk(
                     new_own_stakeholder=new_own_stakeholder,
                     gated_edge_fold_age=(
                         ages.period_to_age(period + 1)
-                        if period + 1 < ages.n_periods
+                        if regime.gated_edges and period + 1 < ages.n_periods
                         else None
                     ),
                 )
@@ -712,10 +810,25 @@ def _simulate_subject_chunk(
         owner.finish()
         if memory is not None:
             memory.period_owner = None
+            # Unit-local owners were released after publication. The period's
+            # current carry and both memberships still live through diagnostics.
+            memory.unit_inputs = (
+                states,
+                prev_regime_ids,
+                subject_regime_ids,
+                new_subject_regime_ids,
+                own_stakeholder,
+                new_own_stakeholder,
+                key,
+                taste_key,
+                original_age,
+                age,
+            )
 
         _validate_period_values(
             logger=logger,
             age=age,
+            memory=memory,
             period_results=tuple(
                 (regime_name, simulation_results[regime_name][period])
                 for regime_name in active_regimes
@@ -730,6 +843,17 @@ def _simulate_subject_chunk(
             prev_regime_ids=prev_regime_ids,
             new_regime_ids=subject_regime_ids,
             regime_ids_to_names=regime_ids_to_names,
+            counts_factory=(
+                None
+                if memory is None
+                else functools.partial(
+                    profiled_transition_counts,
+                    memory=memory,
+                    prev_regime_ids=prev_regime_ids,
+                    new_regime_ids=subject_regime_ids,
+                    sorted_ids=tuple(sorted(regime_ids_to_names)),
+                )
+            ),
         )
 
         elapsed = time.monotonic() - period_start
@@ -757,6 +881,7 @@ def _bind_unit_executor(
                     ),
                     live_footprint=memory.snapshot,
                     budget_devices=memory.devices,
+                    axis_widths=memory.axis_widths,
                     on_output=memory.hold,
                 ),
             ),
@@ -768,6 +893,7 @@ def _concatenate_chunk_results(
     *,
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]],
     regimes: MappingProxyType[RegimeName, Regime],
+    memory: SimulationMemory | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Concatenate per-chunk simulation results along the subject axis.
 
@@ -785,30 +911,14 @@ def _concatenate_chunk_results(
     for regime_name, period_data in chunk_results[0].items():
         for period in period_data:
             per_chunk = [chunk[regime_name][period] for chunk in chunk_results]
-            combined[regime_name][period] = PeriodRegimeSimulationData(
-                V_arr=jnp.concatenate([data.V_arr for data in per_chunk]),
-                actions=MappingProxyType(
-                    {
-                        name: jnp.concatenate(
-                            [data.actions[name] for data in per_chunk]
-                        )
-                        for name in per_chunk[0].actions
-                    }
-                ),
-                states=MappingProxyType(
-                    {
-                        name: jnp.concatenate([data.states[name] for data in per_chunk])
-                        for name in per_chunk[0].states
-                    }
-                ),
-                in_regime=jnp.concatenate([data.in_regime for data in per_chunk]),
-                own_stakeholder=jnp.concatenate(
-                    [data.own_stakeholder for data in per_chunk]
-                ),
-                nested_policy_fallback=jnp.concatenate(
-                    [data.nested_policy_fallback for data in per_chunk]
-                ),
-            )
+            merged = {
+                field.name: jax.tree.map(
+                    lambda *arrays: concatenate_arrays(arrays=arrays, memory=memory),
+                    *(getattr(data, field.name) for data in per_chunk),
+                )
+                for field in fields(PeriodRegimeSimulationData)
+            }
+            combined[regime_name][period] = replace(per_chunk[0], **merged)
     return combined
 
 
@@ -1043,6 +1153,7 @@ def _validate_period_values(
     logger: logging.Logger,
     age: ScalarInt | ScalarFloat,
     period_results: tuple[tuple[RegimeName, PeriodRegimeSimulationData], ...],
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate one period's simulated values for every regime active in it.
 
@@ -1064,15 +1175,26 @@ def _validate_period_values(
         age: Age corresponding to the current period.
         period_results: Tuple of (regime name, that regime's simulated data for
             this period) pairs, in the order the period simulated them.
+        memory: Optional current-period owner for profiled diagnostic admission.
 
     """
     if not validation_enabled(logger) or not period_results:
         return
     regime_names = tuple(regime_name for regime_name, _ in period_results)
-    has_nan, has_non_finite = non_finite_by_regime(
-        values=tuple(data.V_arr for _, data in period_results),
-        in_regime=tuple(data.in_regime for _, data in period_results),
-    ).tolist()
+    arguments = {
+        "values": tuple(data.V_arr for _, data in period_results),
+        "in_regime": tuple(data.in_regime for _, data in period_results),
+    }
+    flags = (
+        non_finite_by_regime(**arguments)
+        if memory is None
+        else memory.run(
+            function=period_value_flags,
+            arguments=arguments,
+            subject_arg_names=("values", "in_regime"),
+        )
+    )
+    has_nan, has_non_finite = flags.tolist()
     log_non_finite_values(
         logger=logger,
         age=age,
@@ -1087,6 +1209,7 @@ def _validate_period_values(
                 age=age,
                 regime_name=regime_name,
                 logger=logger,
+                memory=memory,
             )
 
 
@@ -1097,11 +1220,28 @@ def _validate_simulated_value(
     age: ScalarInt | ScalarFloat,
     regime_name: RegimeName,
     logger: logging.Logger,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate values only for subjects whose current regime owns the rows."""
     if not validation_enabled(logger):
         return
     try:
+        if memory is not None:
+            n_nan = int(
+                memory.run(
+                    function=owned_value_nan_count,
+                    arguments={"value": value, "in_regime": subject_ids_in_regime},
+                    subject_arg_names=("value", "in_regime"),
+                )
+            )
+            if n_nan:
+                raise value_function_nan_error(
+                    n_nan=n_nan,
+                    total=int(value.size),
+                    age=age,
+                    regime_name=regime_name,
+                )
+            return
         # Out-of-regime subjects carry placeholder entries (their state is
         # meaningless under this regime's problem). A collective value carries a
         # trailing stakeholder axis, so broadcast the ownership mask over it.
@@ -1224,8 +1364,10 @@ def _simulate_regime_in_period(
 
     """
     # Select subjects in the current regime
-    subject_ids_in_regime = jnp.asarray(
-        regime_names_to_ids[regime_name] == subject_regime_ids
+    subject_ids_in_regime = chunk_operations.regime_mask(
+        regime_ids=subject_regime_ids,
+        regime_id=regime_names_to_ids[regime_name],
+        memory=memory,
     )
 
     state_action_space = create_regime_state_action_space(
@@ -1376,26 +1518,28 @@ def _simulate_regime_in_period(
                 family="decision",
                 period=period,
                 n_subjects=n_chunk_subjects,
-                arguments={
-                    **state_action_space.states,
-                    **state_action_space.discrete_actions,
-                    **state_action_space.continuous_actions,
-                    **taste_shock_kwargs,
-                    "next_regime_to_V_arr": next_regime_to_V_arr,
-                    **referenced_value_kwargs,
-                    **flat_params[regime_name],
-                    "period": jnp.int32(period),
-                    "age": age,
-                },
+                arguments=decision_arguments(
+                    states=state_action_space.states,
+                    discrete_actions=state_action_space.discrete_actions,
+                    continuous_actions=state_action_space.continuous_actions,
+                    taste_keys=taste_shock_kwargs,
+                    next_values=next_regime_to_V_arr,
+                    references=referenced_value_kwargs,
+                    params=flat_params[regime_name],
+                    period=jnp.int32(period) if memory is None else np.int32(period),
+                    age=age,
+                ),
             ),
         )
         # A stateless collective result lacks the leading subject axis that
         # every downstream simulation operation expects.
         if regime.stakeholders is not None and not state_action_space.states:
-            indices_optimal_actions = jnp.broadcast_to(
-                jnp.asarray(indices_optimal_actions), (n_chunk_subjects,)
+            indices_optimal_actions, V_arr = chunk_operations.broadcast_collective(
+                indices=indices_optimal_actions,
+                value=V_arr,
+                n_subjects=n_chunk_subjects,
+                memory=memory,
             )
-            V_arr = jnp.broadcast_to(V_arr[None, ...], (n_chunk_subjects, *V_arr.shape))
         optimal_actions = run_simulation_operation(
             memory=memory,
             function=_lookup_values_from_indices,
@@ -1428,13 +1572,15 @@ def _simulate_regime_in_period(
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match this chunk's subject count.
     if V_arr.ndim == 0:
-        V_arr = jnp.broadcast_to(V_arr, (n_chunk_subjects,))
+        V_arr = chunk_operations.broadcast_value(
+            value=V_arr, n_subjects=n_chunk_subjects, memory=memory
+        )
 
     # `None` from the reader means no nested continuous-outer read ran for
     # this regime-period (no payload, the flat single-EGM path, passive rows,
     # the discrete-branch redecide), so no subject fell back on that path.
     nested_policy_fallback = (
-        jnp.zeros_like(subject_ids_in_regime, dtype=bool)
+        chunk_operations.empty_fallback(mask=subject_ids_in_regime, memory=memory)
         if nested_fallback is None
         else nested_fallback
     )
@@ -3716,6 +3862,7 @@ def _initial_own_stakeholder(
     initial_conditions: InitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
+    memory: SimulationMemory | None = None,
 ) -> Int1D:
     """Read and validate each subject's seeded role.
 
@@ -3784,7 +3931,17 @@ def _initial_own_stakeholder(
         occupied = sorted(
             name
             for name in starts_needing_a_role
-            if bool(jnp.any(regime_ids == regime_names_to_ids[name]))
+            if bool(
+                run_simulation_operation(
+                    memory=memory,
+                    function=population_operations.regime_is_occupied,
+                    arguments={
+                        "regime_ids": regime_ids,
+                        "regime_id": regime_names_to_ids[name],
+                    },
+                    subject_arg_names=("regime_ids",),
+                )
+            )
         )
         if occupied:
             reachable_routes = sorted(
@@ -3801,11 +3958,21 @@ def _initial_own_stakeholder(
                 "pick."
             )
             raise InvalidInitialConditionsError(msg)
-        return jnp.full_like(regime_ids, NO_ROLE, dtype=jnp.int32)
+        return run_simulation_operation(
+            memory=memory,
+            function=population_operations.default_roles,
+            arguments={"regime_ids": regime_ids},
+            subject_arg_names=("regime_ids",),
+            subject_outputs=True,
+        )
 
-    own_stakeholder = jnp.asarray(declared, dtype=jnp.int32)
-    known = jnp.asarray([NO_ROLE, *role_ids.values()], dtype=jnp.int32)
-    if not bool(jnp.all(jnp.isin(own_stakeholder, known))):
+    own_stakeholder, roles_known = run_simulation_operation(
+        memory=memory,
+        function=population_operations.canonical_roles,
+        arguments={"declared": declared, "known_role_ids": tuple(role_ids.values())},
+        subject_arg_names=("declared",),
+    )
+    if not bool(roles_known):
         msg = (
             f"`own_stakeholder` carries codes outside the model's role "
             f"vocabulary {dict(role_ids)} (the no-role sentinel {NO_ROLE} is "
@@ -3819,11 +3986,20 @@ def _initial_own_stakeholder(
     # every row in a collective regime carries one of ITS roles, so the leg
     # selection always has a leg to find.
     for name in collective_names:
-        starts_here = regime_ids == regime_names_to_ids[name]
-        declared_here = jnp.asarray(
-            [role_ids[s] for s in regimes[name].stakeholders or ()], dtype=jnp.int32
+        mismatch = run_simulation_operation(
+            memory=memory,
+            function=population_operations.role_mismatch,
+            arguments={
+                "roles": own_stakeholder,
+                "regime_ids": regime_ids,
+                "regime_id": regime_names_to_ids[name],
+                "role_ids": tuple(
+                    role_ids[s] for s in regimes[name].stakeholders or ()
+                ),
+            },
+            subject_arg_names=("roles", "regime_ids"),
         )
-        if bool(jnp.any(starts_here & ~jnp.isin(own_stakeholder, declared_here))):
+        if bool(mismatch):
             msg = (
                 f"Subjects starting in the collective regime {name!r} carry an "
                 "`own_stakeholder` that is not one of its stakeholders "
@@ -3838,6 +4014,7 @@ def _compute_starting_periods(
     *,
     initial_ages: Float1D,
     ages: AgeGrid,
+    memory: SimulationMemory | None = None,
 ) -> Int1D:
     """Convert per-subject initial ages to starting period indices.
 
@@ -3852,19 +4029,16 @@ def _compute_starting_periods(
         ValueError: If any initial age is not a valid age grid point.
 
     """
-    age_values = jnp.asarray(ages.values)
-    starting_periods = jnp.searchsorted(age_values, initial_ages)
-
-    # Clamp indices to valid range before accessing age_values. searchsorted can
-    # return len(age_values) for ages beyond the grid maximum.
-    safe_idx = jnp.clip(starting_periods, 0, len(age_values) - 1)
-
-    # Validate that all initial ages are actual grid points. Use isclose instead
-    # of strict equality to handle floating-point representation of sub-annual ages.
-    in_bounds = starting_periods < len(age_values)
-    valid = in_bounds & jnp.isclose(age_values[safe_idx], initial_ages)
-    if not jnp.all(valid):
-        invalid_ages = initial_ages[~valid]
+    starting_periods, valid, all_valid = run_simulation_operation(
+        memory=memory,
+        function=population_operations.starting_periods,
+        arguments={"initial_ages": initial_ages, "age_values": ages.values},  # noqa: PD011
+        subject_arg_names=("initial_ages",),
+    )
+    if not bool(all_valid):
+        # Error-detail selection stays on the host after the admitted predicate;
+        # no data-dependent device gather can bypass the operation's profile.
+        invalid_ages = np.asarray(initial_ages)[~np.asarray(valid)]
         msg = (
             f"Initial ages {invalid_ages.tolist()} are not valid age grid points. "
             f"Valid ages: {ages.values}."  # noqa: PD011

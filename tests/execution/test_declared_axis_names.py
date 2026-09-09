@@ -52,10 +52,15 @@ _DECLARED_AXIS_NAMES = {
 }
 _HOST_AXIS_NAMES = {"nnbegm": (OUTER_CANDIDATE_AXIS,)}
 
-# Forward simulation declares the same two axes whatever the regime is solved
-# with: it tiles the subject population, and its decision streams the same
-# action product the solve's own classification streams.
-_DECLARED_SIMULATION_AXIS_NAMES = (ACTION_PRODUCT_AXIS, SUBJECT_AXIS)
+# Every fixture tiles the subject population. The finite NNBEGM replay route
+# ranks its published candidate bank, so it declares no generic action product.
+# The other fixtures retain their streamed decision programs.
+_DECLARED_SIMULATION_AXIS_NAMES = {
+    "grid_search": (ACTION_PRODUCT_AXIS, SUBJECT_AXIS),
+    "dcegm": (ACTION_PRODUCT_AXIS, SUBJECT_AXIS),
+    "negm": (ACTION_PRODUCT_AXIS, SUBJECT_AXIS),
+    "nnbegm": (SUBJECT_AXIS,),
+}
 
 
 def _legal_axis_names(*, family: str) -> list[str]:
@@ -64,7 +69,7 @@ def _legal_axis_names(*, family: str) -> list[str]:
         {
             *_DECLARED_AXIS_NAMES[family],
             *_HOST_AXIS_NAMES.get(family, ()),
-            *_DECLARED_SIMULATION_AXIS_NAMES,
+            *_DECLARED_SIMULATION_AXIS_NAMES[family],
         }
     )
 
@@ -157,7 +162,7 @@ def test_the_simulation_names_are_what_the_simulation_programs_declare(
 ) -> None:
     """The simulation table above is what every regime's own programs declare."""
     assert _declared_simulation_axis_names(model=_reference(family=family)) == tuple(
-        sorted(_DECLARED_SIMULATION_AXIS_NAMES)
+        sorted(_DECLARED_SIMULATION_AXIS_NAMES[family])
     )
 
 

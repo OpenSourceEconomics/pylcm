@@ -158,7 +158,52 @@ SIMULATION_ENTRY_ALLOCATIONS_SOURCE = "src/_lcm/simulation/entry_allocations.py"
 SIMULATION_POLICY_PROGRAMS_SOURCE = "src/_lcm/simulation/policy_programs.py"
 PUBLISHED_POLICY_SOURCE = "src/_lcm/egm/published_policy.py"
 
+COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE = (
+    "src/_lcm/execution/abstract_program_inputs.py"
+)
+COMBINED_ASSEMBLY_SOURCE = "src/_lcm/simulation/assembly.py"
+COMBINED_CHUNK_ADMISSION_SOURCE = "src/_lcm/simulation/chunk_admission.py"
+COMBINED_CHUNK_OFFLOAD_SOURCE = "src/_lcm/simulation/chunk_offload.py"
+COMBINED_CHUNK_OPERATIONS_SOURCE = "src/_lcm/simulation/chunk_operations.py"
+COMBINED_CHUNK_PLANNING_SOURCE = "src/_lcm/simulation/chunk_planning.py"
+COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE = (
+    "src/_lcm/simulation/chunk_profile_inventory.py"
+)
+COMBINED_CHUNK_PROFILES_SOURCE = "src/_lcm/simulation/chunk_profiles.py"
+COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE = "src/_lcm/simulation/diagnostic_operations.py"
+COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE = (
+    "src/_lcm/simulation/forward_program_profiles.py"
+)
+COMBINED_POPULATION_OPERATIONS_SOURCE = "src/_lcm/simulation/population_operations.py"
+COMBINED_PROGRAM_ARGUMENTS_SOURCE = "src/_lcm/simulation/program_arguments.py"
+COMBINED_SOLUTION_COPIES_SOURCE = "src/_lcm/simulation/solution_copies.py"
+COMBINED_RESULT_SNAPSHOT_SOURCE = "src/_lcm/solution/result_snapshot.py"
+COMBINED_VALIDATE_V_SOURCE = "src/_lcm/solution/validate_V.py"
+COMBINED_LOGGING_SOURCE = "src/_lcm/utils/logging.py"
+COMBINED_AUTHORITY_SOURCE = "src/lcm/_solver_api/authority.py"
+COMBINED_ENTRIES_SOURCE = "src/lcm/_solver_api/entries.py"
+COMBINED_STORES_SOURCE = "src/lcm/_solver_api/stores.py"
+
 _CERTIFIED_CORRIDOR_SOURCES = (
+    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE,
+    COMBINED_ASSEMBLY_SOURCE,
+    COMBINED_CHUNK_ADMISSION_SOURCE,
+    COMBINED_CHUNK_OFFLOAD_SOURCE,
+    COMBINED_CHUNK_OPERATIONS_SOURCE,
+    COMBINED_CHUNK_PLANNING_SOURCE,
+    COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE,
+    COMBINED_CHUNK_PROFILES_SOURCE,
+    COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE,
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE,
+    COMBINED_POPULATION_OPERATIONS_SOURCE,
+    COMBINED_PROGRAM_ARGUMENTS_SOURCE,
+    COMBINED_SOLUTION_COPIES_SOURCE,
+    COMBINED_RESULT_SNAPSHOT_SOURCE,
+    COMBINED_VALIDATE_V_SOURCE,
+    COMBINED_LOGGING_SOURCE,
+    COMBINED_AUTHORITY_SOURCE,
+    COMBINED_ENTRIES_SOURCE,
+    COMBINED_STORES_SOURCE,
     SIMULATION_POLICY_PROGRAMS_SOURCE,
     PUBLISHED_POLICY_SOURCE,
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE,
@@ -248,23 +293,42 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
+    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "8662c505fcf6ba957dd66c5ab7b35c80ec43e8df83ea4172bf87545b102049ca",
+    COMBINED_ASSEMBLY_SOURCE: "eae7d7e3bdaf96d75671331b3cf5a49ba178316cc1848511615ec9a2f90c6fdb",
+    COMBINED_CHUNK_ADMISSION_SOURCE: "c6e4efca9ff4e0cadf0be3cc56e20ef0151822104db1b733411984bc2bd6211a",
+    COMBINED_CHUNK_OFFLOAD_SOURCE: "ebb5e00669a33d9486c3e3f7a6d5752937bf2751ec95ac360903274b6d81304d",
+    COMBINED_CHUNK_OPERATIONS_SOURCE: "4c05c30ef0788a67165e8c595d70a2ca50a00f1a511c43730a4932b2269a4e0c",
+    COMBINED_CHUNK_PLANNING_SOURCE: "d0d1ecc124e912a331ba7db7465ce2e1f803c0419d9bfba63392f092782c8d2f",
+    COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "530f4ff6cb61120d052d1993e0b0265799f5b81f4c4a8a21b473137c593cedb3",
+    COMBINED_CHUNK_PROFILES_SOURCE: "fa71ca612b9354c26ed9a558f10cdf351c2a680fa4fc0a1e343641a537154347",
+    COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "0bff95b0c220db73f741bbca11f9481ee3f134eab8355e6c7d84a7b9c66d8410",
+    COMBINED_POPULATION_OPERATIONS_SOURCE: "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32",
+    COMBINED_PROGRAM_ARGUMENTS_SOURCE: "007c8bf3e52a168ec8bb88b8fd7edcbd2b327bfccdd1dac1545df31bb1010529",
+    COMBINED_SOLUTION_COPIES_SOURCE: "4fb09ef5993a4e351397b0e342f7debfee9e583201066c03a31021964a1c4a2d",
+    COMBINED_RESULT_SNAPSHOT_SOURCE: "519efaefa58c2d898ff833f987cea9c43b7ef7d91876401d77ede4fe1517a050",
+    COMBINED_VALIDATE_V_SOURCE: "1d2c6813216af2e75111f12f730adec3337d03d47c883e50d07717e13e28d029",
+    COMBINED_LOGGING_SOURCE: "c6636e7f19da9495e7d3518240702700646289145bf54570b7380e6efd6f403c",
+    COMBINED_AUTHORITY_SOURCE: "4617c67cce5405f9715787e7a471b40b756404fdb063cd0c960ca31c57d86ba2",
+    COMBINED_ENTRIES_SOURCE: "2283ab803a0f972e88b6514c6bc7c7e94bf77acf349cf063f2ddfd24eb004f15",
+    COMBINED_STORES_SOURCE: "8a494775bf19c28e9bced7a2ba5b3c7cafaf1d3afd7321d8506dc8241a89b256",
     SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
-    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "74ea68920bdbc96dba54187bb207cc6d34a8e7e08fbb51c62927ea7d53a9bc21",
+    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "5d4f6cabda9234e0bdb9b483ff7da90d3053b4606ee9cef3870134e1659d7094",
     NBEGM_SOURCE: "32037ec1fc4e67cf7523d4a574e0172b91e1e600bfdacfbd2f8afa987319c0a4",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
     COMPILER_INPUTS_SOURCE: "c28ac1ab4acab2166120867158dec5eb866c082cdd05f7cb7877f2dc3c52ef8a",
     SIMULATION_OPERANDS_SOURCE: "4c0333036fd861ace225a0a38c925fa2a694433e3eddcc47d9fe1c0eea2ee9f8",
-    SIMULATION_UNIT_SOURCE: "c2c8b34310339ced638e67503251a398047b9c673146bd7d49f69670717c4d3b",
-    SIMULATION_HOST_SOURCE: "74bd0ccccd0b25968e502a42ab0a6c7ae19341eb946dcd1b1c21907a469786d3",
-    SIMULATION_MEMORY_SOURCE: "917677a73a623cc2c8d836957d7a86832403bb1f319ec5eeeb967abad9ec31a1",
+    SIMULATION_UNIT_SOURCE: "40e5914f402a4d22b0273758d8f9fcb2a17a5bc87447e2f05b54bd32118b2590",
+    SIMULATION_HOST_SOURCE: "6a08e86536b4f59f99632390e55f400d27ba7554312297b67002157c38f04638",
+    SIMULATION_MEMORY_SOURCE: "14b8ddb6e9462519ac79d49dea17e0cba44a508b143d4e0ba08e6f7ce78ac7c5",
     SIMULATION_PERIOD_INPUTS_SOURCE: "e29c50dd464cd01f5f48a2c6574e13d454c577afb979e51195fa8394d1099c7f",
     SIMULATION_REPLAY_INPUTS_SOURCE: "6a8f9e1eafbebb264b11d7b6be5535c1e9cdf90e2ec1e17f2343eddc222b01b9",
     SIMULATION_VALUE_READS_SOURCE: "b00b335634970802bc240962c6c7eeba99598924a00b4c0059b87663d4e928e4",
     SIMULATION_VALUE_PLACEMENT_SOURCE: "afd58b343d0385934c3add5552d7926dc3f9ba2700e5a40b26a65a62a75b1e68",
-    SIMULATION_CHUNK_INPUTS_SOURCE: "cf82d14c75cd4826c27dba1f7ccd365f5c0d514b2c9dd4f5535ccf74335a637d",
+    SIMULATION_CHUNK_INPUTS_SOURCE: "482f772e78789c6984cbd5400dbc025dc7921b35a8876a0567d1d2088e526d2d",
     SIMULATION_ENTRY_INPUTS_SOURCE: "546ff0670f64c41fcfd3c3f629e783e30697b9de6164411150d8d69f40ec6e24",
     SIMULATION_RESIDENCY_SOURCE: "78486d94eecdc7b7fcaacc4c24e3a7db6610f7d6bc83c1a18f835a10eb989594",
     SIMULATION_GATED_ROUTING_SOURCE: "9e16638f296169a876c37f0c18399a8ed894dc2f4e1cb54a3466f909ddffb85e",
@@ -276,14 +340,14 @@ _SOURCE_SEALS = {
     WORKSPACE_PLANNING_SOURCE: "05972cd1ecf48b86c6a9ad4828e7b750ca62c130c1945118735ff002ac586f48",
     SIMULATION_PROGRAMS_SOURCE: "dc05c99c5b3e083e20e5b909ffe3a7910b94697cfb3d0fd9b9426d9cd80d5f1e",
     SIMULATION_PROGRAM_TYPES_SOURCE: "3b22c1399e032629734dcff54e29e9e4c00ccd03638d2fafd969f697975c8c6c",
-    SIMULATION_RUNTIME_SOURCE: "629a69bf12c34f7268bca2103b58682cbddefb155b667d76a587ba722de4ff6f",
+    SIMULATION_RUNTIME_SOURCE: "3a629966fd606068b305ee1e778f3ceb9b41f6ee714a574187992b1efa92e56f",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "e01b3de5cdad12804794a3ce83ff3a74424a9539caa70330e8792ca7878f1bc9",
     PROCESSING_SOURCE: "3aa08741042207d1dfd26e4bd8e6b65b1c20d80d5eb2b0825f3c5682d76a4ad9",
     GRID_SEARCH_SOURCE: "ed33d78e3cd17921cbde158534f386014f3a2529af5cf686b7e10c8e3fa43d7e",
-    CORE_PROGRAM_SOURCE: "078df8c1d82cd31e9cfa1bfb7acd263154676ecbd13117ff7c446bab5130fdba",
+    CORE_PROGRAM_SOURCE: "37823a33eca40dcce2cb71952b7d7d7ec8bedccca15061a4df6178061e738757",
     OUTPUT_LAYOUT_SOURCE: "b5e9c667a15dcb6a1393f54f4ba7d8fcea85d3e78104f6e9e4cbd16c60fd1bb5",
     VALUE_TRANSFER_SOURCE: "d1b2c3282b8504346738257983266b298d46dced2d3f49212f23b729d5877f12",
     FOOTPRINT_SOURCE: "0dbaa3c673f053a51fa7bcab4e06d2080252dd84d827ed28123d085c4000fd0f",
@@ -299,19 +363,19 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "400326d4fe75f7ee62daf88ca334c095f30689b37ef5cf16f0aacd61b9cb2b75",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "fe6f2f8e9550314cc4aa76ba9ce41f104f6e55ed8a72804d6b15e18dce9ae8cc",
-    SIMULATION_TRANSITIONS_SOURCE: "18f53b35a8a11536f9e3df03cfc48cec357bbc2fa11308d04091620d02e179a6",
+    SIMULATION_SOURCE: "ea194fd71e5aa939b631d7db6fb3df13179bee5ba19d93d909b78c96ea8cb353",
+    SIMULATION_TRANSITIONS_SOURCE: "76ba02db6b40070033d1c6b3fd5769a675ff8c1d27e2bb8b179246c06be8066e",
     SIMULATION_COMPILE_SOURCE: "f6b4ec612b6bcf6263995d85ce5bd49c75c0c807af1bafd83a16c89140863d12",
-    MODEL_SOURCE: "bad12f838f71ab465e15f21f8f02dbca16e6f939850c8a345ee53be09ebbbf83",
+    MODEL_SOURCE: "3ed5188d5ed0c5c129653a660426a980a2e6cdf79b02a6a52bd1d3f760473bd9",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "43bfe665ac889a793e2f423aa38b87716228c2dc77e3f8fea2e23219b71c5257",
+    BACKWARD_INDUCTION_SOURCE: "6bd61a491590c97a591f803fab2f04cc6abc9818f44f0cf8a0e811c759507021",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
-    INITIAL_CONDITIONS_SOURCE: "5114b119e318dceb693e9cdb99ee8207155c9301ad5a883d7e111cb21f0ca2c5",
-    RESULT_SOURCE: "bfc4b1f19bf1852c86c4f5b87d40abed2521d0519af99ff613975fb8d3ab09f0",
+    INITIAL_CONDITIONS_SOURCE: "6ae5d06da6fb96fbcbdd12160f35ea5ce3731e87b7dba5f9139e7a2e29d0462e",
+    RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
-    SIMULATION_RANDOM_SOURCE: "2b7fb689c8bbfdc8689916bc25063c3c001aed4103d0381e71f61b4c889a865e",
+    SIMULATION_RANDOM_SOURCE: "21f05b2778dec509da57597b19a7df32c3e2712cf093f17152e4ce1ef919c41d",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
     SOLUTION_CONTRACT_SOURCE: "000a633cf6544fa24a057e5c2c668b94ffda232faca10bcc06e21474773d5678",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
@@ -2099,14 +2163,14 @@ ARTIFACT = "artifact"
                 "_validate_retained_artifact_payload_types": "8ceae90284dbdc25b64e0b66d79990e8f9104f9a6410d90d8eb94c426d24ecbd",
                 "_validate_disposition_reason": "5df6651c2d9db4ebeb5542394c738c5238144ff19f48f0639b3bb6b43c63bc8d",
                 "materialize_core_program": "3fca95ce9b59331c45e956c4b5a86d468cfc10ff726875ec36f607a83f0cfb31",
-                "resolve_core_program": "5bbda604fd5e7ca64673ae837d8797db3fccd54bef3d5118faf20170ebb56ea3",
+                "resolve_core_program": "e9f3e9a970c72ce519b4c73261ae3ee9286c775e06c01e76971c4c59fc17e162",
                 "select_programs": "545d2aaa5fd158f5cbbe4c8a2bf69cfffdaff588eb5066fcde54de59fb37c91b",
                 "_validate_core_program": "26c1ac9dd671db992b08622950966686a4a99a98e29931ef8a6af8b4bb27e50d",
                 "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
-                "_resolve_input_transfer_plan": "82f85e723e106098c2fa06f08d3e13bab356c75d313b73d10ac0faec54d70c93",
+                "_resolve_input_transfer_plan": "f62a9fc86af542f15a99a0dd93978b681e1dd0c45d14772b711a6d80d3eceb2e",
                 "_validate_value_reads": "7195e459ee532bf8ba4761bbf4570079282122e85a588f4f77064b0bb3a07ca0",
                 "_value_read_argument_leaf": "5578c82ba01f569fd8ab63c4d2f09bb94529a08f07a9ee203f4c22be737eede2",
-                "_validate_transfer_argument_metadata": "982c86620af578c44c9a3881eca2917d84773b724a7072e54a134fdc5523820e",
+                "_validate_transfer_argument_metadata": "1b81acb2f30edb626b63b984ae712ad91675d27f9b8d0dd91d1bdb2f9792b6ce",
                 "_validate_reduced_axis": "ddbd1f45950e27f98e26c4ec6e966cb81720a58fc76b509304a1584e66b39c55",
                 "_validate_tile_width": "12b8130b0c8fd36ca93fb5c8d5fc47b7b02b802e5c0c84a47858c7999d61e98e",
                 "_validate_coordinate_argument": "b37c132508f8a2ca8803c1db613fff68b4506e417b0832638cbd1ff432a74cd0",
@@ -2978,20 +3042,20 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_RUNTIME_SOURCE: (
-            "ae82802787969da21e89856de64453944733967642a5696109e3c91403a135a8",
+            "d46b7e50734ab51a99e455c8acc83f28ee318f123da3143b19a6387f7888bd93",
             {
                 "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
                 "SimulationRuntime.dispatch": "b936af2fdda53d89102dc39ee6846e1c53072222a216aeeca3e69f34df201165",
                 "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
                 "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
-                "SimulationRuntime._prepare_materialized": "e1660f9fe46061be1e96201b8e2b4f12bcbd3352805428925a9f1d0ae97c36ba",
+                "SimulationRuntime._prepare_materialized": "4bec71f699b5608516ec9caf02f8ed8fb5161fbace0e46b7b5823feb9031c9d7",
                 "execute_simulation_program": "b75e87e597dcb01eb814282f6f89eafdfbb1121ae0f93ea4ae4fbea68e7f10d8",
-                "_SimulationCandidateCompiler.__call__": "34118b52721ac3374cc3b9744b5196428fbb603551f6d297e1b6ab7deea9e907",
+                "_SimulationCandidateCompiler.__call__": "0d6fe04e2c3feece711e26849913a3f865be943f072d36b29aaa2e129b59692a",
                 "_with_subject_extent": "c48502d31e8f9fb29221122b0de6d10f38f3d6f740854a82512c2b964079e463",
                 "_build_context": "d2de03c66739cd53f5c9e1f95f9fd0ab4c57334ca853e7a5e8f0422cf733852d",
                 "SimulationRuntime._materialize": "ad4bea86c85d6fb3ac6e72f164a852c42f677fc3fab5e321ec34805f8c351aaf",
                 "SimulationRuntime._require_budget_context": "6818040f38e55d623ae48f58b61ab3f1858d7ecd79df5b3f68321c364bfa6910",
-                "SimulationRuntime.compile_candidate": "367181627553e0272f4fcc771adb900296d4c3409fda324ea45ac799e2803e0c",
+                "SimulationRuntime.compile_candidate": "0d8715d0800f5b40cf8d6a7c33ea12a89399a95009002510106854f333032251",
                 "_CachedSimulationCandidateCompiler.__call__": "28dcd8f5efac82c89e21143112cf45402a5dde3585423bd912f4c7b455e62107",
                 "_simulation_peak_bytes": "d78167b86cd2b5e0c77fe41aa86ae64b66f4e372bb187f68f4893d323cdce78d",
                 "_SimulationResidentBytes.__call__": "1de7cce7b963299d2803cc325d95389fe99fad8282a3b9a707bdddbb3dccd450",
@@ -3041,38 +3105,38 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     """
     contracts = {
         SIMULATION_SOURCE: (
-            "ee0ba5f89922468b7c3530b7fb401b6472fc63b3d8df7db23c6f27bdad2c9b8e",
+            "45c78f7759d8f0b0d665a9f31fa2fa4311479207e7389f574c1b5166648e4b2b",
             {
-                "_simulate_regime_in_period": "ceeabfb0aced61f656a810866e8ae18f90f348d4dafe14a3b82cf3675d0a5eca",
+                "_simulate_regime_in_period": "4bae486a80b50bd7bb061c8d798a7fc9929bf8e905960db7a404054c8400db30",
                 "_execute_finite_replay": "8b889472c13e0dd4d49371f3cbce5f134eea266236212594169be359d058ce14",
-                "simulate": "de24d5855fc9ca1cd45fbec89bafa783759bc66ecc0f5dce5fcb6d8e0a117c13",
-                "_simulate_subject_chunk": "040cee82b493bbc8630962270a8c692c08186085f8c43bc8108ea673d53b2af9",
-                "_bind_unit_executor": "8a2a8bc6a28f5d7c6a4a2c8d3bea6db86e79c211a8a9b2a409336126a7572a66",
+                "simulate": "644e0f74d100d90f1ded85069d506922081b8fb84d3f7f21cbe4d62d38098c00",
+                "_simulate_subject_chunk": "911f31a1e6656c73ed8099ca1265a3cb3c70c8ddd5fba8c9ccfee15ea1750529",
+                "_bind_unit_executor": "5acd3280f436ccee3fdad56766c042f9dee378baaf9eb30056c7ea47b8968632",
                 "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
                 "_read_external_replay": "7972d2214dbda0c4173fedfabe12b9ae3b03ed099db9f950cd176ee082131c90",
                 "_replay_nnbegm_candidates": "5733c0a4a29a916da35662961a0b6ab2628bdb7668bbda923c4cffb999f93a36",
                 "_prepare_nnbegm_candidate_bank": "d5406bb8fb04f481aeb91ecbce93394cf531239a137df46d28ace9993797b62f",
                 "_rank_nnbegm_candidate_bank": "fe9d4341209042a24be1359ee77089f1f43cbd4a0a4ca1da63ee308b5c547f64",
-                "_initialize_chunk_state": "82b413fe657adbce560df50fae814cf80a268eabc0839cbb99a2242c4b2ab482",
+                "_initialize_chunk_state": "0597964759cc394aea8126642ecf7a6d0902c080cf9ceff9cd704e805a4c149d",
             },
         ),
         SIMULATION_TRANSITIONS_SOURCE: (
-            "8eda19c2d7ca972338f756ace688e6a037fc2e469c3b15614727e74bf8db46ab",
+            "cc50eb0eca3cd9b65846021e97ad41c46f60c79b8ed8d1a6ea763f75a0038ecc",
             {
-                "calculate_next_states": "1d896f682a473fe16b75c9546929ba657dae9e292ab99f99fb5b8f0407232b99",
-                "calculate_next_regime_membership": "061071105fad806a8aa8b452e853f2fb2048476580eb712732c8fd3ece993998",
+                "calculate_next_states": "3e3f6492867d2ec3b57cd8d458d43ebae5929ad572ffe7376fb4edd7cf65c298",
+                "calculate_next_regime_membership": "896c97c2bd5f975ec293815ec54d254b8d6f10cbd5b29ed1ea2896c52983e3e8",
                 "_update_regime_ids": "93e8f8c1aba6e42f14269aac5d911c722e5e132c207cae6fa3e07bf138a58163",
                 "_draw_random_regime_ids": "87fa7035d1095f0dc1a17e51e517ef559808039ac8a107864995ce94f2bf7430",
                 "_advance_states_for_subjects": "a7ea5a0c113ec1aca76552c7d54502133076bee2ebe96052299ef46bf9518547",
             },
         ),
         MODEL_SOURCE: (
-            "247c556286f968e94044d14f96b2e5a05c3494404ca3918978c37a9349f0f2c2",
+            "a28aef719eff4c0657412a7f4ff509a0acdc252b6612d5b8a4ec7fb60845ded5",
             {
-                "Model._resolve_simulate_regimes": "5a11f26e52496d8210ae0ab2b9846d5ca234569764f82d47e871f26e33751ee2",
+                "Model._resolve_simulate_regimes": "20f6a28c67270f2dea7e234644a48df726afaad3bb68e0d41b0be9bde2fd4953",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model._ensure_simulate_compiled": "2e59224333ce9bd7453608d05359e933217971dbf8867e3f9851b9f503a2df86",
-                "Model.simulate": "69143470d9499971c9493fc9c4ac2d25d86808afe4b3b1ec2121ff3a09fa6a15",
+                "Model.simulate": "2c6eeb21b8e4d38d4a6b80855c2c2ebfb3141465bc517d8b9b26f37ad8fe8ab2",
                 # Fixed caller owners flow through both private automatic-solve
                 # boundaries without becoming numerical operands or cache keys.
                 "Model._solve_from_flat_params": "155f0cc0924e38add9e4cccd83ef416b5f716360d20e79cc29cb1735da21f549",
@@ -3084,13 +3148,13 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         SIMULATION_RANDOM_SOURCE: (
-            "b52d2661652f8b3924beb34a3e04a3a207ed5584c70a532c83a2d5312cfecf17",
+            "a682a190f5bd3e24217d3c9781f690e80db6206dcdd63ad29e556110b9e0b77e",
             {
                 "create_simulation_key": "76fca4fbc2e18885d2ee67512e8207616fe8d17443954d9b36765a4bc52b3dd4",
                 "_create_simulation_key": "1ab7921d3e42ea7255fb8bbc60d1ed58e408e8818d0bac91ec132c276c62a05d",
                 "split_simulation_key": "9968b4530b74638b082b63c0160391573b8ae4c20a9dc3b733a9b424de259921",
                 "_split_simulation_key": "666d1e23f386815a8fd331cd543813fa2fcdb501f7672a82be9f48fe31c293b2",
-                "generate_simulation_keys": "a0ada0cd4a1e738dcf51b6966b081504b19f86d9ca5a344111ccc25ee7daaf89",
+                "generate_simulation_keys": "fca1aaea960cf409abee1dc2130e889d292eb12f20b3dc284f4b1e850eb2b503",
                 "_generate_simulation_keys": "87d86ba01310209a8ac5b222c2ea6aebc8ff4488b2ba373b1b28d5b682c737b8",
                 "draw_random_seed": "42fb402a3282c789664d45fb988b3ed07b8cec706924d3e6e11e26b44c393502",
             },
@@ -3145,22 +3209,22 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: (
-        "2d2ae6bfabbbe061665dd4dd250a9c3c5af8218711b54850ad6fdb6bc3de10b4",
+        "514d7dceb8275f0669f2127db0b24dc2bd7ba793281fcdacb6e7f03d781dccb9",
         {
-            "SimulationEntryAllocations.snapshot": "e7ae5d93555a3a4f4f683bb21d19096a8385b87a8d2a7d11a4365ff61cfba963",
-            "SimulationEntryAllocations.solve_input_roots": "3cdc201ba2a560e0b5fb06ffc7cf79020614776b7a0a03a027bf33a1c1df2e31",
+            "SimulationEntryAllocations.snapshot": "a7c1b99111f4d0bddc53601836b39f36e7c45e663ba581844dd19d32df70ae16",
+            "SimulationEntryAllocations.solve_input_roots": "f1a143f6ee98f187c6ad36e0a9917bd50724b97efb457bedeb1b6a74579bc583",
             "SimulationEntryAllocations.__call__": "d16c9d254801ebbff8ef1ce18125a3a9fe68073d83672bf8855eabf923da6624",
             "SimulationEntryAllocations.publish": "a8e437cc229448ceb3f4338fc580081b830cc530dd2fc837b1073fbe546e2ae8",
             "SimulationEntryAllocations.pad": "cfe078114a6c07cfa9ad0ecb0bf0411b8985742aee92a5359d8bae8315d4f0c5",
             "SimulationEntryAllocations.update_solution": "c0b444df24bb2bc44e0d3db1253353b129ca4c881063066a59fcb7c6a37d7972",
-            "SimulationEntryAllocations.close": "2bf72cd82e3c7e142febbff779235771a93857885b007922821d885a7f1fd7cc",
+            "SimulationEntryAllocations.close": "cdb5ef0149b3658b1b7e54b5b0593b71fe540bb14d587e61cb02757ea86b781c",
             "_pad_initial_leaf": "b5ce0e61085c360e97280d593948a3e8e775e10424620a905c038f34142dd7a0",
         },
     ),
     # The entry coordinator preserves both validation families and passes the
     # real retained inventory to each newly profiled summary allocation.
     INITIAL_CONDITIONS_SOURCE: (
-        "12b2aa5964002cd67a04f7e8ae71f132b66febe22595ad90da7322d2c20f7f7c",
+        "1f4bff3706e39f777a2aac997e70bfb8273792822cccdc6753f82bfa5624351d",
         {
             "validate_simulation_inputs": "db221b7a09a394ea9d6eb5e1c0329d4ff61a78737de85ea604b5467ba9179f86",
             "_preflight_memory": "24af3b888fd7f85f2f580b19b08c0ed565ed2bc3da34ed883c4e7982f5bc5caf",
@@ -3252,17 +3316,17 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SIMULATION_UNIT_SOURCE: (
-        "cb5d5f101cbc8f99d94a434f0a22720a6c8f5f386ec465b70940b686bad47233",
+        "5a873645960767a6b5976293a357eb764d58dd812b56a7d5f409adddbd53d7db",
         {
             "SimulationUnitExecutor._live": "68d7baf210f0c7b7c027d9651e180bdba46d7059a7426577ebc27b9f28ec1ff6",
-            "SimulationUnitExecutor.dispatch": "b723f14d6d52fcc4fd650ac2faebf76515f2afdc03113a5986b7882e1fb17aa2",
+            "SimulationUnitExecutor.dispatch": "fcf7c7d15381964d3c22aba55b7576644588e31a0c53787dcef62cd78713a90d",
             "SimulationUnitExecutor.close": "5778ba5f7d0fd5d53898d15913ae8534b4ba43b8de7ffb25b5e79223174f6d80",
         },
     ),
     SIMULATION_HOST_SOURCE: (
-        "08056a9f79f36a104d8d2d922541650a1a682e0fbb646dca702e8b4ef66d7de1",
+        "fd430edbfc9c19226acb99617ed54f2fdb34e0cce58b934fb88c0eb9fbbe3acc",
         {
-            "ProfiledSimulationOperations.dispatch": "f9902fe6a00e363bb238abe3be592cd56e05037db500bcdd5d5c88e1ab5e4a11",
+            "ProfiledSimulationOperations.dispatch": "541a1b08e69ed32c5c3b62473359051fc05fdbd31dbbd9e8d2f710345a31667f",
             "ProfiledSimulationOperations.compile_candidate": "beec6504b97db1a6dd3456ea28534ad9b8dda2d05c7c1f32535a6e82b3534c45",
             "_OperationCompiler.__call__": "4f2d9bccfcd9524fef520a64eef658fe2f88484ff7443700e0b987f62f0e9913",
             "_abstract_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
@@ -3271,7 +3335,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SIMULATION_MEMORY_SOURCE: (
-        "cbcc9d23b3d9bd9a2204eae258a039e79c2c27932e223430c94d5ef8990476f0",
+        "8f4fd7fae88c9bac47ca90dbd93f1348415ca5166dc3566ed3512be51cc05007",
         {
             "SimulationMemory.snapshot": "6c4a5f9c11f7540cfc6bdf495fc1a3b3dd1bbc1b2ddc14ef4a058733bf2c344f",
             "SimulationMemory.set_chunk_inputs": "1132e41412c470c63b70847dbaac4a22bb081fcbda2be1b7406b1857703270f7",
@@ -3328,9 +3392,9 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SIMULATION_CHUNK_INPUTS_SOURCE: (
-        "930c7917f4e71d0c91d4eb52e9207bffdb2b433eeb1e2ae60a2f1f61224dc032",
+        "4f1b764b788d84b3266bb48daef4b768de104254f787cd6e6d47bd81dfc315bc",
         {
-            "prepare_simulation_chunk_inputs": "994f93b22d316bf7709059c323192cc32df53f3b4637c9eba44e7bd1abab7da1",
+            "prepare_simulation_chunk_inputs": "4059c8c0af7ff4c4aa111b16dd1fb529dc4caf1c751d30b81267e3ac88939048",
         },
     ),
     SIMULATION_ENTRY_INPUTS_SOURCE: (
@@ -3529,8 +3593,8 @@ _SIMULATION_ADAPTER_MUTATIONS = {
     ),
     "simulation_adapter:completed_action_space_changed": (
         SIMULATION_CHUNK_INPUTS_SOURCE,
-        "name: regime.solution.state_action_space(regime_params=flat_params[name])",
-        "name: candidate_filter(regime.solution.state_action_space(regime_params=flat_params[name]))",
+        "space = regime.solution.state_action_space(regime_params=flat_params[name])",
+        "space = candidate_filter(regime.solution.state_action_space(regime_params=flat_params[name]))",
     ),
     "simulation_adapter:original_inputs_omitted": (
         SIMULATION_ENTRY_INPUTS_SOURCE,
@@ -3593,6 +3657,310 @@ def _simulation_adapter_errors(*, tree: ast.Module, source: str) -> list[str]:
     )
     if _transport_module_surface(tree) != surface:
         errors.append("simulation owned-input corridor: module bindings changed")
+    return errors
+
+
+# These interfaces connect admitted private copies, descriptor-only preparation,
+# exact chunk profiles and the actual dispatch. Bodies below are structural
+# obligations; compiler/numerical evidence is established in the scoped tests.
+_COMBINED_INPUT_CONTRACTS = {
+    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: (
+        "940af83bd9801553e29a9b494248aad342f843a725089e95576dc08e75baf2c7",
+        {
+            "abstract_program_inputs": "522cfc9f65292fdaf9052734acf713299ca96cf3c7b89a4cc5969da08fb84d79",
+            "_identity": "e9a5387d2c95202d67205d5b7941b87d850dca3358faee599215f8c37f9273ab",
+        },
+    ),
+    COMBINED_ASSEMBLY_SOURCE: (
+        "5ffee884c47cd602f6f3c34a3bb515954b714780d4b0f8cd1c0e7bd40cb780d4",
+        {
+            "concatenate_arrays": "166524acde202897680156949a7154946eada67c9d334c0c7049d44946378ca3",
+            "slice_array": "cfc7f9f403e29db130f989ca681841baebb2a301672cd4acd7b21bdb55fbf37a",
+            "_run_assembly": "78ae9e6c83e25f9cd0b6ee0c4bed2956ee66eef0761df95a418edb2123f5a82f",
+            "_concatenate_arrays": "3788d18fa58eacc8369dbe797ba53d55cb4176b41a5af5fd78eee982947c5716",
+            "_slice_array": "7fcb5248d6614a00a301a43c2e5a7bc438d81f3cb7593894d6c44486bc84deb6",
+        },
+    ),
+    COMBINED_CHUNK_ADMISSION_SOURCE: (
+        "3c5718556daf4de5209fd3d9ca8ff14cc2bdc522ebdb247c4d5a2bf09603f05f",
+        {
+            "PreparedSimulationChunks.require_chunk": "6669149a4b503b89411b3485e9cbc811a37820620eb83fb8f133ee129682a4a3",
+            "prepare_simulation_chunks": "8ebb00eb0d59e43f2fbf0412bb3657475d348316d58f68cb55e1a2ac7ac95222",
+            "_ChunkProfiler.__call__": "d7c563f07e216e6f22a0693a8ae3d2400e26646219b924c2acfb886a80468ceb",
+            "_common_axes": "43b1c757daed03f3ae56ec2388591c6f894e1a5dcae670095b0977f4f8419c22",
+        },
+    ),
+    COMBINED_CHUNK_OFFLOAD_SOURCE: (
+        "b9ab908caa5df5af326df92d1cbee1566cdb9e51738305ed086f59a8e1cbafe0",
+        {
+            "chunk_host_device": "78b1dab1f595c20eceb674b65fcd24f29280a050134327b9d297ecf541a2eb40",
+            "offload_chunk": "c1879b72e6f1726a75b3766c8ecaf1e7da2039024cb77f4955383e4808899670",
+            "_copy_reservation": "61b5fcba503ac11831458b4522800283b492fa3fd51753ba9cb6e24e2236679d",
+        },
+    ),
+    COMBINED_CHUNK_OPERATIONS_SOURCE: (
+        "c59fde4f911dff29e84394afa29a7a734381b2371bc4a442acd4d097c5f9dc3b",
+        {
+            "slice_population": "609dcf09cfa715eabecb29b1e5ff68163bb476ef8edf05fce8fc66a8b63bcf81",
+            "_slice_population": "d792ed23b4f16950eec4a3db4ee0c8ff95aede40469d0f220bd697a47a2d661e",
+            "period_age": "3f7f8c712cde6b3a6cd90ebfb6e66a1680010ca05670ccae90eaecb42353e333",
+            "_period_age": "e514ab831281075c33ac82eaf68aeb57779770d04051aefe64e02a5762c9b820",
+            "regime_mask": "8fbc0153274cb05704a54704fcbb370211e0b635bb2224ee2630a5fa06a5fc4f",
+            "_regime_mask": "e520b5e61daa2fd190ab3b79c0a66e332787e977a4fb0b173e59884e7d8a840d",
+            "broadcast_collective": "55c4bbcc3e163aa8fdb221c2ed3e0ebfdbefae7e86dfa76366f565f00075241d",
+            "_broadcast_collective": "e4e18b73e6c89877dae70e21a6707472219d44ed6fb5eef672577c276e34620b",
+            "broadcast_value": "d19aca835a4b98e2775d9e5a0a4c1099deb65f6c4af5d8887f492b440086d6f9",
+            "_broadcast_value": "52ec120e28113306a52e9a9a2b868485148ebbc2b0cceccff3dd2864db949b4d",
+            "empty_fallback": "6364471157867280847d71bfd4660faee1f5137d08b896f2d952dec8a86a9b50",
+            "_empty_fallback": "974cd130dd3ba7977b514a21225c5936bb4545f20c9d92412b85021424af9627",
+        },
+    ),
+    COMBINED_CHUNK_PLANNING_SOURCE: (
+        "3f11d8ac6a6f7cd2c8d703ccd7ca6fdae2cb02ec44dda559c5f3d3e9750f0e0c",
+        {
+            "SimulationStageProfile.__post_init__": "3c81a739572b4f8f4c6137a61f172deec19934abe9a430ffdabbfe887e857700",
+            "SimulationChunkProfile.__post_init__": "dc35ef9a8a3b963fa62d6f3fb2f54eb645e6d7d2f024a50bf4174d0a32bba602",
+            "SimulationChunkPlan.__post_init__": "f6c3be86ea1d1f22e94c94743dc6fea1275027095004ccfdb30684bca8428cca",
+            "ChunkProfiler.__call__": "0d8cfb4c8530d329393a4f74150d216e68bb03a061b10b6fe93e401a33c6dc51",
+            "plan_simulation_chunks": "56f7031e6be4dfbd264314cc8c6203b969e10c61f7a740c4aebff16e66a1d122",
+            "_required_bytes": "b621b093cae3c8cc1893c4f80fc918e62b15a2379314db01aa4fd62a64948ec6",
+            "_validate_devices": "c7387fae49d5a96a9a3b0454ffd74e0d5c7a798a8b4c837bd2c66d6751cd7c3e",
+        },
+    ),
+    COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: (
+        "bdd486c049dd5165a9801f069c2814fa3d2a822d70300f1ebc328d3bf7be7cc7",
+        {
+            "abstract_tree": "11b026b116f5dbd4af2dc3f00d8da89d16bf616ba2ec3643eb6aba979a5bd419",
+            "payload_bytes": "7ce520611f72127f26c95e7c98b997e0767c14480e3755f6426f821ae5dad26a",
+            "add_bytes": "dc8405be6264d34c70ef2522ab4792b55f21865953e2aecc0cd6a53a3bf8ef78",
+            "maximum_bytes": "783dddf0ef2b38ae119990b8c4815f4469a7396b94a993a7ddfd3b3b36bc020c",
+            "ChunkProfileInventory.operation": "fdf7dd71774697094bf0f4a54c8c886bbc14568fe2e914364ac703b183b62a6f",
+            "ChunkProfileInventory.compiled": "c561113d5ab0c5fd184d3790e2b5e4e20acf663a920e28a2596d10f09924a79f",
+            "ChunkProfileInventory.close_unit": "f65d7fedec0c9f24adf4d8be034aa5be7dd72ae9bb87d312c7dcdefeb885831c",
+        },
+    ),
+    COMBINED_CHUNK_PROFILES_SOURCE: (
+        "31cceed04d965f5cace106835b1f3d8161325cc758745ac0a7a9f244f0bb34a6",
+        {
+            "profile_simulation_chunk": "74ae90e9bc492f99994662ce9484b14a019fa8c476f11cbe80c432c0153929ce",
+            "_profile_next_subjects": "6996f7fc0987bf01ed5356c9ecde559d104b911bc6adda3ef638d05b8b0ebd7b",
+            "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
+            "_profile_outer_storage": "654d9ed612edcf263c2eead952a5e5abbc11fef8b43af2670db23d0d098eefa1",
+            "_record_core": "2eb6e032764c64ec3e1ab888c84f1fb4fc228c32cc662926891118300bd2fb3a",
+            "_profile_initial_carrier": "1ef1aa933990fbe5e52659aed6d1f949d76b44ae0d840c0307c2d8764efce7cb",
+            "_profile_keys": "6ee2aba029d5c6a6249f70aec78a7eab6dd66e391b8522b486de3180c6e20c49",
+            "_profile_taste": "ce976aa42f4ef30bed63fc9fedcf72652b611f2c1a5262b8085a29da83b7e622",
+            "_period_copy_reservation": "e1de20e3ed1e0e38b8b8c60e8a63163b8446e2f74237d6e4e0eda0367fdeac25",
+            "_profile_entry_key": "306ad82a059557d575d50c24ed8c51a0d172ed97b6de476a99945bc8ca10599a",
+        },
+    ),
+    COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: (
+        "796b404a0fe45bd3a5ddb363612286d721a8c0c75656c1522432abd254f141a5",
+        {
+            "period_value_flags": "1ca9e9e2920a0333915071a229cc907c2fdea761f313ebed1aa6e7d35235908c",
+            "owned_value_nan_count": "e6168d82082f8c26ffd75a75386d46764a59d1ec3030b11e9688d019a9e668d7",
+            "transition_counts": "9ab0013eeb414dcc3bde5bf91cf144079b27ea4b3538d4b7858687cfbe84dfbe",
+            "profiled_transition_counts": "586661d6d039c19a88a0bc9c450342a8c31f36eb0453d0d82147ee6d15cf6def",
+            "DiagnosticBinding.__post_init__": "e94a4dd9f381772b875a4dc7715ab199f7f0c7b5d49d3bcff67399f6473d5e72",
+            "diagnostic_bindings": "0266571f8d59c095f9797b9e05bd43e5e5eb9463740b845896b51f555fcea090",
+        },
+    ),
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
+        "4a1211b2b817c4e1058262603333a8e9890d43f39132b0c14d1787319df02f77",
+        {
+            "AbstractSimulationProfile.__post_init__": "363e5274bc77382335a7ac5d5200ed644324ff361f578889d29dfac63bf3aa31",
+            "profile_forward_programs": "c5b88f38a2807ad2c1e181d13184b9a821104fc661157d7f283183d2e201ced1",
+            "profile_forward_unit": "4d7babfcd71f61aff559883e8e092dea05e2ffc0bc508b9ea3d30da767c95e30",
+            "_profile_program": "51bac868a7c4c43b1ccca2253420be8107ac39fb85e86e12a8c1e91a22ef66c5",
+            "_stochastic_keys": "dee659c1811c43e460e7e3d77191d61166c7df35b322128400244b3cbe07aa36",
+            "_shared_tree": "69d4bc1f7c0f179d2c31bbb7fc5bae56005e713c5213b0c44cd262158d7fb858",
+            "_placed_abstract": "7e7f6ef3a1b6d02436a1eebde1869d131f4f11680fff287a44763acc2040723c",
+        },
+    ),
+    COMBINED_POPULATION_OPERATIONS_SOURCE: (
+        "a42062f4ab1662095f72ba4ca56a49fb03bbb2f05ac84d3a6208c8e838471ed7",
+        {
+            "default_roles": "88afa3c0d2bc242098f72d9ab7232308a7a26ba97fdcf02620b70c0cb1929a13",
+            "regime_is_occupied": "8e2e9ccdf0821653598ae983149767955a446b506bb532065f681e785addc62e",
+            "canonical_roles": "4542061502177865523b5c1d0c5346c2aa2ff46286c5b81d3df65a0e7e29fb12",
+            "role_mismatch": "faba46dd0931feb531692c4b87d8cce2991dcf2d7a6f6c14de8f9b24d6a4feb2",
+            "starting_periods": "16199c82e3e6d3d5cab5daa483c9a96122dfccb558203068b6da674eb4e35226",
+        },
+    ),
+    COMBINED_PROGRAM_ARGUMENTS_SOURCE: (
+        "d676623f562969f6338deaddc9353bd6e8bab58d223c55c89e28e52c1d83086f",
+        {
+            "decision_arguments": "e02a1ad8f729a34ca2f06c1df8701483397a2b86e1fd4b17b75e4fae318d2f18",
+            "transition_arguments": "566d397d28efd843dd13235b3897e953736319140ebc99b2432b4d2b03705d48",
+        },
+    ),
+    COMBINED_SOLUTION_COPIES_SOURCE: (
+        "6870a0971a3ab4fbc1c19017518cadc320f775dae7f95b00d8f4da8f6186f5cd",
+        {
+            "copy_solution_leaf": "ed4920f470e9c5922b96575ae7b70518d2fc7248aba499a8ffab43c1fe0ecda9",
+            "_copy_value_leaf": "70a9b70985afb5ad1252e4e430e7884366a8e19a09c363ae2efbcaa07d0970fb",
+        },
+    ),
+    COMBINED_RESULT_SNAPSHOT_SOURCE: (
+        "7eefe7585854e8ba12338bb536aebc7e87af9505ead4a1ae7cd01bb397391700",
+        {
+            "snapshot_value_store": "c9c4c5bd8de56596c0ca595302697da9c5f3d4390b0a1b97d87907662915803b",
+            "_snapshot_value_coordinate": "9e3b60a69ba820b65b589cded3adb8a4a50be655d546012209ec4f2f80557e54",
+            "_keep_payload": "ebc1bf419c862f893f78569cc8d06c1e7676e99421133222f254d206d293b6af",
+        },
+    ),
+    COMBINED_VALIDATE_V_SOURCE: (
+        "9268c8bf6d2e16e7d690d85e9cb1eecea0222b092da9941ea15448934d5782ad",
+        {
+            "value_function_nan_error": "df3ef2ed002fa93625d40067b882afe2e063522362c5609160b5c07951b394c6",
+            "_entry_support_cause": "eaf8001c1762ca0d88cc374068a06ad22d43868b03ff8fa462c574dc788771b2",
+        },
+    ),
+    COMBINED_LOGGING_SOURCE: (
+        "c1e5c03209062c39464bf2ba8e2df7078fec9248c37da16fab42a4c2997f79c6",
+        {
+            "_owned_values": "9295ced0a7415a8738e6e9dd1b6a2ee6dc933bd3fdf37193e591752239c411ed",
+            "non_finite_by_regime": "aa597487e43e16a2a001d5c05c0e00977c494349b9af3e65f8afd47aa6d63de4",
+            "log_non_finite_values": "c03a58684f08342c1ae9001fcad29c3d5a5ec4862d27d04fe2807dc9ffa28493",
+            "log_regime_transitions": "11c5f45c415bfac54b36a55d52cded2911152f3e411e61e2d90a47ab19b11725",
+            "validation_enabled": "14475c5e923e2ddab2f7128215e0ebaecfb9ff756a6ad786d2139f1a490e4b35",
+            "validation_raises": "1cce1da3fb0520f1118923b0d5873d6d38b2e7ca8ae72ee9968627f8b43d2206",
+        },
+    ),
+    COMBINED_AUTHORITY_SOURCE: (
+        "c45e467e420b3d47e8928fbf6b5555aa601f0b3b37b2f606f134582556b06998",
+        {
+            "_ArrayCopier.__call__": "d708cfc14d20e8e157d30abe2336b3faa117b225f4ed3b10840d4dfbd4fa4c36",
+            "_copy_artifact_array_leaf": "a4b4e8c07026ff9de60e4bc5861c48a548b2d9041954299b4cf1ee172089d3da",
+        },
+    ),
+    COMBINED_ENTRIES_SOURCE: (
+        "7c020666b808d660dc2f1cf5828f2b0075332e89888d83adafc24a565a402137",
+        {
+            "_copy_solution_value": "ebf2636dba8b0ad9e93e87354da26f1cecc82fe03a35e9432241639e181123ef",
+            "_CanonicalValueEntry.materialize": "c92e8585201ddd0d377aeb75e4d32b6d08116e96f9002ad73d8b2d6621dd1682",
+            "_CanonicalValueEntry._fresh": "4741ea3c98fecd4f6c80282249fee83e74594fe84046746ed4edcec35a7e10b1",
+            "_canonical_value_entry": "be024f9eae76be0d5376b8d2e3b0d25c0184158e230a0da78dad3d1a1a57e08e",
+        },
+    ),
+    COMBINED_STORES_SOURCE: (
+        "7e144fa4d387ca4998b2c0a321c4d9e5befa9adf4cd54f00730d9ac36823f758",
+        {
+            "_admit_value_entry": "60bd7786314e7a5aeff8f8f74115860d308f41eb449b8e7132029a393d0c5e8f",
+            "ValueStore.__post_init__": "4f81b32757d589ced2e605619de79013a2d9450f319e7adf77094e898b8fe7bb",
+            "ValueStore._initialize": "077c0761c319e9c45a36723cbdf0c870c7d3d0e41ebd8a1f471bcb0a7967c28b",
+            "ValueStore._from_entries_with_copy": "eb389069075becdfbfd100077f286fe56ca7280ee38904df068c735ab1d5248e",
+            "ValueStore._load": "68285e90f0ecb237620875ffdd6a70e8a94f31284fc2339cdaed1896c96ba407",
+            "ValueStore.materialize": "3e32297e221c4bb51cd25687ff756f6c02180bb204978d4ac169c9d0a3b08802",
+            "ValueStore._materialize_with_copy": "57314d38103ab629406414b7f1c858f5122a3140a6ed53cd36bc1931601efdf1",
+        },
+    ),
+    "src/lcm/model.py": (
+        "a28aef719eff4c0657412a7f4ff509a0acdc252b6612d5b8a4ec7fb60845ded5",
+        {
+            "Model._check_solution_result_structure": "d1c10f226f3cc66e4f0b4db0a7d4ed33d26525c4416ef20d75012ca2881690b4",
+            "Model._consume_foreign_solution": "27d53f7d537ca0199d8f52284a026066d939df9878cf6e51ed6c6c098f4c9d3e",
+            "Model._resolve_compile_batch_size": "534ea09e0e582cae773f4dea7d6519cac00b2630fc3a7b4bd57731dab420581b",
+            "Model._resolve_solution_result": "e54b44cae90c76aea922a95c3b6c8d59d6d20eb4a6fa89df14ead02dd899fdae",
+            "Model._snapshot_solution_envelope": "e2ccd962949c87b6149c40d9185f54917f272c1f462d386c9a4916b6e09ffd41",
+        },
+    ),
+    "src/_lcm/execution/core_program.py": (
+        "6849d39bc8ef6ee6ac95dd36cdb330fb7d9ae755a36732bc8ca6e4f67d11172e",
+        {
+            "_validate_abstract_inputs": "70f96b7582b3a085fdac809c48c6cbe5788f28d5b5d94dd0bb19eec5a3bdc973",
+        },
+    ),
+    "src/_lcm/solution/backward_induction.py": (
+        "fc1435830bc5427dbedd120ee68154977e54e8026f9ec21b46ebbff51f947b34",
+        {
+            "_prepare_abstract_program": "d9674a5ecfc16c6811cc7858d84f09b9ba3ff6538174e0b014b6b75ee8d28030",
+        },
+    ),
+    "src/_lcm/simulation/simulate.py": (
+        "45c78f7759d8f0b0d665a9f31fa2fa4311479207e7389f574c1b5166648e4b2b",
+        {
+            "_compute_starting_periods": "33feb11da04e05bfb34b8a2302530eae0746ccd14b94af5575bcefad850c411c",
+            "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
+            "_initial_own_stakeholder": "ed1ce36c6c2b26aa9f4787bd8133a1646138d2ad8e01a85f4809140a9e729278",
+            "_validate_period_values": "ef665fe0964c3f4354973ab54b2f38c51a6c88c17922b000ce2419a8a18cea8d",
+            "_validate_simulated_value": "f67171b240995b23a980791e4218f373eaee7fad34d32106777fea5b099cb9d3",
+        },
+    ),
+    "src/_lcm/simulation/transitions.py": (
+        "cc50eb0eca3cd9b65846021e97ad41c46f60c79b8ed8d1a6ea763f75a0038ecc",
+        {
+            "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
+            "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",
+        },
+    ),
+    "src/_lcm/simulation/chunk_inputs.py": (
+        "4f1b764b788d84b3266bb48daef4b768de104254f787cd6e6d47bd81dfc315bc",
+        {
+            "SimulationCallInputs.array_roots": "ce42e9ab0be027b04c573d054e594c08fed81740441a8bf51dc414f090ccb3ba",
+            "prepare_simulation_call_inputs": "3a4bbfdb69a9825d46b21e5ff7e0d30ed7c90e4361adda1a14f34352addd4ca6",
+        },
+    ),
+    "src/_lcm/simulation/entry_allocations.py": (
+        "514d7dceb8275f0669f2127db0b24dc2bd7ba793281fcdacb6e7f03d781dccb9",
+        {
+            "SimulationEntryAllocations.copy_solution_leaf": "e4a19117088da19af2513976ccb2673f23fb21799ef5893dd6559ae091628de0",
+            "SimulationEntryAllocations.release_foreign_copies": "096914c39bdc6f0f1668cbbad08d7d4b389d79448df16888ef471573b827e06f",
+        },
+    ),
+    "src/_lcm/simulation/host_operations.py": (
+        "fd430edbfc9c19226acb99617ed54f2fdb34e0cce58b934fb88c0eb9fbbe3acc",
+        {
+            "ProfiledSimulationOperations.prepare_abstract": "2089b909bf07f0a9b3eeb7ac48e3a4427948ac7750ab280a06c66aa586466fca",
+            "_abstract_operation_tree": "932535e222497f01d8a3325ea8e5f7a9f670458ce46923f9871f33aeea7a9053",
+            "_operation_key": "e1cae5437921c1875b3b40d5217304cf20141329ea6010ecf90fb36e7b98af73",
+            "_validated_static_arguments": "c61715eed695e4912cf3e0b6e08414893c8783261203333a96bb5b801c735f54",
+        },
+    ),
+    "src/_lcm/simulation/initial_conditions.py": (
+        "1f4bff3706e39f777a2aac997e70bfb8273792822cccdc6753f82bfa5624351d",
+        {
+            "_CarrierWriter.__call__": "697bae0eaa97d3806c3079466e8c3de66ce08eec331d66402da3fa02958a573e",
+            "_build_admitted_initial_states": "ca3e5c754d9c86385c7302441e2199c338239d89edde06c5620874793afc68ec",
+            "_cast_carrier": "5a08758007268730f195c44800937e9274ee44167d6ca2ae6ea00dd75ea4800b",
+            "_fill_carrier": "0045c72197d9e16fd510a8530d9c0866327182129a2383e902a9619030be4844",
+            "build_initial_states": "6bc9d8948f600be8b4099ad779be639d6a30c8a66e4612562cc700d9050144c2",
+            "trim_pad_from_raw_results": "cbd171f98bdfb340441ebf055920a21b0ba2b88d1740ca7eff9448002f7e2e2e",
+        },
+    ),
+    "src/_lcm/simulation/memory.py": (
+        "8f4fd7fae88c9bac47ca90dbd93f1348415ca5166dc3566ed3512be51cc05007",
+        {
+            "SimulationMemory.__post_init__": "73be42502efa22e50684e23da6283e0f29e039003df3be5eeafd2f95119a95ed",
+        },
+    ),
+    "src/_lcm/simulation/random.py": (
+        "a682a190f5bd3e24217d3c9781f690e80db6206dcdd63ad29e556110b9e0b77e",
+        {
+            "_generate_windowed_simulation_keys": "7f78949425a2334609fdcafc40af7004735f24079634d434a8ce4a0610092dd6",
+            "_validated_chunk_window": "b3ea4d659dd8c777e88a08d8c3e3524236d5cecff309bc5cfdf3217e5766876c",
+        },
+    ),
+    "src/_lcm/simulation/runtime.py": (
+        "d46b7e50734ab51a99e455c8acc83f28ee318f123da3143b19a6387f7888bd93",
+        {
+            "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
+            "SimulationRuntime.prepare_abstract": "842dba8c1e48637eba99548bebb2858a25116785451901451be656ad3ab55a76",
+            "_dispatch_widths": "3ba962b2590f67b9d50e907111232d81eb2b9c48c2191a76292f288b09a986f1",
+            "_require_abstract_arguments": "c99bca4f2c8dad3b1454441b13b5e25f81ca67fc44b98acddc00d325458bb073",
+        },
+    ),
+}
+
+
+def _combined_input_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Authenticate reviewed copy/profile boundaries after independent byte reseals."""
+    surface, callables = _COMBINED_INPUT_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="simulation copy and chunk profile", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append("simulation copy and chunk profile: module bindings changed")
     return errors
 
 
@@ -3696,18 +4064,18 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
             "_compile_all_functions": "09ce7fc7b6cc49e2fdd3e1b4c00424936145c8531990587366709d0c38879296",
-            "_resolve_output_layouts_and_lowering_keys": "4dcab394812daa474799c4cceb048d33db5f2d7f1cad943bc82a8f3fb0145b3c",
+            "_resolve_output_layouts_and_lowering_keys": "f03447730445e6e130ec69e7eb87fb05b71b1d57f11134e684a198c12155f3e0",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "2b11ec8152b081ae0e2666a46c79b46ef5062ce2738717da0c93bcc502280c56",
             "_consumer_key": "44f91b9312a058528a7f7d34b843eb23efaae21783e834cc5fa06389f4006c73",
-            "_resolve_program_for_execution": "6e3ec3139833f459a49be4a30a6c8c5813ba8cd66176a849ee24e7a81b27b433",
+            "_resolve_program_for_execution": "5d38d4f43925db396c4e21951cac28774eb894bead4865cade4f4c3dbff65b10",
             "_resolve_value_input_transfer_plan": "72bb5e99e0584e124030d7879265fba08488804c98e20aaec96b6355a34fc0e9",
             "_resolve_value_transfer_layout": "2a6f86d8232989bb441e8a50371e0d891f82a7af22c797b10b91ab5bd1f230be",
             "_lowering_key": "a7dbef4ecda41e3acad598b0be6746144b9d9f7877d194456dff7eaa461cb11e",
             "_abstract_arguments_key": "becd5c3e94366bc4e3e0afa31ea20886002228f7064c9a9ea0e7d0e681630dfa",
             "_abstract_value_key": "b79bdd528ed264be0093eb5d04a0341e7376606d478ba0770aa5cb14f813638b",
-            "_abstract_leaf_key": "94afc53d035e8ad9812025f72adcbf76d8966430ef259d339977e9cf90262b66",
+            "_abstract_leaf_key": "b1035e3da73c72fee5ed7370f8f6cb5acce564403518f51e5734d735c0252591",
             "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
             "_assert_lowered_output_roles": "62fcff4b0e2d8566017c980c72046445639aba034da0be42480dd52a9e499871",
             "_attach_resolved_output_layout": "f707999431091164dc9aaa784b89560044f95c11c9cf3fe9631cb094952f9944",
@@ -3725,7 +4093,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "8eaf79f7ad174027344101ac65e88bbf97c93e1c492666572d2fdd2e6b49b1a4"
+        != "fc1435830bc5427dbedd120ee68154977e54e8026f9ec21b46ebbff51f947b34"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -4515,6 +4883,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
+    for relative in _COMBINED_INPUT_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _combined_input_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     for relative in _FINITE_REPLAY_CONTRACTS:
         tree = parsed.get(relative)
         if tree is not None:
@@ -5161,6 +5536,101 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
 
 
 _SUPPLEMENTAL_SOURCE_MUTATIONS = {
+    "solve_descriptors:required_layout_replaced": (
+        "src/_lcm/execution/abstract_program_inputs.py",
+        "sharding=transfer.source_sharding,",
+        "sharding=transfer.stored_sharding,",
+    ),
+    "chunk_assembly:cpu_budget_exclusion_broadened": (
+        "src/_lcm/simulation/assembly.py",
+        'and all(device.platform == "gpu" for device in memory.devices)',
+        'and all(device.platform in ("gpu", "cpu") for device in memory.devices)',
+    ),
+    "chunk_admission:setup_fulfilled_by_unrelated_inputs": (
+        "src/_lcm/simulation/chunk_admission.py",
+        "else completed_setup,",
+        "else memory.snapshot(),",
+    ),
+    "chunk_offload:source_scratch_omitted": (
+        "src/_lcm/simulation/chunk_offload.py",
+        "scratch_bytes=scratch,",
+        "scratch_bytes={},",
+    ),
+    "chunk_operations:population_window_shifted": (
+        "src/_lcm/simulation/chunk_operations.py",
+        "jax.lax.dynamic_slice_in_dim(array, start, width, axis=0)",
+        "jax.lax.dynamic_slice_in_dim(array, start + 1, width, axis=0)",
+    ),
+    "chunk_planning:published_output_reservation_omitted": (
+        "src/_lcm/simulation/chunk_planning.py",
+        "+ profile.output_reservation.get(device, 0)",
+        "+ 0",
+    ),
+    "chunk_inventory:compiler_output_owners_omitted": (
+        "src/_lcm/simulation/chunk_profile_inventory.py",
+        "add_bytes(target=self.unit, source=payload_bytes(tree=executable.out_info))",
+        "add_bytes(target=self.unit, source={})",
+    ),
+    "chunk_profiles:action_decoder_profile_omitted": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        "executable=decoder.executable,",
+        "executable=decision.executable,",
+    ),
+    "chunk_diagnostics:ownership_mask_ignored": (
+        "src/_lcm/simulation/diagnostic_operations.py",
+        "owned = _owned_values(value=value, in_regime=in_regime)",
+        "owned = value",
+    ),
+    "forward_profiles:current_carrier_ignored": (
+        "src/_lcm/simulation/forward_program_profiles.py",
+        "states = {state: current[state] for state in base.states}",
+        "states = base.states",
+    ),
+    "population_operations:entry_period_shifted": (
+        "src/_lcm/simulation/population_operations.py",
+        "return periods, valid, jnp.all(valid)",
+        "return periods + 1, valid, jnp.all(valid)",
+    ),
+    "program_arguments:continuous_actions_omitted": (
+        "src/_lcm/simulation/program_arguments.py",
+        "        **continuous_actions,\n",
+        "",
+    ),
+    "foreign_copy:source_layout_ignored": (
+        "src/_lcm/simulation/solution_copies.py",
+        "output_sharding=leaf.sharding,",
+        "output_sharding=None,",
+    ),
+    "foreign_snapshot:lazy_materializer_admitted": (
+        "src/_lcm/solution/result_snapshot.py",
+        "if type(entry) is not _CanonicalValueEntry:",
+        "if False and type(entry) is not _CanonicalValueEntry:",
+    ),
+    "diagnostic_error:partial_solution_owner_omitted": (
+        "src/_lcm/solution/validate_V.py",
+        "exc.partial_solution = partial_solution",
+        "exc.partial_solution = None",
+    ),
+    "diagnostic_logging:profiled_callback_bypassed": (
+        "src/_lcm/utils/logging.py",
+        "counts_host = counts_factory()",
+        "counts_host = []",
+    ),
+    "foreign_authority:copy_admission_bypassed": (
+        "src/lcm/_solver_api/authority.py",
+        "else array_copier(leaf=leaf, label=label)",
+        "else jax.numpy.array(leaf, copy=True)",
+    ),
+    "foreign_entry:canonical_copy_dependency_omitted": (
+        "src/lcm/_solver_api/entries.py",
+        'value=source, label="Solution value", array_copier=array_copier',
+        'value=source, label="Solution value", array_copier=None',
+    ),
+    "foreign_store:copy_constructor_dependency_omitted": (
+        "src/lcm/_solver_api/stores.py",
+        "store._initialize(array_copier=array_copier)",
+        "store._initialize(array_copier=None)",
+    ),
     "simulation_finite_policy:consumer_locator_shifted": (
         SIMULATION_POLICY_PROGRAMS_SOURCE,
         'path=("arrays", i),',
@@ -6147,20 +6617,16 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "streaming_resolver:arguments_filtered": replace_once(
             source=core_program_source,
             old=(
-                "        arguments=apply_value_transfer_plan(\n"
-                "            arguments=program.arguments,\n"
-                "            plan=resolved_input_transfer_plan,\n"
-                "        ),"
+                "            else apply_value_transfer_plan(\n"
+                "                arguments=program.arguments,\n"
+                "                plan=resolved_input_transfer_plan,\n"
+                "            )"
             ),
             new=(
-                "        arguments=dict(\n"
-                "            tuple(\n"
-                "                apply_value_transfer_plan(\n"
-                "                    arguments=program.arguments,\n"
-                "                    plan=resolved_input_transfer_plan,\n"
-                "                ).items()\n"
-                "            )[:-1]\n"
-                "        ),"
+                "            else dict(tuple(apply_value_transfer_plan(\n"
+                "                arguments=program.arguments,\n"
+                "                plan=resolved_input_transfer_plan,\n"
+                "            ).items())[:-1])"
             ),
             label="streamed resolver arguments",
         ),
@@ -6192,26 +6658,24 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             source=core_program_source,
             old=(
                 "        _validate_transfer_argument_metadata(\n"
-                "            program=program, read=read, transfer=transfer\n"
+                "            program=program,\n"
+                "            read=read,\n"
+                "            transfer=transfer,\n"
+                "            abstract_inputs=abstract_inputs,\n"
                 "        )"
             ),
-            new=(
-                "        if False:\n"
-                "            _validate_transfer_argument_metadata(\n"
-                "                program=program, read=read, transfer=transfer\n"
-                "            )"
-            ),
+            new="        pass",
             label="core-program transfer argument metadata validation",
         ),
         "value_access:core_lowering_plan_bypassed": replace_once(
             source=core_program_source,
             old=(
-                "        arguments=apply_value_transfer_plan(\n"
-                "            arguments=program.arguments,\n"
-                "            plan=resolved_input_transfer_plan,\n"
-                "        ),"
+                "            else apply_value_transfer_plan(\n"
+                "                arguments=program.arguments,\n"
+                "                plan=resolved_input_transfer_plan,\n"
+                "            )"
             ),
-            new="        arguments=program.arguments,",
+            new="            else program.arguments",
             label="core-program lowering input transfer application",
         ),
         "value_access:core_specialization_dropped": _replace_nth(
@@ -7712,8 +8176,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": INITIAL_CONDITIONS_SOURCE,
             "source": replace_once(
                 source=initial_conditions_source,
-                old="                        {k: v[:original_n_subjects] for k, v in value.items()}",
-                new="                        {k: (v[1 : original_n_subjects + 1] if name == 'actions' else v[:original_n_subjects]) for k, v in value.items()}",
+                old="                                start=0,\n                                stop=original_n_subjects,",
+                new="                                start=1 if name == 'actions' else 0,\n                                stop=original_n_subjects + (name == 'actions'),",
                 label="padded action row shift",
             ),
         },

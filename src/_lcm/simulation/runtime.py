@@ -24,7 +24,10 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from _lcm.execution.workspace_planning import compiler_peak_bytes, plan_workspace
-from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.host_operations import (
+    ProfiledSimulationOperations,
+    _abstract_operand,
+)
 from _lcm.simulation.operand_placement import (
     SubjectArgumentNames,
     place_simulation_arguments,
@@ -83,6 +86,21 @@ class SimulationDispatchContext:
 
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
+    axis_widths: Mapping[str, int] = dataclasses.field(default_factory=_empty_widths)
+    """One common chunk specialization, clamped to each program's own extent."""
+
+    def __post_init__(self) -> None:
+        """Keep selected widths immutable and separate from cached code identity."""
+        if any(
+            type(name) is not str or not name or type(width) is not int or width <= 0
+            for name, width in self.axis_widths.items()
+        ):
+            raise ExecutionPlanningError(
+                "Reserved simulation widths must be positive integers with axis names."
+            )
+        object.__setattr__(
+            self, "axis_widths", MappingProxyType(dict(self.axis_widths))
+        )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -210,6 +228,42 @@ class SimulationRuntime:
             ),
         )
 
+    def prepare_abstract(
+        self,
+        *,
+        program: CoreProgram,
+        arguments: Mapping[str, object],
+        period: int,
+        n_subjects: int,
+        widths: Mapping[str, int],
+    ) -> CompiledSimulationProgram:
+        """Compile an explicitly placed abstract candidate without admitting a call.
+
+        The caller supplies only shape/dtype/layout descriptors. The shared
+        compiler cache stores code; neither concrete buffers nor a budget verdict
+        are captured. Actual execution still requires its live residency context.
+        """
+        if not self.enable_jit or (
+            program.disposition is CoreExecutionDisposition.HOST_DRIVEN
+        ):
+            raise ExecutionPlanningError(
+                "Abstract profiling requires a compiled simulation program."
+            )
+        _require_abstract_arguments(arguments=arguments)
+        if not isinstance(program.argument_builder, SubjectArgumentNames):
+            raise TypeError("Simulation argument builders must declare subject names.")
+        materialized = materialize_core_program(
+            program=_with_subject_extent(program=program, n_subjects=n_subjects),
+            context=_build_context(arguments=arguments, period=period),
+        )
+        _require_abstract_arguments(arguments=materialized.arguments)
+        return self.compile_candidate(
+            program=materialized,
+            n_subjects=n_subjects,
+            widths=widths,
+            abstract_inputs=True,
+        )
+
     def is_prepared(self, *, program: CoreProgram, period: int) -> bool:
         """Return whether this period's declared body has a compiled selection."""
         with self.lock:
@@ -256,7 +310,11 @@ class SimulationRuntime:
             )
         plan = plan_workspace(
             axes=program.requirements.axes,
-            fixed_widths=self.execution.axis_widths,
+            fixed_widths=_dispatch_widths(
+                program=program,
+                configured=self.execution.axis_widths,
+                residency=residency,
+            ),
             compile_candidate=_CachedSimulationCandidateCompiler(
                 runtime=self, program=program, n_subjects=n_subjects
             ),
@@ -296,11 +354,12 @@ class SimulationRuntime:
         program: MaterializedCoreProgram,
         n_subjects: int,
         widths: Mapping[str, int],
+        abstract_inputs: bool = False,
     ) -> CompiledSimulationProgram:
         """Own one compilation per concrete width without retaining live arguments."""
         key = _lowering_key(
             program_identity=_func_dedup_key(func=program.function),
-            arguments=program.arguments,
+            arguments=jax.tree.map(_abstract_operand, program.arguments),
             specialization_key=(
                 n_subjects,
                 tuple(widths.items()),
@@ -326,6 +385,7 @@ class SimulationRuntime:
             compile_candidate = _SimulationCandidateCompiler(
                 program=program,
                 enable_jit=self.enable_jit,
+                abstract_inputs=abstract_inputs,
                 subject_width=min(
                     self.execution.axis_widths.get(SUBJECT_AXIS, n_subjects),
                     n_subjects,
@@ -346,6 +406,32 @@ class SimulationRuntime:
         return compiled
 
 
+def _dispatch_widths(
+    *,
+    program: MaterializedCoreProgram,
+    configured: Mapping[str, int],
+    residency: SimulationDispatchContext | None,
+) -> Mapping[str, int]:
+    """Use the outer plan's common choice without reopening its width frontier."""
+    fixed = dict(configured)
+    if residency is None:
+        return fixed
+    for axis in program.requirements.axes:
+        if axis.name not in residency.axis_widths:
+            continue
+        selected = min(residency.axis_widths[axis.name], axis.extent)
+        if (
+            axis.name in configured
+            and min(configured[axis.name], axis.extent) != selected
+        ):
+            raise ExecutionPlanningError(
+                f"Reserved width for {axis.name!r} conflicts with "
+                "explicit ExecutionConfig."
+            )
+        fixed[axis.name] = selected
+    return MappingProxyType(fixed)
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _CachedSimulationCandidateCompiler:
     """A transient planner callback; persistent entries retain only compiled code."""
@@ -363,6 +449,19 @@ class _CachedSimulationCandidateCompiler:
 def _simulation_peak_bytes(compiled: CompiledSimulationProgram) -> int:
     """Read the genuine underlying executable's compiler-reported memory peak."""
     return compiler_peak_bytes(compiled=compiled.executable, widths=compiled.widths)
+
+
+def _require_abstract_arguments(*, arguments: Mapping[str, object]) -> None:
+    """Require shape-only leaves with explicit layouts before abstract lowering."""
+    if any(
+        not isinstance(leaf, jax.ShapeDtypeStruct)
+        or not isinstance(leaf.sharding, jax.sharding.Sharding)
+        for leaf in jax.tree.leaves(arguments)
+    ):
+        raise ExecutionPlanningError(
+            "Abstract simulation arguments require ShapeDtypeStruct leaves with "
+            "explicit JAX shardings."
+        )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -430,6 +529,9 @@ class _SimulationCandidateCompiler:
     subject_width: int
     """Width of a singleton or host-driven subject loop."""
 
+    abstract_inputs: bool = False
+    """Whether the prepared operands describe required layouts without arrays."""
+
     def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
         """Return the executable for exactly these proposed static widths."""
         if self.program.disposition is CoreExecutionDisposition.HOST_DRIVEN:
@@ -455,6 +557,7 @@ class _SimulationCandidateCompiler:
                 program=self.program,
                 tile_widths=widths,
                 input_transfer_plan=transfers,
+                abstract_inputs=self.abstract_inputs,
             )
             function = resolved.function
             arguments = resolved.arguments
