@@ -347,10 +347,12 @@ everything that constructs the inputs (parameters, grids, transitions, compiled
 callables) lives in `regime_building/` and is read out of the canonical `Regime`
 instances.
 
-Workspace admission combines the compiler-reported peak with a conservative bound on
-resident storage. Profiled simulation operations place all dynamic arguments on the
-execution devices and compile with `keep_unused=True`, so their peak includes arguments
-used only for shape or dtype.
+Workspace admission combines a represented compiler allocation reservation with external
+resident storage. The reservation enforces both the raw peak and
+`argument + output - alias + temporary` bytes for each complete device record. Profiled
+simulation operations place all dynamic arguments on the execution devices and compile
+with `keep_unused=True`, so their reported argument storage includes inputs used only
+for shape or dtype.
 
 Solve and simulation cores allow the compiler to eliminate unused arguments. Each
 candidate's public `Compiled.input_shardings` tree identifies the surviving dynamic
@@ -372,8 +374,8 @@ reservations can overlap compiler-counted inputs, intentionally over-counting st
 Width selection is widest under this declared bound, rather than an allocator-optimal
 choice.
 
-Compiler peaks remain the actual executable reports. The backend must include retained
-input payloads in those reports; unavailable or mismatched input metadata refuses
+Compiler peaks remain the actual executable reports. Complete allocation counters must
+include retained input payloads; unavailable or mismatched input metadata refuses
 budgeted core planning. Executable reuse still requires a fresh residency check. The
 remaining limits of whole-call simulation accounting are recorded in the
 [architecture transition ledger](../development/architecture_transition_ledger.md).
@@ -384,11 +386,12 @@ initial conditions. Host dtype conversion and the existing range checks run firs
 upload admits its destination payload and declared transfer scratch before allocating on
 the first selected device. This staging device is explicit even when device zero is
 excluded. Padding profiles the unchanged last-row repeat and concatenate operation
-against its actual compiler peak. Completed leaves remain owned and charged before the
-next leaf is admitted; the full canonical input mapping remains live throughout padding.
-Subsequent subject placement uses the ordered simulation devices after padding. Series
-and DataFrame values are assembled on the host and use the same upload admission.
-Automatic solves retain and charge these simulation inputs alongside their solve inputs.
+against its represented compiler reservation. Completed leaves remain owned and charged
+before the next leaf is admitted; the full canonical input mapping remains live
+throughout padding. Subsequent subject placement uses the ordered simulation devices
+after padding. Series and DataFrame values are assembled on the host and use the same
+upload admission. Automatic solves retain and charge these simulation inputs alongside
+their solve inputs.
 
 Foreign eager value stores use an explicit call-local allocator for every private JAX
 copy. Each copy preserves the source shape, dtype, sharding and device order, and admits

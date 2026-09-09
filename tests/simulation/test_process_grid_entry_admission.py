@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.simulation import host_operations, process_grids
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
@@ -38,6 +39,7 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.persistence import load_solution
 from lcm.typing import FloatND, ScalarInt, UserInitialConditions, UserParams
+from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 
 
@@ -208,10 +210,10 @@ def _guard_process_grid(
 
 def _over_budget_peak(
     *, compiled: jax.stages.Compiled, profiled: list[jax.stages.Compiled], **kwargs: Any
-) -> int:
+) -> CompilerMemoryReservation:
     del kwargs
     profiled.append(compiled)
-    return 2**30
+    return synthetic_memory(2**30)
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
@@ -247,7 +249,7 @@ def test_automatic_simulation_refuses_process_grid_before_allocation(
     )
     monkeypatch.setattr(
         host_operations,
-        "compiler_peak_bytes",
+        "compiler_memory_reservation",
         partial(_over_budget_peak, profiled=profiled),
     )
     monkeypatch.setattr(

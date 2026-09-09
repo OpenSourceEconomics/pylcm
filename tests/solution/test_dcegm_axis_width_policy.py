@@ -18,6 +18,7 @@ import cloudpickle
 import jax.numpy as jnp
 import pytest
 
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.solution import backward_induction
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from lcm import (
@@ -47,6 +48,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -192,11 +194,13 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
 def synthetic_peaks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Report a peak of `_BYTES_PER_CELL` per unit of width product."""
 
-    def peak(*, compiled: object, widths: Mapping[str, int]) -> int:
+    def peak(
+        *, compiled: object, widths: Mapping[str, int]
+    ) -> CompilerMemoryReservation:
         del compiled
-        return _BYTES_PER_CELL * math.prod(widths.values())
+        return synthetic_memory(_BYTES_PER_CELL * math.prod(widths.values()))
 
-    monkeypatch.setattr(backward_induction, "compiler_peak_bytes", peak)
+    monkeypatch.setattr(backward_induction, "compiler_memory_reservation", peak)
 
 
 def _captured_widths(

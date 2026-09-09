@@ -61,7 +61,7 @@ def test_whole_chunk_selection_uses_real_profiles_and_fresh_retained_storage(
         + originals.nbytes
         + retained_output_bank
         + width * originals.dtype.itemsize
-        + profile.peak_bytes
+        + profile.reservation_bytes
         for width, profile in compiled.items()
     }
     assert totals[1024] > totals[256] > totals[64]

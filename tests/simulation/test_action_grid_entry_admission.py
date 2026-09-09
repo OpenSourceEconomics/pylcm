@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.simulation import host_operations
 from _lcm.simulation import initial_conditions as preflight
 from _lcm.simulation.action_grids import PreflightActionGrids
@@ -34,6 +35,7 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError, InvalidInitialConditionsError
 from lcm.solver_api import SolutionResult
 from lcm.typing import BoolND, FloatND, ScalarInt, UserInitialConditions, UserParams
+from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 
 
@@ -143,10 +145,10 @@ def _guard_action_mesh(
 
 def _over_budget_peak(
     *, compiled: jax.stages.Compiled, profiled: list[jax.stages.Compiled], **kwargs: Any
-) -> int:
+) -> CompilerMemoryReservation:
     del kwargs
     profiled.append(compiled)
-    return 2**30
+    return synthetic_memory(2**30)
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
@@ -164,7 +166,7 @@ def _profile_action_grid(
         with monkeypatch.context() as context:
             context.setattr(
                 host_operations,
-                "compiler_peak_bytes",
+                "compiler_memory_reservation",
                 partial(_over_budget_peak, profiled=profiled),
             )
             return original(self, **kwargs)

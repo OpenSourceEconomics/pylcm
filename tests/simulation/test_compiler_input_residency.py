@@ -15,7 +15,7 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.execution.workspace_planning import compiler_peak_bytes
+from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
@@ -116,7 +116,9 @@ def test_cached_runtime_counts_a_new_dead_owner_but_not_an_input_alias(
     analysis = profile.executable.memory_analysis()
     assert analysis is not None
     assert analysis.argument_size_in_bytes == source.nbytes
-    budget = compiler_peak_bytes(compiled=profile.executable, widths={})
+    budget = compiler_memory_reservation(
+        compiled=profile.executable, widths={}
+    ).reservation_bytes
     del output
 
     runtime = _runtime(budget=budget, device=device)

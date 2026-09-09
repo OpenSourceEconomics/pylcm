@@ -157,7 +157,7 @@ def test_retained_growth_rechecks_the_same_cached_executable() -> None:
     }
     result = dispatcher.dispatch(**kwargs, budget_bytes=1_000_000)
     compiled = next(iter(dispatcher.cache.values()))
-    budget = compiled.peak_bytes + 20
+    budget = compiled.reservation_bytes + 20
     del result
     provider.arrays.append(jnp.ones(16, dtype=jnp.uint8))
     result = dispatcher.dispatch(**kwargs, budget_bytes=budget)

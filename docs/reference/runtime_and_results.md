@@ -66,7 +66,7 @@ Its fields:
 NB-EGM can nominate one marginal leaf on an unsharded, self-carry `main` program.
 Donation requires exclusive solve ownership and a final, unretained read. A physical
 alias or unowned input selects an ordinary executable compiled at the same widths. With
-a memory budget, both variants must fit using their own compiler peak and live
+a memory budget, both variants must fit using their own compiler reservation and live
 residency. This conservative fallback does not use donation to admit a width that only
 the donating executable fits. Eager execution never donates. A selected `replay` program
 does not donate; standalone NB-EGM can select `main` even under the default retention
@@ -98,13 +98,13 @@ extent; a fixed width is the only candidate) and walks it widest-first — desce
 width product, ties broken toward the lexicographically largest width tuple in axis
 declaration order. A position whose resident bytes alone already reach the budget is
 refused before any candidate compiles, since no width could serve it. Otherwise each
-candidate is lowered and compiled, its compiler-reported peak is read, and the first
-candidate whose peak plus the resident bytes fits is dispatched. Solve residency
-includes retained values and continuation inputs, fixed model arrays, concurrent outputs
-and planned copies on their actual devices. Compiler-kept input metadata identifies
-which overlapping buffer spans are already represented in the compiler peak. Eliminated
-inputs stay charged as external residency. Conservative reservations may count some
-storage twice.
+candidate is lowered and compiled, its complete compiler memory report is read, and the
+first candidate whose reservation plus resident bytes fits is dispatched. Solve
+residency includes retained values and continuation inputs, fixed model arrays,
+concurrent outputs and planned copies on their actual devices. Compiler-kept input
+metadata identifies which overlapping buffer spans are already represented in compiler
+allocation accounting. Eliminated inputs stay charged as external residency.
+Conservative reservations may count some storage twice.
 
 When simulation solves automatically, its original and normalized inputs remain in the
 solve's fixed inventory. Shared input and model buffers count once by physical storage;
@@ -129,13 +129,14 @@ one candidate.
 
 Candidate measurement uses compilation, and admission fails closed:
 
-- no candidate is executed to measure it — the compiler's peak is the planning signal,
-  because the runtime high-water mark of a run that dies is a truncated underestimate;
+- no candidate is executed to measure it; compiler-reported requirements are the
+  planning signal, because the runtime high-water mark of a run that dies is a truncated
+  underestimate;
 - a budget that no candidate meets raises `ExecutionPlanningError` before backward
   induction starts, naming the regime, period, core, resident bytes, and budget — the
-  smallest reported peak too, once a width has actually been compiled;
+  smallest reservation and its raw peak too, once a width has actually been compiled;
 - a budget requires JIT compilation. Supplied solutions are supported; forward programs
-  and profiled host operations recheck their compiler peaks against the current retained
+  and profiled host operations recheck their reservations against the current retained
   solution, inputs and growing outputs before dispatch;
 - a forward program without a profiled compiled implementation, including a host-driven
   route, is refused under a budget;
@@ -145,11 +146,26 @@ Candidate measurement uses compilation, and admission fails closed:
   device placement, so a replayed period is lowered against the restored arrays' default
   placement rather than the submesh the solve dispatched the period on.
 
-The ceiling bounds a device's predicted footprint at each core's scheduled position —
-its own compiler-reported peak plus the resident bytes the schedule keeps alive there.
-It does not model compiler temporaries outside the reported peak, executable caches,
-host-side staging, or allocator fragmentation. Among feasible candidates the choice is
-by width, not by measured runtime.
+For each complete device record, compiler admission reserves the larger of the raw
+reported peak and `argument + output - alias + temporary` bytes. The latter counts
+represented argument/output storage and preallocated temporary allocations. Alias bytes
+remove argument/output overlap once. Counters must be present, nonnegative integers;
+aliases must fit both categories. Each device is accounted for before taking the
+maximum. The raw peak stays separately identifiable in profiles and refusal messages.
+
+The selected-device ceiling adds external retained residency to that reservation.
+Generated code, omitted constants and runtime workspace, thread stacks, executable
+caches, and allocator overhead remain outside the represented allocation contract. This
+computed reservation is not a measured peak or a complete runtime upper bound.
+
+Reports with nonzero host allocation counters are refused because the compiler's peak
+cannot reliably be split across default and host memory spaces. Generated-code metadata
+alone does not trigger this refusal. Existing GPU-to-CPU chunk offload continues to
+profile CPU assembly separately and excludes that CPU storage from the GPU ceiling. CPU
+execution charges its selected CPU storage. The reported CPU witness and scope are
+recorded in
+[compiler allocation admission](../development/compiler_allocation_admission.md). Width
+determines the choice among candidates that satisfy the accounting contract.
 
 (solve-execution-lifetime)=
 

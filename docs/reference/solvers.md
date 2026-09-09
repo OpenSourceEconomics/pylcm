@@ -97,7 +97,7 @@ device-memory budget, pylcm streams every eligible core at its bootstrap width: 
 largest power of two below the action product, capped at 64. With an
 [`ExecutionConfig`](runtime_and_results.md#compiler-workspace-budgets) budget, the
 planner instead walks a deterministic width frontier widest-first and dispatches the
-first candidate whose compiler-reported peak fits. Supplying both makes the fixed width
+first candidate whose compiler reservation plus accounted residency fits. Supplying both makes the fixed width
 the only candidate, which must fit the budget. A route whose action reduction is
 deliberately dense, unsupported, or trivial declares no `action_product` axis.
 

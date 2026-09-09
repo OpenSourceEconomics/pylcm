@@ -10,6 +10,7 @@ import pytest
 from _lcm.execution.core_program import TiledOutputAxis
 from _lcm.execution.workspace_planning import plan_workspace
 from lcm.exceptions import ExecutionPlanningError
+from tests.execution.test_compiler_allocation_reservation import memory_stats
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -19,7 +20,7 @@ class _Candidate:
     resident: int
 
     def memory_analysis(self) -> SimpleNamespace:
-        return SimpleNamespace(peak_memory_in_bytes=self.raw_peak)
+        return memory_stats(peak=self.raw_peak)
 
     def __call__(self) -> None:
         raise AssertionError("Planning must not execute a candidate")

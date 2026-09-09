@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.solution import backward_induction
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
@@ -24,6 +25,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.persistence import replay_period
 from lcm.solvers import GridSearch
 from tests.conftest import assert_agrees_to_ulp
+from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.test_models.deterministic.regression import (
     START_AGE,
     LaborSupply,
@@ -82,12 +84,14 @@ def synthetic_peaks(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, int]]:
     """Report a peak of `_BYTES_PER_ACTION` per unit of width product."""
     seen: list[dict[str, int]] = []
 
-    def peak(*, compiled: object, widths: Mapping[str, int]) -> int:
+    def peak(
+        *, compiled: object, widths: Mapping[str, int]
+    ) -> CompilerMemoryReservation:
         del compiled
         seen.append(dict(widths))
-        return _BYTES_PER_ACTION * math.prod(widths.values())
+        return synthetic_memory(_BYTES_PER_ACTION * math.prod(widths.values()))
 
-    monkeypatch.setattr(backward_induction, "compiler_peak_bytes", peak)
+    monkeypatch.setattr(backward_induction, "compiler_memory_reservation", peak)
     return seen
 
 

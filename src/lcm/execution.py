@@ -18,7 +18,12 @@ class ExecutionConfig:
     """
 
     device_memory_bytes: int | None = None
-    """Per-device ceiling for compiler peak plus accounted residency, or `None`."""
+    """Per-device ceiling for represented compiler reservation plus residency.
+
+    The reservation enforces the raw peak and represented argument, output,
+    alias, and temporary allocations. Runtime storage omitted by the compiler
+    remains outside this accounting scope. `None` disables budget admission.
+    """
 
     sharded_states: tuple[StateName, ...] = ()
     """States whose grid axis is spread over the regime's devices."""

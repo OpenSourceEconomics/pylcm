@@ -242,7 +242,9 @@ def test_simulate_refuses_individual_constraint_gather_with_joint_results_reside
 ) -> None:
     """Natural invalid-result replay admits the gather for its diagnostic table."""
     budget = (40 if jax.config.x64_enabled else 24) * 1024
-    model, params, initial = _inputs(budget=budget, n_subjects=1024, reject=True)
+    model, params, initial = _inputs(
+        budget=budget, n_subjects=1024, reject=True, parameter_only=True
+    )
     with pytest.raises(
         ExecutionPlanningError, match=r"compiler peak|before allocation"
     ):
@@ -263,7 +265,11 @@ def test_simulate_refuses_individual_predicate_after_diagnostic_gather(
 ) -> None:
     budget = (44 if jax.config.x64_enabled else 28) * 1024
     model, params, initial = _inputs(
-        budget=budget, n_subjects=1024, reject=True, diagnostic_checks=8
+        budget=budget,
+        n_subjects=1024,
+        reject=True,
+        diagnostic_checks=8,
+        parameter_only=True,
     )
     with pytest.raises(ExecutionPlanningError, match="compiler peak"):
         model.simulate(params=params, initial_conditions=initial, log_level="debug")

@@ -531,7 +531,7 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
     )
     original_resolve = backward_induction._resolve_output_layouts_and_lowering_keys
     original_transfer = transfers_module.apply_value_transfer
-    original_peak = backward_induction.compiler_peak_bytes
+    original_peak = backward_induction.compiler_memory_reservation
     planning = False
     peak_calls: list[object] = []
     planning_copies: list[tuple[weakref.ReferenceType[jax.Array], int]] = []
@@ -539,7 +539,7 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
     runtime_reads: list[ResolvedValueTransfer] = []
     candidate_counts: list[int] = []
 
-    def observe_peak(**kwargs: Any) -> int:
+    def observe_peak(**kwargs: Any) -> Any:
         peak_calls.append(kwargs["compiled"])
         return original_peak(**kwargs)
 
@@ -578,7 +578,7 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
         _assert_only_planning_descriptors(programs=programs, copies=planning_copies)
         return result
 
-    monkeypatch.setattr(backward_induction, "compiler_peak_bytes", observe_peak)
+    monkeypatch.setattr(backward_induction, "compiler_memory_reservation", observe_peak)
     monkeypatch.setattr(transfers_module, "apply_value_transfer", observe_transfer)
     monkeypatch.setattr(
         backward_induction,

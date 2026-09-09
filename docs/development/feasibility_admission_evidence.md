@@ -26,12 +26,13 @@ low-budget thresholds are declared CPU-specific; their numerical values come fro
 observed compiler profiles. The 11 feasibility mutation controls form a separate
 population alongside the existing 406, 50, 37, and 10 controls.
 
-## Open compiler-memory reporting discrepancy
+## Compiler-memory reporting discrepancy and central repair
 
 The original example had **two actions and a 16 KiB budget**. Its intended
-pre-allocation resource refusal remains unresolved under the current compiler-peak
-contract. On CPU, Python 3.14.7, JAX/JAXLIB 0.11.1, float64, the full combined
-feasibility executable reported:
+pre-allocation resource refusal failed under the peak-only compiler contract of this
+feasibility change. The subsequent central reservation repair is documented in
+[compiler allocation admission](compiler_allocation_admission.md). On CPU, Python
+3.14.7, JAX/JAXLIB 0.11.1, float64, the full combined feasibility executable reported:
 
 | Compiler field           |   Bytes |
 | ------------------------ | ------: |
@@ -41,8 +42,8 @@ feasibility executable reported:
 | `peak_memory_in_bytes`   |      90 |
 
 These fields were read from `Compiled.memory_analysis()` after compiling the actual
-combined predicate. The existing `compiler_peak_bytes` admission contract consumes
-`peak_memory_in_bytes`. The example therefore passes admission, executes, and reaches
+combined predicate. That peak-only `compiler_peak_bytes` admission contract consumed
+`peak_memory_in_bytes`. The example therefore passed admission, executed, and reached
 the infeasibility diagnostic. Summing arguments, outputs, and temporary storage would
 change that contract. No such sum is labelled as a measured compiler peak in this
 repair. A larger, 256-action sorting profile likewise reported 16,777,728 temporary
@@ -57,9 +58,9 @@ inspect its statistics, observe `jax.stages.Lowered.compile` and read
 `memory_analysis()` from the program whose HLO contains `_batched_feasibility_check`,
 before `jax.stages.Compiled.__call__`.
 
-Closing this follow-up requires establishing the supported backend interpretation of
-these fields and a central admission contract with an executable witness for
-temporary-workspace pressure. The broader producer inventory also retains transition-law
+The central follow-up captures the exact executable and refuses it before dispatch using
+represented allocation accounting. It preserves the raw 90-byte peak separately from its
+computed reservation. The broader producer inventory also retains transition-law
 evaluation, composite stochastic-process grids, and remaining structural invalid-input
 operations as open work. This feasibility change provides no general guarantee for those
 allocations or for memory omitted from a backend's reported peak.

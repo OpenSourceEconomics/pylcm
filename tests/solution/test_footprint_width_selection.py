@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.execution.scheduler import DispatchUnit, ScheduledNode, plan_period_waves
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.solution import backward_induction
 from _lcm.solution.solve_inputs import SolveInputMappings
 from lcm import (
@@ -36,6 +37,7 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ScalarInt
+from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 
 # Points of the wealth grid, so one regime value is this many elements.
 _N_WEALTH = 64
@@ -124,9 +126,12 @@ def _fixed_fixture_bytes() -> int:
     return 4 * _value_bytes() + 4 * jnp.zeros(()).dtype.itemsize + 6 * 4
 
 
-def _fake_peak(*, compiled: object, widths: Mapping[str, int]) -> int:  # noqa: ARG001
+def _fake_peak(
+    *, compiled: object, widths: Mapping[str, int]
+) -> CompilerMemoryReservation:
     """Report a compiler peak proportional to the streamed width product."""
-    return _value_bytes() * math.prod(widths.values())
+    del compiled
+    return synthetic_memory(_value_bytes() * math.prod(widths.values()))
 
 
 def _solve_capturing_compilation(
@@ -141,7 +146,7 @@ def _solve_capturing_compilation(
         calls.append((kwargs, result))
         return result
 
-    monkeypatch.setattr(backward_induction, "compiler_peak_bytes", _fake_peak)
+    monkeypatch.setattr(backward_induction, "compiler_memory_reservation", _fake_peak)
     monkeypatch.setattr(backward_induction, "_compile_all_functions", capture)
     model = _build_model(
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes)
