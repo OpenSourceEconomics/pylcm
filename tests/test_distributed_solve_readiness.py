@@ -1,14 +1,18 @@
 """Actual complete device footprints control asynchronous solve completion."""
 
-# ruff: noqa: E402 -- configure the fresh topology before importing engine modules
-
 import jax
+import pytest
 
-jax.config.update("jax_num_cpu_devices", 4)
-jax.config.update("jax_platform_name", "cpu")
+try:
+    jax.config.update("jax_num_cpu_devices", 4)
+    jax.config.update("jax_platform_name", "cpu")
+except RuntimeError:
+    pytest.skip(
+        "Solve readiness topology requires a fresh JAX backend.",
+        allow_module_level=True,
+    )
 
 import numpy as np
-import pytest
 
 from _lcm.execution.output_layout import VALUE, PlannedCore, resolve_output_layout
 from _lcm.execution.pending_work import PendingSolveWork

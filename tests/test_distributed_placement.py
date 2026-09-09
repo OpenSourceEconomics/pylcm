@@ -48,6 +48,7 @@ from _lcm.execution.scheduler import (
     shares_a_buffer,
 )
 from _lcm.execution.value_transfer import (
+    MaterializedTransferObserver,
     ResolvedValueTransfer,
     ValueArtifactAddress,
     ValueArtifactKind,
@@ -77,7 +78,23 @@ from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
 
+# Run these tests on a four-CPU-device topology. The pin only applies in a
+# process whose JAX backends are not yet initialized; otherwise the tests skip.
+# The device-count update is attempted FIRST because it is the one that raises
+# after initialization, which keeps the pin atomic.
+try:
+    jax.config.update("jax_num_cpu_devices", 4)
+    jax.config.update("jax_platform_name", "cpu")
+    _PYTEST_PARALLEL = False
+except RuntimeError:
+    _PYTEST_PARALLEL = True
 
+_skip_pytest_parallel = pytest.mark.skipif(
+    _PYTEST_PARALLEL, reason="Can't set num cpus in pytest paralellel"
+)
+
+
+@_skip_pytest_parallel
 @pytest.mark.parametrize("partitioned", [False, True])
 def test_eager_internal_input_preserves_its_ordered_producer_layout(
     *, monkeypatch: pytest.MonkeyPatch, partitioned: bool
@@ -119,21 +136,6 @@ def test_eager_internal_input_preserves_its_ordered_producer_layout(
     np.testing.assert_array_equal(source, np.arange(8))
     assert not source.is_deleted()
 
-
-# Run these tests on a four-CPU-device topology. The pin only applies in a
-# process whose JAX backends are not yet initialized; otherwise the tests skip.
-# The device-count update is attempted FIRST because it is the one that raises
-# after initialization, which keeps the pin atomic.
-try:
-    jax.config.update("jax_num_cpu_devices", 4)
-    jax.config.update("jax_platform_name", "cpu")
-    _PYTEST_PARALLEL = False
-except RuntimeError:
-    _PYTEST_PARALLEL = True
-
-_skip_pytest_parallel = pytest.mark.skipif(
-    _PYTEST_PARALLEL, reason="Can't set num cpus in pytest paralellel"
-)
 
 _PARAMS = {"discount_factor": 0.95}
 
@@ -534,9 +536,14 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
         return original_peak(**kwargs)
 
     def observe_transfer(
-        *, value: object, transfer: ResolvedValueTransfer
+        *,
+        value: object,
+        transfer: ResolvedValueTransfer,
+        on_materialized: MaterializedTransferObserver | None = None,
     ) -> jax.Array:
-        copied = original_transfer(value=value, transfer=transfer)
+        copied = original_transfer(
+            value=value, transfer=transfer, on_materialized=on_materialized
+        )
         if not planning:
             assert isinstance(value, jax.Array)
             runtime_reads.append(transfer)

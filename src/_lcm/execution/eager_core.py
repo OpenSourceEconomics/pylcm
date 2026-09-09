@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 import jax
+import jax.numpy as jnp
 
 from _lcm.execution.core_program import ResolvedCoreProgram
 from _lcm.execution.runtime_sharding import runtime_shardings_match
@@ -123,13 +124,31 @@ class _EagerCore:
                 )
             expected = value.sharding
         sharding = self._typed_sharding(sharding=expected)
-        return (
+        placed = (
             value
             if isinstance(value, jax.Array)
             and value.committed
             and value.sharding == sharding
             else jax.device_put(value, sharding)
         )
+        # AOT execution accepts a weak runtime value at a declared strong input
+        # and uses the declared type for promotion. Establish that same eager
+        # binding explicitly; this allocates a new array and never repairs a
+        # wrong shape/dtype or manufactures a weak value from a strong input.
+        if (
+            placed.weak_type
+            and not template.weak_type
+            and placed.shape == template.shape
+            and placed.dtype == template.dtype
+        ):
+            placed = jnp.asarray(placed, dtype=template.dtype)
+            if not runtime_shardings_match(
+                actual=placed.sharding, expected=sharding, ndim=placed.ndim
+            ):
+                raise ExecutionPlanningError(
+                    "A normalized eager operand changed its planned physical layout."
+                )
+        return placed
 
     def _typed_sharding(
         self, *, sharding: jax.sharding.Sharding

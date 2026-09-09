@@ -947,8 +947,11 @@ _EAGER_PLACEMENT_MUTATIONS = {
     ),
     "eager_core:committed_layout_guard_bypassed": (
         "src/_lcm/execution/eager_core.py",
-        "if not runtime_shardings_match(",
-        "if False and not runtime_shardings_match(",
+        "if not runtime_shardings_match(\n                actual=value.sharding,",
+        (
+            "if False and not runtime_shardings_match(\n"
+            "                actual=value.sharding,"
+        ),
     ),
     "eager_core:weak_typing_guard_bypassed": (
         "src/_lcm/execution/eager_core.py",

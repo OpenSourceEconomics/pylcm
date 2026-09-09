@@ -132,6 +132,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   copy admission and retain intermediate copies through validation. Native archive
   materialization, artifact copies and mixed-backend foreign copies remain unsupported
   under a budget.
+- Eager solve inputs now bind weakly typed values to matching declared strong types,
+  preserving compiled type promotion and their actual device layout. Shape and dtype
+  mismatches remain errors; normalization copies are shared within each call and
+  released with that call.
 - Eager solve cores place ordinary inputs on their planned submesh before executing
   the numerical body, including bodies that create constant outputs. Repeated inputs
   share a placement when their complete descriptors match. Equivalent runtime layouts
