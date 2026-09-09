@@ -45,6 +45,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
 from lcm.case_piece import (
@@ -348,7 +349,10 @@ def project_solution_params(
 
 
 def fingerprint_solution_support(
-    *, regimes: Mapping[RegimeName, Regime], flat_params: FlatParams
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    flat_params: FlatParams,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> str:
     """Hash what the model-owned solution authority reads from a parameter vector.
 
@@ -364,7 +368,11 @@ def fingerprint_solution_support(
         ("pylcm-solution-support", 1),
         {
             name: (
-                _grid_support(regime=regime, regime_params=flat_params[name]),
+                _grid_support(
+                    regime=regime,
+                    regime_params=flat_params[name],
+                    process_grid_resolver=process_grid_resolver,
+                ),
                 {
                     param_name: _param_shape_signature(value)
                     for param_name, value in flat_params[name].items()
@@ -498,6 +506,7 @@ def fingerprint_model(
     flat_params: FlatParams,
     structure: str | None = None,
     projection: SolutionParamProjection | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> str:
     """Hash the model facts that determine stored mathematical interpretation.
 
@@ -527,7 +536,11 @@ def fingerprint_model(
         ("pylcm-model-fingerprint", 6),
         structure_digest,
         {
-            name: _grid_support(regime=regime, regime_params=flat_params[name])
+            name: _grid_support(
+                regime=regime,
+                regime_params=flat_params[name],
+                process_grid_resolver=process_grid_resolver,
+            )
             for name, regime in regimes.items()
         },
         project_solution_params(
@@ -639,11 +652,15 @@ def fingerprint_model_structure(
 
 
 def _grid_support(
-    *, regime: Regime, regime_params: Mapping[str, object]
+    *,
+    regime: Regime,
+    regime_params: Mapping[str, object],
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> MappingProxyType[str, object]:
     """Return one regime's concrete support under a canonical parameter vector."""
     state_action_space = regime.solution.state_action_space(
-        regime_params=cast("Any", regime_params)
+        regime_params=cast("Any", regime_params),
+        process_grid_resolver=process_grid_resolver,
     )
     return MappingProxyType(
         {

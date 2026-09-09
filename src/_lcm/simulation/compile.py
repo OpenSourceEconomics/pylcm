@@ -17,6 +17,7 @@ from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     ResolvedGatedEdge,
     bind_edge_period_context,
@@ -110,6 +111,7 @@ def lower_simulation_programs(
     max_compilation_workers: int | None,
     logger: logging.Logger,
     device_ids: tuple[int, ...] = (),
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> MappingProxyType[RegimeName, Regime]:
     """Prewarm the same program cache that lazy simulation dispatches.
 
@@ -132,6 +134,7 @@ def lower_simulation_programs(
         flat_params=flat_params,
         phase="simulate",
         device_ids=device_ids,
+        process_grid_resolver=process_grid_resolver,
     )
     subject_sharding = subject_array_sharding(
         regimes=regimes, n_subjects=n_subjects, device_ids=device_ids
@@ -146,7 +149,9 @@ def lower_simulation_programs(
                 ),
             )
             for source_name, target_name, topology in _iter_edge_topologies(
-                regimes=regimes, flat_params=flat_params
+                regimes=regimes,
+                flat_params=flat_params,
+                process_grid_resolver=process_grid_resolver,
             )
         }
     )
@@ -204,6 +209,7 @@ def lower_simulation_programs(
                     regime_V_topology=regime_V_topology,
                     flat_params=flat_params,
                     subject_sharding=subject_sharding,
+                    process_grid_resolver=process_grid_resolver,
                 )
                 futures.add(
                     pool.submit(
@@ -591,6 +597,7 @@ def _build_argmax_args(
     regime_V_topology: dict[RegimeName, _RegimeVTopology],
     flat_params: FlatParams,
     subject_sharding: jax.sharding.Sharding,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> dict[str, object]:
     """Build the argmax program's lowering arguments.
 
@@ -606,7 +613,9 @@ def _build_argmax_args(
     own value function — not against the `Wbar` substituted into the
     continuation slot, which simulate never passes here.
     """
-    base = regime.solution.state_action_space(regime_params=regime_params)
+    base = regime.solution.state_action_space(
+        regime_params=regime_params, process_grid_resolver=process_grid_resolver
+    )
     subject_states = _subject_shape_arrays(
         base_arrays=base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
@@ -665,8 +674,11 @@ def _build_next_state_args(
     ages: AgeGrid,
     n_subjects: int,
     subject_sharding: jax.sharding.Sharding,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> dict[str, object]:
-    base = regime.solution.state_action_space(regime_params=regime_params)
+    base = regime.solution.state_action_space(
+        regime_params=regime_params, process_grid_resolver=process_grid_resolver
+    )
     subject_states = _subject_shape_arrays(
         base_arrays=base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
@@ -714,8 +726,11 @@ def _build_crtp_args(
     ages: AgeGrid,
     n_subjects: int,
     subject_sharding: jax.sharding.Sharding,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> dict[str, object]:
-    base = regime.solution.state_action_space(regime_params=regime_params)
+    base = regime.solution.state_action_space(
+        regime_params=regime_params, process_grid_resolver=process_grid_resolver
+    )
     subject_states = _subject_shape_arrays(
         base_arrays=base.states, n_subjects=n_subjects, sharding=subject_sharding
     )

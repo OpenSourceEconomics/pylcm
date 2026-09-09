@@ -13,7 +13,7 @@ import logging
 import subprocess
 import sys
 import weakref
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
@@ -62,10 +62,17 @@ from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building import processing
 from _lcm.simulation.initial_conditions import build_initial_states
+from _lcm.simulation.process_grids import SimulationProcessGrids
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+)
 from _lcm.solution import backward_induction
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.typing import RegimeName
+from _lcm.utils.logging import LogLevel
 from lcm import fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
@@ -74,7 +81,7 @@ from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import ContinuationReader
 from lcm.solvers import GridSearch, Solver
-from lcm.typing import ScalarInt
+from lcm.typing import Float1D, ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
 
@@ -1511,3 +1518,145 @@ def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
     assert not source.is_deleted()
     np.testing.assert_array_equal(source, np.full(source.shape, -3))
     np.testing.assert_array_equal(output, np.arange(source.size))
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(
+    ("sharded", "supplied"), [(False, False), (False, True), (True, True)]
+)
+@pytest.mark.parametrize("log_level", ["off", "debug"])
+def test_uniform_entry_grid_uses_selected_device_and_keeps_source_owners(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    sharded: bool,
+    log_level: LogLevel,
+    supplied: bool,
+) -> None:
+    """Uniform support and its live sources are charged on every consuming device."""
+
+    selected = (1, 3) if sharded else (2,)
+    model = _uniform_placement_model(selected=selected, sharded=sharded)
+    params = {
+        "alive": {
+            "income": {"start": jnp.asarray(1.0), "stop": jnp.asarray(3.0)},
+            "koopmans_aggregator": {"discount_factor": 0.9},
+        },
+        "done": {},
+    }
+    initial = {
+        "income": jnp.asarray([2.0, 2.0]),
+        "kind": jnp.asarray([0, 1]),
+        "age": jnp.asarray([0.0, 0.0]),
+        "regime_id": jnp.asarray([0, 0]),
+    }
+    values = model.solve(params=params, log_level=log_level) if supplied else None
+    sources = measure_buffer_footprint(tree=(params, initial, values))
+    assert jax.devices()[0] in sources.spans
+    grids: list[Float1D] = []
+    monkeypatch.setattr(
+        SimulationProcessGrids,
+        "_produce",
+        functools.partialmethod(
+            _observe_selected_uniform_grid,
+            original=SimulationProcessGrids._produce,
+            selected=selected,
+            sources=sources,
+            grids=grids,
+        ),
+    )
+    result = model.simulate(
+        params=params, initial_conditions=initial, solution=values, log_level=log_level
+    )
+    assert len(grids) == 1
+    np.testing.assert_array_equal(grids[0], [1.0, 1.5, 2.0, 2.5, 3.0])
+    assert result.raw_results["alive"][0].V_arr.sharding.device_set == {
+        jax.devices()[device] for device in selected
+    }
+    rows = result.to_dataframe(use_labels=False)
+    np.testing.assert_array_equal(
+        rows.loc[
+            rows["regime_name"] == "alive", ["income", "saving", "value"]
+        ].to_numpy(),
+        [[2.0, 1.0, 3.0], [2.0, 1.0, 3.0]],
+    )
+
+
+# keyword-only-exempt: library-callback=functools.partialmethod
+def _observe_selected_uniform_grid(
+    self: SimulationProcessGrids,
+    *,
+    original: Callable[..., Float1D],
+    selected: tuple[int, ...],
+    sources: DeviceBufferFootprint,
+    grids: list[Float1D],
+    **kwargs: Any,
+) -> Float1D:
+
+    missing = resident_bytes_by_device(
+        live=sources, arguments=self.snapshot(), devices=tuple(sources.spans)
+    )
+    assert not any(missing.values()), (
+        "Original source buffers were omitted before grid allocation"
+    )
+    grid = original(self, **kwargs)
+    assert grid.sharding.device_set == {jax.devices()[device] for device in selected}
+    grids.append(grid)
+    return grid
+
+
+@categorical(ordered=False)
+class _UniformPlacementRegimeId:
+    alive: ScalarInt
+    done: ScalarInt
+
+
+def _uniform_placement_utility(
+    *, income: ScalarFloat, saving: ScalarFloat, kind: ScalarInt
+) -> ScalarFloat:
+    return income + saving + 0 * kind
+
+
+def _uniform_placement_terminal(*, kind: ScalarInt) -> ScalarFloat:
+    return 0.0 * kind
+
+
+def _uniform_placement_transition() -> ScalarInt:
+    return _UniformPlacementRegimeId.done
+
+
+def _uniform_placement_initial_age(age: float) -> bool:
+    return age == 0
+
+
+def _uniform_placement_terminal_age(age: float) -> bool:
+    return age == 1
+
+
+def _uniform_placement_model(*, selected: tuple[int, ...], sharded: bool) -> Model:
+    from lcm import UniformIIDProcess  # noqa: PLC0415
+
+    return Model(
+        regimes={
+            "alive": UserRegime(
+                transition=_uniform_placement_transition,
+                active=_uniform_placement_initial_age,
+                states={"income": UniformIIDProcess(n_points=5)},
+                actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
+                functions={"utility": _uniform_placement_utility},
+            ),
+            "done": UserRegime(
+                transition=None,
+                active=_uniform_placement_terminal_age,
+                functions={"utility": _uniform_placement_terminal},
+            ),
+        },
+        states={"kind": DiscreteGrid(_TwoValuedType)},
+        state_transitions={"kind": fixed_transition("kind")},
+        regime_id_class=_UniformPlacementRegimeId,
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        execution_config=ExecutionConfig(
+            device_memory_bytes=2**28,
+            devices=selected,
+            sharded_states=("kind",) if sharded else (),
+        ),
+    )

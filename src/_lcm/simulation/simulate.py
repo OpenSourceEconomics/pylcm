@@ -36,6 +36,7 @@ from _lcm.engine import (
     placed_devices_for_ids,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.ndimage import map_coordinates
@@ -196,6 +197,7 @@ def simulate(  # noqa: C901, PLR0915
     device_ids: tuple[int, ...] = (),
     retained_footprint: DeviceBufferFootprint | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -357,6 +359,7 @@ def simulate(  # noqa: C901, PLR0915
             regimes=regimes,
             device_ids=device_ids,
             memory=memory,
+            process_grid_resolver=process_grid_resolver,
         )
         if prepared_chunks is None
         else prepared_chunks.call_inputs
@@ -473,6 +476,7 @@ def simulate(  # noqa: C901, PLR0915
             device_ids=device_ids,
             memory=memory,
             call_inputs=call_inputs,
+            process_grid_resolver=process_grid_resolver,
         )
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
@@ -601,6 +605,7 @@ def _simulate_subject_chunk(
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
     ] = MappingProxyType({}),
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -627,6 +632,7 @@ def _simulate_subject_chunk(
         device_ids=device_ids,
         memory=memory,
         call_inputs=call_inputs,
+        process_grid_resolver=process_grid_resolver,
     )
     devices = chunk_inputs.devices
     flat_params = chunk_inputs.flat_params

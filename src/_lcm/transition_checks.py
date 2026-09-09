@@ -43,6 +43,7 @@ import pandas as pd
 from dags.tree import tree_path_from_qname
 
 from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
 from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
@@ -81,6 +82,7 @@ class _ValidationSummary:
     """Call-owned flags and bindings, never validity retained across calls."""
 
     memory: SimulationMemory | None = None
+    process_grid_resolver: ProcessGridResolver | None = None
     flags: list[jax.Array] = field(default_factory=list)
     spaces: dict[tuple[RegimeName, tuple[tuple[str, int], ...]], StateActionSpace] = (
         field(default_factory=dict, repr=False)
@@ -98,7 +100,9 @@ class _ValidationSummary:
             tuple(sorted((name, id(value)) for name, value in params.items())),
         )
         if key not in self.spaces:
-            space = regime.solution.state_action_space(regime_params=params)
+            space = regime.solution.state_action_space(
+                regime_params=params, process_grid_resolver=self.process_grid_resolver
+            )
             self.spaces[key] = space
             if self.memory is not None:
                 self.memory.hold(tree=(space.states, space.actions))
@@ -200,6 +204,7 @@ def validate_transitions(
     ages: AgeGrid,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Validate regime and state transition probabilities before solve / simulate.
 
@@ -223,9 +228,10 @@ def validate_transitions(
             ages=ages,
             logger=logger,
             summary=summary,
+            process_grid_resolver=process_grid_resolver,
         )
         return
-    pending = _ValidationSummary()
+    pending = _ValidationSummary(process_grid_resolver=process_grid_resolver)
     try:
         try:
             _validate_transition_sequence(
@@ -234,6 +240,7 @@ def validate_transitions(
                 ages=ages,
                 logger=logger,
                 summary=pending,
+                process_grid_resolver=process_grid_resolver,
             )
             accepted = pending.valid()
         except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
@@ -251,6 +258,7 @@ def validate_transitions(
             ages=ages,
             logger=logger,
             summary=None,
+            process_grid_resolver=process_grid_resolver,
         )
 
 
@@ -261,6 +269,7 @@ def _validate_transition_sequence(
     ages: AgeGrid,
     logger: logging.Logger,
     summary: _ValidationSummary | None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Preserve family and item ordering for collection and serial diagnostics."""
     for validator in (
@@ -274,6 +283,7 @@ def _validate_transition_sequence(
             ages=ages,
             logger=logger,
             summary=summary,
+            process_grid_resolver=process_grid_resolver,
         )
 
 
@@ -343,6 +353,7 @@ def validate_regime_transitions_all_periods(
     ages: AgeGrid,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Validate regime transition probabilities for all periods before solve.
 
@@ -412,6 +423,7 @@ def validate_regime_transitions_all_periods(
                     period=period,
                     ages=ages,
                     summary=summary,
+                    process_grid_resolver=process_grid_resolver,
                 )
             except InvalidRegimeTransitionProbabilitiesError as error:
                 if summary is not None:
@@ -428,6 +440,7 @@ def _validate_regime_transition_single(
     period: int,
     ages: AgeGrid,
     summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Validate regime transition probabilities for a single regime and period.
 
@@ -440,7 +453,9 @@ def _validate_regime_transition_single(
     regime_transition_func = regime.solution.validation_regime_transition_probs
 
     state_action_space = (
-        regime.solution.state_action_space(regime_params=regime_params)
+        regime.solution.state_action_space(
+            regime_params=regime_params, process_grid_resolver=process_grid_resolver
+        )
         if summary is None
         else summary.state_action_space(regime=regime, params=regime_params)
     )
@@ -636,6 +651,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
     ages: AgeGrid,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Validate every `MarkovTransition` state transition before solve.
 
@@ -683,7 +699,8 @@ def validate_state_transitions_all_periods(  # noqa: C901
 
             state_action_space = (
                 regime.solution.state_action_space(
-                    regime_params=flat_params[regime_name]
+                    regime_params=flat_params[regime_name],
+                    process_grid_resolver=process_grid_resolver,
                 )
                 if summary is None
                 else summary.state_action_space(
@@ -726,6 +743,7 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912, PLR0915
     ages: AgeGrid,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Validate every transition-local lottery before solve or simulation."""
     if not validation_enabled(logger):
@@ -749,7 +767,8 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912, PLR0915
                 continue
             state_action_space = (
                 regime.solution.state_action_space(
-                    regime_params=flat_params[regime_name]
+                    regime_params=flat_params[regime_name],
+                    process_grid_resolver=process_grid_resolver,
                 )
                 if summary is None
                 else summary.state_action_space(

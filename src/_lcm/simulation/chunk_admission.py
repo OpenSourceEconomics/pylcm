@@ -15,6 +15,7 @@ import jax
 from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.execution.workspace_planning import workspace_width_candidates
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.chunk_inputs import (
     SimulationCallInputs,
     prepare_simulation_call_inputs,
@@ -118,6 +119,7 @@ def prepare_simulation_chunks(
     independent_taste: bool,
     log_level: LogLevel,
     policies: Mapping[int, Mapping[str, object]] | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> PreparedSimulationChunks:
     """Exhaust inner choices before shrinking an outer chunk's admitted extent."""
     runtime = next(iter(regimes.values())).simulation.programs.executor
@@ -168,6 +170,7 @@ def prepare_simulation_chunks(
         regimes=regimes,
         device_ids=runtime.execution.device_ids,
         memory=memory,
+        process_grid_resolver=process_grid_resolver,
     )
     memory.inputs = union_buffer_footprints(
         footprints=(

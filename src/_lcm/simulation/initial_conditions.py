@@ -28,6 +28,7 @@ from _lcm.dtypes import (
 from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_ids
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.Q_and_F import _get_feasibility
 from _lcm.simulation.assembly import slice_array
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
@@ -100,6 +101,7 @@ def validate_simulation_inputs(
     logger: logging.Logger,
     execution: ResolvedExecution | None = None,
     retained_footprint: DeviceBufferFootprint | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Validate a complete call with two host summaries and ordered diagnostics.
 
@@ -119,7 +121,9 @@ def validate_simulation_inputs(
         regime_names_to_ids=regime_names_to_ids,
         ages=ages,
     )
-    summary = _ValidationSummary(memory=memory)
+    summary = _ValidationSummary(
+        memory=memory, process_grid_resolver=process_grid_resolver
+    )
     try:
         try:
             cohorts = _read_initial_cohorts(
@@ -144,6 +148,7 @@ def validate_simulation_inputs(
                 ages=ages,
                 cohorts=cohorts,
                 summary=summary,
+                process_grid_resolver=process_grid_resolver,
             )
             validate_transitions(
                 regimes=regimes,
@@ -151,6 +156,7 @@ def validate_simulation_inputs(
                 ages=ages,
                 logger=logger,
                 summary=summary,
+                process_grid_resolver=process_grid_resolver,
             )
             accepted = summary.valid()
         except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
@@ -170,6 +176,7 @@ def validate_simulation_inputs(
             regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             ages=ages,
+            process_grid_resolver=process_grid_resolver,
         )
     except InvalidInitialConditionsError as error:
         raise_or_warn(logger=logger, error=error)
@@ -179,6 +186,7 @@ def validate_simulation_inputs(
         ages=ages,
         logger=logger,
         summary=None,
+        process_grid_resolver=process_grid_resolver,
     )
 
 
@@ -747,6 +755,7 @@ def validate_initial_conditions(
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     ages: AgeGrid,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
@@ -835,6 +844,7 @@ def validate_initial_conditions(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
+        process_grid_resolver=process_grid_resolver,
     )
     if feasibility_errors:
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
@@ -1042,6 +1052,7 @@ def _collect_feasibility_errors(
     ages: AgeGrid,
     cohorts: _InitialCohorts | None = None,
     summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> list[str]:
     """Collect errors about action feasibility for each subject.
 
@@ -1083,6 +1094,7 @@ def _collect_feasibility_errors(
             ages=ages,
             cohorts=cohorts,
             summary=summary,
+            process_grid_resolver=process_grid_resolver,
         )
         if msg is not None:
             errors.append(msg)
@@ -1289,6 +1301,7 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
     ages: AgeGrid,
     cohorts: _InitialCohorts | None = None,
     summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> str | None:
     """Check whether all subjects in a regime have at least one feasible action.
 
@@ -1333,7 +1346,10 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
     # validator must read points from `state_action_space(regime_params=...)`.
     flat_regime_params = cast("FlatRegimeParams", MappingProxyType(dict(regime_params)))
     state_action_space = (
-        regime.solution.state_action_space(regime_params=flat_regime_params)
+        regime.solution.state_action_space(
+            regime_params=flat_regime_params,
+            process_grid_resolver=process_grid_resolver,
+        )
         if summary is None
         else summary.state_action_space(regime=regime, params=flat_regime_params)
     )

@@ -25,6 +25,7 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
 )
 from _lcm.grids import Grid
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import EdgeStatus, PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
@@ -38,7 +39,7 @@ from _lcm.solution.grid_search import (
     _GridSearchArgumentBuilder,
     _GridSearchPeriodKernel,
 )
-from _lcm.typing import MaxQOverAFunction, StateOrActionName
+from _lcm.typing import FlatRegimeParams, MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
@@ -92,7 +93,13 @@ class MockSolutionPhase:
         """No solver-side grouping; the per-period signature decides alone."""
         return MappingProxyType({})
 
-    def state_action_space(self, regime_params):  # noqa: ARG002
+    def state_action_space(
+        self,
+        *,
+        regime_params: FlatRegimeParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
+    ) -> StateActionSpace:
+        del regime_params, process_grid_resolver
         return self._base_state_action_space
 
 

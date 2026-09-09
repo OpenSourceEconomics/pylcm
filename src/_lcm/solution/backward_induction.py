@@ -106,6 +106,7 @@ from _lcm.execution.workspace_planning import (
     plan_workspace,
     workspace_width_candidates,
 )
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
     CompiledEdgeFold,
@@ -207,6 +208,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retain_all_artifacts: bool = False,
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
     retained_input_arrays: object = (),
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -286,7 +288,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # single kernel is compiled rather than after every regime-period has been
     # AOT-compiled.
     base_state_action_spaces = _build_base_state_action_spaces(
-        regimes=regimes, flat_params=flat_params
+        regimes=regimes,
+        flat_params=flat_params,
+        process_grid_resolver=process_grid_resolver,
     )
     _reject_edge_fold_state_param_collisions(
         regimes=regimes,
@@ -299,6 +303,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             regimes=regimes,
             flat_params=flat_params,
             device_ids=resolved_execution.device_ids,
+            process_grid_resolver=process_grid_resolver,
         )
     )
 
@@ -325,6 +330,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 for space in base_state_action_spaces.values()
             ),
         ),
+        process_grid_resolver=process_grid_resolver,
     )
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
@@ -1026,6 +1032,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     diagnostic_min=diagnostic_min if stats_enabled else None,
                     diagnostic_max=diagnostic_max if stats_enabled else None,
                     diagnostic_mean=diagnostic_mean if stats_enabled else None,
+                    process_grid_resolver=process_grid_resolver,
                 )
             except InvalidValueFunctionError as error:
                 raise_or_warn(logger=logger, error=error)
@@ -1771,6 +1778,7 @@ def _build_continuation_templates(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     device_ids: tuple[int, ...] = (),
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, ContinuationPayload],
@@ -1795,6 +1803,7 @@ def _build_continuation_templates(
         regimes=regimes,
         flat_params=flat_params,
         device_ids=device_ids,
+        process_grid_resolver=process_grid_resolver,
     )
     next_regime_to_V_arr = MappingProxyType(
         {
@@ -1813,7 +1822,10 @@ def _build_continuation_templates(
         {
             (source_name, target_name): _build_zero_V_arr(topology=topology)
             for source_name, target_name, topology in _iter_edge_topologies(
-                regimes=regimes, flat_params=flat_params, device_ids=device_ids
+                regimes=regimes,
+                flat_params=flat_params,
+                device_ids=device_ids,
+                process_grid_resolver=process_grid_resolver,
             )
         }
     )
@@ -1850,6 +1862,7 @@ def _iter_edge_topologies(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     device_ids: tuple[int, ...] = (),
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> Iterator[tuple[RegimeName, RegimeName, _RegimeVTopology]]:
     """Yield `(source, target, Wbar topology)` for every declared gated edge.
 
@@ -1876,7 +1889,8 @@ def _iter_edge_topologies(
             if target_name not in target_shapes:
                 target = regimes[target_name]
                 target_states = target.solution.state_action_space(
-                    regime_params=flat_params[target_name]
+                    regime_params=flat_params[target_name],
+                    process_grid_resolver=process_grid_resolver,
                 ).states
                 target_shapes[target_name] = tuple(
                     len(v) for v in target_states.values()
@@ -1914,6 +1928,7 @@ def _build_base_state_action_spaces(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> dict[RegimeName, StateActionSpace]:
     """Build each regime's params-completed state-action space once.
 
@@ -1923,7 +1938,8 @@ def _build_base_state_action_spaces(
     """
     return {
         regime_name: regime.solution.state_action_space(
-            regime_params=flat_params[regime_name]
+            regime_params=flat_params[regime_name],
+            process_grid_resolver=process_grid_resolver,
         )
         for regime_name, regime in regimes.items()
     }
@@ -3137,6 +3153,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     max_compilation_workers: int | None,
     logger: logging.Logger,
     fixed_input_arrays: object = (),
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> _CompiledPrograms:
     """Resolve every solve program and optionally compile unique lowerings.
 
@@ -3228,6 +3245,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         donate_buffers=execution.donate_buffers,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
+        process_grid_resolver=process_grid_resolver,
     )
 
     _fail_if_one_key_covers_two_callables(
@@ -3860,6 +3878,7 @@ def _resolve_output_layouts_and_lowering_keys(
     donate_buffers: bool = True,
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
@@ -3915,7 +3934,8 @@ def _resolve_output_layouts_and_lowering_keys(
             )
         regime = regimes[regime_name]
         state_action_space = regime.solution.state_action_space(
-            regime_params=flat_params[regime_name]
+            regime_params=flat_params[regime_name],
+            process_grid_resolver=process_grid_resolver,
         )
         edge_kwargs = _edge_kwargs(
             regime=regime,

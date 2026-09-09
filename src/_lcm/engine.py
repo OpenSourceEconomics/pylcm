@@ -14,6 +14,7 @@ from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.simulation.program_types import SimulationPrograms
@@ -549,7 +550,60 @@ class SolutionPhase:
         """Return the device objects this regime's nodes run on."""
         return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
 
-    def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
+    def resolve_process_grids(
+        self,
+        *,
+        regime_params: FlatRegimeParams,
+        process_grid_resolver: ProcessGridResolver,
+    ) -> Mapping[StateName, FloatND]:
+        """Resolve only process producers covered by the explicit admission owner."""
+        required: jax.sharding.Sharding | None = None
+        all_params = {**self.resolved_fixed_params, **regime_params}
+        resolved: dict[StateName, FloatND] = {}
+        for name, spec in self.grids.items():
+            if (
+                name not in self._base_state_action_space.states
+                or not isinstance(spec, _ContinuousStochasticProcess)
+                or not spec.params_to_pass_at_runtime
+                or not process_grid_resolver.supports(spec)
+                or any(
+                    f"{name}__{param}" not in all_params
+                    for param in spec.params_to_pass_at_runtime
+                )
+            ):
+                continue
+            if required is None:
+                devices = self.placed_devices()
+                plan = _build_regime_sharding(
+                    grids=self.grids,
+                    sharded_state_names=self.sharded_state_names,
+                    devices=devices,
+                )
+                required = (
+                    jax.sharding.SingleDeviceSharding(devices[0])
+                    if plan is None
+                    else jax.sharding.NamedSharding(
+                        plan.mesh, jax.sharding.PartitionSpec()
+                    )
+                )
+            resolved[name] = process_grid_resolver(
+                spec=spec,
+                required=required,
+                parameters={
+                    param: cast(
+                        "ScalarFloat | ScalarInt", all_params[f"{name}__{param}"]
+                    )
+                    for param in spec.params_to_pass_at_runtime
+                },
+            )
+        return MappingProxyType(resolved)
+
+    def state_action_space(
+        self,
+        *,
+        regime_params: FlatRegimeParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
+    ) -> StateActionSpace:
         """Return the state-action space with runtime grids filled in.
 
         For IrregSpacedGrid (state or continuous action) with runtime-supplied
@@ -566,7 +620,16 @@ class SolutionPhase:
 
         """
         all_params = {**self.resolved_fixed_params, **regime_params}
-        state_replacements: dict[str, ContinuousState | DiscreteState] = {}
+        state_replacements: dict[str, ContinuousState | DiscreteState] = (
+            {}
+            if process_grid_resolver is None
+            else dict(
+                self.resolve_process_grids(
+                    regime_params=regime_params,
+                    process_grid_resolver=process_grid_resolver,
+                )
+            )
+        )
         action_replacements: dict[str, ContinuousAction] = {}
         for name, spec in self.grids.items():
             in_states = name in self._base_state_action_space.states
@@ -595,6 +658,7 @@ class SolutionPhase:
                 in_states
                 and isinstance(spec, _ContinuousStochasticProcess)
                 and spec.params_to_pass_at_runtime
+                and name not in state_replacements
             ):
                 all_present = all(
                     f"{name}__{p}" in all_params for p in spec.params_to_pass_at_runtime

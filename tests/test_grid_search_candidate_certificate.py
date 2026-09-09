@@ -530,6 +530,17 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert tuple(sorted(result["certified_corridor_sources"])) == CERTIFIED_SOURCES
 
 
+def test_uniform_process_sources_have_literal_inventory_obligations() -> None:
+    """Include the producer, resolver and every support interpretation consumer."""
+    assert isinstance(_parse("src/_lcm/processes/grid_resolution.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/process_grids.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/fingerprint.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/model_authority.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/preconditions.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/diagnostics.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/transition_checks.py"), ast.Module)
+
+
 def test_finite_policy_diagnostic_is_a_literal_certificate_obligation():
     """Include the profiled live-versus-represented candidate diagnostic."""
     assert isinstance(_parse("src/_lcm/simulation/policy_diagnostics.py"), ast.Module)

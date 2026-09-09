@@ -8,6 +8,7 @@ from typing import cast
 import jax
 
 from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.typing import FlatParams, RegimeName, StateOrActionName
@@ -40,6 +41,7 @@ def prepare_simulation_call_inputs(
     regimes: MappingProxyType[RegimeName, Regime],
     device_ids: tuple[int, ...],
     memory: SimulationMemory | None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> SimulationCallInputs:
     """Complete spaces once and keep their real arrays for the entire call.
 
@@ -66,7 +68,9 @@ def prepare_simulation_call_inputs(
         memory.hold(tree=flat_params)
     spaces = {}
     for name, regime in regimes.items():
-        space = regime.solution.state_action_space(regime_params=flat_params[name])
+        space = regime.solution.state_action_space(
+            regime_params=flat_params[name], process_grid_resolver=process_grid_resolver
+        )
         spaces[name] = space
         if memory is not None:
             memory.hold(tree=(space.states, space.actions))
@@ -107,6 +111,7 @@ def prepare_simulation_chunk_inputs(
     device_ids: tuple[int, ...],
     memory: SimulationMemory | None,
     call_inputs: SimulationCallInputs | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> SimulationChunkInputs:
     """Place narrow initial operands while reusing the call's completed spaces."""
     if memory is not None:
@@ -122,6 +127,7 @@ def prepare_simulation_chunk_inputs(
             regimes=regimes,
             device_ids=device_ids,
             memory=memory,
+            process_grid_resolver=process_grid_resolver,
         )
     devices = call_inputs.devices
     flat_params = call_inputs.flat_params

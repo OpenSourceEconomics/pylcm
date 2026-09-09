@@ -52,6 +52,7 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import ModelReachability
 from _lcm.regime_building.broadcast import (
     merge_model_slots,
@@ -790,7 +791,10 @@ class Model:
             self._model_structure_fingerprint = stored_structure
 
     def _declared_solution_authority(
-        self, *, flat_params: FlatParams
+        self,
+        *,
+        flat_params: FlatParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> SolutionAuthority:
         """Return the model-owned solution authority for these parameters.
 
@@ -800,7 +804,9 @@ class Model:
         support. The few most recently used supports stay cached.
         """
         support = fingerprint_solution_support(
-            regimes=self._regimes, flat_params=flat_params
+            regimes=self._regimes,
+            flat_params=flat_params,
+            process_grid_resolver=process_grid_resolver,
         )
         with self._declared_authority_lock:
             cached = self._declared_authority_cache.get(support)
@@ -811,6 +817,7 @@ class Model:
             regimes=self._regimes,
             flat_params=flat_params,
             ages=self.ages,
+            process_grid_resolver=process_grid_resolver,
         )
         with self._declared_authority_lock:
             self._declared_authority_cache[support] = authority
@@ -828,7 +835,12 @@ class Model:
             )
         )
 
-    def _model_fingerprint(self, *, flat_params: FlatParams) -> str:
+    def _model_fingerprint(
+        self,
+        *,
+        flat_params: FlatParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
+    ) -> str:
         """Digest the durable model identity under these parameters."""
         return fingerprint_model(
             ages=self.ages,
@@ -838,6 +850,7 @@ class Model:
             flat_params=flat_params,
             structure=self._model_structure_fingerprint,
             projection=self._solution_param_projection,
+            process_grid_resolver=process_grid_resolver,
         )
 
     def get_params_template(self) -> UserFacingParamsTemplate:
@@ -894,6 +907,7 @@ class Model:
             flat_params=flat_params,
             ages=self.ages,
             logger=log,
+            process_grid_resolver=None,
         )
         return self._solve_from_flat_params(
             flat_params=flat_params,
@@ -903,6 +917,7 @@ class Model:
             max_compilation_workers=max_compilation_workers,
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
+            process_grid_resolver=None,
         )
 
     def _solve_from_flat_params(
@@ -916,6 +931,7 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         retained_input_arrays: object = (),
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
@@ -923,7 +939,9 @@ class Model:
         with the same grid support; the solve's generated replay facts are
         bound into a copy that belongs to this result alone.
         """
-        declared_authority = self._declared_solution_authority(flat_params=flat_params)
+        declared_authority = self._declared_solution_authority(
+            flat_params=flat_params, process_grid_resolver=process_grid_resolver
+        )
         retain_all_persistable = retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
         persistable_artifact_refs = (
             frozenset(
@@ -936,7 +954,9 @@ class Model:
             if retain_all_persistable
             else frozenset()
         )
-        model_fingerprint = self._model_fingerprint(flat_params=flat_params)
+        model_fingerprint = self._model_fingerprint(
+            flat_params=flat_params, process_grid_resolver=process_grid_resolver
+        )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
             model_fingerprint=model_fingerprint,
@@ -951,6 +971,7 @@ class Model:
             persistable_artifact_refs=persistable_artifact_refs,
             collect_solver_diagnostics=True,
             retained_input_arrays=retained_input_arrays,
+            process_grid_resolver=process_grid_resolver,
         )
         authority = bind_generated_solution_authority(
             authority=declared_authority,
@@ -986,6 +1007,7 @@ class Model:
         persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
         collect_solver_diagnostics: bool = False,
         retained_input_arrays: object = (),
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -1007,7 +1029,10 @@ class Model:
         """
         check_solver_params(regimes=self._regimes, flat_params=flat_params)
         check_pareto_weights(
-            regimes=self._regimes, flat_params=flat_params, ages=self.ages
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            process_grid_resolver=process_grid_resolver,
         )
         try:
             internal_result = solve(
@@ -1025,6 +1050,7 @@ class Model:
                 retain_all_artifacts=retain_all_artifacts,
                 persistable_artifact_refs=persistable_artifact_refs,
                 retained_input_arrays=retained_input_arrays,
+                process_grid_resolver=process_grid_resolver,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -1120,6 +1146,7 @@ class Model:
         solution: _SolutionResultBoundary,
         flat_params: FlatParams,
         entry_allocations: SimulationEntryAllocations | None = None,
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> _ResolvedSolution:
         """Resolve one labelled result into engine replay inputs.
 
@@ -1157,12 +1184,14 @@ class Model:
                 solution=solution,
                 engine_view=engine_view,
                 flat_params=flat_params,
+                process_grid_resolver=process_grid_resolver,
             )
         elif entry_allocations is None:
             resolved = self._consume_foreign_solution(
                 solution=solution,
                 flat_params=flat_params,
                 expected_fingerprint=expected_fingerprint,
+                process_grid_resolver=process_grid_resolver,
             )
         else:
             try:
@@ -1175,6 +1204,7 @@ class Model:
                         array_writer=entry_allocations,
                         array_copier=entry_allocations.copy_solution_leaf,
                     ),
+                    process_grid_resolver=process_grid_resolver,
                 )
                 entry_allocations.update_solution(
                     solution=solution,
@@ -1191,6 +1221,7 @@ class Model:
         solution: _SolutionResultBoundary,
         engine_view: OwnedSolutionView,
         flat_params: FlatParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> _ResolvedSolution:
         """Read a result this instance built, by reference, after the replay checks."""
         self._check_solution_result_replay_policies(
@@ -1216,6 +1247,7 @@ class Model:
             authority=engine_view.authority,
             flat_params=flat_params,
             replay_payload=owned_payload,
+            process_grid_resolver=process_grid_resolver,
         )
         return (
             engine_view.values,  # noqa: PD011
@@ -1232,6 +1264,7 @@ class Model:
         expected_fingerprint: str,
         array_copier: _ArrayCopier | None = None,
         native_values: NativeValueMaterializer | None = None,
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> _ResolvedSolution:
         """Copy and validate a result from elsewhere against model authority."""
         if array_copier is not None:
@@ -1258,6 +1291,7 @@ class Model:
             expected_fingerprint=expected_fingerprint,
             array_copier=array_copier,
             native_values=native_values,
+            process_grid_resolver=process_grid_resolver,
         )
         policies, dissolution_flags = self._check_solution_result_artifacts(
             solution=solution,
@@ -1285,6 +1319,7 @@ class Model:
             authority=authority,
             flat_params=flat_params,
             replay_payload=validated_payload,
+            process_grid_resolver=process_grid_resolver,
         )
         return (
             values,
@@ -1302,6 +1337,7 @@ class Model:
         expected_fingerprint: str,
         array_copier: _ArrayCopier | None = None,
         native_values: NativeValueMaterializer | None = None,
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> tuple[
         SolutionAuthority,
         PeriodToRegimeToVArr,
@@ -1311,9 +1347,13 @@ class Model:
         self._check_solution_result_metadata(
             metadata=metadata,
             expected_fingerprint=expected_fingerprint,
-            expected_model_fingerprint=self._model_fingerprint(flat_params=flat_params),
+            expected_model_fingerprint=self._model_fingerprint(
+                flat_params=flat_params, process_grid_resolver=process_grid_resolver
+            ),
         )
-        declared_authority = self._declared_solution_authority(flat_params=flat_params)
+        declared_authority = self._declared_solution_authority(
+            flat_params=flat_params, process_grid_resolver=process_grid_resolver
+        )
         try:
             authority = snapshot_solution_authority(
                 bind_declared_solution_authority(
@@ -1912,6 +1952,7 @@ class Model:
         authority: SolutionAuthority,
         flat_params: FlatParams,
         replay_payload: _ReplayPayloadSource,
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> _PeriodToRegimeToReplayReader:
         """Validate each plugin replay cell once and build its immutable reader.
 
@@ -1925,7 +1966,8 @@ class Model:
             if route is None:
                 continue
             base_state_action_space = regime.solution.state_action_space(
-                regime_params=flat_params[regime_name]
+                regime_params=flat_params[regime_name],
+                process_grid_resolver=process_grid_resolver,
             )
             for period in regime.active_periods:
                 state_action_space = _state_action_space_for_period(
@@ -2346,6 +2388,18 @@ class Model:
             if entry_allocations is None
             else self._process_params(params, array_writer=entry_allocations)
         )
+        process_grid_resolver = (
+            None
+            if entry_allocations is None
+            else entry_allocations.process_grid_resolver
+        )
+        if process_grid_resolver is not None:
+            for regime_name, regime in self._regimes.items():
+                regime.solution.resolve_process_grids(
+                    regime_params=flat_params[regime_name],
+                    process_grid_resolver=process_grid_resolver,
+                )
+            process_grid_resolver.seal()
         if solution is not None:
             (
                 period_to_regime_to_V_arr,
@@ -2356,6 +2410,7 @@ class Model:
                 solution=solution,
                 flat_params=flat_params,
                 entry_allocations=entry_allocations,
+                process_grid_resolver=process_grid_resolver,
             )
         else:
             period_to_regime_to_V_arr = None
@@ -2414,7 +2469,9 @@ class Model:
             _reject_edge_fold_state_param_collisions(
                 regimes=self._regimes,
                 base_state_action_spaces=_build_base_state_action_spaces(
-                    regimes=self._regimes, flat_params=flat_params
+                    regimes=self._regimes,
+                    flat_params=flat_params,
+                    process_grid_resolver=process_grid_resolver,
                 ),
                 flat_params=flat_params,
             )
@@ -2431,6 +2488,7 @@ class Model:
                 if entry_allocations is not None and validation_enabled(log)
                 else None
             ),
+            process_grid_resolver=process_grid_resolver,
         )
         # `actual_n_subjects` is the user's real population (matched against the
         # declared `n_subjects`); `padded_n_subjects` is the leading axis the
@@ -2451,6 +2509,7 @@ class Model:
                     if entry_allocations is None
                     else entry_allocations.solve_input_roots()
                 ),
+                process_grid_resolver=process_grid_resolver,
             )
             (
                 period_to_regime_to_V_arr,
@@ -2461,6 +2520,7 @@ class Model:
                 solution=solution,
                 flat_params=flat_params,
                 entry_allocations=entry_allocations,
+                process_grid_resolver=process_grid_resolver,
             )
         if (
             period_to_regime_to_V_arr is None
@@ -2501,6 +2561,7 @@ class Model:
                 retained_footprint=entry_allocations.snapshot(),
                 independent_taste=taste_shock_seed is not None,
                 log_level=log_level,
+                process_grid_resolver=process_grid_resolver,
             )
             compile_batch_size = prepared_chunks.plan.profile.n_subjects
             initial_conditions, _ = entry_allocations.pad(
@@ -2515,6 +2576,7 @@ class Model:
                 flat_params=flat_params,
                 max_compilation_workers=max_compilation_workers,
                 log=log,
+                process_grid_resolver=process_grid_resolver,
             )
             initial_conditions, _ = pad_initial_conditions_to_multiple(
                 initial_conditions=initial_conditions, multiple=compile_batch_size
@@ -2547,6 +2609,7 @@ class Model:
             retained_footprint=(
                 entry_allocations.snapshot() if entry_allocations is not None else None
             ),
+            process_grid_resolver=process_grid_resolver,
         )
         if entry_allocations is not None:
             entry_allocations.close()
@@ -2579,6 +2642,7 @@ class Model:
         flat_params: FlatParams,
         max_compilation_workers: int | None,
         log: logging.Logger,
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> int:
         """Resolve an unbudgeted ExecutionConfig subject width to an outer chunk.
 
@@ -2614,6 +2678,7 @@ class Model:
                 flat_params=flat_params,
                 max_compilation_workers=max_compilation_workers,
                 log=log,
+                process_grid_resolver=process_grid_resolver,
             )
         return compile_batch_size
 
@@ -2630,6 +2695,7 @@ class Model:
         flat_params: FlatParams,
         max_compilation_workers: int | None,
         log: logging.Logger,
+        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> None:
         """Compile and cache the simulate functions for a chunk shape."""
         with self._simulate_compile_lock:
@@ -2646,6 +2712,7 @@ class Model:
             max_compilation_workers=max_compilation_workers,
             logger=log,
             device_ids=self._execution.device_ids,
+            process_grid_resolver=process_grid_resolver,
         )
         with self._simulate_compile_lock:
             self._simulate_compile_cache[compile_batch_size] = compiled

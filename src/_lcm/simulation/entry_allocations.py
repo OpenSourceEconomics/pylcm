@@ -12,6 +12,7 @@ Artifact and arbitrary lazy materializers require separate allocation profiles.
 """
 
 import dataclasses
+import weakref
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -22,6 +23,7 @@ import numpy as np
 from _lcm.simulation.entry_inputs import SimulationEntryInputs
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.process_grids import SimulationProcessGrids
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -59,6 +61,16 @@ class SimulationEntryAllocations:
         default_factory=list, init=False
     )
     """Ready private copies retained until foreign resolution commits or fails."""
+    process_grid_resolver: SimulationProcessGrids = dataclasses.field(init=False)
+    """Call-owned runtime support admitted before any authority or solve reads it."""
+
+    def __post_init__(self) -> None:
+        """Bind grid admission to the complete entry ownership inventory."""
+        self.process_grid_resolver = SimulationProcessGrids(
+            live_footprint=_EntryFootprint(owner=weakref.ref(self)),
+            devices=self.devices,
+            budget_bytes=self.budget_bytes,
+        )
 
     def snapshot(self) -> DeviceBufferFootprint:
         """Observe original, completed and intermediate owners without allocating."""
@@ -74,6 +86,7 @@ class SimulationEntryAllocations:
                         tuple(self._pending),
                         self._resolved_inputs,
                         tuple(self._foreign_copies),
+                        self.process_grid_resolver.array_roots,
                     )
                 ),
             )
@@ -95,6 +108,7 @@ class SimulationEntryAllocations:
             tuple(self._pending),
             self._resolved_inputs,
             tuple(self._foreign_copies),
+            self.process_grid_resolver.array_roots,
         )
 
     def copy_solution_leaf(self, *, leaf: jax.Array, label: str) -> jax.Array:
@@ -194,9 +208,23 @@ class SimulationEntryAllocations:
         self._resolved_inputs = ()
         self._foreign_copies.clear()
         self.original_inputs = None
+        self.process_grid_resolver.close()
 
 
 def _pad_initial_leaf(*, array: jax.Array, pad: int) -> jax.Array:
     """Duplicate the last row with the existing repeat and concatenate operations."""
     pad_block = jnp.repeat(array[-1:], pad, axis=0)
     return jnp.concatenate([array, pad_block], axis=0)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _EntryFootprint:
+    """Read current residency without retaining the entry scope through a cycle."""
+
+    owner: weakref.ReferenceType[SimulationEntryAllocations]
+
+    def __call__(self) -> DeviceBufferFootprint:
+        owner = self.owner()
+        if owner is None:
+            raise RuntimeError("Simulation entry allocation owner is closed.")
+        return owner.snapshot()

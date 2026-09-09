@@ -35,6 +35,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.grids.discrete import DiscreteGrid
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     edge_may_fold_at_period,
     gate_reads_dissolution_flag,
@@ -682,6 +683,7 @@ def build_solution_authority(  # noqa: PLR0915
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> SolutionAuthority:
     """Derive active value and replay descriptions solely from the model.
 
@@ -691,7 +693,9 @@ def build_solution_authority(  # noqa: PLR0915
     """
     canonical_float = str(np.dtype(canonical_float_dtype()))
     topology = _get_regime_V_shapes_and_shardings(
-        regimes=regimes, flat_params=flat_params
+        regimes=regimes,
+        flat_params=flat_params,
+        process_grid_resolver=process_grid_resolver,
     )
     values: dict[tuple[int, RegimeName], ValueCellDescriptor] = {}
     replay: dict[ArtifactRef, ReplayCellDescriptor] = {}
@@ -725,7 +729,8 @@ def build_solution_authority(  # noqa: PLR0915
         # A plugin build context can carry placeholder nodes for runtime irregular
         # grids; those values are descriptive input, never model authority.
         base_state_action_space = regime.solution.state_action_space(
-            regime_params=flat_params[regime_name]
+            regime_params=flat_params[regime_name],
+            process_grid_resolver=process_grid_resolver,
         )
         for period in regime.active_periods:
             state_action_space = _state_action_space_for_period(
@@ -2336,7 +2341,7 @@ class _AuthorityBinding:
         state_action_space = _state_action_space_for_period(
             regime=regime,
             base=regime.solution.state_action_space(
-                regime_params=flat_params[ref.regime]
+                regime_params=flat_params[ref.regime],
             ),
             period=ref.period,
         )

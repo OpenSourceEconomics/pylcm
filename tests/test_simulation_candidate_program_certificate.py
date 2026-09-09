@@ -749,12 +749,14 @@ _COMBINED_INPUT_MUTATIONS = {
         "src/lcm/model.py",
         (
             "entry_allocations=entry_allocations,\n"
+            "                process_grid_resolver=process_grid_resolver,\n"
             "            )\n"
             "        else:\n"
             "            period_to_regime_to_V_arr = None"
         ),
         (
             "entry_allocations=None,\n"
+            "                process_grid_resolver=process_grid_resolver,\n"
             "            )\n"
             "        else:\n"
             "            period_to_regime_to_V_arr = None"
@@ -764,12 +766,14 @@ _COMBINED_INPUT_MUTATIONS = {
         "src/lcm/model.py",
         (
             "entry_allocations=entry_allocations,\n"
+            "                process_grid_resolver=process_grid_resolver,\n"
             "            )\n"
             "        if (\n"
             "            period_to_regime_to_V_arr is None"
         ),
         (
             "entry_allocations=None,\n"
+            "                process_grid_resolver=process_grid_resolver,\n"
             "            )\n"
             "        if (\n"
             "            period_to_regime_to_V_arr is None"
@@ -1332,8 +1336,9 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "constant_program:lower_compile_mesh_context_omitted",
     }
     assert not set(registered) & set(supplemental)
-    assert {spec["path"] for spec in (registered | supplemental).values()} == set(
-        direct_flow._CERTIFIED_CORRIDOR_SOURCES
+    assert {spec["path"] for spec in (registered | supplemental).values()} == (
+        set(direct_flow._CERTIFIED_CORRIDOR_SOURCES)
+        - set(direct_flow._UNIFORM_PROCESS_SOURCES)
     )
 
 

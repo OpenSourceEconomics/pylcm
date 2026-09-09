@@ -22,6 +22,7 @@ from _lcm.engine import (
     _RegimeSharding,
     placed_devices_for_ids,
 )
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import FlatParams, RegimeName, StateName
 from lcm.typing import FloatND
@@ -96,6 +97,7 @@ def _get_regime_V_shapes_and_shardings(
     flat_params: FlatParams,
     phase: Literal["solve", "simulate"] = "solve",
     device_ids: tuple[int, ...] = (),
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> dict[RegimeName, _RegimeVTopology]:
     """Compute V-array shapes and shardings for every regime.
 
@@ -123,6 +125,7 @@ def _get_regime_V_shapes_and_shardings(
     for regime_name, regime in regimes.items():
         state_action_space = regime.solution.state_action_space(
             regime_params=flat_params[regime_name],
+            process_grid_resolver=process_grid_resolver,
         )
         # Folded IID-process states are integrated out of the stored value by
         # quadrature at solve time (`get_max_Q_over_a`'s fold reduction), so
