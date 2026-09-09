@@ -31,6 +31,7 @@ from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
     resident_bytes_by_device,
+    resolve_budget_devices,
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime
@@ -140,22 +141,26 @@ def prepare_simulation_chunks(
             "Budgeted chunk admission requires compiled decision programs; "
             "host replay routes need complete stage profiles."
         )
-    devices = placed_devices_for_ids(
-        submesh_device_ids=(), visible_device_ids=runtime.execution.device_ids
+    inputs = union_buffer_footprints(
+        footprints=(
+            retained_footprint,
+            measure_buffer_footprint(
+                tree=(flat_params, initial_conditions, values, ages.values)
+            ),
+        )
+    )
+    devices = resolve_budget_devices(
+        execution_devices=placed_devices_for_ids(
+            submesh_device_ids=(), visible_device_ids=runtime.execution.device_ids
+        ),
+        live=inputs,
     )
     memory = SimulationMemory(
         budget_bytes=runtime.execution.device_memory_bytes,
         devices=devices,
         subject_devices=runtime.subject_devices,
         operations=runtime.operations,
-        inputs=union_buffer_footprints(
-            footprints=(
-                retained_footprint,
-                measure_buffer_footprint(
-                    tree=(flat_params, initial_conditions, values, ages.values)
-                ),
-            )
-        ),
+        inputs=inputs,
     )
     memory.check_resident()
     call_inputs = prepare_simulation_call_inputs(

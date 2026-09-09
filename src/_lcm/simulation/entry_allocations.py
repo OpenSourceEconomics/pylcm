@@ -6,7 +6,9 @@ transfer-scratch convention; it does not invent a zero-workspace device cast.
 Pandas labels and scattered values are assembled on the host before the same numeric
 upload boundary. Foreign eager values use exact-layout compiled copies with cumulative
 ownership.
-Artifact and archive materializers require separate allocation profiles.
+Trusted native value uploads use the same writer after archive verification and
+before private cache publication; their detached copies use the foreign-copy owner.
+Artifact and arbitrary lazy materializers require separate allocation profiles.
 """
 
 import dataclasses

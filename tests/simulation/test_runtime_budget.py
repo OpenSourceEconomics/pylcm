@@ -96,10 +96,12 @@ class _ControlledCompiler:
     enable_jit: bool
     subject_width: int
     abstract_inputs: bool
+    subject_devices: tuple[jax.Device, ...]
     compilations: list[int]
     executable_widths: dict[int, int]
 
     def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
+        assert self.subject_devices == (jax.devices()[0],)
         width = widths["subject"]
         self.compilations.append(width)
         # The controlled peak includes this still-owned shape-only state operand.

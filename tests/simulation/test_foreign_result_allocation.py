@@ -360,7 +360,7 @@ def test_growing_copy_bank_rechecks_the_same_compiled_candidate(
 
 
 @pytest.mark.parametrize("preloaded", [False, True])
-def test_native_archive_requires_profiled_materialization_before_any_callback(
+def test_budgeted_native_archive_uses_admitted_loader_without_public_callback(
     *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, preloaded: bool
 ) -> None:
     model, params, initial = _small_grid_search_inputs(
@@ -378,10 +378,9 @@ def test_native_archive_requires_profiled_materialization_before_any_callback(
         raise AssertionError("Unprofiled native archive callback was invoked")
 
     monkeypatch.setattr(archive._LazyHdf5Entry, "materialize", forbidden)
-    with pytest.raises(ExecutionPlanningError, match=r"native archive.*not profiled"):
-        model.simulate(
-            params=params, initial_conditions=initial, solution=foreign, log_level="off"
-        )
+    model.simulate(
+        params=params, initial_conditions=initial, solution=foreign, log_level="off"
+    )
 
 
 @pytest.mark.parametrize(

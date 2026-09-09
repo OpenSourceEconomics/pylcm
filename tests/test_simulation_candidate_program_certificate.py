@@ -509,8 +509,14 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "foreign_model:foreign_copy_dependency_omitted": (
         "src/lcm/model.py",
-        "array_copier=entry_allocations.copy_solution_leaf,",
-        "array_copier=None,",
+        (
+            "array_copier=entry_allocations.copy_solution_leaf,\n"
+            "                    native_values=NativeValueMaterializer("
+        ),
+        (
+            "array_copier=None,\n"
+            "                    native_values=NativeValueMaterializer("
+        ),
     ),
     "foreign_model:copy_released_before_publication": (
         "src/lcm/model.py",
@@ -545,8 +551,12 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "foreign_model:envelope_copy_dependency_omitted": (
         "src/lcm/model.py",
-        "solution=solution, array_copier=array_copier\n        )",
-        "solution=solution, array_copier=None\n        )",
+        (
+            "solution=solution, array_copier=array_copier, "
+            "native_values=native_values\n"
+            "        )"
+        ),
+        "solution=solution, array_copier=None, native_values=native_values\n        )",
     ),
     "foreign_model:materialization_dependency_omitted": (
         "src/lcm/model.py",
@@ -634,8 +644,8 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "chunk_admission:retained_values_ignored": (
         "src/_lcm/simulation/chunk_admission.py",
-        "                retained_footprint,",
-        "                DeviceBufferFootprint(spans={}),",
+        "            retained_footprint,",
+        "            DeviceBufferFootprint(spans={}),",
     ),
     "chunk_admission:unpublished_reservation_fulfilled": (
         "src/_lcm/simulation/chunk_admission.py",
@@ -767,8 +777,11 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "foreign_model:value_snapshot_dependency_omitted": (
         "src/lcm/model.py",
-        'cast("ValueStore", supplied_values), array_copier=array_copier',
-        'cast("ValueStore", supplied_values), array_copier=None',
+        (
+            'cast("ValueStore", supplied_values),\n'
+            "                    array_copier=array_copier,"
+        ),
+        'cast("ValueStore", supplied_values),\n                    array_copier=None,',
     ),
     "foreign_snapshot:store_dependency_omitted": (
         "src/_lcm/solution/result_snapshot.py",
@@ -802,8 +815,16 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "foreign_store:materialize_dependency_omitted": (
         "src/lcm/_solver_api/stores.py",
-        "period=period, regime=regime, array_copier=array_copier",
-        "period=period, regime=regime, array_copier=None",
+        (
+            "period=period,\n"
+            "                            regime=regime,\n"
+            "                            array_copier=array_copier,"
+        ),
+        (
+            "period=period,\n"
+            "                            regime=regime,\n"
+            "                            array_copier=None,"
+        ),
     ),
 }
 
@@ -1294,6 +1315,21 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "simulation_membership:entry_period_changed",
         "simulation_taste_stream:global_row_high_word_ignored",
         "simulation_entry:upload_budget_omitted",
+        "native_values:entry_scope_guard_bypassed",
+        "native_values:upload_writer_omitted",
+        "native_values:first_detached_copy_borrowed",
+        "native_values:second_detached_copy_borrowed",
+        "native_values:store_loader_forwarding_omitted",
+        "native_values:materialization_precedes_metadata_validation",
+        "native_values:first_load_serialization_omitted",
+        "native_values:observation_lock_spans_upload",
+        "native_values:upload_readiness_omitted",
+        "native_values:checksum_ignored",
+        "native_values:preupload_dtype_check_omitted",
+        "native_values:preparation_source_budget_omitted",
+        "native_values:live_source_budget_omitted",
+        "native_values:host_receives_accelerator_ceiling",
+        "constant_program:lower_compile_mesh_context_omitted",
     }
     assert not set(registered) & set(supplemental)
     assert {spec["path"] for spec in (registered | supplemental).values()} == set(

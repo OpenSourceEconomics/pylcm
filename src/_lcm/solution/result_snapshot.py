@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import jax
 
+from _lcm.solution.native_values import NativeValueMaterializer
 from lcm._solver_api.authority import _ArrayCopier
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import (
@@ -228,7 +229,10 @@ def own_value_store(
 
 # keyword-only-exempt: primary-argument=store
 def snapshot_value_store(
-    store: _ValueStoreBoundary, *, array_copier: _ArrayCopier | None = None
+    store: _ValueStoreBoundary,
+    *,
+    array_copier: _ArrayCopier | None = None,
+    native_values: NativeValueMaterializer | None = None,
 ) -> _ValueStoreBoundary:
     """Own value coordinates and detach eager payloads before later lazy reads."""
     if type(store) is not ValueStore:
@@ -242,6 +246,9 @@ def snapshot_value_store(
     if array_copier is not None:
         for entry in entries.values():
             if type(entry) is not _CanonicalValueEntry:
+                if native_values is not None:
+                    native_values.require_entry(entry=entry)
+                    continue
                 raise ExecutionPlanningError(
                     "Budgeted foreign value materialization requires eager canonical "
                     "values; native archive and other lazy uploads are not profiled."

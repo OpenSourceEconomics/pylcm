@@ -242,6 +242,14 @@ jobs:
             --junitxml=reports/junit-cpu-fp64-eager-weak-inputs.xml \
             --cov=./ --cov-append --cov-report= -n 0 \
           && check_population reports/junit-cpu-fp64-eager-weak-inputs.xml \
+          && pixi run -e tests-cpu pytest \
+            tests/test_distributed_constant_simulation.py \
+            --precision=64 -p no:randomly --policy-child \
+            --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp64-constant-simulation.xml \
+            --cov=./ --cov-append --cov-report= -n 0 \
+          && check_population reports/junit-cpu-fp64-constant-simulation.xml \
           && pixi run -e tests-cpu pytest tests/simulation/test_operand_placement.py \
             --precision=64 -p no:randomly --policy-child \
             --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
@@ -493,6 +501,14 @@ jobs:
             --junitxml=reports/junit-cpu-fp32-eager-weak-inputs.xml \
             -n 0 \
           && check_population reports/junit-cpu-fp32-eager-weak-inputs.xml \
+          && pixi run -e tests-cpu pytest \
+            tests/test_distributed_constant_simulation.py \
+            --precision=32 -p no:randomly --policy-child \
+            --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp32-constant-simulation.xml \
+            -n 0 \
+          && check_population reports/junit-cpu-fp32-constant-simulation.xml \
           && pixi run -e tests-cpu pytest tests/simulation/test_operand_placement.py \
             --precision=32 -p no:randomly --policy-child \
             --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \

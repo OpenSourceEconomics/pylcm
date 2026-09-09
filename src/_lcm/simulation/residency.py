@@ -93,6 +93,30 @@ def union_buffer_footprints(
     )
 
 
+def resolve_budget_devices(
+    *, execution_devices: tuple[jax.Device, ...], live: DeviceBufferFootprint
+) -> tuple[jax.Device, ...]:
+    """Include actual retained sources under the execution backend's device ceiling.
+
+    Preserve execution order, then append same-backend sources in footprint order.
+    Host storage on another backend does not acquire an accelerator memory ceiling.
+    This inventory changes neither execution placement nor any array's sharding.
+    """
+    platforms = {device.platform for device in execution_devices}
+    return tuple(
+        dict.fromkeys(
+            (
+                *execution_devices,
+                *(
+                    device
+                    for device, spans in live.spans.items()
+                    if spans and device.platform in platforms
+                ),
+            )
+        )
+    )
+
+
 def resident_bytes_by_device(
     *,
     live: DeviceBufferFootprint,

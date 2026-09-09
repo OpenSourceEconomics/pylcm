@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 import jax
 import numpy as np
@@ -18,6 +19,15 @@ from lcm._solver_api.authority import (
 from lcm._solver_api.identity import (
     LoadState,
 )
+
+
+@runtime_checkable
+class _ValueMaterializer(Protocol):  # noqa: PYI046 — private store boundary protocol
+    """Call-local trusted value loader; never retained by a public store."""
+
+    def __call__(self, *, entry: object) -> object:
+        """Materialize one explicitly admitted entry with its private ownership."""
+        ...
 
 
 class _LazyEntry(ABC):

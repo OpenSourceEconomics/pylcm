@@ -110,6 +110,7 @@ from _lcm.solution.model_authority import (
     snapshot_solution_authority,
 )
 from _lcm.solution.model_seal import BindingRecorder, SealedBindings
+from _lcm.solution.native_values import NativeValueMaterializer
 from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
@@ -1170,6 +1171,10 @@ class Model:
                     flat_params=flat_params,
                     expected_fingerprint=expected_fingerprint,
                     array_copier=entry_allocations.copy_solution_leaf,
+                    native_values=NativeValueMaterializer(
+                        array_writer=entry_allocations,
+                        array_copier=entry_allocations.copy_solution_leaf,
+                    ),
                 )
                 entry_allocations.update_solution(
                     solution=solution,
@@ -1226,6 +1231,7 @@ class Model:
         flat_params: FlatParams,
         expected_fingerprint: str,
         array_copier: _ArrayCopier | None = None,
+        native_values: NativeValueMaterializer | None = None,
     ) -> _ResolvedSolution:
         """Copy and validate a result from elsewhere against model authority."""
         if array_copier is not None:
@@ -1239,10 +1245,10 @@ class Model:
                     raise ExecutionPlanningError(
                         f"Budgeted foreign solution for regime {regime_name!r} "
                         "requires unprofiled artifact authority or payload copies; "
-                        "only eager canonical value materialization is admitted."
+                        "only canonical eager and admitted native values are supported."
                     )
         solution = self._snapshot_solution_envelope(
-            solution=solution, array_copier=array_copier
+            solution=solution, array_copier=array_copier, native_values=native_values
         )
         metadata = solution.metadata
         authority, values, solution = self._check_solution_result_structure(
@@ -1251,6 +1257,7 @@ class Model:
             flat_params=flat_params,
             expected_fingerprint=expected_fingerprint,
             array_copier=array_copier,
+            native_values=native_values,
         )
         policies, dissolution_flags = self._check_solution_result_artifacts(
             solution=solution,
@@ -1294,6 +1301,7 @@ class Model:
         flat_params: FlatParams,
         expected_fingerprint: str,
         array_copier: _ArrayCopier | None = None,
+        native_values: NativeValueMaterializer | None = None,
     ) -> tuple[
         SolutionAuthority,
         PeriodToRegimeToVArr,
@@ -1402,7 +1410,7 @@ class Model:
                 value_store.materialize()
                 if array_copier is None
                 else value_store._materialize_with_copy(  # noqa: SLF001
-                    array_copier=array_copier
+                    array_copier=array_copier, value_materializer=native_values
                 )
             )
         except (TypeError, ValueError) as error:
@@ -1419,7 +1427,10 @@ class Model:
 
     @staticmethod
     def _snapshot_solution_envelope(
-        *, solution: _SolutionResultBoundary, array_copier: _ArrayCopier | None = None
+        *,
+        solution: _SolutionResultBoundary,
+        array_copier: _ArrayCopier | None = None,
+        native_values: NativeValueMaterializer | None = None,
     ) -> _SolutionResultBoundary:
         """Own exact result stores and metadata before any lazy callback can run."""
         supplied_metadata = solution.metadata
@@ -1435,7 +1446,9 @@ class Model:
         try:
             snapshot = SolutionResult(
                 values=snapshot_value_store(
-                    cast("ValueStore", supplied_values), array_copier=array_copier
+                    cast("ValueStore", supplied_values),
+                    array_copier=array_copier,
+                    native_values=native_values,
                 ),
                 metadata=snapshot_solution_metadata(supplied_metadata),
                 retained_continuations=snapshot_artifact_store(

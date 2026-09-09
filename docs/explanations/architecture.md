@@ -397,9 +397,23 @@ entry owner retains intermediate copies until validation commits the resolved va
 failure releases that transient bank. A remembered validated view needs no new copies.
 Source devices outside the simulation subset still count when they use the same backend.
 Mixed CPU/accelerator foreign copies are refused before copying; an accelerator device
-ceiling is not a host-memory budget. Budgeted foreign artifact authorities and native
-archive materializers remain unprofiled and are refused before their copying or upload
-callbacks. Their unbudgeted behavior is unchanged.
+ceiling is not a host-memory budget. Trusted native GridSearch value archives use a
+call-local loader after metadata, authority and coordinate validation. Each host leaf is
+checked against its archived address, shape, dtype and checksum before an admitted
+upload; dtype narrowing is refused before upload. Unloaded values stage on the first
+selected device because archives do not serialize source sharding. Preloaded cache
+arrays keep their actual source layout. Both detached copies are admitted while the
+original cache and earlier copies remain live. A failed upload leaves the entry
+unloaded; failure during a later copy preserves its already published private cache.
+
+Native cache construction has a separate serialization lock from its brief cache
+peek/publication lock. Admission snapshots never hold a cache lock across loading or
+allocation, so simultaneous entry loads can inspect the complete cached bank. These
+locks protect entry memoization; they do not coordinate budgets across concurrent
+mutations of an entire result. Loader callbacks remain call-local and do not enter the
+archive cache or consumed-view memo. Budgeted foreign artifact authorities, native
+artifact payloads and arbitrary lazy decoders remain unprofiled and are refused before
+their copying or upload callbacks. Their unbudgeted behavior is unchanged.
 
 ## The solver seam: keys and routes
 

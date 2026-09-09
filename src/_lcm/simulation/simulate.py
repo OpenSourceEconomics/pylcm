@@ -100,6 +100,7 @@ from _lcm.simulation.replay_inputs import PreparedReplayReader, place_replay_pay
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
+    resolve_budget_devices,
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
@@ -318,6 +319,21 @@ def simulate(  # noqa: C901, PLR0915
                 "Budgeted simulation currently requires compiled decision programs; "
                 "host gated/replay adapters require their own workspace accounting."
             )
+        inputs = union_buffer_footprints(
+            footprints=(
+                retained_footprint,
+                measure_buffer_footprint(
+                    tree=(
+                        initial_conditions,
+                        flat_params,
+                        ages.values,  # noqa: PD011
+                        period_to_regime_to_V_arr,
+                        period_to_regime_to_dissolution_flags,
+                        period_to_regime_to_sim_policy,
+                    )
+                ),
+            )
+        )
         memory = SimulationMemory(
             budget_bytes=runtime.execution.device_memory_bytes,
             axis_widths=MappingProxyType({})
@@ -325,24 +341,13 @@ def simulate(  # noqa: C901, PLR0915
             else prepared_chunks.plan.profile.axis_widths,
             subject_devices=runtime.subject_devices,
             operations=runtime.operations,
-            devices=placed_devices_for_ids(
-                submesh_device_ids=(), visible_device_ids=device_ids
+            devices=resolve_budget_devices(
+                execution_devices=placed_devices_for_ids(
+                    submesh_device_ids=(), visible_device_ids=device_ids
+                ),
+                live=inputs,
             ),
-            inputs=union_buffer_footprints(
-                footprints=(
-                    retained_footprint,
-                    measure_buffer_footprint(
-                        tree=(
-                            initial_conditions,
-                            flat_params,
-                            ages.values,  # noqa: PD011
-                            period_to_regime_to_V_arr,
-                            period_to_regime_to_dissolution_flags,
-                            period_to_regime_to_sim_policy,
-                        )
-                    ),
-                )
-            ),
+            inputs=inputs,
         )
         memory.check_resident()
 

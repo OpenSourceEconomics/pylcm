@@ -77,6 +77,26 @@ def test_distinct_backend_devices_do_not_share_pointer_names() -> None:
     ) == {cpu: 100, gpu: 0}
 
 
+def test_budget_devices_include_only_actual_same_backend_sources() -> None:
+    """Source storage participates without giving host RAM an accelerator ceiling."""
+    cpu = cast("jax.Device", Mock(spec=jax.Device, id=0, platform="cpu"))
+    first, second, source, empty = (
+        cast("jax.Device", Mock(spec=jax.Device, id=index, platform="gpu"))
+        for index in range(4)
+    )
+    live = residency.DeviceBufferFootprint(
+        spans={
+            cpu: ((100, 200),),
+            source: ((100, 200),),
+            first: ((100, 200),),
+            empty: (),
+        }
+    )
+    assert residency.resolve_budget_devices(
+        execution_devices=(second, first), live=live
+    ) == (second, first, source)
+
+
 def test_incremental_publications_union_shared_params_once() -> None:
     """New output metadata adds storage while preserving aliases of earlier inputs."""
     device = jax.devices()[0]

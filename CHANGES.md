@@ -132,6 +132,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   copy admission and retain intermediate copies through validation. Native archive
   materialization, artifact copies and mixed-backend foreign copies remain unsupported
   under a budget.
+- Budgeted simulation accepts built-in native GridSearch value archives, admitting
+  verified uploads and both private copies while retaining the archive cache. Actual
+  source devices on the execution backend participate in residency and transfer-scratch
+  accounting even when they are outside the selected execution subset.
+- Simulation programs whose inputs are all removed by the compiler still run on
+  their selected devices, preserving inferred scalar and vector output layouts.
 - Eager solve inputs now bind weakly typed values to matching declared strong types,
   preserving compiled type promotion and their actual device layout. Shape and dtype
   mismatches remain errors; normalization copies are shared within each call and

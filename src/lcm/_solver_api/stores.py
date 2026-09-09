@@ -21,6 +21,7 @@ from lcm._solver_api.entries import (
     _copy_solution_value,
     _LazyEntry,
     _materialize_entry,
+    _ValueMaterializer,
 )
 from lcm._solver_api.identity import (
     ArtifactKey,
@@ -275,17 +276,21 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         period: _ValuePeriodBoundary,
         regime: _RegimeNameBoundary,
         array_copier: _ArrayCopier | None = None,
+        value_materializer: _ValueMaterializer | None = None,
     ) -> _FloatValueBoundary:
         period = _require_exact_value_period(period)
         regime = _require_exact_regime_name(regime)
         entry = self._entries[(period, regime)]
         if array_copier is not None and isinstance(entry, _LazyEntry):
-            if type(entry) is not _CanonicalValueEntry:
+            if type(entry) is _CanonicalValueEntry:
+                value = entry._fresh(array_copier=array_copier)  # noqa: SLF001
+            elif value_materializer is not None:
+                value = value_materializer(entry=entry)
+            else:
                 raise ExecutionPlanningError(
                     "Budgeted foreign value materialization requires an eager "
                     "canonical value; lazy decoder uploads are not profiled."
                 )
-            value = entry._fresh(array_copier=array_copier)  # noqa: SLF001
         else:
             value = _materialize_entry(entry=entry)
         if type(entry) is not _CanonicalValueEntry:
@@ -321,7 +326,10 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         return self._materialize_with_copy()
 
     def _materialize_with_copy(
-        self, *, array_copier: _ArrayCopier | None = None
+        self,
+        *,
+        array_copier: _ArrayCopier | None = None,
+        value_materializer: _ValueMaterializer | None = None,
     ) -> _MaterializedValuesBoundary:
         """Materialize through a call-local copy dependency without retaining it."""
         return MappingProxyType(
@@ -329,7 +337,10 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                 period: MappingProxyType(
                     {
                         regime: self._load(
-                            period=period, regime=regime, array_copier=array_copier
+                            period=period,
+                            regime=regime,
+                            array_copier=array_copier,
+                            value_materializer=value_materializer,
                         )
                         for regime in view
                     }

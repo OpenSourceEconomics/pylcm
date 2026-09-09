@@ -32,6 +32,7 @@ FOUR_DEVICE_TEST_FILES = (
     "tests/test_distributed_simulation_value_reads.py",
     "tests/test_distributed_solve_readiness.py",
     "tests/test_distributed_eager_weak_inputs.py",
+    "tests/test_distributed_constant_simulation.py",
     "tests/simulation/test_operand_placement.py",
     "tests/simulation/test_host_operations.py",
     "tests/test_distributed_taste_stream.py",

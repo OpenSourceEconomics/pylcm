@@ -386,6 +386,7 @@ class SimulationRuntime:
                 program=program,
                 enable_jit=self.enable_jit,
                 abstract_inputs=abstract_inputs,
+                subject_devices=self.subject_devices,
                 subject_width=min(
                     self.execution.axis_widths.get(SUBJECT_AXIS, n_subjects),
                     n_subjects,
@@ -529,6 +530,9 @@ class _SimulationCandidateCompiler:
     subject_width: int
     """Width of a singleton or host-driven subject loop."""
 
+    subject_devices: tuple[jax.Device, ...]
+    """Ordered execution devices, including when no numerical input is kept."""
+
     abstract_inputs: bool = False
     """Whether the prepared operands describe required layouts without arrays."""
 
@@ -567,16 +571,26 @@ class _SimulationCandidateCompiler:
             return CompiledSimulationProgram(
                 executable=function, static_kwargs=MappingProxyType(static_kwargs)
             )
-        lowered = jax.jit(function, static_argnames=tuple(static_kwargs)).lower(
-            **arguments, **static_kwargs
+        mesh = jax.make_mesh(
+            (len(self.subject_devices),),
+            ("X",),
+            (jax.sharding.AxisType.Auto,),
+            devices=self.subject_devices,
         )
-        _assert_lowered_output_tree(
-            output_roles=self.program.output_roles,
-            output_info=lowered.out_info,
-            label=self.program.name,
-        )
+        # Placement belongs to the selected program even if DCE removes every
+        # operand. Auto axes retain the compiler's inferred output partitions.
+        with jax.set_mesh(mesh):
+            lowered = jax.jit(function, static_argnames=tuple(static_kwargs)).lower(
+                **arguments, **static_kwargs
+            )
+            _assert_lowered_output_tree(
+                output_roles=self.program.output_roles,
+                output_info=lowered.out_info,
+                label=self.program.name,
+            )
+            executable = lowered.compile()
         return CompiledSimulationProgram(
-            executable=lowered.compile(), static_kwargs=MappingProxyType({})
+            executable=executable, static_kwargs=MappingProxyType({})
         )
 
 
