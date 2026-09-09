@@ -408,7 +408,7 @@ _SOURCE_SEALS = {
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
-    DISPATCHERS_SOURCE: "2b7efd1df0a3b8fdf0d90d6ea38b95456ca74b180cc617ebe63266a9f5dca03d",
+    DISPATCHERS_SOURCE: "5f75190406d80c6e99aabd06000b8c690d32d343cc01b6fb653768fa6906a776",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "0838079e35ba498009d8af7e6ed717f870a96a2fdc628d25e80310cd630174a9",
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
@@ -5181,6 +5181,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
+    for relative in _GROUPED_MAPPER_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _grouped_mapper_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     for relative in _ACTION_GRID_CONTRACTS:
         tree = parsed.get(relative)
         if tree is not None:
@@ -6339,6 +6346,242 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
 }
+
+
+_GROUPED_MAPPER_CONTRACTS = {
+    "src/_lcm/utils/dispatchers.py": (
+        "25b1ce052a4d1be8b7d0a851e92c47f1b354932b3e24cc2e657ba2a6c5c0a467",
+        {
+            "tiled_productmap": "5c90e484842166ba0eeee513fb39051c154d2f4c835f2b49bf53fa1bc6845222",
+            "_TiledProductMap.__call__": "045b36c13628348873fdaa040ae02b84359d381ee0d93082b1ab3a64fc365da2",
+            "_map_grouped_product": "81bc7b2858fe526feaf9f5f5cff0e458ec94e028784a31aedbe092ac26e4838b",
+            "_MapOverFinalCoordinate.__call__": "d4934af255cab7f3583631ee376e18eabc6bb6f7742ff945f1e95a260fdf3ece",
+            "_EvaluateTiledCell.__call__": "6836bd1b2ab970e74485a818ace01e603a3e25d9b49337e0a11e39efe88e770a",
+            "_restore_product_axes": "aefd91d6e6d5c1d49f1451435c80b04c616fc010784907adcf8e377508f087c2",
+            "map_over_leading_axis": "2e4707b27863a6d373660a18404ad5373d00cf89037276dc17e44095ab5fa9d2",
+            "_RestoreProductAxisOrder.__call__": "63d433afc99fab8238b273b0075f926b672c20943aea9d2b6170dfc1a6ee5df0",
+            "_transpose_product_axes": "54961f0159833bf5de6053053200dda0e3745caae17447c2aafd2e6f4faadae3",
+        },
+    )
+}
+
+
+def _grouped_mapper_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Pin C-order cells, bounded two-axis windows, and unchanged output roles."""
+    surface, callables = _GROUPED_MAPPER_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="grouped mapper", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append("grouped mapper: module bindings or mapper schema changed")
+    return errors
+
+
+_GROUPED_MAPPER_MUTATIONS = {
+    "grouped_mapper:int32_limit_inflated": ("<module>", "2**31 - 1", "2**63 - 1"),
+    "grouped_mapper:extent_guard_omitted": (
+        "_TiledProductMap.__call__",
+        "n_cells < 1 or n_cells > _MAX_FLAT_CELL_INDEX",
+        "False",
+    ),
+    "grouped_mapper:grouped_reuse_disabled": (
+        "_TiledProductMap.__call__",
+        "len(self.variables) > 1",
+        "False",
+    ),
+    "grouped_mapper:nonmapped_arguments_omitted": (
+        "_TiledProductMap.__call__",
+        "MappingProxyType({name: value for name, value in kwargs.items() if name not in self.variables})",
+        "MappingProxyType({})",
+    ),
+    "grouped_mapper:inner_window_unbounded": (
+        "_map_grouped_product",
+        "min(width, shape[-1])",
+        "shape[-1]",
+    ),
+    "grouped_mapper:outer_window_unbounded": (
+        "_map_grouped_product",
+        "max(1, width // inner_width)",
+        "math.prod(shape[:-1])",
+    ),
+    "grouped_mapper:outer_window_rounds_up": (
+        "_map_grouped_product",
+        "width // inner_width",
+        "(width + inner_width - 1) // inner_width",
+    ),
+    "grouped_mapper:prefix_strides_include_final_axis": (
+        "_map_grouped_product",
+        "shape[index + 1:-1]",
+        "shape[index + 1:]",
+    ),
+    "grouped_mapper:prefix_variable_order_reversed": (
+        "_map_grouped_product",
+        "variables[:-1]",
+        "tuple(reversed(variables[:-1]))",
+    ),
+    "grouped_mapper:prefix_grid_omitted": (
+        "_map_grouped_product",
+        "coordinates[:-1]",
+        "coordinates[:-2]",
+    ),
+    "grouped_mapper:final_variable_changed": (
+        "_map_grouped_product",
+        "variables[-1]",
+        "variables[0]",
+    ),
+    "grouped_mapper:final_grid_changed": (
+        "_map_grouped_product",
+        "coordinates[-1]",
+        "coordinates[0]",
+    ),
+    "grouped_mapper:prefix_extent_truncated": (
+        "_map_grouped_product",
+        "math.prod(shape[:-1])",
+        "math.prod(shape[:-1]) - 1",
+    ),
+    "grouped_mapper:trailing_roles_shifted": (
+        "_restore_product_axes",
+        "value.shape[n_flat_axes:]",
+        "value.shape[1:]",
+    ),
+    "grouped_mapper:grouped_restore_consumes_one_axis": (
+        "_map_grouped_product",
+        "2",
+        "1",
+    ),
+    "grouped_mapper:final_window_unbounded": (
+        "_MapOverFinalCoordinate.__call__",
+        "self.width",
+        "self.coordinate.shape[0]",
+    ),
+    "grouped_mapper:decoded_coordinate_replaced": (
+        "_EvaluateTiledCell.__call__",
+        "coordinate[(index // stride) % coordinate.shape[0]]",
+        "coordinate[0]",
+    ),
+    "grouped_mapper:cell_arguments_dropped": (
+        "_EvaluateTiledCell.__call__",
+        "self.func(**self.arguments, **cell)",
+        "self.func(**cell)",
+    ),
+}
+
+EXPECTED_GROUPED_MAPPER_MUTATION_COUNT = 18
+EXPECTED_GROUPED_MAPPER_MUTATION_NAMES_SHA256 = (
+    "7a71b3f1917dc1ac14cefc08e6b36c8d3a09522bc20d7ef775686a2878db8189"
+)
+
+
+def grouped_mapper_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build separate controls without changing historical mutation populations."""
+    result = {}
+    relative = DISPATCHERS_SOURCE
+    original = (repo_root / relative).read_text(encoding="utf-8")
+    for name, (qualname, old, new) in _GROUPED_MAPPER_MUTATIONS.items():
+        tree = ast.parse(original, filename=relative)
+        if qualname == "<module>":
+            function = tree
+        elif "." in qualname:
+            class_name, method_name = qualname.split(".", maxsplit=1)
+            _, function = _method_definition(
+                tree=tree, class_name=class_name, method_name=method_name
+            )
+        else:
+            function = _definition(tree=tree, name=qualname)
+        expected = ast.dump(ast.parse(old, mode="eval").body, include_attributes=False)
+        matches = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.expr)
+            and ast.dump(node, include_attributes=False) == expected
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"{name}: expected one expression anchor, found {len(matches)}"
+            )
+        replacement = ast.parse(new, mode="eval").body
+        target = matches[0]
+        for parent in ast.walk(function):
+            for attribute, value in ast.iter_fields(parent):
+                if value is target:
+                    setattr(parent, attribute, copy.deepcopy(replacement))
+                elif isinstance(value, list):
+                    setattr(
+                        parent,
+                        attribute,
+                        [
+                            copy.deepcopy(replacement) if item is target else item
+                            for item in value
+                        ],
+                    )
+        mutated = ast.unparse(ast.fix_missing_locations(tree)) + "\n"
+        ast.parse(mutated, filename=relative)
+        result[name] = {"path": relative, "source": mutated}
+    return result
+
+
+_GROUPED_GUARD_MUTATIONS = {
+    "grouped_guard:eligibility_omitted": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "width // min(width, shape[-1]) > 1",
+        "True",
+        1,
+    ),
+    "grouped_guard:eligibility_inverted": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "width // min(width, shape[-1]) > 1",
+        "width // min(width, shape[-1]) <= 1",
+        1,
+    ),
+    "grouped_guard:threshold_lowered": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "width // min(width, shape[-1]) > 1",
+        "width // min(width, shape[-1]) > 0",
+        1,
+    ),
+    "grouped_guard:threshold_raised": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "width // min(width, shape[-1]) > 1",
+        "width // min(width, shape[-1]) > 2",
+        1,
+    ),
+    "grouped_guard:fallback_width_unbounded": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "keyword",
+        "batch_size",
+        "n_cells",
+        1,
+    ),
+    "grouped_guard:fallback_strides_truncated": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "shape[index + 1:]",
+        "shape[index + 1:-1]",
+        1,
+    ),
+}
+
+EXPECTED_GROUPED_GUARD_MUTATION_COUNT = 6
+EXPECTED_GROUPED_GUARD_MUTATION_NAMES_SHA256 = (
+    "e866f1cbeda39679ae30891885e1101904d48a5a571add28552fdacc7dd2f5ca"
+)
+
+
+def grouped_guard_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Keep route-eligibility controls separate from the accepted mapper population."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_GROUPED_GUARD_MUTATIONS
+    )
 
 
 _ACTION_GRID_CONTRACTS = {
@@ -10007,6 +10250,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     uniform = uniform_process_mutation_specs(repo_root=root)
     action_grid = action_grid_mutation_specs(repo_root=root)
     feasibility = feasibility_mutation_specs(repo_root=root)
+    grouped = grouped_mapper_mutation_specs(repo_root=root)
+    guard = grouped_guard_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -10015,7 +10260,13 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(source, encoding="utf-8")
         for name, spec in (
-            registered | supplemental | uniform | action_grid | feasibility
+            registered
+            | supplemental
+            | uniform
+            | action_grid
+            | feasibility
+            | grouped
+            | guard
         ).items():
             relative = spec["path"]
             target = temp_root / relative
@@ -10036,6 +10287,24 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         len(feasibility_cases) == EXPECTED_FEASIBILITY_MUTATION_COUNT
         and _mutation_name_digest(tuple(feasibility_cases))
         == EXPECTED_FEASIBILITY_MUTATION_NAMES_SHA256
+    )
+    guard_cases = {name: cases.pop(name) for name in guard}
+    guard_admitted = sorted(
+        name for name, result in guard_cases.items() if not result["rejected"]
+    )
+    guard_names_match = (
+        len(guard_cases) == EXPECTED_GROUPED_GUARD_MUTATION_COUNT
+        and _mutation_name_digest(tuple(guard_cases))
+        == EXPECTED_GROUPED_GUARD_MUTATION_NAMES_SHA256
+    )
+    grouped_cases = {name: cases.pop(name) for name in grouped}
+    grouped_admitted = sorted(
+        name for name, result in grouped_cases.items() if not result["rejected"]
+    )
+    grouped_names_match = (
+        len(grouped_cases) == EXPECTED_GROUPED_MAPPER_MUTATION_COUNT
+        and _mutation_name_digest(tuple(grouped_cases))
+        == EXPECTED_GROUPED_MAPPER_MUTATION_NAMES_SHA256
     )
     action_grid_cases = {name: cases.pop(name) for name in action_grid}
     action_grid_admitted = sorted(
@@ -10084,6 +10353,14 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "feasibility_mutation_count": len(feasibility_cases),
         "feasibility_names_match_expected": feasibility_names_match,
         "admitted_feasibility_mutations": feasibility_admitted,
+        "grouped_guard_mutations": guard_cases,
+        "grouped_guard_mutation_count": len(guard_cases),
+        "grouped_guard_names_match_expected": guard_names_match,
+        "admitted_grouped_guard_mutations": guard_admitted,
+        "grouped_mapper_mutations": grouped_cases,
+        "grouped_mapper_mutation_count": len(grouped_cases),
+        "grouped_mapper_names_match_expected": grouped_names_match,
+        "admitted_grouped_mapper_mutations": grouped_admitted,
         "action_grid_mutations": action_grid_cases,
         "action_grid_mutation_count": len(action_grid_cases),
         "action_grid_names_match_expected": action_grid_names_match,
@@ -10104,6 +10381,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             and not action_grid_admitted
             and not feasibility_admitted
             and feasibility_names_match
+            and not grouped_admitted
+            and not guard_admitted
+            and guard_names_match
+            and grouped_names_match
             and action_grid_names_match
             and supplemental_names_match
             and uniform_names_match

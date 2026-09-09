@@ -15,6 +15,153 @@ from lcm.typing import BoolND, FloatND
 from tests.conftest import assert_agrees_to_ulp
 
 
+def _evaluate_grouped_cell(
+    *, first: FloatND, second: FloatND, last: FloatND
+) -> FloatND:
+    """Expose independent nonlinear work on a coordinate prefix and final axis."""
+    return jnp.sqrt(first + second) + jnp.exp(last)
+
+
+def _primitive_input_shapes(*, graph: Any, name: str) -> list[tuple[int, ...]]:
+    """Collect operand shapes through nested mapping and reduction bodies."""
+    if not hasattr(graph, "eqns"):
+        if hasattr(graph, "jaxpr"):
+            return _primitive_input_shapes(graph=graph.jaxpr, name=name)
+        return []
+    shapes = []
+    for equation in graph.eqns:
+        if equation.primitive.name == name:
+            shapes.append(equation.invars[0].aval.shape)
+        for parameter in equation.params.values():
+            children = (
+                parameter if isinstance(parameter, tuple | list) else (parameter,)
+            )
+            for child in children:
+                shapes.extend(_primitive_input_shapes(graph=child, name=name))
+    return shapes
+
+
+@pytest.mark.parametrize("width", [8, 30, 40])
+def test_tiled_product_limits_coordinate_only_nonlinear_work(*, width: int) -> None:
+    """Grouped final-coordinate work fits its grid; flat work fits the window."""
+    mapped = functools.partial(
+        cast(
+            "Callable[..., Any]",
+            dispatchers.tiled_productmap(
+                func=_evaluate_grouped_cell,
+                variables=("first", "second", "last"),
+                width_keyword="cell_width",
+            ),
+        ),
+        cell_width=width,
+    )
+    traced = jax.make_jaxpr(mapped)(
+        first=jnp.asarray([1.0, 2.0]),
+        second=jnp.asarray([1.0, 2.0, 3.0]),
+        last=jnp.asarray([0.0, 0.125, 0.25, 0.375, 0.5]),
+    )
+    shapes = _primitive_input_shapes(graph=traced, name="exp")
+    maximum_window = 5 if width >= 10 else width
+    assert (
+        max((np.prod(shape) for shape in shapes), default=width + 1) <= maximum_window
+    )
+
+
+def test_full_product_bounds_prefix_nonlinear_rank() -> None:
+    """Coordinate-prefix work adds at most one batch axis to the scalar body."""
+    mapped = functools.partial(
+        cast(
+            "Callable[..., Any]",
+            dispatchers.tiled_productmap(
+                func=_evaluate_grouped_cell,
+                variables=("first", "second", "last"),
+                width_keyword="cell_width",
+            ),
+        ),
+        cell_width=30,
+    )
+    traced = jax.make_jaxpr(mapped)(
+        first=jnp.asarray([1.0, 2.0]),
+        second=jnp.asarray([1.0, 2.0, 3.0]),
+        last=jnp.asarray([0.0, 0.125, 0.25, 0.375, 0.5]),
+    )
+    shapes = _primitive_input_shapes(graph=traced, name="sqrt")
+    assert max((len(shape) for shape in shapes), default=2) <= 1
+
+
+@pytest.mark.parametrize("width", [1, 4, 8, 11, 30, 40])
+def test_grouped_product_respects_combined_window(*, width: int) -> None:
+    """The two independent nonlinear operand windows fit the admitted cell width."""
+    mapped = functools.partial(
+        cast(
+            "Callable[..., Any]",
+            dispatchers.tiled_productmap(
+                func=_evaluate_grouped_cell,
+                variables=("first", "second", "last"),
+                width_keyword="cell_width",
+            ),
+        ),
+        cell_width=width,
+    )
+    traced = jax.make_jaxpr(mapped)(
+        first=jnp.asarray([1.0, 2.0]),
+        second=jnp.asarray([1.0, 2.0, 3.0]),
+        last=jnp.asarray([0.0, 0.125, 0.25, 0.375, 0.5]),
+    )
+    prefix = _primitive_input_shapes(graph=traced, name="sqrt")
+    final = _primitive_input_shapes(graph=traced, name="exp")
+    prefix_window = max((np.prod(shape) for shape in prefix), default=width + 1)
+    final_window = max((np.prod(shape) for shape in final), default=width + 1)
+    if width >= 10:
+        assert prefix_window * final_window <= width
+    else:
+        assert max(prefix_window, final_window) <= width
+
+
+@pytest.mark.parametrize("width", [1, 4, 8, 30, 40])
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize(
+    "variables", [("first", "second", "last"), ("last", "second", "first")]
+)
+def test_grouped_product_matches_scalar_enumeration(
+    *, width: int, compiled: bool, variables: tuple[str, ...]
+) -> None:
+    """Every nonlinear output retains its declared Cartesian coordinate order."""
+    arguments = {
+        "first": jnp.asarray([1.0, 2.0]),
+        "second": jnp.asarray([1.0, 2.0, 3.0]),
+        "last": jnp.asarray([0.0, 0.125, 0.25, 0.375, 0.5]),
+    }
+    expected = np.asarray(
+        [
+            [
+                [
+                    np.sqrt(first + second) + np.exp(last)
+                    for last in [0.0, 0.125, 0.25, 0.375, 0.5]
+                ]
+                for second in [1.0, 2.0, 3.0]
+            ]
+            for first in [1.0, 2.0]
+        ],
+        dtype=arguments["first"].dtype,
+    )
+    if variables[0] == "last":
+        expected = expected.transpose((2, 1, 0))
+    mapped = functools.partial(
+        cast(
+            "Callable[..., Any]",
+            dispatchers.tiled_productmap(
+                func=_evaluate_grouped_cell,
+                variables=variables,
+                width_keyword="cell_width",
+            ),
+        ),
+        cell_width=width,
+    )
+    run = jax.jit(mapped) if compiled else mapped
+    assert_agrees_to_ulp(got=run(**arguments), expected=expected, n_ulp=4)
+
+
 def _evaluate_cell(
     *, first: FloatND, second: FloatND, offset: FloatND
 ) -> tuple[FloatND, BoolND]:
@@ -126,9 +273,11 @@ def test_flat_cell_indices_cannot_overflow_int32() -> None:
         )
 
 
-@pytest.mark.parametrize("width", [1, 4, 6])
-def test_state_width_changes_the_actual_compiled_loop(*, width: int) -> None:
-    """The scalar and remainder windows stage fewer iterations as width increases."""
+@pytest.mark.parametrize(("width", "expected_lengths"), [(1, [6]), (4, [1]), (6, [])])
+def test_state_width_changes_the_actual_compiled_loop(
+    *, width: int, expected_lengths: list[int]
+) -> None:
+    """Small windows scan flat cells; two final-coordinate groups vectorize here."""
     mapped = functools.partial(
         _build_mapper(variables=("first", "second")), cell_width=width
     )
@@ -142,7 +291,7 @@ def test_state_width_changes_the_actual_compiled_loop(*, width: int) -> None:
         for equation in traced.jaxpr.eqns
         if equation.primitive.name == "scan"
     ]
-    assert lengths == ([6 // width] if width < 6 else [])
+    assert lengths == expected_lengths
 
 
 @pytest.mark.parametrize("untiled", [("first",), ("second",)])
