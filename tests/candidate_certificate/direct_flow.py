@@ -423,7 +423,7 @@ _SOURCE_SEALS = {
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "1f7b4f611a42a1d80e80dbb80f65399b5907822d5d763f20ae39b7ba63094faf",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
-    INITIAL_CONDITIONS_SOURCE: "4fced3517018b012adf40cb4167c45d73b9774186b134797231155a969ae3cd7",
+    INITIAL_CONDITIONS_SOURCE: "4927b23307825c5f767a9bbd007a338204d9d4857495735d7f0fe99129bde6d8",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
@@ -3296,17 +3296,24 @@ _SIMULATION_ADAPTER_CONTRACTS = {
     # The entry coordinator preserves both validation families and passes the
     # real retained inventory to each newly profiled summary allocation.
     INITIAL_CONDITIONS_SOURCE: (
-        "61cf36bdbe630e4df313028e18e15ab977cd19069b84719428113dc698bba8ed",
+        "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
         {
-            "validate_simulation_inputs": "154f5934643fb3b43fbccc40604cbfdee392fe463ac9d8ff2281680949c30344",
+            "validate_simulation_inputs": "78fc1ee7349d3a927e7988c705bc10a9bfd9050b0028af7e63c942ebbf768ed6",
             "_preflight_memory": "24af3b888fd7f85f2f580b19b08c0ed565ed2bc3da34ed883c4e7982f5bc5caf",
             "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
             "_pack_initial_summary": "504e89911be3016190066e13c8acebdb890328a4a7d40c4f9e8afd6a6f0b748a",
             "_read_initial_cohorts": "c2de600ad5640aabae10671db6123ec1dcd7dac80b9bf50a8a21e022d30838ad",
-            "validate_initial_conditions": "9164574849bb0804f9315310b3fb656102761d6c6e41d1778f75daa834652098",
-            "_collect_feasibility_errors": "3fef89c11ff904192cfde03bb04608d4e41c4c02c9a1c7f1048f2ded2f0f4eac",
+            "validate_initial_conditions": "706a297af1125941763bf594511ee343f31dc8a725d38aa1614048c232a8d9c8",
+            "_collect_feasibility_errors": "ccb25705a003d95b1cd10f406df14ef43a809508c0f0028b6e1a13ddf7022b02",
             "_age_specialized_feasibility_message": "1eefe701cada0b668ab2eab2e404120b47d2c65ff390afeb1e726ae420fde174",
-            "_check_regime_feasibility": "4a1a2f8e04834624a5c49c9aaa1b177a11943ce1f4a9367c99a7481f88d08443",
+            "_check_regime_feasibility": "9017964aeb5f3fb33515244c7694b34af260dbad32c8ade442e794a32de643b2",
+            "_run_profiled_feasibility": "7d26c0b25de59dc7402148d72e4a95b9cca6c4999c1c36fcb79351fe7074139e",
+            "_FeasibilityCompiler.__call__": "4c1ea17d3d5b511d3299af73798c6bfc6868dd32112e6e89497f80c8bc25f57b",
+            "_batched_feasibility_check": "6e921929b1b422ce2cf1b097824ab8d2bf016a160b15f0acda829352aef5ee3b",
+            "_evaluate_constant_feasibility": "12c654a6e1a02d4267156e8e501fe98a7a295eb46da3e736840b85eab506e012",
+            "_admits_any_action": "546746b14fcca4269a3e438d2ec0c5c214259c3199169f5e727839c4d9fb0463",
+            "_per_constraint_feasibility": "ee8b914b3346b2d1304b96aa358880c4b61c2addf49b6d9a6acff2f1175a0bad",
+            "_format_infeasibility_message": "cbacb8c81970497c4fd808f428a896685f752a1be534788d7581417e8604d046",
             "_gather_feasibility_inputs": "042f8474176d738b9219516fd96c3d09c5ccc3e4ce18d0641bede57a8ce7d40e",
             "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
             "_constant_feasibility_flag": "f7b994fa04576c7157f8bab30ef0e17126c181ba874cbe493c1e19e6be056f17",
@@ -4214,7 +4221,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "61cf36bdbe630e4df313028e18e15ab977cd19069b84719428113dc698bba8ed",
+        "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
         {
             "_CarrierWriter.__call__": "697bae0eaa97d3806c3079466e8c3de66ce08eec331d66402da3fa02958a573e",
             "_build_admitted_initial_states": "ca3e5c754d9c86385c7302441e2199c338239d89edde06c5620874793afc68ec",
@@ -6215,12 +6222,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "61cf36bdbe630e4df313028e18e15ab977cd19069b84719428113dc698bba8ed",
+        "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
         {
-            "validate_simulation_inputs": "154f5934643fb3b43fbccc40604cbfdee392fe463ac9d8ff2281680949c30344",
-            "validate_initial_conditions": "9164574849bb0804f9315310b3fb656102761d6c6e41d1778f75daa834652098",
-            "_collect_feasibility_errors": "3fef89c11ff904192cfde03bb04608d4e41c4c02c9a1c7f1048f2ded2f0f4eac",
-            "_check_regime_feasibility": "4a1a2f8e04834624a5c49c9aaa1b177a11943ce1f4a9367c99a7481f88d08443",
+            "validate_simulation_inputs": "78fc1ee7349d3a927e7988c705bc10a9bfd9050b0028af7e63c942ebbf768ed6",
+            "validate_initial_conditions": "706a297af1125941763bf594511ee343f31dc8a725d38aa1614048c232a8d9c8",
+            "_collect_feasibility_errors": "ccb25705a003d95b1cd10f406df14ef43a809508c0f0028b6e1a13ddf7022b02",
+            "_check_regime_feasibility": "9017964aeb5f3fb33515244c7694b34af260dbad32c8ade442e794a32de643b2",
         },
     ),
     "src/_lcm/simulation/simulate.py": (
@@ -6343,12 +6350,12 @@ _ACTION_GRID_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "61cf36bdbe630e4df313028e18e15ab977cd19069b84719428113dc698bba8ed",
+        "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
         {
-            "validate_simulation_inputs": "154f5934643fb3b43fbccc40604cbfdee392fe463ac9d8ff2281680949c30344",
-            "validate_initial_conditions": "9164574849bb0804f9315310b3fb656102761d6c6e41d1778f75daa834652098",
-            "_collect_feasibility_errors": "3fef89c11ff904192cfde03bb04608d4e41c4c02c9a1c7f1048f2ded2f0f4eac",
-            "_check_regime_feasibility": "4a1a2f8e04834624a5c49c9aaa1b177a11943ce1f4a9367c99a7481f88d08443",
+            "validate_simulation_inputs": "78fc1ee7349d3a927e7988c705bc10a9bfd9050b0028af7e63c942ebbf768ed6",
+            "validate_initial_conditions": "706a297af1125941763bf594511ee343f31dc8a725d38aa1614048c232a8d9c8",
+            "_collect_feasibility_errors": "ccb25705a003d95b1cd10f406df14ef43a809508c0f0028b6e1a13ddf7022b02",
+            "_check_regime_feasibility": "9017964aeb5f3fb33515244c7694b34af260dbad32c8ade442e794a32de643b2",
             "_build_flat_action_grid": "65b4591dd17c07ed9e30c5ddf8f89ead9a2899c2af663b9a1d1286fb9e990e0a",
         },
     ),
@@ -6783,6 +6790,111 @@ def action_grid_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     """Build the independent Cartesian preflight admission mutation population."""
     return _callable_mutation_specs(
         repo_root=repo_root, mutations=_ACTION_GRID_MUTATIONS
+    )
+
+
+_FEASIBILITY_MUTATIONS = {
+    "feasibility:summary_and_serial_owner_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "validate_simulation_inputs",
+        "keyword",
+        "memory",
+        "None",
+        5,
+    ),
+    "feasibility:joint_admission_bypassed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_batched_feasibility_check",
+        "expression",
+        "memory is not None",
+        "False",
+        1,
+    ),
+    "feasibility:constant_admission_bypassed": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_evaluate_constant_feasibility",
+        "expression",
+        "memory is not None",
+        "False",
+        1,
+    ),
+    "feasibility:diagnostic_gather_and_predicates_unowned": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_per_constraint_feasibility",
+        "keyword",
+        "memory",
+        "None",
+        3,
+    ),
+    "feasibility:placement_budget_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_run_profiled_feasibility",
+        "keyword",
+        "budget_bytes",
+        "None",
+        2,
+    ),
+    "feasibility:live_owners_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_run_profiled_feasibility",
+        "expression",
+        "max(external.values())",
+        "0",
+        1,
+    ),
+    "feasibility:concrete_inputs_closed_over": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_run_profiled_feasibility",
+        "expression",
+        "dict(placed)",
+        "{}",
+        1,
+    ),
+    "feasibility:unprofiled_dispatch": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_run_profiled_feasibility",
+        "expression",
+        "plan.compiled(**placed)",
+        "function(**placed)",
+        1,
+    ),
+    "feasibility:readiness_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_run_profiled_feasibility",
+        "expression",
+        "jax.block_until_ready(result)",
+        "None",
+        1,
+    ),
+    "feasibility:result_lifetime_omitted": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_run_profiled_feasibility",
+        "expression",
+        "memory.hold(tree=result)",
+        "None",
+        1,
+    ),
+    "feasibility:compiler_input_ownership_dropped": (
+        INITIAL_CONDITIONS_SOURCE,
+        "_FeasibilityCompiler.__call__",
+        "keyword",
+        "keep_unused",
+        "False",
+        1,
+    ),
+}
+
+
+EXPECTED_FEASIBILITY_MUTATION_COUNT = 11
+EXPECTED_FEASIBILITY_MUTATION_NAMES_SHA256 = (
+    "b2e6c3e575bb8eacb5f88a78f3315cf5b144918af506e228aba95a4e0e258ea7"
+)
+
+
+def feasibility_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Protect feasibility producers without changing historical control sets."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_FEASIBILITY_MUTATIONS
     )
 
 
@@ -9894,6 +10006,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     supplemental = supplemental_direct_flow_mutation_specs(repo_root=root)
     uniform = uniform_process_mutation_specs(repo_root=root)
     action_grid = action_grid_mutation_specs(repo_root=root)
+    feasibility = feasibility_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -9901,7 +10014,9 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             target = temp_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(source, encoding="utf-8")
-        for name, spec in (registered | supplemental | uniform | action_grid).items():
+        for name, spec in (
+            registered | supplemental | uniform | action_grid | feasibility
+        ).items():
             relative = spec["path"]
             target = temp_root / relative
             target.write_text(spec["source"], encoding="utf-8")
@@ -9913,6 +10028,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+    feasibility_cases = {name: cases.pop(name) for name in feasibility}
+    feasibility_admitted = sorted(
+        name for name, result in feasibility_cases.items() if not result["rejected"]
+    )
+    feasibility_names_match = (
+        len(feasibility_cases) == EXPECTED_FEASIBILITY_MUTATION_COUNT
+        and _mutation_name_digest(tuple(feasibility_cases))
+        == EXPECTED_FEASIBILITY_MUTATION_NAMES_SHA256
+    )
     action_grid_cases = {name: cases.pop(name) for name in action_grid}
     action_grid_admitted = sorted(
         name for name, result in action_grid_cases.items() if not result["rejected"]
@@ -9956,6 +10080,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "expected_mutation_names_sha256": (EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256),
         "mutation_names_match_expected": names_match_expected,
         "admitted_mutations": admitted,
+        "feasibility_mutations": feasibility_cases,
+        "feasibility_mutation_count": len(feasibility_cases),
+        "feasibility_names_match_expected": feasibility_names_match,
+        "admitted_feasibility_mutations": feasibility_admitted,
         "action_grid_mutations": action_grid_cases,
         "action_grid_mutation_count": len(action_grid_cases),
         "action_grid_names_match_expected": action_grid_names_match,
@@ -9974,6 +10102,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             and not supplemental_admitted
             and not uniform_admitted
             and not action_grid_admitted
+            and not feasibility_admitted
+            and feasibility_names_match
             and action_grid_names_match
             and supplemental_names_match
             and uniform_names_match

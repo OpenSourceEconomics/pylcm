@@ -28,6 +28,7 @@ from _lcm.dtypes import (
 )
 from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_ids
 from _lcm.execution.execution_plan import ResolvedExecution
+from _lcm.execution.workspace_planning import plan_workspace
 from _lcm.grids import DiscreteGrid
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.Q_and_F import _get_feasibility
@@ -35,9 +36,11 @@ from _lcm.simulation.action_grids import PreflightActionGrids
 from _lcm.simulation.assembly import slice_array
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
+    resident_bytes_by_device,
     union_buffer_footprints,
 )
 from _lcm.transition_checks import (
@@ -155,6 +158,7 @@ def validate_simulation_inputs(
                     summary=summary,
                     process_grid_resolver=process_grid_resolver,
                     action_grid_resolver=action_grid_resolver,
+                    memory=memory,
                 )
                 validate_transitions(
                     regimes=regimes,
@@ -184,6 +188,7 @@ def validate_simulation_inputs(
                 ages=ages,
                 process_grid_resolver=process_grid_resolver,
                 action_grid_resolver=action_grid_resolver,
+                memory=memory,
             )
         except InvalidInitialConditionsError as error:
             raise_or_warn(logger=logger, error=error)
@@ -764,6 +769,7 @@ def validate_initial_conditions(
     ages: AgeGrid,
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
@@ -854,6 +860,7 @@ def validate_initial_conditions(
         ages=ages,
         process_grid_resolver=process_grid_resolver,
         action_grid_resolver=action_grid_resolver,
+        memory=memory,
     )
     if feasibility_errors:
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
@@ -1063,6 +1070,7 @@ def _collect_feasibility_errors(
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
+    memory: SimulationMemory | None = None,
 ) -> list[str]:
     """Collect errors about action feasibility for each subject.
 
@@ -1083,8 +1091,9 @@ def _collect_feasibility_errors(
     for regime_name, regime in regimes.items():
         if cohorts is None:
             regime_id = regime_names_to_ids[regime_name]
-            idx_arr = jnp.where(regime_id_arr == regime_id)[0].astype(jnp.int32)
-            subject_indices = idx_arr.tolist() if idx_arr.size > 0 else []
+            subject_indices = np.flatnonzero(
+                np.asarray(regime_id_arr) == int(regime_id)
+            ).tolist()
         else:
             subject_indices = list(cohorts.indices[regime_name])
         if not subject_indices:
@@ -1106,6 +1115,7 @@ def _collect_feasibility_errors(
             summary=summary,
             process_grid_resolver=process_grid_resolver,
             action_grid_resolver=action_grid_resolver,
+            memory=memory,
         )
         if msg is not None:
             errors.append(msg)
@@ -1170,9 +1180,8 @@ def _validate_discrete_state_values(
             )
 
 
-# Target peak memory budget for the vmapped feasibility computation.
-# Assumes float32 intermediates (JAX default); doubles under x64 mode, but this is
-# a heuristic — being off by 2x just means larger batches, not correctness issues.
+# Group unbudgeted subject work heuristically. Budgeted calls profile the complete
+# executable, including every batch, slice and concatenation, before dispatch.
 _TARGET_BATCH_BYTES = 256 * 1024 * 1024
 _BYTES_PER_ACTION_ELEMENT = 4
 
@@ -1184,6 +1193,7 @@ def _batched_feasibility_check(
     action_kwargs: Mapping[str, FloatND | IntND],
     filtered_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, FloatND | IntND],
+    memory: SimulationMemory | None = None,
 ) -> BoolND:
     """Check feasibility for all subjects, batching to avoid OOM.
 
@@ -1204,6 +1214,19 @@ def _batched_feasibility_check(
         feasible.
 
     """
+    if memory is not None:
+        return _run_profiled_feasibility(
+            memory=memory,
+            function=functools.partial(
+                _batched_feasibility_check, feasibility_func=feasibility_func
+            ),
+            arguments={
+                "subject_states": subject_states,
+                "action_kwargs": action_kwargs,
+                "filtered_params": filtered_params,
+                "flat_actions": flat_actions,
+            },
+        )
     if action_kwargs:
         vmapped_check = jax.vmap(
             functools.partial(
@@ -1238,6 +1261,76 @@ def _batched_feasibility_check(
         batch = {k: v[start:end] for k, v in subject_states.items()}
         results.append(vmapped_check(batch))
     return jnp.concatenate(results)
+
+
+def _run_profiled_feasibility(
+    *,
+    memory: SimulationMemory,
+    function: Callable[..., BoolND | bool],
+    arguments: Mapping[str, object],
+) -> BoolND:
+    """Admit one call-owned user DAG with explicit dynamic input owners.
+
+    User functions can carry model-specific closures, so their executables stay
+    local to this call. All runtime parameters, action arrays and subject arrays
+    are dynamic operands. Pure metadata operations use the shared profile owner.
+    """
+    placed = place_simulation_arguments(
+        arguments=arguments,
+        # Validation cohorts may have any size, including fewer rows than devices.
+        # Replicate them like the preflight gather, whose output is unpadded.
+        subject_arg_names=(),
+        value_reads=(),
+        devices=memory.subject_devices,
+        budget_bytes=memory.budget_bytes,
+        live_footprint=memory.snapshot(),
+        budget_devices=memory.devices,
+    )
+    argument_buffers = measure_buffer_footprint(tree=placed)
+    live = memory.snapshot(additional=(arguments, placed))
+    external = resident_bytes_by_device(
+        live=live, arguments=argument_buffers, devices=memory.subject_devices
+    )
+    compiler = _FeasibilityCompiler(
+        function=function,
+        arguments=jax.tree.map(
+            lambda value: jax.ShapeDtypeStruct(
+                value.shape,
+                value.dtype,
+                sharding=value.sharding,
+                weak_type=getattr(value, "weak_type", False),
+            ),
+            dict(placed),
+        ),
+    )
+    plan = plan_workspace(
+        axes=(),
+        compile_candidate=compiler,
+        budget_bytes=memory.budget_bytes,
+        resident_bytes=max(external.values()),
+    )
+    result = plan.compiled(**placed)
+    jax.block_until_ready(result)
+    memory.hold(tree=result)
+    return result
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _FeasibilityCompiler:
+    """Own a user DAG and abstract operands only for its current admission."""
+
+    function: Callable[..., BoolND | bool]
+    """Current numerical DAG; concrete call parameters remain explicit operands."""
+    arguments: Mapping[str, object]
+    """Placed shape descriptors, preserving dtype, weak type and device layout."""
+
+    def __call__(self, widths: Mapping[str, int]) -> jax.stages.Compiled:
+        """Lower the full feasibility producer without allocating its output."""
+        if widths:
+            raise ExecutionPlanningError("Feasibility declares no workspace axes.")
+        return (
+            jax.jit(self.function, keep_unused=True).lower(**self.arguments).compile()
+        )
 
 
 def _age_specialized_feasibility_message(
@@ -1302,7 +1395,7 @@ def _age_specialized_feasibility_message(
     )
 
 
-def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
+def _check_regime_feasibility(  # noqa: C901, PLR0912
     *,
     regime: Regime,
     regime_name: RegimeName,
@@ -1314,6 +1407,7 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     action_grid_resolver: PreflightActionGrids | None = None,
+    memory: SimulationMemory | None = None,
 ) -> str | None:
     """Check whether all subjects in a regime have at least one feasible action.
 
@@ -1390,23 +1484,35 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
     needs_period = "period" in accepted
 
     # Build per-subject state arrays
-    if cohorts is not None and summary is not None:
+    if (cohorts is not None and summary is not None) or memory is not None:
         selected_names = [name for name in state_names if name in accepted]
         if needs_age:
             selected_names.append("age")
         subject_states = run_simulation_operation(
-            memory=summary.memory,
+            memory=memory,
             function=_gather_feasibility_inputs,
             arguments={
                 "states": {name: initial_states[name] for name in selected_names},
                 "indices": np.array(subject_indices, dtype=np.int32),
                 "periods": np.array(
-                    cohorts.periods if needs_period else (), dtype=np.int32
+                    (
+                        cohorts.periods
+                        if cohorts is not None
+                        else tuple(
+                            ages.age_to_period(age.item())
+                            for age in np.asarray(initial_states["age"])
+                        )
+                    )
+                    if needs_period
+                    else (),
+                    dtype=np.int32,
                 ),
             },
             static_arguments={"needs_period": needs_period},
         )
-        idx_arr = None
+        idx_arr = (
+            None if summary is not None else np.array(subject_indices, dtype=np.int32)
+        )
     else:
         idx_arr = jnp.array(subject_indices, dtype=jnp.int32)
         subject_states: dict[StateName, FloatND | IntND] = {}
@@ -1435,6 +1541,7 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
                 action_kwargs=action_kwargs,
                 filtered_params=filtered_params,
                 flat_actions=flat_actions,
+                memory=memory,
             )
         except TypeError as exc:
             _raise_feasibility_type_error(
@@ -1449,27 +1556,23 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
                 arguments={"feasible": any_feasible},
             )
             return None
-        infeasible_mask = np.asarray(~any_feasible)
+        infeasible_mask = np.logical_not(np.asarray(any_feasible))
         infeasible_indices = np.asarray(idx_arr)[infeasible_mask].tolist()
     else:
         # No per-subject varying states: feasibility is identical for all subjects.
-        if action_kwargs:
-            result = jax.vmap(
-                functools.partial(
-                    _is_combo_feasible_for_all_subjects,
-                    feasibility_func=feasibility_func,
-                    params=filtered_params,
-                )
-            )(action_kwargs)
-        else:
-            result = feasibility_func(**filtered_params)  # ty: ignore[invalid-argument-type]
+        result = _evaluate_constant_feasibility(
+            feasibility_func=feasibility_func,
+            action_kwargs=action_kwargs,
+            params=filtered_params,
+            memory=memory,
+        )
         if summary is not None:
             summary.append(
                 function=_constant_feasibility_flag,
                 arguments={"feasible": result},
             )
             return None
-        infeasible_indices = [] if jnp.any(result) else subject_indices
+        infeasible_indices = [] if np.any(np.asarray(result)) else subject_indices
 
     if not infeasible_indices:
         return None
@@ -1480,8 +1583,9 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
         subject_states=subject_states,
         regime_params=regime_params,
         flat_actions=flat_actions,
-        idx_arr=cast("Int1D", idx_arr),
+        idx_arr=cast("Int1D | NDArray[np.int32]", idx_arr),
         infeasible_indices=infeasible_indices,
+        memory=memory,
     )
 
     return _format_infeasibility_message(
@@ -1526,18 +1630,43 @@ def _admits_any_action(
     feasibility_func: Callable[..., BoolND],
     action_kwargs: Mapping[str, FloatND | IntND],
     params: Mapping[str, object],
+    memory: SimulationMemory | None = None,
 ) -> bool:
     """Return True iff the feasibility function admits ≥ 1 action under params."""
+    result = _evaluate_constant_feasibility(
+        feasibility_func=feasibility_func,
+        action_kwargs=action_kwargs,
+        params=params,
+        memory=memory,
+    )
+    return bool(np.any(np.asarray(result))) if action_kwargs else bool(result)
+
+
+def _evaluate_constant_feasibility(
+    *,
+    feasibility_func: Callable[..., BoolND],
+    action_kwargs: Mapping[str, FloatND | IntND],
+    params: Mapping[str, object],
+    memory: SimulationMemory | None = None,
+) -> BoolND | bool:
+    """Evaluate a cohort-constant predicate with its full per-action output profile."""
+    if memory is not None:
+        return _run_profiled_feasibility(
+            memory=memory,
+            function=functools.partial(
+                _evaluate_constant_feasibility, feasibility_func=feasibility_func
+            ),
+            arguments={"action_kwargs": action_kwargs, "params": params},
+        )
     if action_kwargs:
-        per_combo = jax.vmap(
+        return jax.vmap(
             functools.partial(
                 _is_combo_feasible_for_all_subjects,
                 feasibility_func=feasibility_func,
                 params=params,
             )
         )(action_kwargs)
-        return bool(jnp.any(per_combo))
-    return bool(feasibility_func(**params))
+    return feasibility_func(**params)
 
 
 # keyword-only-exempt: library-callback=jax.vmap
@@ -1600,8 +1729,9 @@ def _per_constraint_feasibility(
     subject_states: Mapping[str, FloatND | IntND],
     regime_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, FloatND | IntND],
-    idx_arr: Int1D,
+    idx_arr: Int1D | NDArray[np.int32],
     infeasible_indices: Sequence[int],
+    memory: SimulationMemory | None = None,
 ) -> dict[str, np.ndarray]:
     """Per-constraint feasibility for the infeasible subjects.
 
@@ -1624,9 +1754,16 @@ def _per_constraint_feasibility(
     infeasible_positions = np.flatnonzero(
         np.isin(np.asarray(idx_arr), np.asarray(infeasible_indices))
     )
-    infeasible_states = {
-        name: arr[infeasible_positions] for name, arr in subject_states.items()
-    }
+    infeasible_states = run_simulation_operation(
+        memory=memory,
+        function=_gather_feasibility_inputs,
+        arguments={
+            "states": subject_states,
+            "indices": infeasible_positions.astype(np.int32),
+            "periods": np.empty(0, dtype=np.int32),
+        },
+        static_arguments={"needs_period": False},
+    )
 
     out: dict[str, np.ndarray] = {}
     for name, constraint_func in constraints.items():
@@ -1645,6 +1782,7 @@ def _per_constraint_feasibility(
                 feasibility_func=single_feasibility,
                 action_kwargs=single_actions,
                 params=single_params,
+                memory=memory,
             )
             out[name] = np.full(n, admits_any, dtype=bool)
             continue
@@ -1654,6 +1792,7 @@ def _per_constraint_feasibility(
             action_kwargs=single_actions,
             filtered_params=single_params,
             flat_actions=flat_actions,
+            memory=memory,
         )
         out[name] = np.asarray(any_feasible)
     return out
@@ -1732,7 +1871,9 @@ def _format_infeasibility_message(
     # Build DataFrame of infeasible subjects' states
     state_df = pd.DataFrame(
         {
-            name: [float(initial_states[name][i]) for i in infeasible_indices]
+            name: np.asarray(initial_states[name])[list(infeasible_indices)].astype(
+                float
+            )
             for name in state_names
             if name in initial_states
         },
