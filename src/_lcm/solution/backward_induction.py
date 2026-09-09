@@ -79,6 +79,7 @@ from _lcm.execution.output_layout import (
     assert_value_leaf_layout,
     resolve_output_layout,
 )
+from _lcm.execution.pending_work import BeforeArrayDelete, PendingSolveWork
 from _lcm.execution.scheduler import (
     BufferIdentity,
     BufferRegistry,
@@ -467,333 +468,442 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         }
     )
 
-    for period in reversed(range(ages.n_periods)):
-        period_start = time.monotonic()
-        period_solution: dict[RegimeName, FloatND] = {}
-        period_continuations: dict[RegimeName, ContinuationPayload] = {}
-        period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
-        period_generated_replay_authorities: dict[
-            RegimeName, GeneratedReplayAuthority
-        ] = {}
-        period_dissolution_flags: dict[RegimeName, BoolND] = {}
-        period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
-        period_retained_continuations: dict[tuple[RegimeName, ArtifactKey], object] = {}
-        period_replay_artifacts: dict[tuple[RegimeName, ArtifactKey], object] = {}
-        period_auxiliary_artifacts: dict[tuple[RegimeName, ArtifactKey], object] = {}
+    pending_work = (
+        PendingSolveWork()
+        if resolved_execution.device_memory_bytes is not None
+        else None
+    )
+    try:
+        for period in reversed(range(ages.n_periods)):
+            period_start = time.monotonic()
+            period_solution: dict[RegimeName, FloatND] = {}
+            period_continuations: dict[RegimeName, ContinuationPayload] = {}
+            period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
+            period_generated_replay_authorities: dict[
+                RegimeName, GeneratedReplayAuthority
+            ] = {}
+            period_dissolution_flags: dict[RegimeName, BoolND] = {}
+            period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
+            period_retained_continuations: dict[
+                tuple[RegimeName, ArtifactKey], object
+            ] = {}
+            period_replay_artifacts: dict[tuple[RegimeName, ArtifactKey], object] = {}
+            period_auxiliary_artifacts: dict[
+                tuple[RegimeName, ArtifactKey], object
+            ] = {}
 
-        period_inputs = SolveInputMappings(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            next_edge_to_V_arr=next_edge_to_V_arr,
-        )
-        register_rolled_inputs(
-            inputs=period_inputs,
-            next_period=period + 1,
-            ledger=input_liveness,
-            registry=buffer_registry,
-        )
-        period_pending_outputs: list[FloatND] = []
-        period_release_candidates: dict[ValueArtifactAddress, _InputDispatch] = {}
+            period_inputs = SolveInputMappings(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                next_edge_to_V_arr=next_edge_to_V_arr,
+            )
+            register_rolled_inputs(
+                inputs=period_inputs,
+                next_period=period + 1,
+                ledger=input_liveness,
+                registry=buffer_registry,
+            )
+            period_pending_outputs: list[FloatND] = []
+            period_release_candidates: dict[ValueArtifactAddress, _InputDispatch] = {}
 
-        active_regimes = {
-            regime_name: regime
-            for regime_name, regime in regimes.items()
-            if period in regime.active_periods
-        }
+            active_regimes = {
+                regime_name: regime
+                for regime_name, regime in regimes.items()
+                if period in regime.active_periods
+            }
 
-        log_period_header(
-            logger=logger,
-            age=ages.values[period],
-            n_active_regimes=len(active_regimes),
-        )
+            log_period_header(
+                logger=logger,
+                age=ages.values[period],
+                n_active_regimes=len(active_regimes),
+            )
 
-        shared_transfer_counts, regime_shared_transfer_keys = (
-            _period_shared_transfer_plan(
-                compiled_cores_by_regime=MappingProxyType(
-                    {
-                        regime_name: compiled_functions[(regime_name, period)]
-                        for regime_name in active_regimes
-                    }
+            shared_transfer_counts, regime_shared_transfer_keys = (
+                _period_shared_transfer_plan(
+                    compiled_cores_by_regime=MappingProxyType(
+                        {
+                            regime_name: compiled_functions[(regime_name, period)]
+                            for regime_name in active_regimes
+                        }
+                    )
                 )
             )
-        )
-        period_transfer_cache = PeriodTransferCache(
-            registry=buffer_registry,
-            consumer_counts=shared_transfer_counts,
-            pending_outputs=period_pending_outputs,
-            release_enabled=enable_jit,
-            logger=logger,
-        )
+            period_transfer_cache = PeriodTransferCache(
+                registry=buffer_registry,
+                consumer_counts=shared_transfer_counts,
+                pending_outputs=period_pending_outputs,
+                release_enabled=enable_jit,
+                logger=logger,
+                before_delete=None
+                if pending_work is None
+                else pending_work.before_delete,
+            )
 
-        # Regimes declaring `same_period_refs` read other regimes' V of
-        # THIS period, so a reference regime is planned into an earlier wave
-        # than its reader. Independent regimes whose device sets are disjoint
-        # share a wave and dispatch back to back, which is what a submesh
-        # placement buys; regimes sharing a device keep one unit per wave, in
-        # declaration order among regimes without a reference.
-        waves = plan_period_waves(
-            nodes=tuple(
-                ScheduledNode(period=period, regime=regime_name, program=core_key)
-                for regime_name in active_regimes
-                for core_key in compiled_functions[(regime_name, period)]
-            ),
-            same_period_dependencies=MappingProxyType(
-                {
-                    regime_name: regime.same_period_ref_regimes
-                    for regime_name, regime in active_regimes.items()
-                }
-            ),
-            device_sets=MappingProxyType(
-                {
-                    regime_name: device_ids_by_regime[regime_name]
+            # Regimes declaring `same_period_refs` read other regimes' V of
+            # THIS period, so a reference regime is planned into an earlier wave
+            # than its reader. Independent regimes whose device sets are disjoint
+            # share a wave and dispatch back to back, which is what a submesh
+            # placement buys; regimes sharing a device keep one unit per wave, in
+            # declaration order among regimes without a reference.
+            waves = plan_period_waves(
+                nodes=tuple(
+                    ScheduledNode(period=period, regime=regime_name, program=core_key)
                     for regime_name in active_regimes
-                }
-            ),
-        )
-        for wave in waves:
-            for unit in wave:
-                regime_name = unit.regime
-                regime = active_regimes[regime_name]
-                regime_retains_replay = (regime_name, period) in replay_dispatches
-                selected_artifact_keys = _selected_artifact_keys_for_cell(
-                    persistable_artifact_refs=persistable_artifact_refs,
-                    regime_name=regime_name,
-                    period=period,
-                )
-                selected_cores, selected_donations = _select_runtime_donation_cores(
-                    compiled_programs=compiled_programs,
-                    unit=unit,
-                    inputs=SolveInputMappings(
-                        next_regime_to_V_arr=next_regime_to_V_arr,
-                        next_regime_to_continuation=next_regime_to_continuation,
-                        next_edge_to_V_arr=next_edge_to_V_arr,
-                    ),
-                    templates=input_templates,
-                    registry=buffer_registry,
-                    logger=logger,
-                )
-                donated_inputs = _donated_input_arrays(
-                    donations=selected_donations,
-                    unit=unit,
-                    inputs=SolveInputMappings(
-                        next_regime_to_V_arr=next_regime_to_V_arr,
-                        next_regime_to_continuation=next_regime_to_continuation,
-                        next_edge_to_V_arr=next_edge_to_V_arr,
-                    ),
-                    templates=input_templates,
-                    registry=buffer_registry,
-                )
-                output = _run_period_kernel(
-                    regime=regime,
-                    regime_name=regime_name,
-                    period=period,
-                    compiled_cores=_cores_with_transfer_cache(
-                        cores=selected_cores,
-                        cache=period_transfer_cache,
-                    ),
-                    capture_target=capture_target,
-                    state_action_space=base_state_action_spaces[regime_name],
-                    flat_params=flat_params,
-                    ages=ages,
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    next_regime_to_continuation=next_regime_to_continuation,
-                    logger=logger,
-                    next_edge_to_V_arr=next_edge_to_V_arr,
-                    period_solution=period_solution,
-                    retain_replay=_regime_retains_replay(
-                        regime=regime,
-                        retain_replay=retain_replay,
-                    ),
-                    selected_artifact_keys=selected_artifact_keys,
-                )
-                continuation_spec = regime.solution.continuation_spec
-                result = consume_kernel_output(
-                    output=output,
-                    continuation_key=(
-                        None
-                        if continuation_spec is None
-                        else continuation_spec.artifact_key
-                    ),
-                    regime_name=regime_name,
-                    period=period,
-                    artifact_authorities=regime.solution.artifact_authorities,
-                )
-                V_arr = result.value
-                # The published V mapping is the calling convention for every
-                # downstream consumer — the parents' cores and the AOT-lowered
-                # simulate programs are both compiled against the per-regime V
-                # topology — so a kernel value must leave its compiled program on
-                # the template's placement; it is asserted here, never re-placed.
-                V_arr = _publish_kernel_value(
-                    value=V_arr,
-                    compiled_cores=compiled_functions[(regime_name, period)],
-                )
-                _fail_if_continuation_publisher_returned_none(
-                    result=result,
-                    regime_name=regime_name,
-                    period=period,
-                    continuation_publishers=next_regime_to_continuation,
-                )
-                if result.continuation is not None:
-                    period_continuations[regime_name] = result.continuation
-                if retain_all_artifacts:
-                    period_retained_continuations.update(
-                        {
-                            (regime_name, key): payload
-                            for key, payload in result.continuation_artifacts.items()
-                            if ArtifactRef(
-                                period=period,
-                                regime=regime_name,
-                                key=key,
-                            )
-                            in persistable_artifact_refs
-                        }
-                    )
-                # A policy is kept only where the regime's declared simulation route
-                # reads it; the replay authority travels with the policy it describes.
-                if result.simulation_policy is not None and regime_retains_replay:
-                    period_simulation_policies[regime_name] = result.simulation_policy
-                    if result.generated_replay_authority is not None:
-                        period_generated_replay_authorities[regime_name] = (
-                            result.generated_replay_authority
-                        )
-                period_replay_artifacts.update(
+                    for core_key in compiled_functions[(regime_name, period)]
+                ),
+                same_period_dependencies=MappingProxyType(
                     {
-                        (regime_name, key): payload
-                        for key, payload in result.replay_artifacts.items()
-                        if key != SIMULATION_POLICY
-                        and (
-                            retain_replay
-                            or ArtifactRef(
-                                period=period,
-                                regime=regime_name,
-                                key=key,
-                            )
-                            in persistable_artifact_refs
-                        )
+                        regime_name: regime.same_period_ref_regimes
+                        for regime_name, regime in active_regimes.items()
                     }
-                )
-                if retain_all_artifacts:
-                    period_auxiliary_artifacts.update(
+                ),
+                device_sets=MappingProxyType(
+                    {
+                        regime_name: device_ids_by_regime[regime_name]
+                        for regime_name in active_regimes
+                    }
+                ),
+            )
+            for wave in waves:
+                for unit in wave:
+                    regime_name = unit.regime
+                    regime = active_regimes[regime_name]
+                    regime_retains_replay = (regime_name, period) in replay_dispatches
+                    selected_artifact_keys = _selected_artifact_keys_for_cell(
+                        persistable_artifact_refs=persistable_artifact_refs,
+                        regime_name=regime_name,
+                        period=period,
+                    )
+                    selected_cores, selected_donations = _select_runtime_donation_cores(
+                        compiled_programs=compiled_programs,
+                        unit=unit,
+                        inputs=SolveInputMappings(
+                            next_regime_to_V_arr=next_regime_to_V_arr,
+                            next_regime_to_continuation=next_regime_to_continuation,
+                            next_edge_to_V_arr=next_edge_to_V_arr,
+                        ),
+                        templates=input_templates,
+                        registry=buffer_registry,
+                        logger=logger,
+                    )
+                    donated_inputs = _donated_input_arrays(
+                        donations=selected_donations,
+                        unit=unit,
+                        inputs=SolveInputMappings(
+                            next_regime_to_V_arr=next_regime_to_V_arr,
+                            next_regime_to_continuation=next_regime_to_continuation,
+                            next_edge_to_V_arr=next_edge_to_V_arr,
+                        ),
+                        templates=input_templates,
+                        registry=buffer_registry,
+                    )
+                    output = _run_period_kernel(
+                        regime=regime,
+                        regime_name=regime_name,
+                        period=period,
+                        compiled_cores=_cores_with_transfer_cache(
+                            cores=selected_cores,
+                            cache=period_transfer_cache,
+                            pending_work=pending_work,
+                        ),
+                        capture_target=capture_target,
+                        state_action_space=base_state_action_spaces[regime_name],
+                        flat_params=flat_params,
+                        ages=ages,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        logger=logger,
+                        next_edge_to_V_arr=next_edge_to_V_arr,
+                        period_solution=period_solution,
+                        retain_replay=_regime_retains_replay(
+                            regime=regime,
+                            retain_replay=retain_replay,
+                        ),
+                        selected_artifact_keys=selected_artifact_keys,
+                    )
+                    continuation_spec = regime.solution.continuation_spec
+                    result = consume_kernel_output(
+                        output=output,
+                        continuation_key=(
+                            None
+                            if continuation_spec is None
+                            else continuation_spec.artifact_key
+                        ),
+                        regime_name=regime_name,
+                        period=period,
+                        artifact_authorities=regime.solution.artifact_authorities,
+                    )
+                    V_arr = result.value
+                    # The published V mapping is the calling convention for every
+                    # downstream consumer — the parents' cores and the AOT-lowered
+                    # simulate programs are both compiled against the per-regime V
+                    # topology — so a kernel value must leave its compiled program on
+                    # the template's placement; it is asserted here, never re-placed.
+                    V_arr = _publish_kernel_value(
+                        value=V_arr,
+                        compiled_cores=compiled_functions[(regime_name, period)],
+                    )
+                    _fail_if_continuation_publisher_returned_none(
+                        result=result,
+                        regime_name=regime_name,
+                        period=period,
+                        continuation_publishers=next_regime_to_continuation,
+                    )
+                    if result.continuation is not None:
+                        period_continuations[regime_name] = result.continuation
+                    if retain_all_artifacts:
+                        period_retained_continuations.update(
+                            {
+                                (regime_name, key): payload
+                                for key, payload in (
+                                    result.continuation_artifacts.items()
+                                )
+                                if ArtifactRef(
+                                    period=period,
+                                    regime=regime_name,
+                                    key=key,
+                                )
+                                in persistable_artifact_refs
+                            }
+                        )
+                    # A policy is kept only where the regime's declared simulation route
+                    # reads it; replay authority travels with its policy.
+                    if result.simulation_policy is not None and regime_retains_replay:
+                        period_simulation_policies[regime_name] = (
+                            result.simulation_policy
+                        )
+                        if result.generated_replay_authority is not None:
+                            period_generated_replay_authorities[regime_name] = (
+                                result.generated_replay_authority
+                            )
+                    period_replay_artifacts.update(
                         {
                             (regime_name, key): payload
-                            for key, payload in result.auxiliary_artifacts.items()
-                            if ArtifactRef(
-                                period=period,
-                                regime=regime_name,
-                                key=key,
+                            for key, payload in result.replay_artifacts.items()
+                            if key != SIMULATION_POLICY
+                            and (
+                                retain_replay
+                                or ArtifactRef(
+                                    period=period,
+                                    regime=regime_name,
+                                    key=key,
+                                )
+                                in persistable_artifact_refs
                             )
-                            in persistable_artifact_refs
                         }
                     )
-                # A collective regime publishes its
-                # empty-mask dissolution flag D alongside V; singleton regimes
-                # leave it None and never touch this mapping.
-                if result.dissolution is not None:
-                    period_dissolution_flags[regime_name] = result.dissolution
-                if (
-                    collect_solver_diagnostics
-                    and diagnostics_enabled
-                    and result.diagnostics is not None
-                ):
-                    period_solver_diagnostics[regime_name] = result.diagnostics
-                running_any_nan, running_any_inf = _fold_period_diagnostics(
-                    V_arr=V_arr,
-                    regime_name=regime_name,
-                    period=period,
-                    ages=ages,
-                    diagnostics_enabled=diagnostics_enabled,
-                    stats_enabled=stats_enabled,
-                    diagnostic_rows=diagnostic_rows,
-                    diagnostic_min=diagnostic_min,
-                    diagnostic_max=diagnostic_max,
-                    diagnostic_mean=diagnostic_mean,
-                    running_any_nan=running_any_nan,
-                    running_any_inf=running_any_inf,
-                )
+                    if retain_all_artifacts:
+                        period_auxiliary_artifacts.update(
+                            {
+                                (regime_name, key): payload
+                                for key, payload in result.auxiliary_artifacts.items()
+                                if ArtifactRef(
+                                    period=period,
+                                    regime=regime_name,
+                                    key=key,
+                                )
+                                in persistable_artifact_refs
+                            }
+                        )
+                    # A collective regime publishes its
+                    # empty-mask dissolution flag D alongside V; singleton regimes
+                    # leave it None and never touch this mapping.
+                    if result.dissolution is not None:
+                        period_dissolution_flags[regime_name] = result.dissolution
+                    if (
+                        collect_solver_diagnostics
+                        and diagnostics_enabled
+                        and result.diagnostics is not None
+                    ):
+                        period_solver_diagnostics[regime_name] = result.diagnostics
+                    running_any_nan, running_any_inf = _fold_period_diagnostics(
+                        V_arr=V_arr,
+                        regime_name=regime_name,
+                        period=period,
+                        ages=ages,
+                        diagnostics_enabled=diagnostics_enabled,
+                        stats_enabled=stats_enabled,
+                        diagnostic_rows=diagnostic_rows,
+                        diagnostic_min=diagnostic_min,
+                        diagnostic_max=diagnostic_max,
+                        diagnostic_mean=diagnostic_mean,
+                        running_any_nan=running_any_nan,
+                        running_any_inf=running_any_inf,
+                    )
 
-                period_solution[regime_name] = V_arr
-                period_pending_outputs.append(V_arr)
-                if result.continuation is not None:
-                    period_pending_outputs.extend(jax.tree.leaves(result.continuation))
-                dispatch_outputs = (
-                    V_arr,
-                    result.continuation,
-                    result.continuation_artifacts,
-                    result.replay_artifacts,
-                    result.auxiliary_artifacts,
-                    result.simulation_policy,
-                    result.dissolution,
-                    _diagnostic_arrays(
-                        diagnostics=()
-                        if result.diagnostics is None
-                        else (result.diagnostics,)
-                    ),
-                )
-                # Whatever this dispatch handed straight back out, it did not
-                # produce. The inputs are read the way the dispatch reads them —
-                # through the same period-axis overlay — so an age-specialized
-                # axis is compared as the dispatch actually saw it, and including
-                # this period's own values, which a same-period-ref regime reads.
-                buffer_registry.declare_passed_through(
-                    inputs=(
-                        _states_for_period(
-                            regime=regime,
-                            state_action_space=base_state_action_spaces[regime_name],
-                            period=period,
+                    period_solution[regime_name] = V_arr
+                    period_pending_outputs.append(V_arr)
+                    if result.continuation is not None:
+                        period_pending_outputs.extend(
+                            jax.tree.leaves(result.continuation)
+                        )
+                    dispatch_outputs = (
+                        V_arr,
+                        result.continuation,
+                        result.continuation_artifacts,
+                        result.replay_artifacts,
+                        result.auxiliary_artifacts,
+                        result.simulation_policy,
+                        result.dissolution,
+                        _diagnostic_arrays(
+                            diagnostics=()
+                            if result.diagnostics is None
+                            else (result.diagnostics,)
                         ),
+                    )
+                    # Whatever this dispatch handed straight back out, it did not
+                    # produce. The inputs are read the way the dispatch reads them —
+                    # through the same period-axis overlay — so an age-specialized
+                    # axis is compared as the dispatch actually saw it, and including
+                    # this period's own values, which a same-period-ref regime reads.
+                    buffer_registry.declare_passed_through(
+                        inputs=(
+                            _states_for_period(
+                                regime=regime,
+                                state_action_space=base_state_action_spaces[
+                                    regime_name
+                                ],
+                                period=period,
+                            ),
+                            next_regime_to_V_arr,
+                            next_regime_to_continuation,
+                            next_edge_to_V_arr,
+                            period_solution,
+                        ),
+                        outputs=dispatch_outputs,
+                    )
+                    # The result keeps these payloads, and what would make them
+                    # independent runs only once the period is finished — after the
+                    # releases below, and for the dissolution flags not at all. Two
+                    # channels carrying one array is enough for a release addressed at
+                    # one of them to reach the other, so every retained channel is
+                    # declared before this period's first release.
+                    buffer_registry.declare_not_produced(
+                        tree=(
+                            period_retained_continuations,
+                            period_replay_artifacts,
+                            period_auxiliary_artifacts,
+                            period_simulation_policies,
+                            period_dissolution_flags,
+                            _diagnostic_arrays(
+                                diagnostics=tuple(period_solver_diagnostics.values())
+                            ),
+                        )
+                    )
+                    (
                         next_regime_to_V_arr,
                         next_regime_to_continuation,
                         next_edge_to_V_arr,
-                        period_solution,
-                    ),
-                    outputs=dispatch_outputs,
-                )
-                # The result keeps these payloads, and what would make them
-                # independent runs only once the period is finished — after the
-                # releases below, and for the dissolution flags not at all. Two
-                # channels carrying one array is enough for a release addressed at
-                # one of them to reach the other, so every retained channel is
-                # declared before this period's first release.
-                buffer_registry.declare_not_produced(
-                    tree=(
-                        period_retained_continuations,
-                        period_replay_artifacts,
-                        period_auxiliary_artifacts,
-                        period_simulation_policies,
-                        period_dissolution_flags,
-                        _diagnostic_arrays(
-                            diagnostics=tuple(period_solver_diagnostics.values())
+                    ) = _retire_donated_inputs(
+                        donated_inputs=donated_inputs,
+                        dispatch=(period, regime_name),
+                        inputs=SolveInputMappings(
+                            next_regime_to_V_arr=next_regime_to_V_arr,
+                            next_regime_to_continuation=next_regime_to_continuation,
+                            next_edge_to_V_arr=next_edge_to_V_arr,
                         ),
+                        templates=input_templates,
+                        pending_outputs=(
+                            tuple(period_pending_outputs),
+                            dispatch_outputs,
+                        ),
+                        registry=buffer_registry,
+                        logger=logger,
+                        before_delete=None
+                        if pending_work is None
+                        else pending_work.before_delete,
                     )
-                )
+                for unit in wave:
+                    for key in regime_shared_transfer_keys.get(
+                        unit.regime, frozenset()
+                    ):
+                        period_transfer_cache.commit_consumer(key=key)
+                    for closed in input_liveness.commit_successful_dispatch(
+                        dispatch=(period, unit.regime)
+                    ):
+                        period_release_candidates.setdefault(
+                            closed, (period, unit.regime)
+                        )
                 (
                     next_regime_to_V_arr,
                     next_regime_to_continuation,
                     next_edge_to_V_arr,
-                ) = _retire_donated_inputs(
-                    donated_inputs=donated_inputs,
-                    dispatch=(period, regime_name),
+                ) = _release_closed_period_inputs(
+                    ledger=input_liveness,
+                    registry=buffer_registry,
+                    candidates=period_release_candidates,
                     inputs=SolveInputMappings(
                         next_regime_to_V_arr=next_regime_to_V_arr,
                         next_regime_to_continuation=next_regime_to_continuation,
                         next_edge_to_V_arr=next_edge_to_V_arr,
                     ),
                     templates=input_templates,
-                    pending_outputs=(
-                        tuple(period_pending_outputs),
-                        dispatch_outputs,
-                    ),
-                    registry=buffer_registry,
+                    pending_outputs=period_pending_outputs,
                     logger=logger,
+                    release_enabled=enable_jit,
+                    before_delete=None
+                    if pending_work is None
+                    else pending_work.before_delete,
                 )
-            for unit in wave:
-                for key in regime_shared_transfer_keys.get(unit.regime, frozenset()):
-                    period_transfer_cache.commit_consumer(key=key)
+
+            # Force the device-side reduction kernels to finish before the
+            # next period dispatches, so each period's `isnan` / `isinf`
+            # (and min/max/mean) intermediate buffers can be freed instead
+            # of stacking up. `block_until_ready` does NOT transfer to host
+            # — it is a device-side wait, cheap when the dominant
+            # per-period kernel (`max_Q_over_a`) is the actual bottleneck.
+            if diagnostics_enabled:
+                running_any_nan.block_until_ready()
+                running_any_inf.block_until_ready()
+                if stats_enabled and diagnostic_mean:
+                    # Blocking on the last-appended stat suffices: XLA
+                    # serialises dispatch order, so a finished `mean`
+                    # implies a finished `min`/`max` too.
+                    diagnostic_mean[-1].block_until_ready()
+
+            # Fold each declared gated edge whose target
+            # was solved this period onto the target grid, and roll the resulting
+            # Wbar into the edge continuation the source reads next period. Reads
+            # only the still-live period-t arrays (`period_solution`,
+            # `period_dissolution_flags`). The node fold is streamed to cap peak
+            # memory; parents then read Wbar in place of the raw target V via the
+            # existing next_regime_to_V_arr threading.
+            folded_edge_to_V_arr = _roll_gated_edges(
+                regimes=regimes,
+                ages=ages,
+                period=period,
+                period_solution=period_solution,
+                period_dissolution_flags=period_dissolution_flags,
+                base_state_action_spaces=base_state_action_spaces,
+                flat_params=flat_params,
+                next_edge_to_V_arr=next_edge_to_V_arr,
+            )
+            # The fold is a dispatch unit in its own right, and it passes a great
+            # deal through: an edge it does not fold keeps its previous Wbar, and
+            # the sharding match a folded one ends in returns its argument whenever
+            # the shardings already agree. Its grids and params need no mention —
+            # those are declared for the whole solve before the first dispatch.
+            buffer_registry.declare_passed_through(
+                inputs=(
+                    next_edge_to_V_arr,
+                    period_solution,
+                    period_dissolution_flags,
+                ),
+                outputs=folded_edge_to_V_arr,
+            )
+            next_edge_to_V_arr = folded_edge_to_V_arr
+            # A fold is a consumer of the period's raw values in its own right, so
+            # each edge folded above commits the dispatch declared for it. An edge
+            # the same enumeration left unfolded declared none and commits nothing.
+            for folded_edge in _folded_edge_keys_at_period(
+                regimes=regimes,
+                period=period,
+                solved_regimes=period_solution,
+            ):
                 for closed in input_liveness.commit_successful_dispatch(
-                    dispatch=(period, unit.regime)
+                    dispatch=(period, *folded_edge)
                 ):
-                    period_release_candidates.setdefault(closed, (period, unit.regime))
+                    period_release_candidates.setdefault(closed, (period, *folded_edge))
             next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
                 _release_closed_period_inputs(
                     ledger=input_liveness,
@@ -808,184 +918,123 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     pending_outputs=period_pending_outputs,
                     logger=logger,
                     release_enabled=enable_jit,
+                    before_delete=None
+                    if pending_work is None
+                    else pending_work.before_delete,
                 )
             )
-
-        # Force the device-side reduction kernels to finish before the
-        # next period dispatches, so each period's `isnan` / `isinf`
-        # (and min/max/mean) intermediate buffers can be freed instead
-        # of stacking up. `block_until_ready` does NOT transfer to host
-        # — it is a device-side wait, cheap when the dominant
-        # per-period kernel (`max_Q_over_a`) is the actual bottleneck.
-        if diagnostics_enabled:
-            running_any_nan.block_until_ready()
-            running_any_inf.block_until_ready()
-            if stats_enabled and diagnostic_mean:
-                # Blocking on the last-appended stat suffices: XLA
-                # serialises dispatch order, so a finished `mean`
-                # implies a finished `min`/`max` too.
-                diagnostic_mean[-1].block_until_ready()
-
-        # Fold each declared gated edge whose target
-        # was solved this period onto the target grid, and roll the resulting
-        # Wbar into the edge continuation the source reads next period. Reads
-        # only the still-live period-t arrays (`period_solution`,
-        # `period_dissolution_flags`). The node fold is streamed to cap peak
-        # memory; parents then read Wbar in place of the raw target V via the
-        # existing next_regime_to_V_arr threading.
-        folded_edge_to_V_arr = _roll_gated_edges(
-            regimes=regimes,
-            ages=ages,
-            period=period,
-            period_solution=period_solution,
-            period_dissolution_flags=period_dissolution_flags,
-            base_state_action_spaces=base_state_action_spaces,
-            flat_params=flat_params,
-            next_edge_to_V_arr=next_edge_to_V_arr,
-        )
-        # The fold is a dispatch unit in its own right, and it passes a great
-        # deal through: an edge it does not fold keeps its previous Wbar, and
-        # the sharding match a folded one ends in returns its argument whenever
-        # the shardings already agree. Its grids and params need no mention —
-        # those are declared for the whole solve before the first dispatch.
-        buffer_registry.declare_passed_through(
-            inputs=(
-                next_edge_to_V_arr,
-                period_solution,
-                period_dissolution_flags,
-            ),
-            outputs=folded_edge_to_V_arr,
-        )
-        next_edge_to_V_arr = folded_edge_to_V_arr
-        # A fold is a consumer of the period's raw values in its own right, so
-        # each edge folded above commits the dispatch declared for it. An edge
-        # the same enumeration left unfolded declared none and commits nothing.
-        for folded_edge in _folded_edge_keys_at_period(
-            regimes=regimes,
-            period=period,
-            solved_regimes=period_solution,
-        ):
-            for closed in input_liveness.commit_successful_dispatch(
-                dispatch=(period, *folded_edge)
-            ):
-                period_release_candidates.setdefault(closed, (period, *folded_edge))
-        next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
-            _release_closed_period_inputs(
-                ledger=input_liveness,
-                registry=buffer_registry,
-                candidates=period_release_candidates,
-                inputs=SolveInputMappings(
+            next_regime_to_V_arr, next_regime_to_continuation = (
+                _roll_continuation_inputs(
+                    regimes=regimes,
+                    period_solution=period_solution,
+                    period_continuations=period_continuations,
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     next_regime_to_continuation=next_regime_to_continuation,
-                    next_edge_to_V_arr=next_edge_to_V_arr,
-                ),
-                templates=input_templates,
-                pending_outputs=period_pending_outputs,
-                logger=logger,
-                release_enabled=enable_jit,
+                )
             )
-        )
-        next_regime_to_V_arr, next_regime_to_continuation = _roll_continuation_inputs(
-            regimes=regimes,
-            period_solution=period_solution,
-            period_continuations=period_continuations,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-        )
-        solution[period] = MappingProxyType(period_solution)
-        # Publish each collective regime's dissolution
-        # flag D alongside V, where a reader exists. Kept as a plain per-period
-        # mapping (not rolled like `next_regime_to_V_arr`): nothing consumes a
-        # NEXT-period D — a gated edge's gate reads the still-live per-period
-        # flags at each period's end, before the roll (above). The period keys
-        # match `solution`'s either way; only the arrays behind them differ.
-        dissolution_flags[period] = (
-            MappingProxyType(period_dissolution_flags)
-            if publish_dissolution_flags
-            else _NO_DISSOLUTION_FLAGS
-        )
-        if retain_replay or period_simulation_policies:
-            assert host_device is not None  # noqa: S101
-            simulation_policies[period] = MappingProxyType(
-                {
-                    regime_name: jax.block_until_ready(
-                        jax.device_put(simulation_policy, host_device)
-                    )
-                    for regime_name, simulation_policy in (
-                        period_simulation_policies.items()
-                    )
-                }
+            solution[period] = MappingProxyType(period_solution)
+            # Publish each collective regime's dissolution
+            # flag D alongside V, where a reader exists. Kept as a plain per-period
+            # mapping (not rolled like `next_regime_to_V_arr`): nothing consumes a
+            # NEXT-period D — a gated edge's gate reads the still-live per-period
+            # flags at each period's end, before the roll (above). The period keys
+            # match `solution`'s either way; only the arrays behind them differ.
+            dissolution_flags[period] = (
+                MappingProxyType(period_dissolution_flags)
+                if publish_dissolution_flags
+                else _NO_DISSOLUTION_FLAGS
             )
-        if period_generated_replay_authorities:
-            generated_replay_authorities[period] = MappingProxyType(
-                period_generated_replay_authorities
-            )
-        if period_solver_diagnostics:
-            assert host_device is not None  # noqa: S101
-            solver_diagnostics[period] = MappingProxyType(
-                {
-                    regime_name: _copy_solver_diagnostics_to_host(
-                        diagnostics=diagnostics,
-                        host_device=host_device,
-                    )
-                    for regime_name, diagnostics in period_solver_diagnostics.items()
-                }
-            )
-        if retain_all_artifacts:
-            assert host_device is not None  # noqa: S101
-            for (regime_name, key), payload in period_retained_continuations.items():
-                retained_continuations[
-                    ArtifactRef(period=period, regime=regime_name, key=key)
-                ] = jax.block_until_ready(jax.device_put(payload, host_device))
-            for (regime_name, key), payload in period_auxiliary_artifacts.items():
-                auxiliary_artifacts[
-                    ArtifactRef(period=period, regime=regime_name, key=key)
-                ] = jax.block_until_ready(jax.device_put(payload, host_device))
-        if retain_replay or period_replay_artifacts:
-            assert host_device is not None  # noqa: S101
-            for (regime_name, key), payload in period_replay_artifacts.items():
-                replay_artifacts[
-                    ArtifactRef(period=period, regime=regime_name, key=key)
-                ] = jax.block_until_ready(jax.device_put(payload, host_device))
+            if retain_replay or period_simulation_policies:
+                assert host_device is not None  # noqa: S101
+                simulation_policies[period] = MappingProxyType(
+                    {
+                        regime_name: jax.block_until_ready(
+                            jax.device_put(simulation_policy, host_device)
+                        )
+                        for regime_name, simulation_policy in (
+                            period_simulation_policies.items()
+                        )
+                    }
+                )
+            if period_generated_replay_authorities:
+                generated_replay_authorities[period] = MappingProxyType(
+                    period_generated_replay_authorities
+                )
+            if period_solver_diagnostics:
+                assert host_device is not None  # noqa: S101
+                solver_diagnostics[period] = MappingProxyType(
+                    {
+                        regime_name: _copy_solver_diagnostics_to_host(
+                            diagnostics=diagnostics,
+                            host_device=host_device,
+                        )
+                        for regime_name, diagnostics in (
+                            period_solver_diagnostics.items()
+                        )
+                    }
+                )
+            if retain_all_artifacts:
+                assert host_device is not None  # noqa: S101
+                for (
+                    regime_name,
+                    key,
+                ), payload in period_retained_continuations.items():
+                    retained_continuations[
+                        ArtifactRef(period=period, regime=regime_name, key=key)
+                    ] = jax.block_until_ready(jax.device_put(payload, host_device))
+                for (regime_name, key), payload in period_auxiliary_artifacts.items():
+                    auxiliary_artifacts[
+                        ArtifactRef(period=period, regime=regime_name, key=key)
+                    ] = jax.block_until_ready(jax.device_put(payload, host_device))
+            if retain_replay or period_replay_artifacts:
+                assert host_device is not None  # noqa: S101
+                for (regime_name, key), payload in period_replay_artifacts.items():
+                    replay_artifacts[
+                        ArtifactRef(period=period, regime=regime_name, key=key)
+                    ] = jax.block_until_ready(jax.device_put(payload, host_device))
 
-        elapsed = time.monotonic() - period_start
-        log_period_timing(logger=logger, elapsed=elapsed)
+            elapsed = time.monotonic() - period_start
+            log_period_timing(logger=logger, elapsed=elapsed)
 
-        # Fail-fast on NaN: surface the offending period immediately
-        # instead of finishing the whole backward induction. Costs one
-        # host transfer of a scalar bool per period — negligible next
-        # to the per-period `max_Q_over_a` kernel. Inf is non-fatal so
-        # we don't break on it; the post-loop emitter still raises a
-        # warning if any period flagged Inf.
-        #
-        # Only raise mode fails fast. Raise mode is the loudest level, so
-        # diagnostics are on and `running_any_nan` has been tracked. In warn
-        # mode induction runs to completion so `solve` returns a complete
-        # (NaN-bearing) solution rather than a truncated one.
-        if validation_raises(logger) and running_any_nan.item():
-            break
+            # Fail-fast on NaN: surface the offending period immediately
+            # instead of finishing the whole backward induction. Costs one
+            # host transfer of a scalar bool per period — negligible next
+            # to the per-period `max_Q_over_a` kernel. Inf is non-fatal so
+            # we don't break on it; the post-loop emitter still raises a
+            # warning if any period flagged Inf.
+            #
+            # Only raise mode fails fast. Raise mode is the loudest level, so
+            # diagnostics are on and `running_any_nan` has been tracked. In warn
+            # mode induction runs to completion so `solve` returns a complete
+            # (NaN-bearing) solution rather than a truncated one.
+            if validation_raises(logger) and running_any_nan.item():
+                break
 
-        _release_rolled_continuations(period_continuations=period_continuations)
+            _release_rolled_continuations(period_continuations=period_continuations)
 
-    if diagnostics_enabled:
-        try:
-            _emit_post_loop_diagnostics(
-                logger=logger,
-                diagnostic_rows=diagnostic_rows,
-                solution=MappingProxyType(solution),
-                regimes=regimes,
-                flat_params=flat_params,
-                running_any_nan=running_any_nan,
-                running_any_inf=running_any_inf,
-                diagnostic_min=diagnostic_min if stats_enabled else None,
-                diagnostic_max=diagnostic_max if stats_enabled else None,
-                diagnostic_mean=diagnostic_mean if stats_enabled else None,
-            )
-        except InvalidValueFunctionError as error:
-            raise_or_warn(logger=logger, error=error)
+        if diagnostics_enabled:
+            try:
+                _emit_post_loop_diagnostics(
+                    logger=logger,
+                    diagnostic_rows=diagnostic_rows,
+                    solution=MappingProxyType(solution),
+                    regimes=regimes,
+                    flat_params=flat_params,
+                    running_any_nan=running_any_nan,
+                    running_any_inf=running_any_inf,
+                    diagnostic_min=diagnostic_min if stats_enabled else None,
+                    diagnostic_max=diagnostic_max if stats_enabled else None,
+                    diagnostic_mean=diagnostic_mean if stats_enabled else None,
+                )
+            except InvalidValueFunctionError as error:
+                raise_or_warn(logger=logger, error=error)
 
-    _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
-    input_liveness.assert_solve_complete()
+        _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
+        input_liveness.assert_solve_complete()
+
+    finally:
+        if pending_work is not None:
+            pending_work.close()
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
@@ -1203,12 +1252,17 @@ def _run_period_kernel(
 
 
 def _cores_with_transfer_cache(
-    *, cores: MappingProxyType[str, PlannedCore], cache: PeriodTransferCache
+    *,
+    cores: MappingProxyType[str, PlannedCore],
+    cache: PeriodTransferCache,
+    pending_work: PendingSolveWork | None = None,
 ) -> MappingProxyType[str, PlannedCore]:
     """Hand one period's transfer cache to every core a kernel dispatches."""
     return MappingProxyType(
         {
-            core_key: dataclasses.replace(core, transfer_cache=cache)
+            core_key: dataclasses.replace(
+                core, transfer_cache=cache, pending_work=pending_work
+            )
             for core_key, core in cores.items()
         }
     )
@@ -2070,6 +2124,7 @@ def _release_closed_period_inputs(
     pending_outputs: Sequence[FloatND],
     logger: logging.Logger,
     release_enabled: bool,
+    before_delete: BeforeArrayDelete | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, ContinuationPayload],
@@ -2124,6 +2179,7 @@ def _release_closed_period_inputs(
             pending_outputs=pending_outputs,
             closing_dispatch=dispatch,
             logger=logger,
+            before_delete=before_delete,
         ):
             released_artifact = cast("ValueArtifactAddress", record.artifact)
             if locate_artifact(inputs=inputs, artifact=released_artifact) is not None:
@@ -2244,6 +2300,7 @@ def _retire_donated_inputs(
     pending_outputs: Sequence[object],
     registry: BufferRegistry,
     logger: logging.Logger,
+    before_delete: BeforeArrayDelete | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, ContinuationPayload],
@@ -2270,6 +2327,8 @@ def _retire_donated_inputs(
     for donated in donated_inputs:
         registry.forget_identity(identity=donated.identity)
         if not donated.array.is_deleted():
+            if before_delete is not None:
+                before_delete(arrays=(donated.array,))
             donated.array.delete()
             logger.debug(
                 "donation of %r by dispatch %r fell back to release",

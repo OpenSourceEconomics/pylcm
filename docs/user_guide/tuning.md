@@ -142,6 +142,12 @@ A larger GPU can run larger chunks and may benefit from more concurrent independ
 work. It does not automatically shorten a workload made of small sequential kernels.
 Measure occupancy and memory rather than extrapolating from device memory alone.
 
+With an explicit memory budget, solve execution waits for earlier compiled work that
+uses any of the next core's execution or transfer devices. Work on disjoint device sets
+can remain asynchronous. A shared source array can therefore serialize cores assigned to
+different regime submeshes. The wait covers returned auxiliary arrays and declared
+copies as well as values; it does not bound memory used by compiler autotuning.
+
 ## Batch forward simulation
 
 Set `ExecutionConfig(axis_widths={"subject": k})` on the model to process subjects in

@@ -1091,6 +1091,126 @@ _FINITE_POLICY_MUTATIONS = {
 }
 
 
+_SOLVE_READINESS_MUTATIONS = {
+    "solve_completion:discharged_records_retained": (
+        "src/_lcm/execution/pending_work.py",
+        (
+            "        self._records[:] = [\n"
+            "            record for record in self._records "
+            "if not record.devices & devices\n"
+            "        ]"
+        ),
+        "        self._records[:] = list(self._records)",
+    ),
+    "solve_completion:only_first_output_owned": (
+        "src/_lcm/execution/pending_work.py",
+        "for leaf in jax.tree.leaves(outputs)",
+        "for leaf in jax.tree.leaves(outputs)[:1]",
+    ),
+    "solve_completion:actual_output_devices_ignored": (
+        "src/_lcm/execution/pending_work.py",
+        "devices=record.devices | actual_devices",
+        "devices=record.devices",
+    ),
+    "solve_completion:close_retains_owners": (
+        "src/_lcm/execution/pending_work.py",
+        "        self._records.clear()",
+        "        pass  # keep stale records",
+    ),
+    "solve_completion:cleanup_replaces_original_error": (
+        "src/_lcm/execution/pending_work.py",
+        (
+            "            if active_error is None:\n                raise\n"
+            "            active_error.add_note(\n"
+            '                "Solve completion cleanup also failed: "'
+        ),
+        (
+            "            if True:\n                raise\n"
+            "            active_error.add_note(\n"
+            '                "Solve completion cleanup also failed: "'
+        ),
+    ),
+    "solve_completion:concrete_source_devices_ignored": (
+        "src/_lcm/execution/pending_work.py",
+        "for leaf in jax.tree.leaves(arguments)",
+        "for leaf in ()",
+    ),
+    "solve_completion:transfer_endpoints_ignored": (
+        "src/_lcm/execution/pending_work.py",
+        "for transfer in transfers\n            for sharding",
+        "for transfer in ()\n            for sharding",
+    ),
+    "solve_completion:selected_compiler_proof_ignored": (
+        "src/_lcm/execution/pending_work.py",
+        "if path in kept_paths and isinstance(leaf, jax.Array)",
+        "if isinstance(leaf, jax.Array)",
+    ),
+    "solve_completion:donating_copy_wait_omitted": (
+        "src/_lcm/execution/pending_work.py",
+        "if donates or id(array) not in kept_arrays",
+        "if id(array) not in kept_arrays",
+    ),
+    "solve_completion:dead_copy_wait_omitted": (
+        "src/_lcm/execution/pending_work.py",
+        "if donates or id(array) not in kept_arrays",
+        "if donates",
+    ),
+    "solve_completion:partial_copy_cleanup_omitted": (
+        "src/_lcm/execution/pending_work.py",
+        "        copies.close(owner=owner, devices=devices)",
+        "        pass  # drop returned transfer witnesses",
+    ),
+    "solve_completion:deleted_wrapper_treated_ready": (
+        "src/_lcm/execution/pending_work.py",
+        "        raise RuntimeError(msg)",
+        "        return",
+    ),
+    "solve_completion:transfer_observation_omitted": (
+        "src/_lcm/execution/value_transfer.py",
+        "        on_materialized(transfer=transfer, array=copied)",
+        "        pass  # drop observed copy",
+    ),
+    "solve_completion:transfer_cache_release_callback_omitted": (
+        "src/_lcm/execution/scheduler.py",
+        "            before_delete=self._before_delete,",
+        "            before_delete=None,",
+    ),
+    "solve_completion:release_predelete_wait_omitted": (
+        "src/_lcm/execution/scheduler.py",
+        (
+            "        before_delete(arrays=tuple("
+            "candidate.array for candidate in to_delete))"
+        ),
+        "        pass  # invalidate pending witnesses",
+    ),
+    "solve_completion:donation_predelete_wait_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        "                before_delete(arrays=(donated.array,))",
+        "                pass  # invalidate pending witnesses",
+    ),
+    "solve_completion:transient_core_owner_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        "core, transfer_cache=cache, pending_work=pending_work",
+        "core, transfer_cache=cache, pending_work=None",
+    ),
+    "solve_completion:solve_finally_cleanup_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        "            pending_work.close()",
+        "            pass  # abandon pending outputs",
+    ),
+    "solve_completion:unbudgeted_owner_installed": (
+        "src/_lcm/solution/backward_induction.py",
+        "if resolved_execution.device_memory_bytes is not None\n        else None",
+        "if True\n        else None",
+    ),
+    "solve_completion:planned_core_owner_bypassed": (
+        "src/_lcm/execution/output_layout.py",
+        "        if self.pending_work is not None:",
+        "        if False and self.pending_work is not None:",
+    ),
+}
+
+
 @pytest.fixture(scope="module")
 def program_mutations() -> dict[str, dict[str, str]]:
     """Build registry controls plus explicit random and profiling defects."""
@@ -1110,6 +1230,7 @@ def program_mutations() -> dict[str, dict[str, str]]:
         | _COMBINED_INPUT_MUTATIONS
         | _EAGER_PLACEMENT_MUTATIONS
         | _FINITE_BUDGET_MUTATIONS
+        | _SOLVE_READINESS_MUTATIONS
     ).items():
         source = (root / relative).read_text(encoding="utf-8")
         assert source.count(old) == 1, name
@@ -1135,6 +1256,7 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
 
     assert set(supplemental) == {
+        "solve_completion:conflict_wait_bypassed",
         "eager_core:planned_operand_placement_bypassed",
         "runtime_sharding:physical_partition_ignored",
         "policy_diagnostics:represented_mask_ignored",
@@ -1220,6 +1342,7 @@ def test_live_simulation_program_sources_are_certified(source: str):
     + list(_COMBINED_INPUT_MUTATIONS)
     + list(_EAGER_PLACEMENT_MUTATIONS)
     + list(_FINITE_BUDGET_MUTATIONS)
+    + list(_SOLVE_READINESS_MUTATIONS)
     + list(direct_flow._SUPPLEMENTAL_SOURCE_MUTATIONS),
 )
 def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(

@@ -228,6 +228,13 @@ jobs:
             --junitxml=reports/junit-cpu-fp64-simulation-value-reads.xml \
             --cov=./ --cov-append --cov-report= -n 0 \
           && check_population reports/junit-cpu-fp64-simulation-value-reads.xml \
+          && pixi run -e tests-cpu pytest tests/test_distributed_solve_readiness.py \
+            --precision=64 -p no:randomly --policy-child \
+            --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp64-solve-readiness.xml \
+            --cov=./ --cov-append --cov-report= -n 0 \
+          && check_population reports/junit-cpu-fp64-solve-readiness.xml \
           && pixi run -e tests-cpu pytest tests/simulation/test_operand_placement.py \
             --precision=64 -p no:randomly --policy-child \
             --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
@@ -466,6 +473,12 @@ jobs:
             --junitxml=reports/junit-cpu-fp32-simulation-value-reads.xml \
             -n 0 \
           && check_population reports/junit-cpu-fp32-simulation-value-reads.xml \
+          && pixi run -e tests-cpu pytest tests/test_distributed_solve_readiness.py \
+            --precision=32 -p no:randomly --policy-child \
+            --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp32-solve-readiness.xml -n 0 \
+          && check_population reports/junit-cpu-fp32-solve-readiness.xml \
           && pixi run -e tests-cpu pytest tests/simulation/test_operand_placement.py \
             --precision=32 -p no:randomly --policy-child \
             --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \

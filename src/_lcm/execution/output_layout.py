@@ -11,7 +11,7 @@ the tree.
 """
 
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
 
@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.execution.internal_outputs import assert_internal_inputs
+from _lcm.execution.pending_work import PendingSolveWork, execute_with_pending_work
 from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -26,6 +27,7 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer_plan,
 )
 from _lcm.typing import StateName
+from lcm.exceptions import ExecutionPlanningError
 
 
 class OutputRole(Enum):
@@ -431,6 +433,10 @@ class PlannedCore:
     """Abstract template per internal input this core was lowered against."""
     transfer_cache: TransferCache | None = None
     """Per-period store shared transfers are served from, or `None` to copy."""
+    pending_work: PendingSolveWork | None = field(
+        default=None, compare=False, repr=False
+    )
+    """Call-local completion owner on transient budgeted solve wrappers only."""
     donated_arguments: tuple[str, ...] = ()
     """Arguments the executable was lowered to donate, in declaration order."""
     name: str
@@ -484,6 +490,23 @@ class PlannedCore:
                 "only by keyword."
             )
             raise TypeError(msg)
+        if self.pending_work is not None:
+            if args or not isinstance(self.compiled, jax.stages.Compiled):
+                msg = (
+                    "Budgeted solve completion requires an actual compiled executable "
+                    "with dynamic arguments supplied by keyword."
+                )
+                raise ExecutionPlanningError(msg)
+            output = execute_with_pending_work(
+                owner=self.pending_work,
+                compiled=self.compiled,
+                arguments=kwargs,
+                transfers=self.input_transfer_plan,
+                cache=self.transfer_cache,
+                donates=bool(self.donated_arguments),
+            )
+            assert_output_layout(output=output, layout=self.layout)
+            return output
         planned_kwargs = (
             apply_value_transfer_plan(
                 arguments=kwargs,

@@ -114,6 +114,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   Without a budget, streamed solve axes use their bootstrap widths, capped at 64,
   unless an explicit width is supplied. An omitted width requests planning, and zero
   is not a full-width sentinel in `axis_widths`.
+- Budgeted solves wait for earlier compiled work before dispatching another core
+  whose execution or transfer devices overlap. Completion retains auxiliary outputs
+  and copy witnesses through validation and error cleanup, and runs before eligible
+  buffers are deleted or donated. Work with disjoint complete device footprints may
+  remain asynchronous. This does not bound compiler autotuning or unprofiled host
+  allocations.
 - Configure subject chunks with `ExecutionConfig(axis_widths={"subject": width})`;
   `Model.simulate(subject_batch_size=...)` is removed. Device alignment can increase
   the outer chunk extent while preserving the requested inner width. With a budget

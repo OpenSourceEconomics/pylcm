@@ -2529,3 +2529,8 @@ def test_dropping_one_candidate_leaves_every_other_candidate_alone():
         _WEALTH_VALUES + _CONSUMPTION_VALUES[0] + 10.0 * _WORK_VALUES[0],
         decimal=DECIMAL_PRECISION,
     )
+
+
+def test_solve_completion_owner_is_a_literal_certificate_dependency():
+    """Authenticate the live owner in the solve transport certificate inventory."""
+    assert isinstance(_parse("src/_lcm/execution/pending_work.py"), ast.Module)

@@ -23,6 +23,7 @@ from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
+from lcm.typing import ValueND
 
 _VALUE_TRANSFER_VERSION = 2
 
@@ -375,8 +376,20 @@ def resolve_value_transfer(
     )
 
 
+@runtime_checkable
+class MaterializedTransferObserver(Protocol):
+    """Observe a newly returned concrete copy before its metadata is checked."""
+
+    def __call__(self, *, transfer: ResolvedValueTransfer, array: ValueND) -> None:
+        """Receive one fresh operator result, never an aligned value or cache hit."""
+        ...
+
+
 def apply_value_transfer(
-    *, value: object, transfer: ResolvedValueTransfer
+    *,
+    value: object,
+    transfer: ResolvedValueTransfer,
+    on_materialized: MaterializedTransferObserver | None = None,
 ) -> jax.Array:
     """Apply one resolved adapter after validating the exact stored artifact.
 
@@ -397,6 +410,8 @@ def apply_value_transfer(
     if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:
         return stored
     copied = jax.device_put(stored, transfer.source_sharding)
+    if on_materialized is not None:
+        on_materialized(transfer=transfer, array=copied)
     _assert_value_metadata(
         value=copied,
         expected_shape=transfer.expected_shape,
@@ -412,6 +427,7 @@ def apply_value_transfer_plan(
     arguments: Mapping[str, object],
     plan: Iterable[ResolvedValueTransfer],
     cache: TransferCache | None = None,
+    on_materialized: MaterializedTransferObserver | None = None,
 ) -> Mapping[str, object]:
     """Apply a transfer plan to an immutable copy of a core-argument tree.
 
@@ -455,6 +471,7 @@ def apply_value_transfer_plan(
             transfer=transfer,
             traversed=(root,),
             cache=cache,
+            on_materialized=on_materialized,
         )
         updated = dict(result)
         updated[root] = replaced
@@ -552,10 +569,13 @@ def _replace_transfer_leaf(
     transfer: ResolvedValueTransfer,
     traversed: tuple[str | int, ...],
     cache: TransferCache | None,
+    on_materialized: MaterializedTransferObserver | None,
 ) -> object:
     """Rebuild one supported argument branch and replace its selected leaf."""
     if not path:
-        return _transferred_leaf(node=node, transfer=transfer, cache=cache)
+        return _transferred_leaf(
+            node=node, transfer=transfer, cache=cache, on_materialized=on_materialized
+        )
     segment, *remaining = path
     rest = tuple(remaining)
     if isinstance(node, Mapping):
@@ -569,6 +589,7 @@ def _replace_transfer_leaf(
             transfer=transfer,
             traversed=(*traversed, segment),
             cache=cache,
+            on_materialized=on_materialized,
         )
         return MappingProxyType(updated)
     if isinstance(node, tuple):
@@ -591,6 +612,7 @@ def _replace_transfer_leaf(
             transfer=transfer,
             traversed=(*traversed, segment),
             cache=cache,
+            on_materialized=on_materialized,
         )
         return tuple(updated)
     if is_dataclass(node) and not isinstance(node, type):
@@ -601,6 +623,7 @@ def _replace_transfer_leaf(
             transfer=transfer,
             traversed=traversed,
             cache=cache,
+            on_materialized=on_materialized,
         )
     msg = (
         f"Value-transfer path {traversed!r} would rebuild a "
@@ -615,14 +638,19 @@ def _transferred_leaf(
     node: object,
     transfer: ResolvedValueTransfer,
     cache: TransferCache | None,
+    on_materialized: MaterializedTransferObserver | None,
 ) -> object:
     """Apply one transfer to the selected leaf, sharing a copy where one is cached."""
     if cache is None or not transfer.reused_by_several_consumers:
-        return apply_value_transfer(value=node, transfer=transfer)
+        return apply_value_transfer(
+            value=node, transfer=transfer, on_materialized=on_materialized
+        )
     cached = cache.get(transfer=transfer)
     if cached is not None and not cached.is_deleted():
         return cached
-    copied = apply_value_transfer(value=node, transfer=transfer)
+    copied = apply_value_transfer(
+        value=node, transfer=transfer, on_materialized=on_materialized
+    )
     if not isinstance(node, jax.Array):
         msg = "A cached transfer's pre-transfer value must be a concrete JAX array."
         raise TypeError(msg)
@@ -638,6 +666,7 @@ def _replace_dataclass_field(
     transfer: ResolvedValueTransfer,
     traversed: tuple[str | int, ...],
     cache: TransferCache | None,
+    on_materialized: MaterializedTransferObserver | None,
 ) -> object:
     """Rebuild one dataclass branch field by field around the replaced leaf.
 
@@ -667,6 +696,7 @@ def _replace_dataclass_field(
                 transfer=transfer,
                 traversed=(*traversed, segment),
                 cache=cache,
+                on_materialized=on_materialized,
             )
         },
     )

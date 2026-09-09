@@ -46,7 +46,11 @@
           },
           {
             "path": "src/_lcm/execution/output_layout.py",
-            "sha256": "b4d773d70a0a3c3d3ff03b4b0eb4f043f7e311aa8811bf560ae102bfa666c9b7"
+            "sha256": "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9"
+          },
+          {
+            "path": "src/_lcm/execution/pending_work.py",
+            "sha256": "f2b6dd1e053b7fa372c19696bd3e8f934467b49048a8eedf15aff199a0841efb"
           },
           {
             "path": "src/_lcm/execution/runtime_sharding.py",
@@ -54,11 +58,11 @@
           },
           {
             "path": "src/_lcm/execution/scheduler.py",
-            "sha256": "8071b900fa30fe5a9e38ee2133e320bf68cbe2f2e733fa3b4114adcd3bd9ad65"
+            "sha256": "0d6c5bb74f8229fca43231142c4d53cbe3753949fc4e05e4c216f5cc683620ea"
           },
           {
             "path": "src/_lcm/execution/value_transfer.py",
-            "sha256": "5dc6922a03711a32f731d7585b8997f7afd18c1d5273c889e6a80557a17bbf26"
+            "sha256": "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6"
           },
           {
             "path": "src/_lcm/execution/workspace_planning.py",
@@ -318,7 +322,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "e5dded6b48f674cf1a41dd4166745649384e05206826ec73ec983e35cfc7a9fe"
+            "sha256": "ac5ed4d203a9d6bf2e69e1511bc8116ce92ecad0a4840f28238d51040e91ca74"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -425,8 +429,8 @@
             "sha256": "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006"
           }
         ],
-        "source_count": 105,
-        "source_inventory_sha256": "6301983a5e9982ed1b2a14327ae61e6c4a1a7a62384bc71697220d02f4588c97"
+        "source_count": 106,
+        "source_inventory_sha256": "5d411f0ab1b4fac0ff641005b96e335ca42aa76549eba06d038624c923038fac"
       },
       "fast": {
         "candidate_sources": [
@@ -472,7 +476,11 @@
           },
           {
             "path": "src/_lcm/execution/output_layout.py",
-            "sha256": "b4d773d70a0a3c3d3ff03b4b0eb4f043f7e311aa8811bf560ae102bfa666c9b7"
+            "sha256": "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9"
+          },
+          {
+            "path": "src/_lcm/execution/pending_work.py",
+            "sha256": "f2b6dd1e053b7fa372c19696bd3e8f934467b49048a8eedf15aff199a0841efb"
           },
           {
             "path": "src/_lcm/execution/runtime_sharding.py",
@@ -480,11 +488,11 @@
           },
           {
             "path": "src/_lcm/execution/scheduler.py",
-            "sha256": "8071b900fa30fe5a9e38ee2133e320bf68cbe2f2e733fa3b4114adcd3bd9ad65"
+            "sha256": "0d6c5bb74f8229fca43231142c4d53cbe3753949fc4e05e4c216f5cc683620ea"
           },
           {
             "path": "src/_lcm/execution/value_transfer.py",
-            "sha256": "5dc6922a03711a32f731d7585b8997f7afd18c1d5273c889e6a80557a17bbf26"
+            "sha256": "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6"
           },
           {
             "path": "src/_lcm/execution/workspace_planning.py",
@@ -744,7 +752,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "e5dded6b48f674cf1a41dd4166745649384e05206826ec73ec983e35cfc7a9fe"
+            "sha256": "ac5ed4d203a9d6bf2e69e1511bc8116ce92ecad0a4840f28238d51040e91ca74"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -851,14 +859,14 @@
             "sha256": "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006"
           }
         ],
-        "source_count": 105,
-        "source_inventory_sha256": "6301983a5e9982ed1b2a14327ae61e6c4a1a7a62384bc71697220d02f4588c97"
+        "source_count": 106,
+        "source_inventory_sha256": "5d411f0ab1b4fac0ff641005b96e335ca42aa76549eba06d038624c923038fac"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "6301983a5e9982ed1b2a14327ae61e6c4a1a7a62384bc71697220d02f4588c97",
+  "source_inventory_sha256": "5d411f0ab1b4fac0ff641005b96e335ca42aa76549eba06d038624c923038fac",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -902,7 +910,11 @@
     },
     {
       "path": "src/_lcm/execution/output_layout.py",
-      "sha256": "b4d773d70a0a3c3d3ff03b4b0eb4f043f7e311aa8811bf560ae102bfa666c9b7"
+      "sha256": "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9"
+    },
+    {
+      "path": "src/_lcm/execution/pending_work.py",
+      "sha256": "f2b6dd1e053b7fa372c19696bd3e8f934467b49048a8eedf15aff199a0841efb"
     },
     {
       "path": "src/_lcm/execution/runtime_sharding.py",
@@ -910,11 +922,11 @@
     },
     {
       "path": "src/_lcm/execution/scheduler.py",
-      "sha256": "8071b900fa30fe5a9e38ee2133e320bf68cbe2f2e733fa3b4114adcd3bd9ad65"
+      "sha256": "0d6c5bb74f8229fca43231142c4d53cbe3753949fc4e05e4c216f5cc683620ea"
     },
     {
       "path": "src/_lcm/execution/value_transfer.py",
-      "sha256": "5dc6922a03711a32f731d7585b8997f7afd18c1d5273c889e6a80557a17bbf26"
+      "sha256": "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6"
     },
     {
       "path": "src/_lcm/execution/workspace_planning.py",
@@ -1174,7 +1186,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "e5dded6b48f674cf1a41dd4166745649384e05206826ec73ec983e35cfc7a9fe"
+      "sha256": "ac5ed4d203a9d6bf2e69e1511bc8116ce92ecad0a4840f28238d51040e91ca74"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",

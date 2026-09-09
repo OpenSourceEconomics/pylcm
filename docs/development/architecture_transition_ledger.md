@@ -47,6 +47,16 @@ committed arrays are not relocated by this adapter. Internal producer descriptor
 separate from ordinary inputs; when their abstract trace omits sharding, the adapter
 preserves the producer's actual validated layout.
 
+Budgeted solves own completion witnesses for each compiled dispatch and its declared
+copies. Before another core allocates transfers or executes on overlapping actual
+devices, the prior witnesses are completed. The full returned array tree is recorded
+before output validation, and eligible release/donation paths discharge witnesses before
+invalidating wrappers. Only transient core wrappers carry this owner; cached cores and
+compilation identities remain unchanged. Complete disjoint footprints stay asynchronous;
+conservatively including all concrete input devices can serialize a compiler-dead shared
+source. Edge folds, unprofiled host work, compiler autotuning and backend failures that
+return no completion handle remain outside this contract.
+
 Simulation reads retained values, dissolution flags, and replay leaves on the actual
 ordered subject devices. Finite NNBEGM replay profiles its actual preparation bank,
 dropped-candidate diagnostics and canonical ranking. Its policy transfers deduplicate by

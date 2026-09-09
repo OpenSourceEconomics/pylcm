@@ -189,7 +189,10 @@ RUNTIME_SHARDING_SOURCE = "src/_lcm/execution/runtime_sharding.py"
 
 POLICY_DIAGNOSTICS_SOURCE = "src/_lcm/simulation/policy_diagnostics.py"
 
+SOLVE_PENDING_WORK_SOURCE = "src/_lcm/execution/pending_work.py"
+
 _CERTIFIED_CORRIDOR_SOURCES = (
+    SOLVE_PENDING_WORK_SOURCE,
     POLICY_DIAGNOSTICS_SOURCE,
     EAGER_CORE_SOURCE,
     RUNTIME_SHARDING_SOURCE,
@@ -301,6 +304,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
+    SOLVE_PENDING_WORK_SOURCE: "f2b6dd1e053b7fa372c19696bd3e8f934467b49048a8eedf15aff199a0841efb",
     POLICY_DIAGNOSTICS_SOURCE: "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3",
     EAGER_CORE_SOURCE: "ed5d37d0a685943bd53185ea313089d68f0b5fc4eb7be3cd88d4d1e0623f5ab4",
     RUNTIME_SHARDING_SOURCE: "0e7f276d6abad69469ba42707a4dcfc78e9eefd3fb78ed9aad7942559553df9a",
@@ -345,7 +349,7 @@ _SOURCE_SEALS = {
     SIMULATION_GATED_ROUTING_SOURCE: "9e16638f296169a876c37f0c18399a8ed894dc2f4e1cb54a3466f909ddffb85e",
     VALUE_TOPOLOGY_SOURCE: "80bf43a740c77b1ddb1675a2510859b521efc6fc0f60a6a8ab7319e0bc98a4f2",
     RETAINED_BUFFERS_SOURCE: "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870",
-    SCHEDULER_SOURCE: "8071b900fa30fe5a9e38ee2133e320bf68cbe2f2e733fa3b4114adcd3bd9ad65",
+    SCHEDULER_SOURCE: "0d6c5bb74f8229fca43231142c4d53cbe3753949fc4e05e4c216f5cc683620ea",
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
     WORKSPACE_PLANNING_SOURCE: "05972cd1ecf48b86c6a9ad4828e7b750ca62c130c1945118735ff002ac586f48",
@@ -359,8 +363,8 @@ _SOURCE_SEALS = {
     PROCESSING_SOURCE: "3aa08741042207d1dfd26e4bd8e6b65b1c20d80d5eb2b0825f3c5682d76a4ad9",
     GRID_SEARCH_SOURCE: "ed33d78e3cd17921cbde158534f386014f3a2529af5cf686b7e10c8e3fa43d7e",
     CORE_PROGRAM_SOURCE: "37823a33eca40dcce2cb71952b7d7d7ec8bedccca15061a4df6178061e738757",
-    OUTPUT_LAYOUT_SOURCE: "b4d773d70a0a3c3d3ff03b4b0eb4f043f7e311aa8811bf560ae102bfa666c9b7",
-    VALUE_TRANSFER_SOURCE: "5dc6922a03711a32f731d7585b8997f7afd18c1d5273c889e6a80557a17bbf26",
+    OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
+    VALUE_TRANSFER_SOURCE: "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6",
     FOOTPRINT_SOURCE: "0dbaa3c673f053a51fa7bcab4e06d2080252dd84d827ed28123d085c4000fd0f",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
@@ -379,7 +383,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "f6b4ec612b6bcf6263995d85ce5bd49c75c0c807af1bafd83a16c89140863d12",
     MODEL_SOURCE: "c9a4c9b2a8058bde1d379c0d7e26ab9dd771774b50de8f79334612e6d29f45b9",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "e5dded6b48f674cf1a41dd4166745649384e05206826ec73ec983e35cfc7a9fe",
+    BACKWARD_INDUCTION_SOURCE: "ac5ed4d203a9d6bf2e69e1511bc8116ce92ecad0a4840f28238d51040e91ca74",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "6ae5d06da6fb96fbcbdd12160f35ea5ce3731e87b7dba5f9139e7a2e29d0462e",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
@@ -2544,6 +2548,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()",
                 "internal_input_templates: Mapping[str, object] = MappingProxyType({})",
                 "transfer_cache: TransferCache | None = None",
+                "pending_work: PendingSolveWork | None = field(default=None, compare=False, repr=False)",
                 "donated_arguments: tuple[str, ...] = ()",
                 "name: str",
             ),
@@ -2588,7 +2593,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "assert_output_layout": "daad2a8d5013f547b1004e7f51d7c71d6051b57badf5d3933c866774f862c2a8",
                 "_assert_output_metadata": "4fdb1d8439ec600990e801f0da9197759f71dc01661a1d0cf14d332be05b1209",
                 "PlannedCore.__post_init__": "92f25766a12bbd9fe2e9be8a5b8a4034c537633499adcd7acc832b460becb73c",
-                "PlannedCore.__call__": "5ee61337ebbab597c5e7fee8e8a90c19bc50331a747ba57a93e7540e065c8703",
+                "PlannedCore.__call__": "08bfb7b759bc903ff3a4225f57edd4d2298c2e5e8c38832c5ef6b81a878828da",
                 "assert_value_leaf_layout": "9362aaf98344976ae13de7ac67e05d23fe983f12e34eac9f2ad439762a5d159d",
                 "_assert_output_leaf": "86db39c8c2dc696c5adcd8164bf080df1d5fcbee9629d5c378df1d269e978f5f",
                 "_resolve_output_leaf": "b321849f4ff64dbab550be131a31a74157e9749a396958917b8e587fdffe5fa4",
@@ -2758,12 +2763,12 @@ COLLECTIVE = "collective"
                 "ValueConsumerAddress.__post_init__": "e2a6c26a492e21aef01bc5ae519d02426a0f6e067201925b2797eed13fadcc41",
                 "ResolvedValueTransfer.__post_init__": "6fc7223a75c3dc5fbb6072004915bbf08a05c9d1d42711b12ba6aae4306192c8",
                 "resolve_value_transfer": "232ec967f8b1c8c9055ae513e5afce130d808e8afe7f90271fc19f111db0cc1e",
-                "apply_value_transfer": "76b11059204dc6786aab1701a6c2523ddedd4f6fff16d80df49b1428784db311",
-                "apply_value_transfer_plan": "d17240965105a83382d4a0a71809dece1aa4770143729968bbc370177ea3e7e6",
+                "apply_value_transfer": "ddbe334f29354344b04b5e73f280522164c6af9b128d93936c6a1ea3ef604961",
+                "apply_value_transfer_plan": "5935a6ddc11376327dbec4ea66035063acb212093c52f93d8f38f4cced622291",
                 "classify_value_transfer": "c55b04af4530ac76c2dce1b47bb3ccf0d4056efa7c4dd68417257f59e03d506e",
                 "ResolvedValueTransfer.cost": "b62e0d903fb8fb628e869b4fa90e089f8e4cc118bbbad34d8e654dfe0386f8e4",
                 "_named_axes": "46fa78227ccbe7e1dd881030b05d16794d3f45003c37b638ba0badc434d977ed",
-                "_replace_transfer_leaf": "f075cfa66700c236bae59a1d26278a61ac916e793e6b3cd78f6b7abfb4f64732",
+                "_replace_transfer_leaf": "7d6561650cf00a181a636eff3c320653916aa95ed57b25b32f6699582bd3084b",
                 "_validate_edge_identity": "b9dc316bc5c544a59041fd3c7c67a48766829f66db5db31a6d1bb48eb96afc05",
                 "_validate_replay_leaf_identity": "0da3b8851138ef9c733fa1b64977f7ceb243e6185b5e44fa49236619ccb2e779",
                 "_validate_continuation_leaf_identity": "88493fd0b4b5ef9670c2958f580de3d53e855b187f3548e335193364a3cb61f8",
@@ -3474,7 +3479,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SCHEDULER_SOURCE: (
-        "1ee33c5b8472f2e50cb6c0ca944865e0f65d488b85d84ad4a78c3ccb61b46488",
+        "c8e5d0bb93091e883f269194bb4803c6910b8717a887f5800bff0b64875d1b05",
         {
             "buffer_identity": "773d4a78840d9f58d52a23420af0b9942d22ce1e7d84af0d6e84fb3f0207716d",
             "shard_identities": "5dcf1a2c1f363f904cd238cebc7607d4a23350cd2ea7e7673c93a4df12334559",
@@ -3489,14 +3494,14 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "BufferRegistry.forget": "9ef1e2b80e6713c961ae890a09e95af5c1ff6b1ee4b4a55747279bac9497a8b5",
             "BufferRegistry.forget_identity": "de10a1a351d0d573c380eb0db602cc2ea3f297be95df5bc18c5dbf5e1c63c9b8",
             "BufferRegistry._prune_dead_declarations": "bc21c180ad19b29c98a38972521639dd454636f572602ffd68529e7689b2e4ab",
-            "release_closed_artifacts": "bca1a611edf7a6e9fd4af7d634e35d820438a8a6b77d5b042c383cab847bab88",
+            "release_closed_artifacts": "76bd3cb14ddc9fc90add485422a671db7096d06061fd34c2b48bc2158260995f",
             "_one_delete_per_shared_buffer": "c6824683620084bbb6acbd667b2657a3ba1afdcf425268d7f1d384ee4b308f71",
             "plan_period_waves": "0f2995c211c6472a1f378a69861a15181f6f2e0856db85191883176788017999",
             "replace_leaf_by_identity": "12231a2d73d86bda8fd3611d877f8b2d23bb2006a4abd0134d480c88e7426d50",
-            "PeriodTransferCache.__init__": "72346f56ffc5316a0871756fd988ec73c9274daefd52c1e72370114d2163e569",
+            "PeriodTransferCache.__init__": "b8f98b0f9b31d9aa402075b92baa63729b17d71d4a5ce9fde078be47b95854c4",
             "PeriodTransferCache.get": "f16cad2377317e84a219306a4cc2669dd74afc472906974c751452976ae63041",
             "PeriodTransferCache.put": "28648ac358887b0434396849a8827980e1f7be1249a0b8a0bf43416a0f1ea8d8",
-            "PeriodTransferCache.commit_consumer": "1e50f0f76ca23c95019747cecc025601d103b6297ccd8df906ed85ce3c59b8df",
+            "PeriodTransferCache.commit_consumer": "83ffdec9aea1efd675cad1d45d317a31e72775d52169df9e11bcb157b5d9b0ef",
             "PeriodTransferCache.__len__": "9fb60f4b369c44a05b578b7d992aab8b3f956ffa5c5b465715beceba5fe2728d",
             "_add_declaring_array": "8cc69ee60ad06411506f95155fbef57acea86a11ca7246182e25c62336ade59c",
             "_keep_live_declaring_arrays": "120348a883a1615abc6106151a8da9b6212cc82b0c5574806f4e08ae609f3a1e",
@@ -3767,19 +3772,19 @@ def _finite_budget_errors(*, tree: ast.Module, source: str) -> list[str]:
 
 _EAGER_INPUT_CONTRACTS = {
     "src/_lcm/execution/output_layout.py": (
-        "365b885f8e359cb36ebd5cae8c38c71cf8e7d88659a843cc4c4779a9662cea55",
+        "bf24629f0671e78981873d3d6b9e295ad33cbdae8c61e1a98c9f27f32aca8be6",
         {
             "_assert_output_leaf": "86db39c8c2dc696c5adcd8164bf080df1d5fcbee9629d5c378df1d269e978f5f",
         },
     ),
     "src/_lcm/execution/value_transfer.py": (
-        "f78db25072d2f88d95fbddcf7cd29c3f8e1607a3c7bb9ba1e8eaf1f6e6a877f5",
+        "5ec2b824f761dcbee87404a43daa6e106690da72260ed606a011677529965c13",
         {
             "_assert_value_metadata": "907fc083964acd015981f5c17b02586a03f57d229bf9a113e5961a0437ac6e81",
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "6cf04507093214b98322e374a9180d0cba727bb1bb50cf9c302d830f35611b8f",
+        "39a0efe7087cdc347eca00fe22d4d281e696190bcc1cd8d5425c4c64416fe38f",
         {
             "_compile_all_functions": "b9dee4d2a7caf364552f551713477cc4410fc7da8339e665962ae0e8066b9659",
         },
@@ -3812,6 +3817,74 @@ def _eager_input_errors(*, tree: ast.Module, source: str) -> list[str]:
     )
     if _transport_module_surface(tree) != surface:
         errors.append("eager input transport: module bindings changed")
+    return errors
+
+
+# The call-local owner authenticates completion, not numerical arithmetic or
+# physical allocator peaks. Real pending-array and transfer regressions establish
+# execution behavior; these guards reject changed lifetime/dispatch corridors.
+_SOLVE_READINESS_CONTRACTS = {
+    SOLVE_PENDING_WORK_SOURCE: (
+        "9a45521ac40df04ae42ce44ae8cd11748dd69a845c4cd5b496aaadffc893c9a3",
+        {
+            "BeforeArrayDelete.__call__": "1c24de0e7bdcf0cb0bc04e791baba1c42b13d9956ddf52f8317356a5266ad74b",
+            "PendingSolveWork.__init__": "906f9616790021cbfb647a5be9e3e540f03684510fc0b077971a70102c825fa9",
+            "PendingSolveWork.before": "ff4a1626ee01b3b7bd92e381028061cafaaf5e7783600221967ae733eb9833ae",
+            "PendingSolveWork.record": "2ca9affccdc84b37cbe437cd320cd2793f627947a0af8fe347fb4d5b9362dc1f",
+            "PendingSolveWork.before_delete": "94a1cf03edab4724c3c89b5178739980fcbb921d8d5bdc7eaf398064917e1f23",
+            "PendingSolveWork.close": "fe6414b23cac14171f27d9b47d1be4782ec87455a8a49757b9d492aec57539fd",
+            "_MaterializedCopies.__call__": "2c4a4c66c43562237d26b463d44a44ec9fa04df33758ded7fd344aa7a86022c6",
+            "_MaterializedCopies.close": "1f54bd302fbd989ef36cf1c3dcd67c1e4b0bdf85a9fa5711c5fda702aec64a66",
+            "execute_with_pending_work": "ae75d43d947d8cf2872fa803b114c4a4de5ec7c7774d3118786ea7bef6c0f44e",
+            "_drain": "e29703e5803aebcfd54107150edd5bdafd73368d5d736bedece1e3e4f4573322",
+            "_complete_array": "55a0795c2c3ab63912524fcce52fabd7fbd5c9b9aff1d2e6bce9d80e49d4f6e6",
+        },
+    ),
+    "src/_lcm/execution/output_layout.py": (
+        "bf24629f0671e78981873d3d6b9e295ad33cbdae8c61e1a98c9f27f32aca8be6",
+        {
+            "PlannedCore.__call__": "08bfb7b759bc903ff3a4225f57edd4d2298c2e5e8c38832c5ef6b81a878828da",
+        },
+    ),
+    "src/_lcm/execution/value_transfer.py": (
+        "5ec2b824f761dcbee87404a43daa6e106690da72260ed606a011677529965c13",
+        {
+            "MaterializedTransferObserver.__call__": "3e06bf2091d6a3291e5674060c34313e03f0e7419af22b033de98b2fb2845ca4",
+            "apply_value_transfer": "ddbe334f29354344b04b5e73f280522164c6af9b128d93936c6a1ea3ef604961",
+            "apply_value_transfer_plan": "5935a6ddc11376327dbec4ea66035063acb212093c52f93d8f38f4cced622291",
+            "_replace_transfer_leaf": "7d6561650cf00a181a636eff3c320653916aa95ed57b25b32f6699582bd3084b",
+            "_transferred_leaf": "b2b9022815cc8459d04c18fd9dda22ecd1fb8dfe969540e5112d279ef0403af1",
+            "_replace_dataclass_field": "fb6a7641a0cdf063cf1933917f50a88dbad7591ac560b55bcfd49a1c68e51147",
+        },
+    ),
+    "src/_lcm/execution/scheduler.py": (
+        "c8e5d0bb93091e883f269194bb4803c6910b8717a887f5800bff0b64875d1b05",
+        {
+            "release_closed_artifacts": "76bd3cb14ddc9fc90add485422a671db7096d06061fd34c2b48bc2158260995f",
+            "PeriodTransferCache.__init__": "b8f98b0f9b31d9aa402075b92baa63729b17d71d4a5ce9fde078be47b95854c4",
+            "PeriodTransferCache.commit_consumer": "83ffdec9aea1efd675cad1d45d317a31e72775d52169df9e11bcb157b5d9b0ef",
+        },
+    ),
+    "src/_lcm/solution/backward_induction.py": (
+        "39a0efe7087cdc347eca00fe22d4d281e696190bcc1cd8d5425c4c64416fe38f",
+        {
+            "solve": "8b46385260dbfe4fc52baab4bf041e3694ece97b6b188501769f19a4b017cdba",
+            "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
+            "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
+            "_retire_donated_inputs": "d5c3862195f2733fa97a5489d8db20d7c55e53431f0b2313b1b4f9a49b34e20c",
+        },
+    ),
+}
+
+
+def _solve_readiness_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Reject changed solve completion ownership after independent byte resealing."""
+    surface, callables = _SOLVE_READINESS_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="solve completion ownership", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append("solve completion ownership: module bindings changed")
     return errors
 
 
@@ -4025,7 +4098,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "6cf04507093214b98322e374a9180d0cba727bb1bb50cf9c302d830f35611b8f",
+        "39a0efe7087cdc347eca00fe22d4d281e696190bcc1cd8d5425c4c64416fe38f",
         {
             "_prepare_abstract_program": "d9674a5ecfc16c6811cc7858d84f09b9ba3ff6538174e0b014b6b75ee8d28030",
         },
@@ -4246,7 +4319,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "6cf04507093214b98322e374a9180d0cba727bb1bb50cf9c302d830f35611b8f"
+        != "39a0efe7087cdc347eca00fe22d4d281e696190bcc1cd8d5425c4c64416fe38f"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -4310,7 +4383,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "9a58e554610ec84eb1967278c2509474cb01a0933f82f81db20ecc2219b22247"
+        expected = "be46a266f67b14329f43d2407d9e20fac0762368699298bb3a252621f888a02c"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -5052,6 +5125,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
+    for relative in _SOLVE_READINESS_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _solve_readiness_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     for relative in _COMBINED_INPUT_CONTRACTS:
         tree = parsed.get(relative)
         if tree is not None:
@@ -5709,6 +5789,11 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
 
 
 _SUPPLEMENTAL_SOURCE_MUTATIONS = {
+    "solve_completion:conflict_wait_bypassed": (
+        "src/_lcm/execution/pending_work.py",
+        "    owner.before(devices=devices)",
+        "    owner.before(devices=frozenset())",
+    ),
     "policy_diagnostics:represented_mask_ignored": (
         POLICY_DIAGNOSTICS_SOURCE,
         "jnp.sum(live & ~represented)",

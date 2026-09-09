@@ -23,6 +23,7 @@ import jax
 from jaxtyping import PyTree
 
 from _lcm.execution.liveness import PlannedInputLiveness
+from _lcm.execution.pending_work import BeforeArrayDelete
 from _lcm.execution.value_transfer import ResolvedValueTransfer
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
@@ -286,6 +287,7 @@ def release_closed_artifacts(
     pending_outputs: Sequence[jax.Array],
     closing_dispatch: Hashable,
     logger: logging.Logger,
+    before_delete: BeforeArrayDelete | None = None,
 ) -> tuple[ReleaseRecord, ...]:
     """Delete the buffers of closed artifacts once every pending output is ready.
 
@@ -345,6 +347,8 @@ def release_closed_artifacts(
     if not to_delete:
         return ()
     jax.block_until_ready(tuple(pending_outputs))
+    if before_delete is not None:
+        before_delete(arrays=tuple(candidate.array for candidate in to_delete))
     records: list[ReleaseRecord] = []
     for candidate in to_delete:
         array = candidate.array
@@ -558,6 +562,7 @@ class PeriodTransferCache:
 
     __slots__ = (
         "_arrays",
+        "_before_delete",
         "_ledger",
         "_logger",
         "_next_dispatch_index",
@@ -575,6 +580,7 @@ class PeriodTransferCache:
         pending_outputs: Sequence[jax.Array] = (),
         release_enabled: bool = True,
         logger: logging.Logger = _logger,
+        before_delete: BeforeArrayDelete | None = None,
     ) -> None:
         """Start with no cached copy and the period's declared consumer counts.
 
@@ -589,6 +595,7 @@ class PeriodTransferCache:
         # cleanly to `release_closed_artifacts`'s `Mapping[Hashable, jax.Array]`
         # parameter — `Mapping`'s key type parameter is invariant.
         self._arrays: dict[Hashable, jax.Array] = {}
+        self._before_delete = before_delete
         self._registry = registry
         self._pending_outputs = pending_outputs
         self._release_enabled = release_enabled
@@ -674,6 +681,7 @@ class PeriodTransferCache:
             pending_outputs=tuple(self._pending_outputs),
             closing_dispatch=dispatch,
             logger=self._logger,
+            before_delete=self._before_delete,
         )
 
     def __len__(self) -> int:
