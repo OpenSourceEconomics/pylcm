@@ -211,7 +211,9 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
     assert len(compile_calls["_select_period_programs"]) == 1
     assert len(compile_calls["_resolve_output_layouts_and_lowering_keys"]) == 1
     assert len(collect_calls["materialize_core_program"]) == 1
-    assert len(collect_calls["_resolve_program_for_execution"]) == 1
+    assert len(collect_calls["resolve_core_program_candidates"]) == 1
+    resolver_calls = _direct_call_lines(_function_tree(resolve_core_program))
+    assert len(resolver_calls["resolve_core_program_candidates"]) == 1
     assert len(replay_calls["core_program_graph"]) == 1
     assert len(replay_calls["materialize_core_program"]) == 1
     assert len(replay_calls["_resolve_program_for_execution"]) == 1

@@ -985,11 +985,53 @@ def resolve_core_program(
     metadata checks run, but no physical transfer is applied. The original source
     transfer plan remains attached to the resolved program for cost accounting.
     """
+    return resolve_core_program_candidates(
+        program=program,
+        tile_widths=(tile_widths,),
+        input_transfer_plan=input_transfer_plan,
+        abstract_inputs=abstract_inputs,
+    )[0]
+
+
+def resolve_core_program_candidates(
+    *,
+    program: MaterializedCoreProgram,
+    tile_widths: tuple[Mapping[str, object] | None, ...],
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
+    abstract_inputs: bool = False,
+) -> tuple[ResolvedCoreProgram, ...]:
+    """Validate one program and bind every candidate in the supplied order.
+
+    The declaration, callable signature and abstract-input metadata are shared
+    by every width of this materialized program. Validate them once for this
+    call. Each candidate still checks its widths and exact transfer plan and
+    keeps the original callable identity. A later call validates afresh, so
+    mutable callable signatures and partial bindings remain visible.
+    """
     _validate_core_program(program=program)
     if type(abstract_inputs) is not bool:
         raise TypeError("abstract_inputs must be a bool.")
     if abstract_inputs:
         _validate_abstract_inputs(program=program)
+    return tuple(
+        _resolve_core_program(
+            program=program,
+            tile_widths=widths,
+            input_transfer_plan=input_transfer_plan,
+            abstract_inputs=abstract_inputs,
+        )
+        for widths in tile_widths
+    )
+
+
+def _resolve_core_program(
+    *,
+    program: MaterializedCoreProgram,
+    tile_widths: Mapping[str, object] | None,
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...],
+    abstract_inputs: bool,
+) -> ResolvedCoreProgram:
+    """Bind one candidate of a validated program, preserving width-specific checks."""
     requested_widths = {} if tile_widths is None else dict(tile_widths)
     if program.disposition is CoreExecutionDisposition.PLANNED:
         (
@@ -1134,11 +1176,14 @@ def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
         msg = f"Core program has duplicate planner width keywords: {width_keywords!r}."
         raise ValueError(msg)
 
+    signature: inspect.Signature | None = None
     for axis in axes:
         _validate_axis_width_keyword(axis=axis, arguments=program.arguments)
         if isinstance(axis, ReducedAxis):
             _validate_reduced_axis(axis=axis, arguments=program.arguments)
-        _validate_width_keyword(function=program.function, axis=axis)
+        if signature is None:
+            signature = inspect.signature(program.function)
+        _validate_width_keyword(signature=signature, axis=axis)
 
 
 def _validate_materialized_declaration(*, program: MaterializedCoreProgram) -> None:
@@ -1524,10 +1569,9 @@ def _validate_coordinate_argument(
 
 
 def _validate_width_keyword(
-    *, function: Callable[..., object], axis: ReducedAxis | TiledOutputAxis
+    *, signature: inspect.Signature, axis: ReducedAxis | TiledOutputAxis
 ) -> None:
     """Require the raw core to accept the planner's static width binding."""
-    signature = inspect.signature(function)
     parameter = signature.parameters.get(axis.width_keyword)
     accepts_kwargs = any(
         item.kind is inspect.Parameter.VAR_KEYWORD

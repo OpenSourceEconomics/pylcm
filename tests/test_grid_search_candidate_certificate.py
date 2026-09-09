@@ -834,6 +834,8 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "terminal_wrapper:native_graph_filtered",
         "terminal_wrapper:duplicate_legacy_authority",
         "streaming_resolver:bypass_static_width_binding",
+        "streaming_resolver:candidate_validation_bypassed",
+        "streaming_resolver:later_candidates_dropped",
         "streaming_resolver:arguments_filtered",
         "streaming_resolver:specialization_drops_axes",
         "streaming_resolver:output_roles_dropped",
@@ -924,15 +926,15 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     original_names = {
         name for name in names if not name.startswith("simulation_adapter:")
     }
-    assert len(original_names) == 386
+    assert len(original_names) == 388
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "ef2fd95367327acc193d97d4f9ca8c4b6627af9a763419ec9a60b73d32da812d"
+        == "f3d63d3030cb5d0a347f938aaba1c03faa52b23dd81690d982dcf7685d3a9a2d"
     )
-    assert len(names) == 404
+    assert len(names) == 406
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "7fb69a87daf4bd1f927d76d0c6507138d8b0d7eda25d478c3f5f551b1bdd1b61"
+        == "8a05b3e83750ca635e61bd66bc0667278710dc750e0ccb58f85fc8e1c63f8454"
     )
 
 

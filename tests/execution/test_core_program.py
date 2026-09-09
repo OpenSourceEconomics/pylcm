@@ -1,6 +1,7 @@
 """Tests for planner-owned CoreProgram declarations and resolution."""
 
 import functools
+import inspect
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -24,6 +25,7 @@ from _lcm.execution.core_program import (
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
+    resolve_core_program_candidates,
 )
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
@@ -723,6 +725,56 @@ def test_resolver_binds_width_without_adding_a_dynamic_argument() -> None:
 def test_resolver_requires_a_planner_width_for_each_execution_axis() -> None:
     with pytest.raises(ValueError, match=r"[Tt]ile width.*required"):
         resolve_core_program(program=_program())
+
+
+def test_each_resolution_checks_the_current_partial_signature() -> None:
+    """A changed callable signature is checked when a new resolution begins."""
+    function = functools.partial(_hard_max_core)
+    program = replace(_program(), function=function)
+    resolved = resolve_core_program(program=program, tile_widths={"action_product": 2})
+    assert resolved.function is function
+    assert_array_equal(
+        resolved.function(**resolved.arguments, **resolved.static_kwargs), 9.0
+    )
+
+    object.__setattr__(
+        function,
+        "__signature__",
+        inspect.Signature([inspect.Parameter("first", inspect.Parameter.KEYWORD_ONLY)]),
+    )
+    with pytest.raises(TypeError, match="not accepted by the core function"):
+        resolve_core_program(program=program, tile_widths={"action_product": 3})
+
+
+def test_candidate_resolutions_preserve_width_order_identity_and_values() -> None:
+    """Every requested tile retains the same complete action reduction."""
+    program = _program()
+    candidates = resolve_core_program_candidates(
+        program=program,
+        tile_widths=(
+            {"action_product": 6},
+            {"action_product": 3},
+            {"action_product": 1},
+        ),
+    )
+    assert tuple(
+        candidate.tile_widths["action_product"] for candidate in candidates
+    ) == (6, 3, 1)
+    for candidate in candidates:
+        assert candidate.function is program.function
+        assert_array_equal(
+            candidate.function(**candidate.arguments, **candidate.static_kwargs), 9.0
+        )
+
+
+@pytest.mark.parametrize("invalid_width", [0, 7, True])
+def test_candidate_resolutions_validate_later_widths(invalid_width: object) -> None:
+    """A valid first tile leaves every later tile subject to its axis contract."""
+    with pytest.raises((TypeError, ValueError), match=r"[Tt]ile width"):
+        resolve_core_program_candidates(
+            program=_program(),
+            tile_widths=({"action_product": 2}, {"action_product": invalid_width}),
+        )
 
 
 def test_a_host_driven_program_declares_no_execution_axis() -> None:

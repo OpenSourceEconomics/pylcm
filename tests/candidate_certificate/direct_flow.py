@@ -369,7 +369,7 @@ _SOURCE_SEALS = {
     MAX_Q_SOURCE: "e01b3de5cdad12804794a3ce83ff3a74424a9539caa70330e8792ca7878f1bc9",
     PROCESSING_SOURCE: "3aa08741042207d1dfd26e4bd8e6b65b1c20d80d5eb2b0825f3c5682d76a4ad9",
     GRID_SEARCH_SOURCE: "ed33d78e3cd17921cbde158534f386014f3a2529af5cf686b7e10c8e3fa43d7e",
-    CORE_PROGRAM_SOURCE: "37823a33eca40dcce2cb71952b7d7d7ec8bedccca15061a4df6178061e738757",
+    CORE_PROGRAM_SOURCE: "924a99cdcd6eef3b4d3d4085b59fa0a6b487994395715385af689df207942305",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
     VALUE_TRANSFER_SOURCE: "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6",
     FOOTPRINT_SOURCE: "0dbaa3c673f053a51fa7bcab4e06d2080252dd84d827ed28123d085c4000fd0f",
@@ -390,7 +390,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "f6b4ec612b6bcf6263995d85ce5bd49c75c0c807af1bafd83a16c89140863d12",
     MODEL_SOURCE: "1e7373256c3d264b07568282252f07659f33c697c708f85541d66cdfc44be18f",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "ac5ed4d203a9d6bf2e69e1511bc8116ce92ecad0a4840f28238d51040e91ca74",
+    BACKWARD_INDUCTION_SOURCE: "2f6f144918e600bcc8c10e0e425323eb7ccfc985665d83ed8710191c89a30164",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "6ae5d06da6fb96fbcbdd12160f35ea5ce3731e87b7dba5f9139e7a2e29d0462e",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
@@ -419,9 +419,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "727870dc8917f7aedfe99e4b7f1cacac6ecd11f4763004a29d2b4ef8237522ea",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 404
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "7fb69a87daf4bd1f927d76d0c6507138d8b0d7eda25d478c3f5f551b1bdd1b61"
+    "8a05b3e83750ca635e61bd66bc0667278710dc750e0ccb58f85fc8e1c63f8454"
 )
 
 
@@ -2190,9 +2190,11 @@ ARTIFACT = "artifact"
                 "_validate_retained_artifact_payload_types": "8ceae90284dbdc25b64e0b66d79990e8f9104f9a6410d90d8eb94c426d24ecbd",
                 "_validate_disposition_reason": "5df6651c2d9db4ebeb5542394c738c5238144ff19f48f0639b3bb6b43c63bc8d",
                 "materialize_core_program": "3fca95ce9b59331c45e956c4b5a86d468cfc10ff726875ec36f607a83f0cfb31",
-                "resolve_core_program": "e9f3e9a970c72ce519b4c73261ae3ee9286c775e06c01e76971c4c59fc17e162",
+                "resolve_core_program": "0ec2c3d08016ccb5dfcd205ff179edcdcdeb7fd1a773bd695ea6d287f21598b8",
+                "resolve_core_program_candidates": "290aa30be2202a404c89d7d6a31f9c77847c2be1d5280d059d48864e6a72cafa",
+                "_resolve_core_program": "e84f83f1e02527adedd8b895f57981281e7e4ba725b3793cb4057f9ba10ced7f",
                 "select_programs": "545d2aaa5fd158f5cbbe4c8a2bf69cfffdaff588eb5066fcde54de59fb37c91b",
-                "_validate_core_program": "26c1ac9dd671db992b08622950966686a4a99a98e29931ef8a6af8b4bb27e50d",
+                "_validate_core_program": "b7558f7fe479363723c2b4d4925ab954e262883c4e07cbc956b72bbbe4291511",
                 "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
                 "_resolve_input_transfer_plan": "f62a9fc86af542f15a99a0dd93978b681e1dd0c45d14772b711a6d80d3eceb2e",
                 "_validate_value_reads": "7195e459ee532bf8ba4761bbf4570079282122e85a588f4f77064b0bb3a07ca0",
@@ -2201,7 +2203,7 @@ ARTIFACT = "artifact"
                 "_validate_reduced_axis": "ddbd1f45950e27f98e26c4ec6e966cb81720a58fc76b509304a1584e66b39c55",
                 "_validate_tile_width": "12b8130b0c8fd36ca93fb5c8d5fc47b7b02b802e5c0c84a47858c7999d61e98e",
                 "_validate_coordinate_argument": "b37c132508f8a2ca8803c1db613fff68b4506e417b0832638cbd1ff432a74cd0",
-                "_validate_width_keyword": "b30b4f2a38c8a23089c9443ce0df2079589b6d5c881035bfbb3d50da9eadb659",
+                "_validate_width_keyword": "d35cbcfe40e9888d2d9bdde001c488fd82f01b6a8eabbd7dbf6121bfe709674e",
             },
         )
     )
@@ -3792,7 +3794,7 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "39a0efe7087cdc347eca00fe22d4d281e696190bcc1cd8d5425c4c64416fe38f",
+        "2d56706f2fb035c8a28b11ca1d1b9baf6263646ad74ca84be9447f6dddaf3cd9",
         {
             "_compile_all_functions": "b9dee4d2a7caf364552f551713477cc4410fc7da8339e665962ae0e8066b9659",
         },
@@ -3874,7 +3876,7 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "39a0efe7087cdc347eca00fe22d4d281e696190bcc1cd8d5425c4c64416fe38f",
+        "2d56706f2fb035c8a28b11ca1d1b9baf6263646ad74ca84be9447f6dddaf3cd9",
         {
             "solve": "8b46385260dbfe4fc52baab4bf041e3694ece97b6b188501769f19a4b017cdba",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
@@ -4122,13 +4124,13 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/execution/core_program.py": (
-        "6849d39bc8ef6ee6ac95dd36cdb330fb7d9ae755a36732bc8ca6e4f67d11172e",
+        "78a681adbf5536f614fd976e5c2d27b0f501e24957249a0920207f04385ab470",
         {
             "_validate_abstract_inputs": "70f96b7582b3a085fdac809c48c6cbe5788f28d5b5d94dd0bb19eec5a3bdc973",
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "39a0efe7087cdc347eca00fe22d4d281e696190bcc1cd8d5425c4c64416fe38f",
+        "2d56706f2fb035c8a28b11ca1d1b9baf6263646ad74ca84be9447f6dddaf3cd9",
         {
             "_prepare_abstract_program": "d9674a5ecfc16c6811cc7858d84f09b9ba3ff6538174e0b014b6b75ee8d28030",
         },
@@ -4320,7 +4322,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
             "_compile_all_functions": "b9dee4d2a7caf364552f551713477cc4410fc7da8339e665962ae0e8066b9659",
-            "_resolve_output_layouts_and_lowering_keys": "f03447730445e6e130ec69e7eb87fb05b71b1d57f11134e684a198c12155f3e0",
+            "_resolve_output_layouts_and_lowering_keys": "0c0c1a43a2300bda03416d67932eb7b82fec12783a32a45cd841d5ab18d76f03",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "2b11ec8152b081ae0e2666a46c79b46ef5062ce2738717da0c93bcc502280c56",
@@ -4349,7 +4351,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "39a0efe7087cdc347eca00fe22d4d281e696190bcc1cd8d5425c4c64416fe38f"
+        != "2d56706f2fb035c8a28b11ca1d1b9baf6263646ad74ca84be9447f6dddaf3cd9"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -7038,6 +7040,18 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     }
 
     core_program_cases = {
+        "streaming_resolver:candidate_validation_bypassed": replace_once(
+            source=core_program_source,
+            old="    _validate_core_program(program=program)",
+            new="    pass",
+            label="candidate declaration validation",
+        ),
+        "streaming_resolver:later_candidates_dropped": replace_once(
+            source=core_program_source,
+            old="        for widths in tile_widths",
+            new="        for widths in tile_widths[:1]",
+            label="complete width candidate enumeration",
+        ),
         "streaming_resolver:bypass_static_width_binding": replace_once(
             source=core_program_source,
             old="        static_kwargs=width_bindings,",
@@ -8464,13 +8478,13 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="                source=triple,",
+                old="            source=triple,",
                 new=(
-                    "                source=(\n"
-                    "                    materialized.requirements.value_reads[0].source.source_regime,\n"
-                    "                    materialized.requirements.value_reads[0].source.source_period,\n"
-                    "                    materialized.requirements.value_reads[0].source.core_key,\n"
-                    "                ),"
+                    "            source=(\n"
+                    "                materialized.requirements.value_reads[0].source.source_regime,\n"
+                    "                materialized.requirements.value_reads[0].source.source_period,\n"
+                    "                materialized.requirements.value_reads[0].source.core_key,\n"
+                    "            ),"
                 ),
                 label="backward actual source-coordinate authority",
             ),
@@ -8479,8 +8493,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": _replace_nth(
                 text=backward_induction_source,
-                marker="        input_transfer_plan=input_transfer_plan,",
-                replacement="        input_transfer_plan=(),",
+                marker="            input_transfer_plan=transfer_plan,",
+                replacement="            input_transfer_plan=(),",
                 occurrence=1,
             ),
         },
@@ -8547,8 +8561,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="                tile_widths=widths,",
-                new="                tile_widths={},",
+                old="            tile_widths=width_candidates,",
+                new="            tile_widths=tuple({} for _ in width_candidates),",
                 label="native program planned widths",
             ),
         },

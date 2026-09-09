@@ -615,8 +615,8 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "solve_descriptors:planning_transfer_executed": (
         "src/_lcm/solution/backward_induction.py",
-        "input_transfer_plan=transfer_plan,\n                abstract_inputs=True,",
-        "input_transfer_plan=transfer_plan,\n                abstract_inputs=False,",
+        "input_transfer_plan=transfer_plan,\n            abstract_inputs=True,",
+        "input_transfer_plan=transfer_plan,\n            abstract_inputs=False,",
     ),
     "abstract_core:concrete_operand_admitted": (
         "src/_lcm/execution/core_program.py",

@@ -41,6 +41,7 @@ from _lcm.execution.core_program import (
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
+    resolve_core_program_candidates,
     select_programs,
 )
 from _lcm.execution.donation import (
@@ -3951,15 +3952,12 @@ def _resolve_output_layouts_and_lowering_keys(
             if name not in regime.fold_state_names
         )
         records: dict[Hashable, ResolvedProducer] = {}
-        for widths in width_candidates:
-            resolved = _resolve_program_for_execution(
-                program=materialized,
-                tile_widths=widths,
-                source_value_template=next_regime_to_V_arr[regime_name],
-                source=triple,
-                input_transfer_plan=transfer_plan,
-                abstract_inputs=True,
-            )
+        for resolved in resolve_core_program_candidates(
+            program=materialized,
+            tile_widths=width_candidates,
+            input_transfer_plan=transfer_plan,
+            abstract_inputs=True,
+        ):
             layout = layouts.get(triple)
             if layout is None:
                 layout = resolve_output_layout(
