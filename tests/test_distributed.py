@@ -28,6 +28,7 @@ from _lcm.execution.scheduler import (
     shares_a_buffer,
 )
 from _lcm.execution.value_transfer import (
+    MaterializedTransferObserver,
     ResolvedValueTransfer,
     ValueArtifactAddress,
     ValueArtifactKind,
@@ -1440,11 +1441,14 @@ def shared_transfer_executions() -> list[tuple[int, object]]:
     real = value_transfer.apply_value_transfer
 
     def count(
-        *, value: object, transfer: value_transfer.ResolvedValueTransfer
+        *,
+        value: object,
+        transfer: value_transfer.ResolvedValueTransfer,
+        on_materialized: MaterializedTransferObserver | None = None,
     ) -> jax.Array:
         if transfer.reused_by_several_consumers:
             executed.append((transfer.source.source_period, transfer.target))
-        return real(value=value, transfer=transfer)
+        return real(value=value, transfer=transfer, on_materialized=on_materialized)
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(value_transfer, "apply_value_transfer", count)

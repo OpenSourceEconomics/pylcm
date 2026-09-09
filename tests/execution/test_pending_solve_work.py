@@ -1,4 +1,4 @@
-"""Pending-work ownership waits on complete real output trees and clears roots."""
+"""Completion ownership visits every real output and clears its retained roots."""
 
 import gc
 import weakref
@@ -25,62 +25,80 @@ from _lcm.execution.value_transfer import (
 )
 
 
-def _dot(*, operand: jax.Array) -> jax.Array:
-    return operand @ operand
-
-
 def _is_ready(*, array: jax.Array) -> bool:
     """Read the real JAX readiness method omitted from its current type stubs."""
     return cast("Callable[[], bool]", getattr(array, "is_ready"))()  # noqa: B009
 
 
-def _pending_array() -> jax.Array:
-    operand = jnp.full((1024, 1024), 0.125).block_until_ready()
-    compiled = jax.jit(_dot).lower(operand=operand).compile()
-    result = compiled(operand=operand)
-    assert not _is_ready(array=result), "The fixture must return actual pending work."
-    return result
+@pytest.fixture
+def completed_array_ids(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Observe real completion calls without retaining arrays or timing their work."""
+    array_type = type(jnp.asarray(0.0))
+    complete = array_type.block_until_ready
+    completed: list[int] = []
+
+    def observe(array: jax.Array) -> jax.Array:
+        completed.append(id(array))
+        return complete(array)
+
+    monkeypatch.setattr(array_type, "block_until_ready", observe)
+    return completed
 
 
-def test_conflict_waits_for_auxiliary_beside_ready_pass_through_value() -> None:
+def test_conflict_completes_auxiliary_beside_ready_pass_through_value(
+    completed_array_ids: list[int],
+) -> None:
     owner = pending_work.PendingSolveWork()
     ready_value = jnp.asarray(3.0).block_until_ready()
-    auxiliary = _pending_array()
+    auxiliary = jnp.arange(8.0).block_until_ready()
+    completed_array_ids.clear()
     try:
         owner.record(
             outputs=(ready_value, {"auxiliary": auxiliary}), devices=auxiliary.devices()
         )
         assert _is_ready(array=ready_value)
+        assert completed_array_ids == []
         owner.before(devices=auxiliary.devices())
+        assert completed_array_ids == [id(ready_value), id(auxiliary)]
         assert _is_ready(array=auxiliary)
     finally:
         owner.close()
 
 
-def test_before_delete_discharges_record_before_invalidating_wrapper() -> None:
+def test_before_delete_discharges_record_before_invalidating_wrapper(
+    completed_array_ids: list[int],
+) -> None:
     owner = pending_work.PendingSolveWork()
-    result = _pending_array()
+    result = jnp.arange(8.0).block_until_ready()
     devices = result.devices()
+    completed_array_ids.clear()
     try:
         owner.record(outputs=result, devices=devices)
+        assert completed_array_ids == []
         owner.before_delete(arrays=(result,))
+        assert completed_array_ids == [id(result)]
         assert _is_ready(array=result)
         result.delete()
         owner.before(devices=devices)
+        assert completed_array_ids == [id(result)]
     finally:
         owner.close()
 
 
 @pytest.mark.parametrize("drain", ["before", "close"])
-def test_drained_owner_keeps_no_output_reference(*, drain: str) -> None:
+def test_drained_owner_keeps_no_output_reference(
+    *, drain: str, completed_array_ids: list[int]
+) -> None:
     owner = pending_work.PendingSolveWork()
-    result = _pending_array()
+    result = jnp.arange(8.0).block_until_ready()
     reference = weakref.ref(result)
+    completed_array_ids.clear()
     owner.record(outputs=result, devices=result.devices())
     if drain == "before":
         owner.before(devices=result.devices())
     else:
         owner.close()
+    assert completed_array_ids == [id(result)]
     assert _is_ready(array=result)
     del result
     gc.collect()
@@ -90,7 +108,7 @@ def test_drained_owner_keeps_no_output_reference(*, drain: str) -> None:
 
 def test_close_preserves_active_exception_and_discards_its_owner_roots() -> None:
     owner = pending_work.PendingSolveWork()
-    result = _pending_array()
+    result = jnp.arange(8.0).block_until_ready()
     owner.record(outputs=result, devices=result.devices())
     # A missing release hook is not evidence of readiness: the cleanup must
     # report that invalid witness without replacing the original solver error.
