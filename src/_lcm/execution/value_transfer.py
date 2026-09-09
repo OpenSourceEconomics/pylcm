@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.execution.footprint import layout_footprint, sharding_device_ids
+from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
@@ -794,7 +795,9 @@ def _assert_value_metadata(
             f"expected {expected_dtype}."
         )
         raise TypeError(msg)
-    if value.sharding != expected_sharding:
+    if not runtime_shardings_match(
+        actual=value.sharding, expected=expected_sharding, ndim=value.ndim
+    ):
         msg = (
             f"The {label} transfer value has sharding {value.sharding}; "
             f"expected {expected_sharding}."

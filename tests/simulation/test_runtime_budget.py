@@ -95,6 +95,7 @@ class _ControlledCompiler:
     program: MaterializedCoreProgram
     enable_jit: bool
     subject_width: int
+    abstract_inputs: bool
     compilations: list[int]
     executable_widths: dict[int, int]
 

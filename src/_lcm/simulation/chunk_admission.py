@@ -116,6 +116,7 @@ def prepare_simulation_chunks(
     retained_footprint: DeviceBufferFootprint,
     independent_taste: bool,
     log_level: LogLevel,
+    policies: Mapping[int, Mapping[str, object]] | None = None,
 ) -> PreparedSimulationChunks:
     """Exhaust inner choices before shrinking an outer chunk's admitted extent."""
     runtime = next(iter(regimes.values())).simulation.programs.executor
@@ -128,7 +129,10 @@ def prepare_simulation_chunks(
         )
     if not runtime.enable_jit or any(
         regime.gated_edges
-        or regime.simulation.replay_route.policy_applicable
+        or (
+            regime.simulation.replay_route.policy_applicable
+            and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+        )
         or regime.simulation.external_replay_route is not None
         for regime in regimes.values()
     ):
@@ -197,6 +201,7 @@ def prepare_simulation_chunks(
         regimes=regimes,
         call_inputs=call_inputs,
         values=values,
+        policies=policies,
         ages=ages,
         initial_conditions=initial_conditions,
         regime_names_to_ids=regime_names_to_ids,
@@ -236,6 +241,7 @@ class _ChunkProfiler:
     log_level: LogLevel
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
+    policies: Mapping[int, Mapping[str, object]] | None = None
 
     def __call__(self, *, n_subjects: int) -> SimulationChunkProfile:
         """Return a fitting common inner choice, or the smallest required bound."""
@@ -257,6 +263,7 @@ class _ChunkProfiler:
                 flat_params=self.call_inputs.flat_params,
                 base_spaces=self.call_inputs.base_state_action_spaces,
                 values=self.values,
+                policies=self.policies,
                 ages=self.ages,
                 initial_conditions=self.initial_conditions,
                 regime_names_to_ids=self.regime_names_to_ids,
@@ -290,7 +297,12 @@ def _common_axes(
     axes: dict[str, ReducedAxis | TiledOutputAxis] = {}
     for regime in regimes.values():
         programs = regime.simulation.programs
-        for family in (programs.decision, programs.transition, programs.route):
+        for family in (
+            programs.policy_prepare,
+            programs.decision,
+            programs.transition,
+            programs.route,
+        ):
             for program in family.values():
                 for declared in program.requirements.axes:
                     axis = (

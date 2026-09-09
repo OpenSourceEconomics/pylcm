@@ -21,6 +21,7 @@ _replay = importlib.import_module("_lcm.simulation.simulate")
 def _legacy_finite_replay(**arguments):
     """Use the unchanged pre-program coordinator as the comparison route."""
     n_subjects = arguments.pop("n_subjects")
+    arguments.pop("memory", None)
     actions, values = _replay._replay_nnbegm_candidates(
         optimal_actions=MappingProxyType({}),
         action_names=arguments["regime"].simulation.action_names,

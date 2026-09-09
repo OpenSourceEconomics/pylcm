@@ -530,6 +530,17 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert tuple(sorted(result["certified_corridor_sources"])) == CERTIFIED_SOURCES
 
 
+def test_finite_policy_diagnostic_is_a_literal_certificate_obligation():
+    """Include the profiled live-versus-represented candidate diagnostic."""
+    assert isinstance(_parse("src/_lcm/simulation/policy_diagnostics.py"), ast.Module)
+
+
+def test_eager_dependencies_are_literal_certificate_obligations():
+    """Include the live eager placement and physical-layout dependencies."""
+    assert isinstance(_parse("src/_lcm/execution/eager_core.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/runtime_sharding.py"), ast.Module)
+
+
 def test_copy_and_chunk_dependencies_are_literal_certificate_obligations():
     """Inventory each new live dependency in the reviewed copy/profile corridor."""
     assert isinstance(

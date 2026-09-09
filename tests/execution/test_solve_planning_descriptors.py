@@ -1,6 +1,8 @@
 """Solve descriptors preserve concrete operands' numerical and placement contract."""
 
+import weakref
 from dataclasses import dataclass, replace
+from pathlib import Path
 from types import MappingProxyType
 
 import jax
@@ -25,6 +27,7 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from _lcm.solution.backward_induction import _abstract_arguments_key
+from tests.test_dropped_models_release_nested_functions import _live_nested_functions
 
 
 @jax.tree_util.register_dataclass
@@ -48,6 +51,31 @@ def _program(arguments: dict[str, object]) -> MaterializedCoreProgram:
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
     )
+
+
+def _describe_and_drop() -> tuple[weakref.ReferenceType[object], ...]:
+    """Exercise real descriptor construction without retaining its input owners."""
+    original = jnp.arange(4.0)
+    program = _program({"payload": original, "scalar": jnp.asarray(1.0)})
+    described = abstract_program_inputs(
+        program=program,
+        transfers=(),
+        execution_sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+    )
+    return weakref.ref(original), weakref.ref(program), weakref.ref(described)
+
+
+def test_dropped_descriptor_build_retains_no_nested_function_or_input_owner() -> None:
+    """A second real build leaves no per-call engine function in the claw cache."""
+    source_roots = (Path(__file__).resolve().parents[2] / "src" / "_lcm",)
+    _describe_and_drop()
+    before = _live_nested_functions(source_roots=source_roots)
+
+    references = _describe_and_drop()
+
+    after = _live_nested_functions(source_roots=source_roots)
+    assert all(reference() is None for reference in references)
+    assert after == before
 
 
 @pytest.mark.parametrize("weak", [False, True])

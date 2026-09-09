@@ -126,6 +126,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   copy admission and retain intermediate copies through validation. Native archive
   materialization, artifact copies and mixed-backend foreign copies remain unsupported
   under a budget.
+- Eager solve cores place ordinary inputs on their planned submesh before executing
+  the numerical body, including bodies that create constant outputs. Repeated inputs
+  share a placement when their complete descriptors match. Equivalent runtime layouts
+  are accepted without changing declared transfer or compilation identities. Declared
+  producer outputs reach subsequent eager cores with their actual validated layouts.
+- Solve operand profiling uses a shared descriptor callable, allowing model disposal
+  to release every per-program nested function.
+- Finite NNBEGM simulation admits its declared candidate preparation, dropped-candidate
+  diagnostics and canonical ranking under the chunk budget. The full candidate bank
+  remains owned and counted through ranking, with addressed policy transfers shared
+  across both programs.
 - Supplied solutions on regime submeshes are accepted by simulation. Forward programs
   and profiled allocation operations recheck current retained inputs and growing
   results at dispatch. Unprofiled eager or host-driven programs fail visibly under a

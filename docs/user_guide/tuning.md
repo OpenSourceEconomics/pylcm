@@ -161,6 +161,12 @@ not estimate an allocator optimum. On CPU, retaining all chunks and assembling t
 result can impose a floor that narrower chunks cannot remove. CPU assembly after GPU
 offload uses host RAM outside the GPU ceiling.
 
+Finite NNBEGM replay includes candidate preparation, diagnostics and canonical ranking
+in this bound. The prepared bank has one row per subject in the outer chunk and keeps
+the full published candidate extent. A smaller inner width does not remove that bank's
+storage requirement. Addressed policy copies and their transfer overlap are counted
+alongside retained originals.
+
 Parameterized grids and user entry laws can still allocate eagerly while shared inputs
 are completed. Their resulting arrays are counted, but this entry work is not
 pre-admitted by the chunk profiles. Budgeted host replay routes remain refused until

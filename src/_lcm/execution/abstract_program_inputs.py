@@ -1,7 +1,7 @@
 """Describe a solve core's required operands without materializing its transfers."""
 
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import jax
 
@@ -37,29 +37,9 @@ def abstract_program_inputs(
         else execution_sharding
     )
 
-    def describe(value: object) -> jax.ShapeDtypeStruct:
-        abstract = (
-            value
-            if isinstance(value, (jax.Array, jax.ShapeDtypeStruct))
-            else jax.eval_shape(_identity, value)
-        )
-        if not isinstance(abstract, (jax.Array, jax.ShapeDtypeStruct)):
-            raise TypeError("A numerical operand must describe one array leaf.")
-        sharding = (
-            value.sharding
-            if isinstance(value, jax.Array) and value.committed
-            else shared
-        )
-        if isinstance(value, jax.ShapeDtypeStruct) and value.sharding is not None:
-            sharding = value.sharding
-        return jax.ShapeDtypeStruct(
-            abstract.shape,
-            abstract.dtype,
-            weak_type=abstract.weak_type,
-            sharding=sharding,
-        )
-
-    arguments = jax.tree.map(describe, program.arguments)
+    arguments = jax.tree.map(
+        _OperandDescriptor(default_sharding=shared), program.arguments
+    )
     described = replace(program, arguments=arguments)
     replacements: dict[int, jax.ShapeDtypeStruct] = {}
     for transfer in transfers:
@@ -82,6 +62,37 @@ def abstract_program_inputs(
         lambda leaf: replacements.get(id(leaf), leaf), arguments
     )
     return replace(program, arguments=required)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _OperandDescriptor:
+    """Describe leaves without creating a nested callback for every program."""
+
+    default_sharding: jax.sharding.Sharding
+    """Execution layout used only when an operand declares no committed layout."""
+
+    def __call__(self, value: object) -> jax.ShapeDtypeStruct:
+        """Preserve one operand's numerical metadata and authoritative placement."""
+        abstract = (
+            value
+            if isinstance(value, (jax.Array, jax.ShapeDtypeStruct))
+            else jax.eval_shape(_identity, value)
+        )
+        if not isinstance(abstract, (jax.Array, jax.ShapeDtypeStruct)):
+            raise TypeError("A numerical operand must describe one array leaf.")
+        sharding = (
+            value.sharding
+            if isinstance(value, jax.Array) and value.committed
+            else self.default_sharding
+        )
+        if isinstance(value, jax.ShapeDtypeStruct) and value.sharding is not None:
+            sharding = value.sharding
+        return jax.ShapeDtypeStruct(
+            abstract.shape,
+            abstract.dtype,
+            weak_type=abstract.weak_type,
+            sharding=sharding,
+        )
 
 
 def _identity(value: object) -> object:

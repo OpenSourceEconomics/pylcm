@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from functools import partial
 from types import MappingProxyType
 from typing import cast
 
@@ -11,12 +12,19 @@ import numpy as np
 from dags.tree import qname_from_tree_path
 
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import CoreProgram
 from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
 from _lcm.simulation.operand_placement import subject_operand_sharding
-from _lcm.simulation.program_arguments import decision_arguments, transition_arguments
+from _lcm.simulation.policy_programs import ReplayPayload
+from _lcm.simulation.program_arguments import (
+    decision_arguments,
+    policy_prepare_arguments,
+    policy_rank_arguments,
+    transition_arguments,
+)
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import FlatParams
@@ -60,6 +68,7 @@ def profile_forward_programs(
     widths: Mapping[str, int],
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
+    policies: Mapping[int, Mapping[str, object]] | None = None,
 ) -> Mapping[tuple[int, str, str], ForwardProgramProfile]:
     """Prepare canonical entry descriptors for focused core-level profiling.
 
@@ -96,6 +105,7 @@ def profile_forward_programs(
                 columns=columns,
                 ordinary_key=ordinary_key,
                 taste_key=taste_key,
+                policy=(policies or {}).get(period, {}).get(name),
             )
             profiles.update(
                 {(period, name, family): profile for family, profile in unit.items()}
@@ -118,6 +128,7 @@ def profile_forward_unit(
     columns: Mapping[str, jax.ShapeDtypeStruct],
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
+    policy: object = None,
 ) -> Mapping[str, ForwardProgramProfile]:
     """Bind one actual current carrier to its decision, transition and route.
 
@@ -139,7 +150,10 @@ def profile_forward_unit(
             )
     if (
         regime.gated_edges
-        or regime.simulation.replay_route.policy_applicable
+        or (
+            regime.simulation.replay_route.policy_applicable
+            and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+        )
         or regime.simulation.external_replay_route is not None
     ):
         raise ExecutionPlanningError(
@@ -194,48 +208,71 @@ def profile_forward_unit(
         (ordinary_key if taste_key is None else taste_key).dtype,
         sharding=subject,
     )
-    arguments = decision_arguments(
-        states=states,
-        discrete_actions=_shared_tree(tree=base.discrete_actions, devices=devices),
-        continuous_actions=_shared_tree(tree=base.continuous_actions, devices=devices),
-        taste_keys={"taste_shock_key": decision_key} if regime.has_taste_shocks else {},
-        next_values=_shared_tree(tree=next_values, devices=devices),
-        references=_shared_tree(tree=references, devices=devices),
-        params=params,
-        period=period_value,
-        age=age,
-    )
-    decision = regime.simulation.programs.decision[period]
-    decision_profile = _profile_program(
-        runtime=runtime,
-        program=decision,
-        arguments=arguments,
-        period=period,
-        n_subjects=n_subjects,
-        widths=widths,
-    )
-    indices, _ = decision_profile.executable.out_info
-    if regime.stakeholders is not None and not states:
-        indices = jax.ShapeDtypeStruct((n_subjects,), indices.dtype, sharding=subject)
-    decoder_arguments = {
-        "flat_indices": _placed_abstract(leaf=indices, sharding=subject),
-        "grids": _shared_tree(tree=base.actions, devices=devices),
-    }
-    decoded = runtime.operations.prepare_abstract(
-        function=_lookup_values_from_indices,
-        arguments=decoder_arguments,
-        subject_arg_names=("flat_indices",),
-        devices=devices,
-    )
-    profiles = {
-        "decision": replace(
-            decision_profile,
-            action_decoder=AbstractSimulationProfile(
-                executable=decoded.executable, arguments=decoder_arguments
-            ),
+    if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
+        profiles = _profile_finite_decision(
+            runtime=runtime,
+            regime=regime,
+            period=period,
+            n_subjects=n_subjects,
+            widths=widths,
+            policy=policy,
+            states=current,
+            canonical_states=states,
+            params=params,
+            age=age,
+            next_values=_shared_tree(tree=next_values, devices=devices),
+            references=_shared_tree(tree=references, devices=devices),
         )
-    }
-    actions = decoded.executable.out_info
+        actions, _, _ = profiles["decision"].executable.out_info
+    else:
+        arguments = decision_arguments(
+            states=states,
+            discrete_actions=_shared_tree(tree=base.discrete_actions, devices=devices),
+            continuous_actions=_shared_tree(
+                tree=base.continuous_actions, devices=devices
+            ),
+            taste_keys={"taste_shock_key": decision_key}
+            if regime.has_taste_shocks
+            else {},
+            next_values=_shared_tree(tree=next_values, devices=devices),
+            references=_shared_tree(tree=references, devices=devices),
+            params=params,
+            period=period_value,
+            age=age,
+        )
+        decision = regime.simulation.programs.decision[period]
+        decision_profile = _profile_program(
+            runtime=runtime,
+            program=decision,
+            arguments=arguments,
+            period=period,
+            n_subjects=n_subjects,
+            widths=widths,
+        )
+        indices, _ = decision_profile.executable.out_info
+        if regime.stakeholders is not None and not states:
+            indices = jax.ShapeDtypeStruct(
+                (n_subjects,), indices.dtype, sharding=subject
+            )
+        decoder_arguments = {
+            "flat_indices": _placed_abstract(leaf=indices, sharding=subject),
+            "grids": _shared_tree(tree=base.actions, devices=devices),
+        }
+        decoded = runtime.operations.prepare_abstract(
+            function=_lookup_values_from_indices,
+            arguments=decoder_arguments,
+            subject_arg_names=("flat_indices",),
+            devices=devices,
+        )
+        profiles = {
+            "decision": replace(
+                decision_profile,
+                action_decoder=AbstractSimulationProfile(
+                    executable=decoded.executable, arguments=decoder_arguments
+                ),
+            )
+        }
+        actions = decoded.executable.out_info
     for family in ("transition", "route"):
         program = getattr(regime.simulation.programs, family).get(period)
         if program is None:
@@ -263,6 +300,82 @@ def profile_forward_unit(
             widths=widths,
         )
     return MappingProxyType(profiles)
+
+
+def _profile_finite_decision(
+    *,
+    runtime: SimulationRuntime,
+    regime: Regime,
+    period: int,
+    n_subjects: int,
+    widths: Mapping[str, int],
+    policy: object,
+    states: Mapping[str, jax.ShapeDtypeStruct],
+    canonical_states: Mapping[str, jax.ShapeDtypeStruct],
+    params: Mapping[str, object],
+    age: jax.ShapeDtypeStruct,
+    next_values: Mapping[str, object],
+    references: Mapping[str, object],
+) -> dict[str, ForwardProgramProfile]:
+    """Use actual payload metadata and the preparation executable's bank schema."""
+    programs = regime.simulation.programs
+    if (
+        not isinstance(policy, NNBEGMSimPolicy)
+        or period not in programs.policy_prepare
+        or period not in programs.policy_rank
+        or programs.decision[period] is not programs.policy_rank[period]
+    ):
+        raise ExecutionPlanningError(
+            "Finite profiles require their declared policy stages."
+        )
+    payload = ReplayPayload.from_policy(policy)
+    if not all(isinstance(leaf, jax.Array) for leaf in payload.arrays):
+        raise ExecutionPlanningError(
+            "Finite profiles require retained canonical JAX policy leaves."
+        )
+    abstract_payload = jax.tree.map(
+        partial(_abstract_policy_leaf, devices=runtime.subject_devices), payload
+    )
+    preparation = _profile_program(
+        runtime=runtime,
+        program=programs.policy_prepare[period],
+        arguments=policy_prepare_arguments(
+            payload=abstract_payload, states=states, params=params, age=age
+        ),
+        period=period,
+        n_subjects=n_subjects,
+        widths=widths,
+    )
+    ranking = _profile_program(
+        runtime=runtime,
+        program=programs.policy_rank[period],
+        arguments=policy_rank_arguments(
+            payload=abstract_payload,
+            bank=preparation.executable.out_info,
+            canonical_states=canonical_states,
+            params=params,
+            age=age,
+            next_values=next_values,
+            references=references,
+        ),
+        period=period,
+        n_subjects=n_subjects,
+        widths=widths,
+    )
+    return {"policy_prepare": preparation, "decision": ranking}
+
+
+# keyword-only-exempt: library-callback=jax.tree.map
+def _abstract_policy_leaf(
+    leaf: jax.Array, *, devices: tuple[jax.Device, ...]
+) -> jax.ShapeDtypeStruct:
+    """Bind only required device metadata while abstracting a retained policy leaf."""
+    return _placed_abstract(
+        leaf=leaf,
+        sharding=simulation_value_sharding(
+            stored_sharding=leaf.sharding, devices=devices
+        ),
+    )
 
 
 def _profile_program(

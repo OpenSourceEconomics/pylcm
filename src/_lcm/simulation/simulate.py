@@ -84,8 +84,13 @@ from _lcm.simulation.period_inputs import (
     gate_reads,
     unit_value_reads,
 )
+from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.policy_programs import ReplayPayload
-from _lcm.simulation.program_arguments import decision_arguments
+from _lcm.simulation.program_arguments import (
+    decision_arguments,
+    policy_prepare_arguments,
+    policy_rank_arguments,
+)
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
@@ -302,7 +307,10 @@ def simulate(  # noqa: C901, PLR0915
             )
         if not runtime.enable_jit or any(
             regime.gated_edges
-            or regime.simulation.replay_route.policy_applicable
+            or (
+                regime.simulation.replay_route.policy_applicable
+                and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+            )
             or regime.simulation.external_replay_route is not None
             for regime in regimes.values()
         ):
@@ -1496,6 +1504,7 @@ def _simulate_regime_in_period(
             next_regime_to_V_arr=next_regime_to_V_arr,
             referenced_value_kwargs=referenced_value_kwargs,
             logger=logger,
+            memory=memory,
         )
     else:
         taste_shock_kwargs = {}
@@ -1700,6 +1709,7 @@ def _execute_finite_replay(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     referenced_value_kwargs: Mapping[str, object],
     logger: logging.Logger,
+    memory: SimulationMemory | None = None,
 ) -> tuple[MappingProxyType, FloatND, BoolND]:
     """Run declared reconstruction, its host diagnostic, and canonical ranking."""
     payload = ReplayPayload.from_policy(sim_policy)
@@ -1708,21 +1718,29 @@ def _execute_finite_replay(
         family="policy_prepare",
         period=period,
         n_subjects=n_subjects,
-        arguments={
-            "payload": payload,
-            "states": states,
-            "params": flat_params,
-            "age": age,
-        },
+        arguments=policy_prepare_arguments(
+            payload=payload,
+            states=states,
+            params=flat_params,
+            age=age,
+        ),
     )
     bank = cast("tuple[FloatND, FloatND, BoolND, BoolND]", bank)
-    _announce_dropped_outer_candidates(
-        logger=logger,
-        dropped=bank[2] & ~bank[3],
-        n_live=bank[2],
-        regime_name=regime.name,
-        period=period,
-    )
+    if validation_enabled(logger):
+        n_dropped, total = run_simulation_operation(
+            memory=memory,
+            function=dropped_candidate_counts,
+            arguments={"live": bank[2], "represented": bank[3]},
+            subject_arg_names=("live", "represented"),
+        ).tolist()
+        if n_dropped:
+            _report_dropped_outer_candidates(
+                logger=logger,
+                n_dropped=n_dropped,
+                total=total,
+                regime_name=regime.name,
+                period=period,
+            )
     return cast(
         "tuple[MappingProxyType, FloatND, BoolND]",
         execute_simulation_program(
@@ -1730,15 +1748,15 @@ def _execute_finite_replay(
             family="policy_rank",
             period=period,
             n_subjects=n_subjects,
-            arguments={
-                "payload": payload,
-                "bank": bank,
-                "canonical_states": canonical_states,
-                "params": flat_params,
-                "age": age,
-                "next_regime_to_V_arr": next_regime_to_V_arr,
-                **referenced_value_kwargs,
-            },
+            arguments=policy_rank_arguments(
+                payload=payload,
+                bank=bank,
+                canonical_states=canonical_states,
+                params=flat_params,
+                age=age,
+                next_values=next_regime_to_V_arr,
+                references=referenced_value_kwargs,
+            ),
         ),
     )
 
@@ -3516,6 +3534,24 @@ def _announce_dropped_outer_candidates(
     if n_dropped == 0:
         return
     total = int(jnp.sum(n_live))
+    _report_dropped_outer_candidates(
+        logger=logger,
+        n_dropped=n_dropped,
+        total=total,
+        regime_name=regime_name,
+        period=period,
+    )
+
+
+def _report_dropped_outer_candidates(
+    *,
+    logger: logging.Logger,
+    n_dropped: int,
+    total: int,
+    regime_name: RegimeName,
+    period: int,
+) -> None:
+    """Build the host report from admitted exact candidate counts."""
     error = UnrepresentableOuterCandidateError(
         f"Regime {regime_name!r} at period {period}: {n_dropped} of {total} "
         "live outer candidates could not be reconstructed at their realized "

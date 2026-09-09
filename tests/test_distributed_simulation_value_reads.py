@@ -1,5 +1,7 @@
 """Simulation value-copy ownership on actual ordered four-device CPU layouts."""
 
+import dataclasses
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -8,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.execution.core_program import ValueRead
 from _lcm.execution.scheduler import shares_a_buffer
 from _lcm.execution.value_transfer import (
@@ -40,13 +43,135 @@ except RuntimeError:
     _TOPOLOGY_UNAVAILABLE = True
 
 # This fixture defines categoricals and arrays at import, after topology setup.
+from _lcm.simulation import value_reads
+from _lcm.simulation.chunk_profiles import _period_copy_reservation
+from _lcm.simulation.residency import (
+    measure_buffer_footprint,
+    require_transfer_headroom,
+    union_buffer_footprints,
+)
 from benchmarks.asv._simulation_witnesses import dissolution
+from lcm.exceptions import ExecutionPlanningError
 from tests.conformance_solver import ReferenceReplayRoute, ReferenceSolver
+from tests.simulation.test_finite_policy_budget import _inputs as _finite_inputs
 from tests.test_external_solver_conformance import _PARAMS, _model, _solve
 
 pytestmark = pytest.mark.skipif(
     _TOPOLOGY_UNAVAILABLE, reason="Four-device topology requires an isolated process"
 )
+
+
+@pytest.mark.parametrize("discrete", [False, True])
+@pytest.mark.parametrize("aliased", [False, True])
+def test_finite_profile_reserves_addressed_policy_copies_once_on_ordered_submesh(
+    *,
+    discrete: bool,
+    aliased: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real prepare/rank declarations share copies without collapsing artifact slots."""
+    model, params, _ = _finite_inputs(discrete=discrete, budget=None)
+    solution = model.solve(params=params, log_level="off")
+    view = cast("OwnedSolutionView", solution._engine_view)
+    source_device = jax.devices()[2]
+    devices = (jax.devices()[3], jax.devices()[1])
+    original_policy = view.simulation_policies[0]["alive"]
+    policy = jax.tree.map(
+        lambda leaf: jax.device_put(leaf, source_device), original_policy
+    )
+    if aliased:
+        policy = dataclasses.replace(
+            policy, candidate_value=policy.candidate_inner_action
+        )
+    values = jax.tree.map(lambda leaf: jax.device_put(leaf, source_device), view.values)
+    regime = model._runtime_regimes_for_shape(compile_batch_size=2)["alive"]
+    reads = (
+        *regime.simulation.programs.policy_prepare[0].requirements.value_reads,
+        *regime.simulation.programs.policy_rank[0].requirements.value_reads,
+    )
+    leaves = jax.tree.leaves(policy)
+    policy_reads = replay_payload_reads(
+        payload=policy,
+        key=SIMULATION_POLICY,
+        period=0,
+        regime="alive",
+        core="reference",
+    )
+    sources = {
+        read.target: leaf for read, leaf in zip(policy_reads, leaves, strict=True)
+    }
+    sources.update(
+        {
+            read.target: values[read.target.period][read.target.regime]
+            for read in reads
+            if read.target.kind is ValueArtifactKind.REGIME_VALUE
+        }
+    )
+    assert len(sources) == len({read.target for read in reads})
+    logical_bytes = sum(leaf.size * leaf.dtype.itemsize for leaf in sources.values())
+    with monkeypatch.context() as guard:
+
+        def forbid(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("A copy reservation allocated a device buffer")
+
+        guard.setattr(jax, "device_put", forbid)
+        reservation = _period_copy_reservation(
+            regimes={"alive": regime},
+            values=values,
+            period=0,
+            devices=devices,
+            policies={0: {"alive": policy}},
+        )
+    assert reservation == {
+        source_device: logical_bytes,
+        devices[0]: 2 * logical_bytes,
+        devices[1]: 2 * logical_bytes,
+    }
+    owner = PeriodSimulationReads(
+        period=0,
+        devices=devices,
+        reads_by_unit={"alive": reads},
+        release_enabled=True,
+    )
+    actual_transfer = value_reads.apply_value_transfer
+    copied_addresses = []
+
+    def observe_copy(**call: Any) -> jax.Array:
+        copied_addresses.append(call["transfer"].target)
+        return actual_transfer(**call)
+
+    monkeypatch.setattr(value_reads, "apply_value_transfer", observe_copy)
+    copies = {}
+    for read in reads:
+        source = sources[read.target]
+        placed = owner.read(unit="alive", read=read, value=source)
+        if read.target in copies:
+            assert placed is copies[read.target]
+        copies[read.target] = placed
+        assert isinstance(placed.sharding, jax.NamedSharding)
+        assert tuple(placed.sharding.mesh.devices.flat) == devices
+        np.testing.assert_array_equal(placed, source)
+    assert len(copied_addresses) == len(sources)
+    assert len(set(copied_addresses)) == len(sources)
+    if aliased:
+        assert len({id(leaf) for leaf in sources.values()}) < len(sources)
+    _close_finite_copy_owner(owner=owner, sources=sources, copies=copies)
+
+
+def _close_finite_copy_owner(
+    *,
+    owner: PeriodSimulationReads,
+    sources: Mapping[ValueArtifactAddress, jax.Array],
+    copies: Mapping[ValueArtifactAddress, jax.Array],
+) -> None:
+    """Compare real sources after the period releases every addressed destination."""
+    expected_sources = {target: np.asarray(leaf) for target, leaf in sources.items()}
+    owner.commit(unit="alive", outputs=())
+    owner.finish()
+    assert all(leaf.is_deleted() for leaf in copies.values())
+    for target, source in sources.items():
+        assert not source.is_deleted()
+        np.testing.assert_array_equal(source, expected_sources[target])
 
 
 def _read(*, unit: str) -> ValueRead:
@@ -63,6 +188,62 @@ def _read(*, unit: str) -> ValueRead:
             path=("target",),
         ),
     )
+
+
+def test_finite_policy_transfer_refuses_before_its_ordered_copy_allocates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The actual period owner admits retained policy plus destination and scratch."""
+    model, params, _ = _finite_inputs(discrete=False, budget=None)
+    solution = model.solve(params=params, log_level="off")
+    policy = cast("OwnedSolutionView", solution._engine_view).simulation_policies[0][
+        "alive"
+    ]
+    assert isinstance(policy, NNBEGMSimPolicy)
+    source = jax.device_put(policy.candidate_inner_action, jax.devices()[2])
+    regime = model._runtime_regimes_for_shape(compile_batch_size=2)["alive"]
+    read = regime.simulation.programs.policy_prepare[0].requirements.value_reads[0]
+    live = measure_buffer_footprint(tree=source)
+    observed = []
+
+    def before_transfer(*, transfer: Any, live_values: tuple[jax.Array, ...]) -> None:
+        observed.append(transfer)
+        destination = transfer.source_sharding.device_set
+        require_transfer_headroom(
+            live=union_buffer_footprints(
+                footprints=(
+                    live,
+                    measure_buffer_footprint(tree=live_values),
+                )
+            ),
+            destination_bytes=dict.fromkeys(destination, source.nbytes),
+            scratch_bytes=dict.fromkeys(destination | source.devices(), source.nbytes),
+            budget_bytes=2 * source.nbytes - 1,
+            devices=tuple(jax.devices()),
+        )
+
+    def forbid_copy(**_call: Any) -> jax.Array:
+        raise AssertionError("The refused policy transfer allocated")
+
+    owner = PeriodSimulationReads(
+        period=0,
+        devices=(jax.devices()[3], jax.devices()[1]),
+        reads_by_unit={"alive": (read,)},
+        release_enabled=True,
+        before_transfer=before_transfer,
+    )
+    monkeypatch.setattr(value_reads, "apply_value_transfer", forbid_copy)
+    with pytest.raises(ExecutionPlanningError):
+        owner.read(unit="alive", read=read, value=source)
+    assert len(observed) == 1
+    assert tuple(observed[0].source_sharding.mesh.devices.flat) == (
+        jax.devices()[3],
+        jax.devices()[1],
+    )
+    with pytest.raises(ExecutionPlanningError, match="uncommitted units"):
+        owner.finish()
+    assert not source.is_deleted()
+    np.testing.assert_array_equal(source, policy.candidate_inner_action)
 
 
 @pytest.mark.parametrize("subject_ids", [(3,), (3, 1)])

@@ -2480,6 +2480,7 @@ class Model:
                 regimes=simulate_regimes,
                 flat_params=flat_params,
                 values=period_to_regime_to_V_arr,
+                policies=period_to_regime_to_sim_policy,
                 ages=self.ages,
                 initial_conditions=initial_conditions,
                 regime_names_to_ids=self.regime_names_to_ids,

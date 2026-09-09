@@ -45,6 +45,19 @@ def _mesh() -> jax.sharding.Mesh:
     return jax.sharding.Mesh(np.asarray(jax.devices()), ("kind",))
 
 
+def _wrong_output_sharding() -> jax.NamedSharding:
+    """Corrupt naming on one device, physical replication on several devices."""
+    # Replication and a size-one partition are physically identical. A single
+    # device therefore exercises the deliberately strict named-axis contract;
+    # actual partition-vs-replication is pinned by the isolated topology tests.
+    mesh = (
+        jax.sharding.Mesh(np.asarray(jax.devices()), ("wrong",))
+        if len(jax.devices()) == 1
+        else _mesh()
+    )
+    return jax.NamedSharding(mesh, jax.P())
+
+
 def _template(*, collective: bool = False):
     shape = (len(jax.devices()), 3, 2) if collective else (len(jax.devices()), 3)
     spec = jax.P("kind", None, None) if collective else jax.P("kind", None)
@@ -275,7 +288,7 @@ def test_assert_output_layout_rejects_post_run_repair_need():
     assert_output_layout(output=expected, layout=resolved)
     replicated = jax.device_put(
         jnp.zeros(expected.shape),
-        jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
+        _wrong_output_sharding(),
     )
     with pytest.raises(AssertionError, match="output sharding"):
         assert_output_layout(output=replicated, layout=resolved)
@@ -371,7 +384,7 @@ def test_published_value_placement_is_asserted_not_repaired():
     template = _template()
     replicated = jax.device_put(
         jnp.zeros(template.shape),
-        jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
+        _wrong_output_sharding(),
     )
     layout = resolve_output_layout(
         core_key="main",
@@ -582,7 +595,7 @@ def test_assert_value_leaf_layout_checks_only_the_value_leaf():
     assert_value_leaf_layout(value=template, layout=resolved)
     replicated = jax.device_put(
         jnp.zeros(template.shape),
-        jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
+        _wrong_output_sharding(),
     )
     with pytest.raises(AssertionError, match="output sharding"):
         assert_value_leaf_layout(value=replicated, layout=resolved)

@@ -184,7 +184,15 @@ COMBINED_AUTHORITY_SOURCE = "src/lcm/_solver_api/authority.py"
 COMBINED_ENTRIES_SOURCE = "src/lcm/_solver_api/entries.py"
 COMBINED_STORES_SOURCE = "src/lcm/_solver_api/stores.py"
 
+EAGER_CORE_SOURCE = "src/_lcm/execution/eager_core.py"
+RUNTIME_SHARDING_SOURCE = "src/_lcm/execution/runtime_sharding.py"
+
+POLICY_DIAGNOSTICS_SOURCE = "src/_lcm/simulation/policy_diagnostics.py"
+
 _CERTIFIED_CORRIDOR_SOURCES = (
+    POLICY_DIAGNOSTICS_SOURCE,
+    EAGER_CORE_SOURCE,
+    RUNTIME_SHARDING_SOURCE,
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE,
     COMBINED_ASSEMBLY_SOURCE,
     COMBINED_CHUNK_ADMISSION_SOURCE,
@@ -293,18 +301,21 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # refreshes these hashes only; the independent callable and module contracts below
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
-    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "8662c505fcf6ba957dd66c5ab7b35c80ec43e8df83ea4172bf87545b102049ca",
+    POLICY_DIAGNOSTICS_SOURCE: "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3",
+    EAGER_CORE_SOURCE: "ed5d37d0a685943bd53185ea313089d68f0b5fc4eb7be3cd88d4d1e0623f5ab4",
+    RUNTIME_SHARDING_SOURCE: "0e7f276d6abad69469ba42707a4dcfc78e9eefd3fb78ed9aad7942559553df9a",
+    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "070d4936497a9a15089cdc34d188d56873dee724c2275a5fc3424478ce5a3d11",
     COMBINED_ASSEMBLY_SOURCE: "eae7d7e3bdaf96d75671331b3cf5a49ba178316cc1848511615ec9a2f90c6fdb",
-    COMBINED_CHUNK_ADMISSION_SOURCE: "c6e4efca9ff4e0cadf0be3cc56e20ef0151822104db1b733411984bc2bd6211a",
+    COMBINED_CHUNK_ADMISSION_SOURCE: "da7fc12cc58a2a957a86ef1247f348c8c920f3e81f4527ea7da93c8a2b079428",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "ebb5e00669a33d9486c3e3f7a6d5752937bf2751ec95ac360903274b6d81304d",
     COMBINED_CHUNK_OPERATIONS_SOURCE: "4c05c30ef0788a67165e8c595d70a2ca50a00f1a511c43730a4932b2269a4e0c",
     COMBINED_CHUNK_PLANNING_SOURCE: "d0d1ecc124e912a331ba7db7465ce2e1f803c0419d9bfba63392f092782c8d2f",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "530f4ff6cb61120d052d1993e0b0265799f5b81f4c4a8a21b473137c593cedb3",
-    COMBINED_CHUNK_PROFILES_SOURCE: "fa71ca612b9354c26ed9a558f10cdf351c2a680fa4fc0a1e343641a537154347",
+    COMBINED_CHUNK_PROFILES_SOURCE: "88c16b60ce3cf7fc90c8b2ecbaca049e5c9324eeae4aa027c07f9d806884030e",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "0bff95b0c220db73f741bbca11f9481ee3f134eab8355e6c7d84a7b9c66d8410",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "e2307fd782e6de6d6adc351129b2487017f369161f77597500469c2646c2f4d8",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32",
-    COMBINED_PROGRAM_ARGUMENTS_SOURCE: "007c8bf3e52a168ec8bb88b8fd7edcbd2b327bfccdd1dac1545df31bb1010529",
+    COMBINED_PROGRAM_ARGUMENTS_SOURCE: "01e626e177210d9638ce1d359f67de44cdb950b63155f6c6f643173147570fbc",
     COMBINED_SOLUTION_COPIES_SOURCE: "4fb09ef5993a4e351397b0e342f7debfee9e583201066c03a31021964a1c4a2d",
     COMBINED_RESULT_SNAPSHOT_SOURCE: "519efaefa58c2d898ff833f987cea9c43b7ef7d91876401d77ede4fe1517a050",
     COMBINED_VALIDATE_V_SOURCE: "1d2c6813216af2e75111f12f730adec3337d03d47c883e50d07717e13e28d029",
@@ -348,8 +359,8 @@ _SOURCE_SEALS = {
     PROCESSING_SOURCE: "3aa08741042207d1dfd26e4bd8e6b65b1c20d80d5eb2b0825f3c5682d76a4ad9",
     GRID_SEARCH_SOURCE: "ed33d78e3cd17921cbde158534f386014f3a2529af5cf686b7e10c8e3fa43d7e",
     CORE_PROGRAM_SOURCE: "37823a33eca40dcce2cb71952b7d7d7ec8bedccca15061a4df6178061e738757",
-    OUTPUT_LAYOUT_SOURCE: "b5e9c667a15dcb6a1393f54f4ba7d8fcea85d3e78104f6e9e4cbd16c60fd1bb5",
-    VALUE_TRANSFER_SOURCE: "d1b2c3282b8504346738257983266b298d46dced2d3f49212f23b729d5877f12",
+    OUTPUT_LAYOUT_SOURCE: "b4d773d70a0a3c3d3ff03b4b0eb4f043f7e311aa8811bf560ae102bfa666c9b7",
+    VALUE_TRANSFER_SOURCE: "5dc6922a03711a32f731d7585b8997f7afd18c1d5273c889e6a80557a17bbf26",
     FOOTPRINT_SOURCE: "0dbaa3c673f053a51fa7bcab4e06d2080252dd84d827ed28123d085c4000fd0f",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
@@ -363,12 +374,12 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "400326d4fe75f7ee62daf88ca334c095f30689b37ef5cf16f0aacd61b9cb2b75",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "ea194fd71e5aa939b631d7db6fb3df13179bee5ba19d93d909b78c96ea8cb353",
+    SIMULATION_SOURCE: "8ec0e94b49c18a74596e9b3c1f2dd0eb19bc31061feae2056688ea86caeb744e",
     SIMULATION_TRANSITIONS_SOURCE: "76ba02db6b40070033d1c6b3fd5769a675ff8c1d27e2bb8b179246c06be8066e",
     SIMULATION_COMPILE_SOURCE: "f6b4ec612b6bcf6263995d85ce5bd49c75c0c807af1bafd83a16c89140863d12",
-    MODEL_SOURCE: "3ed5188d5ed0c5c129653a660426a980a2e6cdf79b02a6a52bd1d3f760473bd9",
+    MODEL_SOURCE: "c9a4c9b2a8058bde1d379c0d7e26ab9dd771774b50de8f79334612e6d29f45b9",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "6bd61a491590c97a591f803fab2f04cc6abc9818f44f0cf8a0e811c759507021",
+    BACKWARD_INDUCTION_SOURCE: "e5dded6b48f674cf1a41dd4166745649384e05206826ec73ec983e35cfc7a9fe",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "6ae5d06da6fb96fbcbdd12160f35ea5ce3731e87b7dba5f9139e7a2e29d0462e",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
@@ -508,8 +519,7 @@ def _guarded_binding(
     ]
     if len(guards) != 1:
         raise ValueError(
-            f"expected one direct has_taste_shocks guard in {outer_name!r}, "
-            f"found {len(guards)}"
+            f"expected one direct has_taste_shocks guard in {outer_name!r}, found {len(guards)}"
         )
     guard = guards[0]
     nested_scopes = [
@@ -1743,8 +1753,12 @@ Q_and_F = productmap(
                 "from dags import with_signature",
                 "from _lcm.logsum import EULER_GAMMA, logsum_and_softmax",
                 "from _lcm.regime_building.argmax import argmax_and_max",
-                "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout",
-                "from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a",
+                (
+                    "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout"
+                ),
+                (
+                    "from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a"
+                ),
                 "from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d",
                 "from _lcm.utils.functools import allow_args, allow_only_kwargs",
                 "from lcm.typing import BoolND, FloatND, IntND, ScalarFloat",
@@ -2015,7 +2029,9 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "donation_candidates: tuple[str, ...] = ()",
                 "scope: ProgramScope = ProgramScope.ANY",
                 "retained_artifact_keys: _RetainedArtifactKeys = ()",
-                "retained_artifact_payload_types: _RetainedArtifactPayloadTypes = MappingProxyType({})",
+                (
+                    "retained_artifact_payload_types: _RetainedArtifactPayloadTypes = MappingProxyType({})"
+                ),
                 "replaces_program: str | None = None",
                 "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
                 "compiler_options: tuple[tuple[str, int], ...] = ()",
@@ -2574,7 +2590,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "PlannedCore.__post_init__": "92f25766a12bbd9fe2e9be8a5b8a4034c537633499adcd7acc832b460becb73c",
                 "PlannedCore.__call__": "5ee61337ebbab597c5e7fee8e8a90c19bc50331a747ba57a93e7540e065c8703",
                 "assert_value_leaf_layout": "9362aaf98344976ae13de7ac67e05d23fe983f12e34eac9f2ad439762a5d159d",
-                "_assert_output_leaf": "8a75af878a85e6cc997e5d823b55ba0545ff3f147a30a7ddbfd2666db07d70fd",
+                "_assert_output_leaf": "86db39c8c2dc696c5adcd8164bf080df1d5fcbee9629d5c378df1d269e978f5f",
                 "_resolve_output_leaf": "b321849f4ff64dbab550be131a31a74157e9749a396958917b8e587fdffe5fa4",
                 "_state_axes_leading_sharding": "275366296965e4160350df8a1ca9482d4985be24f394afd4a441bbf0fbd8404e",
                 "_state_axis_spec": "49e002ddc32f703b089ecc147a6bb5296157f2c4f6313335c308e82f06ddd18d",
@@ -2751,7 +2767,7 @@ COLLECTIVE = "collective"
                 "_validate_edge_identity": "b9dc316bc5c544a59041fd3c7c67a48766829f66db5db31a6d1bb48eb96afc05",
                 "_validate_replay_leaf_identity": "0da3b8851138ef9c733fa1b64977f7ceb243e6185b5e44fa49236619ccb2e779",
                 "_validate_continuation_leaf_identity": "88493fd0b4b5ef9670c2958f580de3d53e855b187f3548e335193364a3cb61f8",
-                "_assert_value_metadata": "7ebe6eb927b678ae88ed2a12d8f7571bdd8a86d5a4bf3dc55cd24f92da6e389d",
+                "_assert_value_metadata": "907fc083964acd015981f5c17b02586a03f57d229bf9a113e5961a0437ac6e81",
                 "_normalize_shape": "346ecb8fac04e0e000005dbc613e197e374b60cd9b08d1a53bba790e04c3621a",
                 "_require_period": "31f344bbdf23177b3a5bd9d2561bcbe4c9398814c1e7cbd6920afdbc0c013d68",
                 "_require_name": "af49e5c3217919d353aa787908d9d0764ff17792b1d64aaeb08afa1f0a983628",
@@ -2946,7 +2962,9 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
             },
             expected_imports=[
                 "from types import MappingProxyType",
-                "from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime, SimulationPhase, SolutionPhase, StateActionSpace, Variables, _fail_if_template_is_misplaced, placed_devices_for_ids",
+                (
+                    "from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime, SimulationPhase, SolutionPhase, StateActionSpace, Variables, _fail_if_template_is_misplaced, placed_devices_for_ids"
+                ),
                 "from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a",
                 "from _lcm.simulation.programs import build_simulation_programs",
             ],
@@ -3105,11 +3123,11 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     """
     contracts = {
         SIMULATION_SOURCE: (
-            "45c78f7759d8f0b0d665a9f31fa2fa4311479207e7389f574c1b5166648e4b2b",
+            "2a168db93957928fba4483c9bbe54b5a7b88efe87cf296a85c357191b394e4d1",
             {
-                "_simulate_regime_in_period": "4bae486a80b50bd7bb061c8d798a7fc9929bf8e905960db7a404054c8400db30",
-                "_execute_finite_replay": "8b889472c13e0dd4d49371f3cbce5f134eea266236212594169be359d058ce14",
-                "simulate": "644e0f74d100d90f1ded85069d506922081b8fb84d3f7f21cbe4d62d38098c00",
+                "_simulate_regime_in_period": "0ca0d03e7d0b5df8a5f7fecac4ba93c96b7e992c7a0fb6768c5dfdb5dfa42895",
+                "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
+                "simulate": "bab3c879bcd0130a2f75f30c46cd0291ea1eb51d3c7ac8ac56a352cbd06ed8e5",
                 "_simulate_subject_chunk": "911f31a1e6656c73ed8099ca1265a3cb3c70c8ddd5fba8c9ccfee15ea1750529",
                 "_bind_unit_executor": "5acd3280f436ccee3fdad56766c042f9dee378baaf9eb30056c7ea47b8968632",
                 "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
@@ -3136,7 +3154,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
                 "Model._resolve_simulate_regimes": "20f6a28c67270f2dea7e234644a48df726afaad3bb68e0d41b0be9bde2fd4953",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model._ensure_simulate_compiled": "2e59224333ce9bd7453608d05359e933217971dbf8867e3f9851b9f503a2df86",
-                "Model.simulate": "2c6eeb21b8e4d38d4a6b80855c2c2ebfb3141465bc517d8b9b26f37ad8fe8ab2",
+                "Model.simulate": "64cd7536a562c66f3a7318aaf2f53ea4efa58ed68ea2f18624ceca303c0122f1",
                 # Fixed caller owners flow through both private automatic-solve
                 # boundaries without becoming numerical operands or cache keys.
                 "Model._solve_from_flat_params": "155f0cc0924e38add9e4cccd83ef416b5f716360d20e79cc29cb1735da21f549",
@@ -3584,7 +3602,9 @@ _SIMULATION_ADAPTER_MUTATIONS = {
     "simulation_adapter:stored_value_changed": (
         SIMULATION_VALUE_READS_SOURCE,
         "copied = apply_value_transfer(value=value, transfer=transfer)",
-        "copied = apply_value_transfer(value=candidate_filter(value), transfer=transfer)",
+        (
+            "copied = apply_value_transfer(value=candidate_filter(value), transfer=transfer)"
+        ),
     ),
     "simulation_adapter:subject_device_order_changed": (
         SIMULATION_VALUE_PLACEMENT_SOURCE,
@@ -3594,7 +3614,9 @@ _SIMULATION_ADAPTER_MUTATIONS = {
     "simulation_adapter:completed_action_space_changed": (
         SIMULATION_CHUNK_INPUTS_SOURCE,
         "space = regime.solution.state_action_space(regime_params=flat_params[name])",
-        "space = candidate_filter(regime.solution.state_action_space(regime_params=flat_params[name]))",
+        (
+            "space = candidate_filter(regime.solution.state_action_space(regime_params=flat_params[name]))"
+        ),
     ),
     "simulation_adapter:original_inputs_omitted": (
         SIMULATION_ENTRY_INPUTS_SOURCE,
@@ -3624,7 +3646,9 @@ _SIMULATION_ADAPTER_MUTATIONS = {
     "simulation_adapter:cached_value_changed": (
         SCHEDULER_SOURCE,
         "        return self._arrays.get((transfer.target, transfer.source_sharding))",
-        "        return candidate_filter(self._arrays.get((transfer.target, transfer.source_sharding)))",
+        (
+            "        return candidate_filter(self._arrays.get((transfer.target, transfer.source_sharding)))"
+        ),
     ),
     "simulation_adapter:live_read_released_early": (
         LIVENESS_SOURCE,
@@ -3634,7 +3658,9 @@ _SIMULATION_ADAPTER_MUTATIONS = {
     "simulation_adapter:read_occurrence_changed": (
         CONTINUATION_READS_SOURCE,
         "read, source=dataclasses.replace(read.source, core_key=core_key)",
-        "candidate_filter(read), source=dataclasses.replace(read.source, core_key=core_key)",
+        (
+            "candidate_filter(read), source=dataclasses.replace(read.source, core_key=core_key)"
+        ),
     ),
     "simulation_adapter:selected_executable_changed": (
         WORKSPACE_PLANNING_SOURCE,
@@ -3663,11 +3689,138 @@ def _simulation_adapter_errors(*, tree: ast.Module, source: str) -> list[str]:
 # These interfaces connect admitted private copies, descriptor-only preparation,
 # exact chunk profiles and the actual dispatch. Bodies below are structural
 # obligations; compiler/numerical evidence is established in the scoped tests.
+# Eager execution preserves the resolved numerical body and exact outputs.
+# These AST guards authenticate pre-body placement, transient ownership, and the
+# physical-layout predicate; scoped real-device tests establish executable behavior.
+# The finite-policy profile uses the actual retained payload and compiler bank
+# schema. These structural guards pin admission, transfer addresses, diagnostics,
+# and dispatch bindings; numerical ranking bodies retain their existing contract.
+_FINITE_BUDGET_CONTRACTS = {
+    "src/_lcm/simulation/chunk_admission.py": (
+        "911609874a32943fdf39e62f578b83e1d9af3c73dbe5487c6c182dee4fd93324",
+        {
+            "prepare_simulation_chunks": "91df85dbf779c7c15adf190695941cf3e6e8e1416e80ffeb1a245f6da11b9626",
+            "_ChunkProfiler.__call__": "32ba0f798b93177f35df91d3e8ded8c725194c2457b02e0d840111da7d3a1329",
+            "_common_axes": "d76f02f7736b983194410c1c8d137944b5ead924b23dec8893124e1bfcf15e62",
+        },
+    ),
+    "src/_lcm/simulation/chunk_profiles.py": (
+        "cae0d6c3d9f612964d91dec42c19ce01e1d3966fabed02e3e142047654b508cd",
+        {
+            "profile_simulation_chunk": "a650cec25a7ead2f1bfae91cb38df25903abb3fa2fa6e3d40a52c3972903f8c7",
+            "_period_copy_reservation": "39aa3a36e9a2be9cf55357c5110e768890e5a7e47a242ef49fb6fd3f36c547c1",
+            "_policy_read_sources": "97ed74090101e2acb6689e8c10d074d8677a6a407c1d72d20dd120efd79a73b7",
+            "_retained_read_source": "58d590f1427e18ad615f49fff564067daffa983ba21fbf8359f9aa07e1406c0f",
+        },
+    ),
+    "src/_lcm/simulation/forward_program_profiles.py": (
+        "7211de8026853ac60d65e174bc2951d958351a035188e74a504aeaa1002361af",
+        {
+            "profile_forward_programs": "9fec9838321544ee2dc2db2eea3f52ca1ff17e2a55de08959eacefb6204b4f79",
+            "profile_forward_unit": "24c122e4bc4abc5e53ee25d028e7c6345468355a5f2fa0064063b8a1e3154b2a",
+            "_profile_finite_decision": "25c0274cffcc2b261463404beb0a1ad6e4b70bed6f6b8bd873c764429567bcbe",
+            "_abstract_policy_leaf": "96e133ac576cd9b40afbf10907084378253b43bf9376d39d0faa3743d58b0cd2",
+        },
+    ),
+    "src/_lcm/simulation/program_arguments.py": (
+        "3b52fc9e3b1d69a16b60554154f2661022324938c34f66fdca374a88f85a6fbf",
+        {
+            "policy_prepare_arguments": "bb1845d1744ab4ca4c8b2fc918d9510fb4996c3eda27dc64643464a7124e9e82",
+            "policy_rank_arguments": "e7fa8d1483b70c729b25fc0ce5f195c2fdb8f368e7d349849db17a8c8f12750c",
+        },
+    ),
+    "src/_lcm/simulation/simulate.py": (
+        "2a168db93957928fba4483c9bbe54b5a7b88efe87cf296a85c357191b394e4d1",
+        {
+            "simulate": "bab3c879bcd0130a2f75f30c46cd0291ea1eb51d3c7ac8ac56a352cbd06ed8e5",
+            "_simulate_regime_in_period": "0ca0d03e7d0b5df8a5f7fecac4ba93c96b7e992c7a0fb6768c5dfdb5dfa42895",
+            "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
+            "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
+            "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
+        },
+    ),
+    "src/_lcm/simulation/policy_diagnostics.py": (
+        "6ab53d88f11165b91371920ebecef50bf288c3ab3e4cec258e4d8787d8f84238",
+        {
+            "dropped_candidate_counts": "b82dee7807b85e869b9962f3b3b4f5fd0ee65a3ad51eeb54c074c814030b2afa",
+        },
+    ),
+    "src/lcm/model.py": (
+        "a28aef719eff4c0657412a7f4ff509a0acdc252b6612d5b8a4ec7fb60845ded5",
+        {
+            "Model.simulate": "64cd7536a562c66f3a7318aaf2f53ea4efa58ed68ea2f18624ceca303c0122f1",
+        },
+    ),
+}
+
+
+def _finite_budget_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Reject changed finite budget transport independently of byte seals."""
+    surface, callables = _FINITE_BUDGET_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="finite policy budget transport", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append("finite policy budget transport: module bindings changed")
+    return errors
+
+
+_EAGER_INPUT_CONTRACTS = {
+    "src/_lcm/execution/output_layout.py": (
+        "365b885f8e359cb36ebd5cae8c38c71cf8e7d88659a843cc4c4779a9662cea55",
+        {
+            "_assert_output_leaf": "86db39c8c2dc696c5adcd8164bf080df1d5fcbee9629d5c378df1d269e978f5f",
+        },
+    ),
+    "src/_lcm/execution/value_transfer.py": (
+        "f78db25072d2f88d95fbddcf7cd29c3f8e1607a3c7bb9ba1e8eaf1f6e6a877f5",
+        {
+            "_assert_value_metadata": "907fc083964acd015981f5c17b02586a03f57d229bf9a113e5961a0437ac6e81",
+        },
+    ),
+    "src/_lcm/solution/backward_induction.py": (
+        "6cf04507093214b98322e374a9180d0cba727bb1bb50cf9c302d830f35611b8f",
+        {
+            "_compile_all_functions": "b9dee4d2a7caf364552f551713477cc4410fc7da8339e665962ae0e8066b9659",
+        },
+    ),
+    EAGER_CORE_SOURCE: (
+        "6c8af956c5928eca91d8c1043407b77a6e328297cc486e703a85485008dce83a",
+        {
+            "make_eager_core": "17f304950d7a2982e94e8d2510fe67db7714e475c084c47cc8d37b81f49b5630",
+            "_EagerCore.__call__": "2a201f7f57fff1f4559d4d1feb7b932a0c5960fcdfcc81a7dcd0b851a7c6bb6d",
+            "_EagerCore.place_operand": "51d0ce57c735f9ea061038cc7fc7c85e9923d9b0b7e043b28b3c15137e1ad1ea",
+            "_EagerCore._typed_sharding": "274e9d40da69831ec01f8b88626389d092d13b6e9218d5ce1f06d90bb08f1147",
+            "_EagerPlacement.internal": "a5bfdfa9096c056d706194f7de4804973483eb998b33dd0866f30f26e7a1cc71",
+            "_EagerPlacement.__call__": "be84f81c9c35e1867e56b8070f7cac857c58dfbfae50788f7382d7e1e6e06927",
+        },
+    ),
+    RUNTIME_SHARDING_SOURCE: (
+        "8089ea76122ac3ab579951a07ee8d6e9b7f02c6916476eee41f8d47934ee47ce",
+        {
+            "runtime_shardings_match": "5f7cafda4ca0420d72f0fbd007e31d4725a42f286eb82c408c5cec8defda5f27",
+        },
+    ),
+}
+
+
+def _eager_input_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Reject changed eager transport even after an independent byte reseal."""
+    surface, callables = _EAGER_INPUT_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="eager input transport", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append("eager input transport: module bindings changed")
+    return errors
+
+
 _COMBINED_INPUT_CONTRACTS = {
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: (
-        "940af83bd9801553e29a9b494248aad342f843a725089e95576dc08e75baf2c7",
+        "ca47609c80fc2cf672a22feaa93722cc043507589b80c37276bf103445723a4c",
         {
-            "abstract_program_inputs": "522cfc9f65292fdaf9052734acf713299ca96cf3c7b89a4cc5969da08fb84d79",
+            "abstract_program_inputs": "b752a7b6a65cdfd3b2d47462e8e2037522127db37cad64283229fc74e96b5139",
+            "_OperandDescriptor.__call__": "f5f1dd8803d687c50ba2899e0bab0d5e49e9bef83c0def08582844e9351285b3",
             "_identity": "e9a5387d2c95202d67205d5b7941b87d850dca3358faee599215f8c37f9273ab",
         },
     ),
@@ -3682,12 +3835,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_ADMISSION_SOURCE: (
-        "3c5718556daf4de5209fd3d9ca8ff14cc2bdc522ebdb247c4d5a2bf09603f05f",
+        "911609874a32943fdf39e62f578b83e1d9af3c73dbe5487c6c182dee4fd93324",
         {
             "PreparedSimulationChunks.require_chunk": "6669149a4b503b89411b3485e9cbc811a37820620eb83fb8f133ee129682a4a3",
-            "prepare_simulation_chunks": "8ebb00eb0d59e43f2fbf0412bb3657475d348316d58f68cb55e1a2ac7ac95222",
-            "_ChunkProfiler.__call__": "d7c563f07e216e6f22a0693a8ae3d2400e26646219b924c2acfb886a80468ceb",
-            "_common_axes": "43b1c757daed03f3ae56ec2388591c6f894e1a5dcae670095b0977f4f8419c22",
+            "prepare_simulation_chunks": "91df85dbf779c7c15adf190695941cf3e6e8e1416e80ffeb1a245f6da11b9626",
+            "_ChunkProfiler.__call__": "32ba0f798b93177f35df91d3e8ded8c725194c2457b02e0d840111da7d3a1329",
+            "_common_axes": "d76f02f7736b983194410c1c8d137944b5ead924b23dec8893124e1bfcf15e62",
         },
     ),
     COMBINED_CHUNK_OFFLOAD_SOURCE: (
@@ -3740,9 +3893,9 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "31cceed04d965f5cace106835b1f3d8161325cc758745ac0a7a9f244f0bb34a6",
+        "cae0d6c3d9f612964d91dec42c19ce01e1d3966fabed02e3e142047654b508cd",
         {
-            "profile_simulation_chunk": "74ae90e9bc492f99994662ce9484b14a019fa8c476f11cbe80c432c0153929ce",
+            "profile_simulation_chunk": "a650cec25a7ead2f1bfae91cb38df25903abb3fa2fa6e3d40a52c3972903f8c7",
             "_profile_next_subjects": "6996f7fc0987bf01ed5356c9ecde559d104b911bc6adda3ef638d05b8b0ebd7b",
             "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
             "_profile_outer_storage": "654d9ed612edcf263c2eead952a5e5abbc11fef8b43af2670db23d0d098eefa1",
@@ -3750,7 +3903,7 @@ _COMBINED_INPUT_CONTRACTS = {
             "_profile_initial_carrier": "1ef1aa933990fbe5e52659aed6d1f949d76b44ae0d840c0307c2d8764efce7cb",
             "_profile_keys": "6ee2aba029d5c6a6249f70aec78a7eab6dd66e391b8522b486de3180c6e20c49",
             "_profile_taste": "ce976aa42f4ef30bed63fc9fedcf72652b611f2c1a5262b8085a29da83b7e622",
-            "_period_copy_reservation": "e1de20e3ed1e0e38b8b8c60e8a63163b8446e2f74237d6e4e0eda0367fdeac25",
+            "_period_copy_reservation": "39aa3a36e9a2be9cf55357c5110e768890e5a7e47a242ef49fb6fd3f36c547c1",
             "_profile_entry_key": "306ad82a059557d575d50c24ed8c51a0d172ed97b6de476a99945bc8ca10599a",
         },
     ),
@@ -3766,11 +3919,11 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
-        "4a1211b2b817c4e1058262603333a8e9890d43f39132b0c14d1787319df02f77",
+        "7211de8026853ac60d65e174bc2951d958351a035188e74a504aeaa1002361af",
         {
             "AbstractSimulationProfile.__post_init__": "363e5274bc77382335a7ac5d5200ed644324ff361f578889d29dfac63bf3aa31",
-            "profile_forward_programs": "c5b88f38a2807ad2c1e181d13184b9a821104fc661157d7f283183d2e201ced1",
-            "profile_forward_unit": "4d7babfcd71f61aff559883e8e092dea05e2ffc0bc508b9ea3d30da767c95e30",
+            "profile_forward_programs": "9fec9838321544ee2dc2db2eea3f52ca1ff17e2a55de08959eacefb6204b4f79",
+            "profile_forward_unit": "24c122e4bc4abc5e53ee25d028e7c6345468355a5f2fa0064063b8a1e3154b2a",
             "_profile_program": "51bac868a7c4c43b1ccca2253420be8107ac39fb85e86e12a8c1e91a22ef66c5",
             "_stochastic_keys": "dee659c1811c43e460e7e3d77191d61166c7df35b322128400244b3cbe07aa36",
             "_shared_tree": "69d4bc1f7c0f179d2c31bbb7fc5bae56005e713c5213b0c44cd262158d7fb858",
@@ -3788,7 +3941,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: (
-        "d676623f562969f6338deaddc9353bd6e8bab58d223c55c89e28e52c1d83086f",
+        "3b52fc9e3b1d69a16b60554154f2661022324938c34f66fdca374a88f85a6fbf",
         {
             "decision_arguments": "e02a1ad8f729a34ca2f06c1df8701483397a2b86e1fd4b17b75e4fae318d2f18",
             "transition_arguments": "566d397d28efd843dd13235b3897e953736319140ebc99b2432b4d2b03705d48",
@@ -3872,13 +4025,13 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "fc1435830bc5427dbedd120ee68154977e54e8026f9ec21b46ebbff51f947b34",
+        "6cf04507093214b98322e374a9180d0cba727bb1bb50cf9c302d830f35611b8f",
         {
             "_prepare_abstract_program": "d9674a5ecfc16c6811cc7858d84f09b9ba3ff6538174e0b014b6b75ee8d28030",
         },
     ),
     "src/_lcm/simulation/simulate.py": (
-        "45c78f7759d8f0b0d665a9f31fa2fa4311479207e7389f574c1b5166648e4b2b",
+        "2a168db93957928fba4483c9bbe54b5a7b88efe87cf296a85c357191b394e4d1",
         {
             "_compute_starting_periods": "33feb11da04e05bfb34b8a2302530eae0746ccd14b94af5575bcefad850c411c",
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
@@ -4063,7 +4216,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "09ce7fc7b6cc49e2fdd3e1b4c00424936145c8531990587366709d0c38879296",
+            "_compile_all_functions": "b9dee4d2a7caf364552f551713477cc4410fc7da8339e665962ae0e8066b9659",
             "_resolve_output_layouts_and_lowering_keys": "f03447730445e6e130ec69e7eb87fb05b71b1d57f11134e684a198c12155f3e0",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
@@ -4093,7 +4246,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "fc1435830bc5427dbedd120ee68154977e54e8026f9ec21b46ebbff51f947b34"
+        != "6cf04507093214b98322e374a9180d0cba727bb1bb50cf9c302d830f35611b8f"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -4111,7 +4264,9 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         ]
         if len(fixed_inputs) != 1 or not _expression_matches(
             node=fixed_inputs[0],
-            source="(retained_input_arrays, tuple((space.states, space.discrete_actions, space.continuous_actions) for space in base_state_action_spaces.values()))",
+            source=(
+                "(retained_input_arrays, tuple((space.states, space.discrete_actions, space.continuous_actions) for space in base_state_action_spaces.values()))"
+            ),
         ):
             errors.append(
                 "backward output-layout transport: fixed owner inputs changed"
@@ -4883,6 +5038,20 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
+    for relative in _FINITE_BUDGET_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _finite_budget_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _EAGER_INPUT_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _eager_input_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     for relative in _COMBINED_INPUT_CONTRACTS:
         tree = parsed.get(relative)
         if tree is not None:
@@ -5355,7 +5524,9 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
     )
     mutations["taste_shock_simulate:wrong_continuous_count"] = source.replace(
         "n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes :])",
-        "n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes + 1 :])",
+        (
+            "n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes + 1 :])"
+        ),
         1,
     )
     mutations["taste_shock_simulate:continuous_axis_mismatch"] = source.replace(
@@ -5505,7 +5676,9 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
     )
     mutations["singleton_simulate:attribute_argmax_and_max"] = source.replace(
         "return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)",
-        "return candidate_filter.argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)",
+        (
+            "return candidate_filter.argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)"
+        ),
         1,
     )
     mutations["collective_solve:attribute_collective_readout"] = _replace_nth(
@@ -5536,6 +5709,32 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
 
 
 _SUPPLEMENTAL_SOURCE_MUTATIONS = {
+    "policy_diagnostics:represented_mask_ignored": (
+        POLICY_DIAGNOSTICS_SOURCE,
+        "jnp.sum(live & ~represented)",
+        "jnp.sum(live)",
+    ),
+    "eager_core:planned_operand_placement_bypassed": (
+        "src/_lcm/execution/eager_core.py",
+        (
+            "            placed = jax.tree.map(\n                placement,"
+            "\n                {\n                    name: value\n        "
+            "            for name, value in arguments.items()\n            "
+            "        if name not in self.internal_input_templates\n        "
+            "        },\n                dict(self.arguments),\n           "
+            " )\n            placed.update(\n                jax.tree.map("
+            "\n                    placement.internal,\n                   "
+            " {name: arguments[name] for name in self."
+            "internal_input_templates},\n                    dict(self."
+            "internal_input_templates),\n                )\n            )"
+        ),
+        "            placed = dict(arguments)",
+    ),
+    "runtime_sharding:physical_partition_ignored": (
+        "src/_lcm/execution/runtime_sharding.py",
+        "and actual.is_equivalent_to(expected, ndim)",
+        "and True",
+    ),
     "solve_descriptors:required_layout_replaced": (
         "src/_lcm/execution/abstract_program_inputs.py",
         "sharding=transfer.source_sharding,",
@@ -5638,8 +5837,12 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
     ),
     "simulation_finite_policy:producer_leaf_order_changed": (
         PUBLISHED_POLICY_SOURCE,
-        "        policy.candidate_inner_action,\n        policy.candidate_outer_target,",
-        "        policy.candidate_outer_target,\n        policy.candidate_inner_action,",
+        (
+            "        policy.candidate_inner_action,\n        policy.candidate_outer_target,"
+        ),
+        (
+            "        policy.candidate_outer_target,\n        policy.candidate_inner_action,"
+        ),
     ),
     "simulation_entry:upload_budget_omitted": (
         SIMULATION_ENTRY_ALLOCATIONS_SOURCE,
@@ -5691,7 +5894,9 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
     ),
     "compiler_inputs:eliminated_input_counted_by_compiler": (
         COMPILER_INPUTS_SOURCE,
-        "return frozenset(path for path, sharding in with_paths if sharding is not None)",
+        (
+            "return frozenset(path for path, sharding in with_paths if sharding is not None)"
+        ),
         "return frozenset(path for path, sharding in with_paths)",
     ),
     "simulation_membership:entry_period_changed": (
@@ -5876,7 +6081,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "native_graph:argument_builder_wrapped": replace_once(
             source=grid_source,
             old="                argument_builder=argument_builder,",
-            new="                argument_builder=lambda context: argument_builder(context),",
+            new=(
+                "                argument_builder=lambda context: argument_builder(context),"
+            ),
             label="native graph argument-builder authority",
         ),
         "native_graph:requirements_erased": replace_once(
@@ -6134,7 +6341,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_classifier:collective_ev1_admitted": replace_once(
             source=grid_source,
-            old="        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1",
+            old=(
+                "        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1"
+            ),
             new="        disposition = _ActionStreamingDisposition.STREAMED",
             label="collective EV1 disposition",
         ),
@@ -6146,7 +6355,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_classifier:collective_fold_admitted": replace_once(
             source=grid_source,
-            old="        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD",
+            old=(
+                "        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD"
+            ),
             new="        disposition = _ActionStreamingDisposition.STREAMED",
             label="collective fold disposition",
         ),
@@ -6174,7 +6385,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_classifier:trivial_product_admitted": replace_once(
             source=grid_source,
-            old="        disposition = _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT",
+            old=(
+                "        disposition = _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT"
+            ),
             new="        disposition = _ActionStreamingDisposition.STREAMED",
             label="trivial-action-product disposition",
         ),
@@ -6212,7 +6425,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_classifier:collective_resource_gate_bypassed": replace_once(
             source=grid_source,
-            old="        disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES",
+            old=(
+                "        disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES"
+            ),
             new="        disposition = _ActionStreamingDisposition.STREAMED",
             label="collective resource gate",
         ),
@@ -6250,8 +6465,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_collective:published_dissolution_inverted": replace_once(
             source=grid_source,
-            old="                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},",
-            new="                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: ~dissolution},",
+            old=(
+                "                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},"
+            ),
+            new=(
+                "                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: ~dissolution},"
+            ),
             label="streamed collective result publication",
         ),
         "value_access:grid_reachable_targets_dropped": _replace_nth(
@@ -6719,7 +6938,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_blocks:reverse_coordinate_decode": replace_once(
             source=action_streaming_source,
-            old="    for name, grid, size in zip(action_names, action_grids, action_sizes, strict=True):",
+            old=(
+                "    for name, grid, size in zip(action_names, action_grids, action_sizes, strict=True):"
+            ),
             new=(
                 "    for name, grid, size in zip(reversed(action_names), "
                 "reversed(action_grids), reversed(action_sizes), strict=True):"
@@ -6773,13 +6994,17 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_ev1:scale_rebound": replace_once(
             source=action_streaming_source,
-            old="        reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(self.scale))",
+            old=(
+                "        reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(self.scale))"
+            ),
             new="        reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(1.0))",
             label="streamed EV1 one-session scale binding",
         ),
         "streaming_ev1:continuous_extent_changed": replace_once(
             source=action_streaming_source,
-            old="        continuous_extent = math.prod(action_sizes[self.n_discrete_action_axes :])",
+            old=(
+                "        continuous_extent = math.prod(action_sizes[self.n_discrete_action_axes :])"
+            ),
             new="        continuous_extent = 1",
             label="streamed EV1 discrete-prefix branch extent",
         ),
@@ -7089,8 +7314,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "output_layout:sharding_check_disabled": replace_once(
             source=output_layout_source,
-            old="    if actual != expected.sharding:",
-            new="    if False and actual != expected.sharding:",
+            old="    if not runtime_shardings_match(\n",
+            new="    if False and not runtime_shardings_match(\n",
             label="planned output sharding assertion",
         ),
         "output_layout:expected_value_shape_sliced": replace_once(
@@ -7213,7 +7438,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     internal_outputs_cases = {
         "internal_outputs:resolved_templates_dropped": replace_once(
             source=internal_outputs_source,
-            old="        abstract_output=jax.eval_shape(invocation, **program.arguments, **templates),",
+            old=(
+                "        abstract_output=jax.eval_shape(invocation, **program.arguments, **templates),"
+            ),
             new="        abstract_output=jax.eval_shape(invocation, **program.arguments),",
             label="producer tracing includes its own internal-input templates",
         ),
@@ -7279,8 +7506,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_PROGRAMS_SOURCE,
                 "source": replace_once(
                     source=simulation_programs_source,
-                    old="return _SubjectTiled(func=dense_reducer, subject_arg_names=subject_arg_names)",
-                    new="return _SubjectTiled(func=candidate_filter(dense_reducer), subject_arg_names=subject_arg_names)",
+                    old=(
+                        "return _SubjectTiled(func=dense_reducer, subject_arg_names=subject_arg_names)"
+                    ),
+                    new=(
+                        "return _SubjectTiled(func=candidate_filter(dense_reducer), subject_arg_names=subject_arg_names)"
+                    ),
                     label="dense_reducer_replaced",
                 ),
             },
@@ -7298,7 +7529,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "source": replace_once(
                     source=simulation_programs_source,
                     old="                            coordinate_names=action_names,",
-                    new="                            coordinate_names=tuple(reversed(action_names)),",
+                    new=(
+                        "                            coordinate_names=tuple(reversed(action_names)),"
+                    ),
                     label="action_coordinates_reversed",
                 ),
             },
@@ -7316,7 +7549,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "source": replace_once(
                     source=simulation_programs_source,
                     old="                            reduction=HARD_MAX_REDUCTION,",
-                    new="                            reduction=candidate_filter(HARD_MAX_REDUCTION),",
+                    new=(
+                        "                            reduction=candidate_filter(HARD_MAX_REDUCTION),"
+                    ),
                     label="hard_max_reduction_replaced",
                 ),
             },
@@ -7397,7 +7632,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "source": replace_once(
                     source=simulation_program_types_source,
                     old="self, field, MappingProxyType(dict(getattr(self, field)))",
-                    new="self, field, MappingProxyType(candidate_filter(dict(getattr(self, field))))",
+                    new=(
+                        "self, field, MappingProxyType(candidate_filter(dict(getattr(self, field))))"
+                    ),
                     label="program_snapshot_filtered",
                 ),
             },
@@ -7414,8 +7651,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_RUNTIME_SOURCE,
                 "source": replace_once(
                     source=simulation_runtime_source,
-                    old="            executable=lowered.compile(), static_kwargs=MappingProxyType({})",
-                    new="            executable=candidate_filter(lowered).compile(), static_kwargs=MappingProxyType({})",
+                    old=(
+                        "            executable=lowered.compile(), static_kwargs=MappingProxyType({})"
+                    ),
+                    new=(
+                        "            executable=candidate_filter(lowered).compile(), static_kwargs=MappingProxyType({})"
+                    ),
                     label="lowered_body_replaced",
                 ),
             },
@@ -7477,8 +7718,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_COMPILE_SOURCE,
                 "source": replace_once(
                     source=simulation_compile_source,
-                    old="        program=program, arguments=arguments, period=period, n_subjects=n_subjects",
-                    new="        program=dataclasses.replace(program, function=candidate_filter(program.function)), arguments=arguments, period=period, n_subjects=n_subjects",
+                    old=(
+                        "        program=program, arguments=arguments, period=period, n_subjects=n_subjects"
+                    ),
+                    new=(
+                        "        program=dataclasses.replace(program, function=candidate_filter(program.function)), arguments=arguments, period=period, n_subjects=n_subjects"
+                    ),
                     label="prewarm_program_replaced",
                 ),
             },
@@ -7527,7 +7772,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "caller_simulate:published_empty_mapping": replace_once(
             source=processing_source,
             old="        programs=programs,",
-            new="        programs=dataclass_replace(programs, decision=MappingProxyType({})),",
+            new=(
+                "        programs=dataclass_replace(programs, decision=MappingProxyType({})),"
+            ),
             label="simulate caller publication",
         ),
         "caller_simulate:attribute_simulation_phase": replace_once(
@@ -7584,7 +7831,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     argmax_cases = {
         "shared_argmax:q_order_early_return": replace_once(
             source=argmax_source,
-            old="    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)",
+            old=(
+                "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)"
+            ),
             new="    if a.reshape(-1)[0] > a.reshape(-1)[1]:\n"
             "        return jnp.array(1, dtype=jnp.int32), a.reshape(-1)[1]\n"
             "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)",
@@ -7592,7 +7841,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "shared_argmax:support_filter": replace_once(
             source=argmax_source,
-            old="    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)",
+            old=(
+                "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)"
+            ),
             new="    where = jnp.where(\n"
             "        jnp.sum(where) > 1,\n"
             "        where.reshape(-1).at[0].set(False).reshape(where.shape),\n"
@@ -7637,7 +7888,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     collective_cases = {
         "shared_collective:q_gap_filter": replace_once(
             source=collective_source,
-            old="    objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)",
+            old=(
+                "    objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)"
+            ),
             new="    objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)\n"
             "    objective = jnp.where(\n"
             "        objective.reshape(-1)[0] - objective.reshape(-1)[1] > 0.5,\n"
@@ -7660,18 +7913,26 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "shared_collective:action_axis_prefix": replace_once(
             source=collective_source,
             old="        a=objective, axis=action_axes, initial=-jnp.inf, where=feasibility",
-            new="        a=objective, axis=action_axes[:-1], initial=-jnp.inf, where=feasibility",
+            new=(
+                "        a=objective, axis=action_axes[:-1], initial=-jnp.inf, where=feasibility"
+            ),
             label="collective action axis",
         ),
         "shared_collective:gather_next_candidate": replace_once(
             source=collective_source,
-            old="    gathered = jnp.take_along_axis(q_flat, argmax_flat[..., None], axis=-1)",
-            new="    gathered = jnp.take_along_axis(q_flat, (argmax_flat + 1)[..., None], axis=-1)",
+            old=(
+                "    gathered = jnp.take_along_axis(q_flat, argmax_flat[..., None], axis=-1)"
+            ),
+            new=(
+                "    gathered = jnp.take_along_axis(q_flat, (argmax_flat + 1)[..., None], axis=-1)"
+            ),
             label="collective gather",
         ),
         "shared_collective:early_candidate_return": replace_once(
             source=collective_source,
-            old="    objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)",
+            old=(
+                "    objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)"
+            ),
             new="    if jnp.all(feasibility):\n"
             "        return (\n"
             "            jnp.array(1, dtype=jnp.int32),\n"
@@ -7848,8 +8109,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": GRID_BASE_SOURCE,
             "source": replace_once(
                 source=grid_base_source,
-                old='class Grid(ABC):\n    """Outcome-space definition shared by all LCM grids."""',
-                new='class Grid(ABC):\n    """Outcome-space definition shared by all LCM grids."""\n\n    def __getattribute__(self, name):\n        value = super().__getattribute__(name)\n        if name == "to_jax":\n            return lambda: value()[:-1]\n        return value',
+                old=(
+                    'class Grid(ABC):\n    """Outcome-space definition shared by all LCM grids."""'
+                ),
+                new=(
+                    'class Grid(ABC):\n    """Outcome-space definition shared by all LCM grids."""\n\n    def __getattribute__(self, name):\n        value = super().__getattribute__(name)\n        if name == "to_jax":\n            return lambda: value()[:-1]\n        return value'
+                ),
                 label="inherited grid coordinate interception",
             ),
         },
@@ -7857,8 +8122,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": SIMULATION_TRANSITIONS_SOURCE,
             "source": replace_once(
                 source=simulation_transitions_source,
-                old="    return base.replace(states=MappingProxyType(states_for_state_action_space))",
-                new="    return base.replace(\n        states=MappingProxyType(states_for_state_action_space),\n        discrete_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base.discrete_actions.items()}),\n        continuous_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base.continuous_actions.items()}),\n    )",
+                old=(
+                    "    return base.replace(states=MappingProxyType(states_for_state_action_space))"
+                ),
+                new=(
+                    "    return base.replace(\n        states=MappingProxyType(states_for_state_action_space),\n        discrete_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base.discrete_actions.items()}),\n        continuous_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base.continuous_actions.items()}),\n    )"
+                ),
                 label="simulation base-action preservation",
             ),
         },
@@ -7867,7 +8136,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=simulation_source,
                 old="        base=base_state_action_space,",
-                new="        base=base_state_action_space.replace(continuous_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base_state_action_space.continuous_actions.items()})),",
+                new=(
+                    "        base=base_state_action_space.replace(continuous_actions=MappingProxyType({name: values.at[-1].set(values[0]) for name, values in base_state_action_space.continuous_actions.items()})),"
+                ),
                 label="simulation adapter caller base wrapping",
             ),
         },
@@ -7885,7 +8156,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=engine_source,
                 old="            dict(self.discrete_actions) | dict(self.continuous_actions)",
-                new="            {name: values.at[-1].set(values[0]) for name, values in self.discrete_actions.items()} | {name: values.at[-1].set(values[0]) for name, values in self.continuous_actions.items()}",
+                new=(
+                    "            {name: values.at[-1].set(values[0]) for name, values in self.discrete_actions.items()} | {name: values.at[-1].set(values[0]) for name, values in self.continuous_actions.items()}"
+                ),
                 label="combined action mapping candidate omission",
             ),
         },
@@ -7893,8 +8166,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": ENGINE_SOURCE,
             "source": replace_once(
                 source=engine_source,
-                old="        discrete_actions = first_non_none(discrete_actions, self.discrete_actions)",
-                new="        discrete_actions = first_non_none(discrete_actions, MappingProxyType({name: values.at[-1].set(values[0]) for name, values in self.discrete_actions.items()}))",
+                old=(
+                    "        discrete_actions = first_non_none(discrete_actions, self.discrete_actions)"
+                ),
+                new=(
+                    "        discrete_actions = first_non_none(discrete_actions, MappingProxyType({name: values.at[-1].set(values[0]) for name, values in self.discrete_actions.items()}))"
+                ),
                 label="StateActionSpace.replace inherited candidate omission",
             ),
         },
@@ -7911,8 +8188,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": STATE_ACTION_SPACE_SOURCE,
             "source": replace_once(
                 source=state_action_space_source,
-                old="        name: _grid_to_jax_or_placeholder(grids[name])\n        for name in variables.continuous_action_names",
-                new="        name: _grid_to_jax_or_placeholder(grids[name]).at[-1].set(_grid_to_jax_or_placeholder(grids[name])[0])\n        for name in variables.continuous_action_names",
+                old=(
+                    "        name: _grid_to_jax_or_placeholder(grids[name])\n        for name in variables.continuous_action_names"
+                ),
+                new=(
+                    "        name: _grid_to_jax_or_placeholder(grids[name]).at[-1].set(_grid_to_jax_or_placeholder(grids[name])[0])\n        for name in variables.continuous_action_names"
+                ),
                 label="state-action continuous candidate omission",
             ),
         },
@@ -8105,15 +8386,14 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=backward_induction_source,
                 old=(
-                    "                    else program.function\n"
-                    "                ),\n"
-                    "                layout=all_layouts[triple],"
+                    "                compiled=make_eager_core(\n                   "
+                    " program=program,\n                    execution_sharding="
+                    "all_layouts[triple].expected_leaves[0].sharding,\n            "
+                    "        internal_input_templates=internal_templates[\n        "
+                    "                selected_candidates[triple]\n                 "
+                    "   ],\n                ),"
                 ),
-                new=(
-                    "                    else all_programs[triple].function\n"
-                    "                ),\n"
-                    "                layout=all_layouts[triple],"
-                ),
+                new="                compiled=all_programs[triple].function,",
                 label="eager resolved function",
             ),
         },
@@ -8176,8 +8456,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": INITIAL_CONDITIONS_SOURCE,
             "source": replace_once(
                 source=initial_conditions_source,
-                old="                                start=0,\n                                stop=original_n_subjects,",
-                new="                                start=1 if name == 'actions' else 0,\n                                stop=original_n_subjects + (name == 'actions'),",
+                old=(
+                    "                                start=0,\n                                stop=original_n_subjects,"
+                ),
+                new=(
+                    "                                start=1 if name == 'actions' else 0,\n                                stop=original_n_subjects + (name == 'actions'),"
+                ),
                 label="padded action row shift",
             ),
         },
@@ -8186,7 +8470,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=result_source,
                 old="        self._raw_results = raw_results",
-                new="        self._raw_results = MappingProxyType({regime: MappingProxyType({period: __import__('dataclasses').replace(data, actions=MappingProxyType({name: jnp.roll(values, 1) for name, values in data.actions.items()})) for period, data in periods.items()}) for regime, periods in raw_results.items()})",
+                new=(
+                    "        self._raw_results = MappingProxyType({regime: MappingProxyType({period: __import__('dataclasses').replace(data, actions=MappingProxyType({name: jnp.roll(values, 1) for name, values in data.actions.items()})) for period, data in periods.items()}) for regime, periods in raw_results.items()})"
+                ),
                 label="SimulationResult raw action shift",
             ),
         },
@@ -8212,8 +8498,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": ADDITIONAL_TARGETS_SOURCE,
             "source": replace_once(
                 source=additional_targets_source,
-                old="        return {\n            k: _one_value_per_row(values=v, n_rows=n_rows) for k, v in result.items()\n        }",
-                new="        return {\n            k: _one_value_per_row(values=v, n_rows=n_rows) for k, v in result.items()\n        } | {name: jnp.roll(jnp.asarray(data[name]), 1) for name in regime.simulation.action_names if name in data}",
+                old=(
+                    "        return {\n            k: _one_value_per_row(values=v, n_rows=n_rows) for k, v in result.items()\n        }"
+                ),
+                new=(
+                    "        return {\n            k: _one_value_per_row(values=v, n_rows=n_rows) for k, v in result.items()\n        } | {name: jnp.roll(jnp.asarray(data[name]), 1) for name in regime.simulation.action_names if name in data}"
+                ),
                 label="single-pass additional-target action overwrite",
             ),
         },
@@ -8221,8 +8511,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": ADDITIONAL_TARGETS_SOURCE,
             "source": replace_once(
                 source=additional_targets_source,
-                old="    return {\n        name: np.concatenate([out[name] for out in chunk_outputs])\n        for name in chunk_outputs[0]\n    }",
-                new="    return {\n        **{name: np.concatenate([out[name] for out in chunk_outputs]) for name in chunk_outputs[0]},\n        **{name: jnp.roll(jnp.asarray(data[name]), 1) for name in regime.simulation.action_names if name in data},\n    }",
+                old=(
+                    "    return {\n        name: np.concatenate([out[name] for out in chunk_outputs])\n        for name in chunk_outputs[0]\n    }"
+                ),
+                new=(
+                    "    return {\n        **{name: np.concatenate([out[name] for out in chunk_outputs]) for name in chunk_outputs[0]},\n        **{name: jnp.roll(jnp.asarray(data[name]), 1) for name in regime.simulation.action_names if name in data},\n    }"
+                ),
                 label="chunked additional-target action overwrite",
             ),
         },
@@ -8231,7 +8525,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=simulation_random_source,
                 old='        simulation_keys[f"key_{name}"] = per_subject_keys',
-                new='        simulation_keys[f"key_{name}"] = jnp.roll(per_subject_keys, 1, axis=0)',
+                new=(
+                    '        simulation_keys[f"key_{name}"] = jnp.roll(per_subject_keys, 1, axis=0)'
+                ),
                 label="subject taste-key reassignment",
             ),
         },
@@ -8273,7 +8569,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=solver_api_source,
                 old="        if not np.issubdtype(value_dtype, np.floating):",
-                new='        object.__setattr__(self, "value", -self.value)\n        if not np.issubdtype(value_dtype, np.floating):',
+                new=(
+                    '        object.__setattr__(self, "value", -self.value)\n        if not np.issubdtype(value_dtype, np.floating):'
+                ),
                 label="KernelOutput value transport negation",
             ),
         },
@@ -8282,7 +8580,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=grids_init_source,
                 old="from _lcm.grids.discrete import DiscreteGrid",
-                new="from _lcm.grids.discrete import DiscreteGrid\n\nContinuousGrid = DiscreteGrid",
+                new=(
+                    "from _lcm.grids.discrete import DiscreteGrid\n\nContinuousGrid = DiscreteGrid"
+                ),
                 label="continuous-grid classification rebinding",
             ),
         },
@@ -8291,7 +8591,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=processes_init_source,
                 old="from _lcm.processes.iid import _IIDProcess",
-                new="from _lcm.processes.iid import _IIDProcess\n\n_ContinuousStochasticProcess = _AR1Process",
+                new=(
+                    "from _lcm.processes.iid import _IIDProcess\n\n_ContinuousStochasticProcess = _AR1Process"
+                ),
                 label="process-action classification rebinding",
             ),
         },
@@ -8308,8 +8610,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": CONTINUOUS_GRID_SOURCE,
             "source": replace_once(
                 source=continuous_grid_source,
-                old="        return grid_coordinates.linspace(\n            start=self.start, stop=self.stop, n_points=self.n_points\n        )",
-                new="        return grid_coordinates.linspace(\n            start=self.start, stop=self.stop, n_points=self.n_points\n        )[:-1]",
+                old=(
+                    "        return grid_coordinates.linspace(\n            start=self.start, stop=self.stop, n_points=self.n_points\n        )"
+                ),
+                new=(
+                    "        return grid_coordinates.linspace(\n            start=self.start, stop=self.stop, n_points=self.n_points\n        )[:-1]"
+                ),
                 label="linear action point omission",
             ),
         },
@@ -8317,8 +8623,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": GRID_COORDINATES_SOURCE,
             "source": replace_once(
                 source=grid_coordinates_source,
-                old="    return jnp.linspace(start, stop, n_points)  # ty: ignore[no-matching-overload]",
-                new="    return jnp.linspace(start, stop, n_points)[:-1]  # ty: ignore[no-matching-overload]",
+                old=(
+                    "    return jnp.linspace(start, stop, n_points)  # ty: ignore[no-matching-overload]"
+                ),
+                new=(
+                    "    return jnp.linspace(start, stop, n_points)[:-1]  # ty: ignore[no-matching-overload]"
+                ),
                 label="shared linear coordinate omission",
             ),
         },
@@ -8344,8 +8654,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": PROCESS_IID_SOURCE,
             "source": replace_once(
                 source=process_iid_source,
-                old='        return jnp.linspace(\n            start=kwargs["start"], stop=kwargs["stop"], num=self.n_points\n        )',
-                new='        return jnp.linspace(\n            start=kwargs["start"], stop=kwargs["stop"], num=self.n_points\n        )[:-1]',
+                old=(
+                    '        return jnp.linspace(\n            start=kwargs["start"], stop=kwargs["stop"], num=self.n_points\n        )'
+                ),
+                new=(
+                    '        return jnp.linspace(\n            start=kwargs["start"], stop=kwargs["stop"], num=self.n_points\n        )[:-1]'
+                ),
                 label="IID action node omission",
             ),
         },
@@ -8353,8 +8667,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": PROCESS_AR1_SOURCE,
             "source": replace_once(
                 source=process_ar1_source,
-                old="        return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)",
-                new="        return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)[:-1]",
+                old=(
+                    "        return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)"
+                ),
+                new=(
+                    "        return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)[:-1]"
+                ),
                 label="AR1 action node omission",
             ),
         },
@@ -8362,8 +8680,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": VARIABLES_SOURCE,
             "source": replace_once(
                 source=variables_source,
-                old='    actions = [name for name, var_info in info.items() if var_info.kind == "action"]',
-                new='    actions = [name for name, var_info in info.items() if var_info.kind == "action"][:-1]',
+                old=(
+                    '    actions = [name for name, var_info in info.items() if var_info.kind == "action"]'
+                ),
+                new=(
+                    '    actions = [name for name, var_info in info.items() if var_info.kind == "action"][:-1]'
+                ),
                 label="finalized action-name omission",
             ),
         },
@@ -8381,7 +8703,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=params_processing_source,
                 old="            result[regime][remainder] = params_flat[chosen]",
-                new='            result[regime][remainder] = (-params_flat[chosen] if remainder.endswith("__points") else params_flat[chosen])',
+                new=(
+                    '            result[regime][remainder] = (-params_flat[chosen] if remainder.endswith("__points") else params_flat[chosen])'
+                ),
                 label="runtime action points changed during broadcast",
             ),
         },
@@ -8390,7 +8714,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=namespace_source,
                 old="    return MappingProxyType(flatten_to_qnames(d))",
-                new='    flat = flatten_to_qnames(d)\n    return MappingProxyType({key: -value if key.endswith("__points") and hasattr(value, "dtype") else value for key, value in flat.items()})',
+                new=(
+                    '    flat = flatten_to_qnames(d)\n    return MappingProxyType({key: -value if key.endswith("__points") and hasattr(value, "dtype") else value for key, value in flat.items()})'
+                ),
                 label="runtime action points changed during namespace flattening",
             ),
         },
@@ -8399,7 +8725,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=dtypes_source,
                 old="    return jnp.asarray(np_value, dtype=target_dtype)",
-                new='    out = jnp.asarray(np_value, dtype=target_dtype)\n    return -out if name.endswith("__points") else out',
+                new=(
+                    '    out = jnp.asarray(np_value, dtype=target_dtype)\n    return -out if name.endswith("__points") else out'
+                ),
                 label="runtime action points changed during canonical cast",
             ),
         },
@@ -8424,8 +8752,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": MODEL_PROCESSING_SOURCE,
             "source": replace_once(
                 source=model_processing_source,
-                old="        regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))",
-                new='        regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))\n        regime_fixed = {key: -value if key.endswith("__points") else value for key, value in regime_fixed.items()}',
+                old=(
+                    "        regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))"
+                ),
+                new=(
+                    '        regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))\n        regime_fixed = {key: -value if key.endswith("__points") else value for key, value in regime_fixed.items()}'
+                ),
                 label="fixed runtime action points changed before state-space completion",
             ),
         },

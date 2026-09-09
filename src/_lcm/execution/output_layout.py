@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.execution.internal_outputs import assert_internal_inputs
+from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     TransferCache,
@@ -380,7 +381,9 @@ def _assert_output_leaf(
         expected_dtype=expected.dtype,
     )
     actual = getattr(output, "sharding", None)
-    if actual != expected.sharding:
+    if not runtime_shardings_match(
+        actual=actual, expected=expected.sharding, ndim=getattr(output, "ndim", 0)
+    ):
         msg = (
             f"planned output sharding mismatch at {path} ({expected.label}): "
             f"expected {expected.sharding}, got {actual}. The output must be born "

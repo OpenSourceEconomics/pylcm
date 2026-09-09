@@ -15,8 +15,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.execution.core_program import ValueRead
 from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
     ValueArtifactKind,
     ValueTransferKind,
     classify_value_transfer,
@@ -67,11 +70,13 @@ from _lcm.simulation.membership import (
     _empty_subject_membership,
 )
 from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.random import (
     _create_simulation_key,
     _generate_windowed_simulation_keys,
     _split_simulation_key,
 )
+from _lcm.simulation.replay_inputs import replay_payload_reads
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.taste_stream import (
     _advance_simulation_taste_key,
@@ -87,10 +92,15 @@ from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
+from lcm.solver_api import SIMULATION_POLICY
+
+type _FiniteRankOutput = tuple[
+    Mapping[str, jax.ShapeDtypeStruct], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct
+]
 
 
 # Keep setup, per-unit publication and period cleanup in their lifetime order.
-def profile_simulation_chunk(  # noqa: C901, PLR0915
+def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     *,
     runtime: SimulationRuntime,
     regimes: Mapping[str, Regime],
@@ -106,12 +116,13 @@ def profile_simulation_chunk(  # noqa: C901, PLR0915
     widths: Mapping[str, int],
     independent_taste: bool,
     log_level: LogLevel,
+    policies: Mapping[int, Mapping[str, object]] | None = None,
 ) -> SimulationChunkProfile:
     """Prepare actual compiled stages for one proposed outer population extent.
 
-    The current route covers declared compiled decisions without gated/replay
-    adapters. Its diagnostics, retained storage, and outer assembly profiles feed
-    the public chunk selector before any candidate chunk is allocated.
+    The current route covers declared grid and finite-policy decisions without
+    host gated or other replay adapters. Diagnostics, retained storage and outer
+    assembly profiles feed the selector before any candidate chunk is allocated.
     """
     if population < original_population or original_population <= 0 or n_subjects <= 0:
         raise ExecutionPlanningError("Chunk profiles need a valid positive population.")
@@ -236,6 +247,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0915
                 columns=carrier[name],
                 ordinary_key=key,
                 taste_key=taste_key,
+                policy=(policies or {}).get(period, {}).get(name),
             )
             mask = inventory.operation(
                 function=_regime_mask,
@@ -253,47 +265,73 @@ def profile_simulation_chunk(  # noqa: C901, PLR0915
                     width=n_subjects,
                     scalar_int=scalar_int,
                 )
-            decision = cores["decision"]
-            indices, value = cast(
-                "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
-                _record_core(inventory=inventory, profile=decision, family="decision"),
-            )
-            if regime.stakeholders is not None and not base_spaces[name].states:
+            if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
+                bank = cast(
+                    "tuple[jax.ShapeDtypeStruct, ...]",
+                    _record_core(
+                        inventory=inventory,
+                        profile=cores["policy_prepare"],
+                        family="policy_prepare",
+                    ),
+                )
+                if log_level != "off":
+                    inventory.operation(
+                        function=dropped_candidate_counts,
+                        arguments={"live": bank[2], "represented": bank[3]},
+                        subject_arg_names=("live", "represented"),
+                    )
+                actions, value, fallback = cast(
+                    "_FiniteRankOutput",
+                    _record_core(
+                        inventory=inventory,
+                        profile=cores["decision"],
+                        family="policy_rank",
+                    ),
+                )
+            else:
+                decision = cores["decision"]
                 indices, value = cast(
                     "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
-                    inventory.operation(
-                        function=_broadcast_collective,
-                        arguments={"indices": indices, "value": value},
-                        static_arguments={"n_subjects": n_subjects},
-                        subject_outputs=True,
+                    _record_core(
+                        inventory=inventory, profile=decision, family="decision"
                     ),
                 )
-            decoder = decision.action_decoder
-            if decoder is None:
-                raise ExecutionPlanningError(
-                    "A decision chunk profile omitted its action decoder."
+                if regime.stakeholders is not None and not base_spaces[name].states:
+                    indices, value = cast(
+                        "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
+                        inventory.operation(
+                            function=_broadcast_collective,
+                            arguments={"indices": indices, "value": value},
+                            static_arguments={"n_subjects": n_subjects},
+                            subject_outputs=True,
+                        ),
+                    )
+                decoder = decision.action_decoder
+                if decoder is None:
+                    raise ExecutionPlanningError(
+                        "A decision chunk profile omitted its action decoder."
+                    )
+                actions = inventory.compiled(
+                    name="_lookup_values_from_indices",
+                    executable=decoder.executable,
+                    arguments=decoder.arguments,
                 )
-            actions = inventory.compiled(
-                name="_lookup_values_from_indices",
-                executable=decoder.executable,
-                arguments=decoder.arguments,
-            )
-            if not value.shape:
-                value = cast(
-                    "jax.ShapeDtypeStruct",
-                    inventory.operation(
-                        function=_broadcast_value,
-                        arguments={"value": value},
-                        static_arguments={"n_subjects": n_subjects},
-                        subject_outputs=True,
-                    ),
+                if not value.shape:
+                    value = cast(
+                        "jax.ShapeDtypeStruct",
+                        inventory.operation(
+                            function=_broadcast_value,
+                            arguments={"value": value},
+                            static_arguments={"n_subjects": n_subjects},
+                            subject_outputs=True,
+                        ),
+                    )
+                fallback = inventory.operation(
+                    function=_empty_fallback,
+                    arguments={"mask": mask},
+                    subject_arg_names=("mask",),
+                    subject_outputs=True,
                 )
-            fallback = inventory.operation(
-                function=_empty_fallback,
-                arguments={"mask": mask},
-                subject_arg_names=("mask",),
-                subject_outputs=True,
-            )
             record = (value, actions, carrier[name], mask, own_roles, fallback)
             records.append(record)
             period_values.append(value)
@@ -343,7 +381,11 @@ def profile_simulation_chunk(  # noqa: C901, PLR0915
         add_bytes(
             target=pending,
             source=_period_copy_reservation(
-                regimes=regimes, values=values, period=period, devices=devices
+                regimes=regimes,
+                values=values,
+                policies=policies,
+                period=period,
+                devices=devices,
             ),
         )
         maximum_bytes(target=maximum_period, source=pending)
@@ -792,53 +834,106 @@ def _period_copy_reservation(
     values: Mapping[int, Mapping[str, jax.Array]],
     period: int,
     devices: tuple[jax.Device, ...],
+    policies: Mapping[int, Mapping[str, object]] | None = None,
 ) -> dict[jax.Device, int]:
-    """Reserve actual declared nonaligned copies once per period/address/layout."""
+    """Reserve declared nonaligned copies once per period/address/ordered layout."""
+    policy_sources = _policy_read_sources(
+        policies=(policies or {}).get(period, {}), period=period
+    )
+    reads = tuple(
+        read
+        for regime in regimes.values()
+        for family in (
+            regime.simulation.programs.policy_prepare,
+            regime.simulation.programs.decision,
+        )
+        if period in family
+        for read in family[period].requirements.value_reads
+    )
     seen = set()
     result: dict[jax.Device, int] = {}
-    for regime in regimes.values():
-        program = regime.simulation.programs.decision.get(period)
-        if program is None:
+    for read in reads:
+        source = _retained_read_source(
+            read=read, values=values, policy_sources=policy_sources
+        )
+        required = simulation_value_sharding(
+            stored_sharding=source.sharding, devices=devices
+        )
+        identity = (read.target, required)
+        if identity in seen:
             continue
-        for read in program.requirements.value_reads:
-            if read.target.kind is not ValueArtifactKind.REGIME_VALUE:
-                raise ExecutionPlanningError(
-                    "Chunk copies require an explicit retained artifact schema."
-                )
-            source = values[read.target.period][read.target.regime]
-            required = simulation_value_sharding(
-                stored_sharding=source.sharding, devices=devices
-            )
-            identity = (read.target, required)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            kind = classify_value_transfer(
-                stored_sharding=source.sharding, required_sharding=required
-            )
-            if kind is ValueTransferKind.ALIGNED_LOCAL:
-                continue
-            transfer = resolve_value_transfer(
-                target=read.target,
-                source=read.source,
-                kind=kind,
-                stored_template=source,
-                source_sharding=required,
-            )
-            add_bytes(
-                target=result,
-                source=dict.fromkeys(
-                    required.device_set, transfer.cost.per_device_bytes
-                ),
-            )
-            add_bytes(
-                target=result,
-                source=dict.fromkeys(
-                    required.device_set | source.sharding.device_set,
-                    transfer.cost.temporary_bytes,
-                ),
-            )
+        seen.add(identity)
+        kind = classify_value_transfer(
+            stored_sharding=source.sharding, required_sharding=required
+        )
+        if kind is ValueTransferKind.ALIGNED_LOCAL:
+            continue
+        transfer = resolve_value_transfer(
+            target=read.target,
+            source=read.source,
+            kind=kind,
+            stored_template=source,
+            source_sharding=required,
+        )
+        add_bytes(
+            target=result,
+            source=dict.fromkeys(required.device_set, transfer.cost.per_device_bytes),
+        )
+        add_bytes(
+            target=result,
+            source=dict.fromkeys(
+                required.device_set | source.sharding.device_set,
+                transfer.cost.temporary_bytes,
+            ),
+        )
     return result
+
+
+def _policy_read_sources(
+    *, policies: Mapping[str, object], period: int
+) -> dict[ValueArtifactAddress, jax.Array]:
+    """Index canonical retained finite leaves by the actual period-owner addresses."""
+    sources = {}
+    for name, policy in policies.items():
+        if not isinstance(policy, NNBEGMSimPolicy):
+            raise ExecutionPlanningError(
+                "Chunk policy copies require a finite retained payload schema."
+            )
+        leaves = jax.tree.leaves(policy)
+        if not all(isinstance(leaf, jax.Array) for leaf in leaves):
+            raise ExecutionPlanningError(
+                "Chunk policy copies require canonical JAX leaves."
+            )
+        reads = replay_payload_reads(
+            payload=policy,
+            key=SIMULATION_POLICY,
+            period=period,
+            regime=name,
+            core="simulation_policy_replay",
+        )
+        sources.update(
+            (read.target, leaf) for read, leaf in zip(reads, leaves, strict=True)
+        )
+    return sources
+
+
+def _retained_read_source(
+    *,
+    read: ValueRead,
+    values: Mapping[int, Mapping[str, jax.Array]],
+    policy_sources: Mapping[ValueArtifactAddress, jax.Array],
+) -> jax.Array:
+    """Resolve only the declared value and finite-policy storage classes."""
+    if read.target.kind is ValueArtifactKind.REGIME_VALUE:
+        return values[read.target.period][read.target.regime]
+    if (
+        read.target.kind is ValueArtifactKind.REPLAY_ARTIFACT_LEAF
+        and read.target in policy_sources
+    ):
+        return policy_sources[read.target]
+    raise ExecutionPlanningError(
+        "Chunk copies require an explicit retained artifact schema."
+    )
 
 
 def _profile_entry_key(

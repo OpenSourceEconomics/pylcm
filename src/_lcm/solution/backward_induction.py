@@ -49,6 +49,7 @@ from _lcm.execution.donation import (
     unit_input_readers,
     withhold_shared_donations,
 )
+from _lcm.execution.eager_core import make_eager_core
 from _lcm.execution.execution_plan import (
     ResolvedExecution,
     execution_over_visible_devices,
@@ -3210,10 +3211,12 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         }
         eager = {
             triple: _attach_resolved_output_layout(
-                compiled=(
-                    functools.partial(program.function, **program.static_kwargs)
-                    if program.static_kwargs
-                    else program.function
+                compiled=make_eager_core(
+                    program=program,
+                    execution_sharding=all_layouts[triple].expected_leaves[0].sharding,
+                    internal_input_templates=internal_templates[
+                        selected_candidates[triple]
+                    ],
                 ),
                 layout=all_layouts[triple],
                 tile_widths=program.tile_widths,

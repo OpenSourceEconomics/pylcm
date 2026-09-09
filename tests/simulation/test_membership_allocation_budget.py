@@ -2,8 +2,11 @@
 
 import dataclasses
 import functools
+import inspect
+import sys
 import weakref
 from collections.abc import Callable
+from types import CodeType
 from typing import Any
 
 import jax
@@ -12,8 +15,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.simulation import initial_conditions
 from _lcm.simulation import membership as membership_module
 from _lcm.simulation import simulate as simulation_module
+from _lcm.simulation.chunk_operations import _period_age
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.membership import (
     activate_subject_membership,
@@ -47,8 +52,14 @@ def _run_with_membership_guard(
     observations: list[bool],
     **kwargs: Any,
 ) -> Any:
-    """Inspect membership setup after public entry validation has finished."""
+    """Inspect the pure membership body during abstract profiling or execution."""
     function_name = "full_like" if operation == "empty_carriers" else "where"
+    target_name = (
+        "_empty_subject_membership"
+        if operation == "empty_carriers"
+        else "_activate_subject_membership"
+    )
+    target_code = inspect.unwrap(getattr(membership_module, target_name)).__code__
     numerical_function = getattr(jnp, function_name)
     with monkeypatch.context() as guard:
         guard.setattr(
@@ -59,6 +70,7 @@ def _run_with_membership_guard(
                 original=numerical_function,
                 operation=operation,
                 observations=observations,
+                target_code=target_code,
             ),
         )
         return original(**kwargs)
@@ -69,6 +81,7 @@ def _guard_first_subject_allocation(
     original: Callable[..., Any],
     operation: str,
     observations: list[bool],
+    target_code: CodeType,
     **kwargs: Any,
 ) -> Any:
     """The first subject-sized operation must be traced before it executes."""
@@ -77,7 +90,11 @@ def _guard_first_subject_allocation(
         if args
         else kwargs["a" if operation == "empty_carriers" else "condition"]
     )
-    if not observations and getattr(operand, "shape", None) == (1,):
+    if (
+        sys._getframe(1).f_code is target_code
+        and not observations
+        and getattr(operand, "shape", None) == (1,)
+    ):
         traced = isinstance(operand, jax.core.Tracer)
         observations.append(traced)
         if not traced:
@@ -101,18 +118,13 @@ def test_budgeted_membership_setup_allocates_inside_profiled_code(
     }
     solution = model.solve(params=params, log_level="off")
     observations: list[bool] = []
-    monkeypatch.setattr(
-        simulation_module,
-        "_simulate_subject_chunk",
-        functools.partial(
-            _run_with_membership_guard,
-            original=simulation_module._simulate_subject_chunk,
-            monkeypatch=monkeypatch,
-            operation=operation,
-            observations=observations,
-        ),
-    )
-    result = model.simulate(
+    # Whole-chunk admission traces the body before entering the subject loop.
+    # Observe its primitives across the whole call, keeping its function identity.
+    result = _run_with_membership_guard(
+        original=model.simulate,
+        monkeypatch=monkeypatch,
+        operation=operation,
+        observations=observations,
         params=params,
         initial_conditions=initial,
         solution=solution,
@@ -207,6 +219,7 @@ class _ObservedMembershipRoots:
     original_ages: DeviceBufferFootprint | None = None
     expected_age: object = None
     reached: int = 0
+    produced: tuple[weakref.ReferenceType[jax.Array], ...] = ()
 
 
 def _capture_initial_state_roots(
@@ -271,7 +284,27 @@ def _inspect_membership_roots(
             for array in arrays
         )
         observed.reached += 1
-    return original(self, **kwargs)
+    result = original(self, **kwargs)
+    producer_functions = (
+        (initial_conditions._cast_carrier, initial_conditions._fill_carrier)
+        if observed.channel == "states"
+        else (_period_age,)
+    )
+    if kwargs["function"] in producer_functions:
+        # Capture before SimulationMemory.run enrolls this operation's result.
+        # The later explicit handoff may enroll the same arrays a second time.
+        observed.produced += tuple(
+            weakref.ref(array) for array in jax.tree.leaves(result)
+        )
+    return result
+
+
+# keyword-only-exempt: library-callback=jax.tree.map
+def _omit_membership_leaf(
+    value: object, *, observed: _ObservedMembershipRoots
+) -> object:
+    """Omit only the captured new roots, preserving every unrelated live operand."""
+    return None if any(value is ref() for ref in observed.produced) else value
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
@@ -282,20 +315,10 @@ def _omit_observed_membership_hold(
     original: Callable[..., Any],
     observed: _ObservedMembershipRoots,
 ) -> None:
-    if (
-        observed.channel == "age"
-        and observed.age is not None
-        and tree is observed.age()
-    ):
-        return
-    if observed.channel == "states" and isinstance(tree, tuple) and len(tree) == 2:
-        supplied = jax.tree.leaves(tree[0])
-        if observed.states and all(
-            any(array is reference() for array in supplied)
-            for reference in observed.states
-        ):
-            return
-    original(self, tree)
+    original(
+        self,
+        jax.tree.map(functools.partial(_omit_membership_leaf, observed=observed), tree),
+    )
 
 
 def _assert_public_membership_inventory(
@@ -404,7 +427,7 @@ def test_membership_admission_counts_new_public_path_roots(
 def test_missing_membership_root_handoff_is_detected(
     *, monkeypatch: pytest.MonkeyPatch, channel: str
 ) -> None:
-    """The public-path observer rejects removal of each exact lifetime handoff."""
+    """Reject omission from both the profiled result and explicit handoff owners."""
     with pytest.raises(AssertionError, match=f"Membership {channel} missing"):
         _assert_public_membership_inventory(
             monkeypatch=monkeypatch, channel=channel, omit_hold=True

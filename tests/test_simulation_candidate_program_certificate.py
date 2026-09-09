@@ -808,6 +808,179 @@ _COMBINED_INPUT_MUTATIONS = {
 }
 
 
+_FINITE_BUDGET_MUTATIONS = {
+    "finite_budget:retained_policy_mapping_omitted": (
+        "src/lcm/model.py",
+        "                policies=period_to_regime_to_sim_policy,",
+        "                policies=None,",
+    ),
+    "finite_budget:profile_payload_omitted": (
+        "src/_lcm/simulation/forward_program_profiles.py",
+        "payload=abstract_payload, states=states, params=params, age=age",
+        "payload=None, states=states, params=params, age=age",
+    ),
+    "finite_budget:prepared_bank_schema_bypassed": (
+        "src/_lcm/simulation/forward_program_profiles.py",
+        "bank=preparation.executable.out_info,",
+        "bank=abstract_payload,",
+    ),
+    "finite_budget:required_policy_layout_ignored": (
+        "src/_lcm/simulation/forward_program_profiles.py",
+        "\n            stored_sharding=leaf.sharding, devices=devices\n",
+        (
+            "\n            stored_sharding=leaf.sharding, devices=tupl"
+            "e(leaf.sharding.device_set)\n"
+        ),
+    ),
+    "finite_budget:preparation_storage_replaced": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        'profile=cores["policy_prepare"],',
+        'profile=cores["decision"],',
+    ),
+    "finite_budget:diagnostic_profile_replaced": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        "function=dropped_candidate_counts,",
+        "function=_empty_fallback,",
+    ),
+    "finite_budget:distinct_artifact_copies_merged": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        "identity = (read.target, required)",
+        "identity = (read.target.kind, required)",
+    ),
+    "finite_budget:policy_locator_value_replaced": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        "(read.target, leaf) for read, leaf in zip(reads, leaves, strict=True)",
+        "(read.target, leaves[0]) for read, leaf in zip(reads, leaves, strict=True)",
+    ),
+    "finite_budget:copy_scratch_omitted": (
+        "src/_lcm/simulation/chunk_profiles.py",
+        "transfer.cost.temporary_bytes,",
+        "0,",
+    ),
+    "finite_budget:canonical_next_values_omitted": (
+        "src/_lcm/simulation/program_arguments.py",
+        (
+            '        "age": age,\n        "next_regime_to_V_arr": next'
+            "_values,\n        **references,"
+        ),
+        (
+            '        "age": age,\n        "next_regime_to_V_arr": {},\n'
+            "        **references,"
+        ),
+    ),
+    "finite_budget:diagnostic_admission_bypassed": (
+        "src/_lcm/simulation/simulate.py",
+        "            memory=memory,\n            function=dropped_candidate_counts,",
+        "            memory=None,\n            function=dropped_candidate_counts,",
+    ),
+}
+
+
+_EAGER_PLACEMENT_MUTATIONS = {
+    "eager_internal:declaration_guard_ignored": (
+        "src/_lcm/execution/eager_core.py",
+        (
+            "internal_input_templates.keys() != program.requirements."
+            "internal_inputs.keys()"
+        ),
+        "False",
+    ),
+    "eager_internal:producer_operand_omitted": (
+        "src/_lcm/execution/eager_core.py",
+        "            placed.update(\n",
+        "            {}.update(\n",
+    ),
+    "eager_internal:producer_layout_replaced": (
+        "src/_lcm/execution/eager_core.py",
+        "                sharding=value.sharding,",
+        "                sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),",
+    ),
+    "eager_internal:selected_templates_omitted": (
+        "src/_lcm/solution/backward_induction.py",
+        (
+            "internal_input_templates=internal_templates[\n           "
+            "             selected_candidates[triple]\n               "
+            "     ],"
+        ),
+        "internal_input_templates={},",
+    ),
+    "solve_descriptors:nested_callback_reintroduced": (
+        "src/_lcm/execution/abstract_program_inputs.py",
+        (
+            "    arguments = jax.tree.map(\n        _OperandDescriptor"
+            "(default_sharding=shared), program.arguments\n    )"
+        ),
+        (
+            "    def describe(value: object) -> jax.ShapeDtypeStruct:"
+            "\n        return _OperandDescriptor(default_sharding=shar"
+            "ed)(value)\n\n    arguments = jax.tree.map(describe, progr"
+            "am.arguments)"
+        ),
+    ),
+    "solve_descriptors:declared_operand_layout_ignored": (
+        "src/_lcm/execution/abstract_program_inputs.py",
+        "if isinstance(value, jax.ShapeDtypeStruct) and value.sharding is not None:",
+        (
+            "if False and isinstance(value, jax.ShapeDtypeStruct) and"
+            " value.sharding is not None:"
+        ),
+    ),
+    "eager_core:explicit_mesh_bypassed": (
+        "src/_lcm/execution/eager_core.py",
+        "if self.mesh is not None:",
+        "if False and self.mesh is not None:",
+    ),
+    "eager_core:default_device_replaced": (
+        "src/_lcm/execution/eager_core.py",
+        "with jax.default_device(self.device):",
+        "with jax.default_device(jax.devices()[0]):",
+    ),
+    "eager_core:descriptor_omitted_from_memo": (
+        "src/_lcm/execution/eager_core.py",
+        "key = (id(value), template)",
+        "key = (id(value), None)",
+    ),
+    "eager_core:concrete_memo_retained": (
+        "src/_lcm/execution/eager_core.py",
+        "placement.results.clear()",
+        "pass",
+    ),
+    "eager_core:committed_layout_guard_bypassed": (
+        "src/_lcm/execution/eager_core.py",
+        "if not runtime_shardings_match(",
+        "if False and not runtime_shardings_match(",
+    ),
+    "eager_core:weak_typing_guard_bypassed": (
+        "src/_lcm/execution/eager_core.py",
+        "or placed.weak_type != template.weak_type",
+        "or False",
+    ),
+    "eager_core:output_repaired_after_execution": (
+        "src/_lcm/execution/eager_core.py",
+        "                        return self.function(**placed)",
+        (
+            "                        return jax.device_put(self.funct"
+            "ion(**placed), jax.devices()[0])"
+        ),
+    ),
+    "eager_core:resolved_widths_omitted": (
+        "src/_lcm/execution/eager_core.py",
+        "function=functools.partial(program.function, **program.static_kwargs),",
+        "function=program.function,",
+    ),
+    "runtime_sharding:mesh_shape_ignored": (
+        "src/_lcm/execution/runtime_sharding.py",
+        "actual.mesh.devices.shape == expected.mesh.devices.shape",
+        "True",
+    ),
+    "runtime_sharding:axis_names_ignored": (
+        "src/_lcm/execution/runtime_sharding.py",
+        "and actual.mesh.axis_names == expected.mesh.axis_names",
+        "and True",
+    ),
+}
+
+
 _FINITE_POLICY_MUTATIONS = {
     "finite_policy:discrete_leaf_omitted": (
         "src/_lcm/simulation/policy_programs.py",
@@ -887,8 +1060,8 @@ _FINITE_POLICY_MUTATIONS = {
     ),
     "finite_policy:actual_diagnostic_bypassed": (
         "src/_lcm/simulation/simulate.py",
-        "dropped=bank[2] & ~bank[3],",
-        "dropped=jnp.zeros_like(bank[2]),",
+        'arguments={"live": bank[2], "represented": bank[3]},',
+        'arguments={"live": bank[2], "represented": bank[2]},',
     ),
     "finite_policy:actual_rank_dispatch_replaced": (
         "src/_lcm/simulation/simulate.py",
@@ -935,6 +1108,8 @@ def program_mutations() -> dict[str, dict[str, str]]:
         _PROFILED_HELPER_MUTATIONS
         | _FINITE_POLICY_MUTATIONS
         | _COMBINED_INPUT_MUTATIONS
+        | _EAGER_PLACEMENT_MUTATIONS
+        | _FINITE_BUDGET_MUTATIONS
     ).items():
         source = (root / relative).read_text(encoding="utf-8")
         assert source.count(old) == 1, name
@@ -960,6 +1135,9 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
     supplemental = direct_flow.supplemental_direct_flow_mutation_specs(repo_root=root)
 
     assert set(supplemental) == {
+        "eager_core:planned_operand_placement_bypassed",
+        "runtime_sharding:physical_partition_ignored",
+        "policy_diagnostics:represented_mask_ignored",
         "solve_descriptors:required_layout_replaced",
         "chunk_assembly:cpu_budget_exclusion_broadened",
         "chunk_admission:setup_fulfilled_by_unrelated_inputs",
@@ -1040,6 +1218,8 @@ def test_live_simulation_program_sources_are_certified(source: str):
     + list(_PROFILED_HELPER_MUTATIONS)
     + list(_FINITE_POLICY_MUTATIONS)
     + list(_COMBINED_INPUT_MUTATIONS)
+    + list(_EAGER_PLACEMENT_MUTATIONS)
+    + list(_FINITE_BUDGET_MUTATIONS)
     + list(direct_flow._SUPPLEMENTAL_SOURCE_MUTATIONS),
 )
 def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(

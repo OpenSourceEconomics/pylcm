@@ -8,6 +8,7 @@ simulation reads them off the canonical layout either way.
 """
 
 import dataclasses
+import functools
 import logging
 import subprocess
 import sys
@@ -15,7 +16,7 @@ import weakref
 from collections.abc import Hashable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import numpy as np
@@ -29,11 +30,17 @@ from _lcm.execution.core_program import (
     ResolvedCoreProgram,
     ValueRead,
 )
+from _lcm.execution.eager_core import make_eager_core
 from _lcm.execution.footprint import (
     ResidentInventory,
     concrete_device_bytes,
 )
-from _lcm.execution.output_layout import VALUE, resolve_output_layout
+from _lcm.execution.output_layout import (
+    VALUE,
+    assert_output_layout,
+    resolve_output_layout,
+)
+from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.execution.scheduler import (
     BufferRegistry,
     PeriodTransferCache,
@@ -68,6 +75,50 @@ from lcm.solver_api import ContinuationReader
 from lcm.solvers import GridSearch, Solver
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
+from tests.execution.test_eager_core import eager_program, internal_eager_program
+
+
+@pytest.mark.parametrize("partitioned", [False, True])
+def test_eager_internal_input_preserves_its_ordered_producer_layout(
+    *, monkeypatch: pytest.MonkeyPatch, partitioned: bool
+) -> None:
+    """A layout-free internal template never turns a producer shard into a replica."""
+    devices = (jax.devices()[3], jax.devices()[1])
+    mesh = jax.sharding.Mesh(np.array(devices), ("state",))
+    target = jax.NamedSharding(
+        mesh,
+        jax.sharding.PartitionSpec("state")
+        if partitioned
+        else jax.sharding.PartitionSpec(),
+    )
+    source = jax.device_put(np.arange(8, dtype=np.int32), target)
+    original_put = jax.device_put
+    destinations: list[tuple[jax.Device, ...]] = []
+
+    # keyword-only-exempt: library-callback=jax.device_put
+    def record_put(value: object, device: object = None, **kwargs: Any) -> object:
+        assert isinstance(device, jax.sharding.Sharding)
+        destinations.append(tuple(device.device_set))
+        return original_put(value, device, **kwargs)
+
+    adapter = make_eager_core(
+        program=internal_eager_program(function=lambda produced: produced),
+        internal_input_templates={"produced": jax.ShapeDtypeStruct((8,), np.int32)},
+        execution_sharding=target,
+    )
+    with monkeypatch.context() as probe:
+        probe.setattr(jax, "device_put", record_put)
+        output = adapter(produced=source)
+    assert isinstance(output, jax.Array)
+    assert runtime_shardings_match(actual=output.sharding, expected=target, ndim=1)
+    assert isinstance(output.sharding, jax.NamedSharding)
+    assert tuple(output.sharding.mesh.devices.flat) == devices
+    assert all(set(destination) == set(devices) for destination in destinations)
+    assert len(destinations) <= 1
+    np.testing.assert_array_equal(output, np.arange(8))
+    np.testing.assert_array_equal(source, np.arange(8))
+    assert not source.is_deleted()
+
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized; otherwise the tests skip.
@@ -87,6 +138,278 @@ _skip_pytest_parallel = pytest.mark.skipif(
 _PARAMS = {"discount_factor": 0.95}
 
 
+def _ordered_eager_sharding(*, explicit: bool = False) -> jax.NamedSharding:
+    """Build an actual ordered submesh, bypassing model device-set sorting."""
+    mesh = jax.sharding.Mesh(
+        np.asarray([jax.devices()[i] for i in (3, 1, 2)]),
+        ("kind",),
+        axis_types=(
+            jax.sharding.AxisType.Explicit if explicit else jax.sharding.AxisType.Auto,
+        ),
+    )
+    return jax.NamedSharding(mesh, jax.P("kind", None))
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("operand", ["uncommitted", "committed"])
+@pytest.mark.parametrize("constant", [False, True])
+def test_eager_ordered_mesh_preserves_owners_and_outputs_at_birth(
+    *, operand: str, constant: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = _ordered_eager_sharding()
+    source = jnp.arange(6, dtype=jnp.float32).reshape(3, 2)
+    if operand == "committed":
+        source = jax.device_put(source, expected)
+    before = np.asarray(source).copy()
+    fixed = jnp.asarray(2.0)
+    observed: list[object] = []
+    body_finished = False
+    original_put = jax.device_put
+
+    def observed_put(*args: Any, **kwargs: Any) -> object:
+        assert not body_finished, "eager adapter repaired an already produced output"
+        return original_put(*args, **kwargs)
+
+    def body(*, value: jax.Array, offset: jax.Array) -> object:
+        nonlocal body_finished
+        assert offset is fixed
+        result = (
+            jax.vmap(lambda _row: jnp.full((2,), 7.0))(value)
+            if constant
+            else value + offset
+        )
+        tree = {"payload": (result, None)}
+        observed.append(tree)
+        body_finished = True
+        return tree
+
+    function = functools.partial(body, offset=fixed)
+    arguments: dict[str, object] = {
+        "value": jax.ShapeDtypeStruct(source.shape, source.dtype, sharding=expected)
+    }
+    adapter = make_eager_core(
+        program=eager_program(function=function, arguments=arguments),
+        execution_sharding=expected,
+    )
+    with monkeypatch.context() as scoped:
+        scoped.setattr(jax, "device_put", observed_put)
+        result = adapter(value=source)
+    assert result is observed[0]
+    value = cast("dict[str, tuple[jax.Array, None]]", result)["payload"][0]
+    assert isinstance(value.sharding, jax.NamedSharding)
+    assert tuple(value.sharding.mesh.devices.flat) == tuple(
+        jax.devices()[i] for i in (3, 1, 2)
+    )
+    assert value.sharding.mesh.devices.shape == (3,)
+    assert value.sharding.mesh.axis_names == ("kind",)
+    assert value.sharding.memory_kind == expected.memory_kind
+    assert value.sharding.devices_indices_map(
+        value.shape
+    ) == expected.devices_indices_map((3, 2))
+    assert {shard.data.shape for shard in value.addressable_shards} == {(1, 2)}
+    assert jax.devices()[0] not in value.devices()
+    np.testing.assert_array_equal(
+        value, np.full((3, 2), 7.0) if constant else before + 2
+    )
+    np.testing.assert_array_equal(source, before)
+    np.testing.assert_array_equal(fixed, np.asarray(2.0))
+    assert not source.is_deleted()
+
+
+@_skip_pytest_parallel
+def test_eager_committed_operand_is_not_silently_moved() -> None:
+    expected = _ordered_eager_sharding()
+    source = jax.device_put(jnp.ones((3, 2)), jax.devices()[0])
+
+    def forbidden(*, value: object) -> object:
+        pytest.fail(f"a misplaced committed operand reached the body: {value!r}")
+
+    adapter = make_eager_core(
+        program=eager_program(
+            function=forbidden,
+            arguments={
+                "value": jax.ShapeDtypeStruct(
+                    source.shape, source.dtype, sharding=expected
+                )
+            },
+        ),
+        execution_sharding=expected,
+    )
+    with pytest.raises(ExecutionPlanningError, match="committed eager operand"):
+        adapter(value=source)
+    assert source.devices() == {jax.devices()[0]}
+    np.testing.assert_array_equal(source, np.ones((3, 2)))
+
+
+@_skip_pytest_parallel
+def test_eager_nested_aliases_and_context_restoration() -> None:
+    expected = _ordered_eager_sharding()
+    source = jnp.arange(6, dtype=jnp.float32).reshape(3, 2)
+    original = MappingProxyType({"second": source, "first": (source, None)})
+    descriptor = jax.ShapeDtypeStruct(source.shape, source.dtype, sharding=expected)
+    descriptors = MappingProxyType({"second": descriptor, "first": (descriptor, None)})
+    outside_mesh = jax.get_mesh()
+    outside_device = jax.config.jax_default_device
+
+    def body(*, values: Mapping[str, Any]) -> object:
+        assert type(values) is MappingProxyType
+        assert tuple(values) == tuple(original)
+        assert jax.tree.structure(values) == jax.tree.structure(original)
+        assert shares_a_buffer(first=values["second"], second=values["first"][0])
+        assert tuple(jax.get_mesh().devices.flat) == tuple(expected.mesh.devices.flat)
+        assert jax.config.jax_default_device == jax.devices()[3]
+        raise RuntimeError("body failure after observing placed aliases")
+
+    adapter = make_eager_core(
+        program=eager_program(function=body, arguments={"values": descriptors}),
+        execution_sharding=expected,
+    )
+    with pytest.raises(
+        RuntimeError, match="body failure after observing placed aliases"
+    ):
+        adapter(values=original)
+    assert original["second"] is original["first"][0]
+    assert jax.get_mesh() == outside_mesh
+    assert jax.config.jax_default_device == outside_device
+    np.testing.assert_array_equal(source, np.arange(6).reshape(3, 2))
+
+
+@_skip_pytest_parallel
+def test_eager_repeated_original_keeps_distinct_declared_layouts() -> None:
+    sharded = _ordered_eager_sharding()
+    replicated = jax.NamedSharding(sharded.mesh, jax.P())
+    source = jnp.arange(6, dtype=jnp.float32).reshape(3, 2)
+
+    def body(*, partitioned: jax.Array, whole: jax.Array) -> object:
+        assert partitioned is not whole
+        assert partitioned.sharding.devices_indices_map(
+            source.shape
+        ) == sharded.devices_indices_map(source.shape)
+        assert whole.sharding.devices_indices_map(
+            source.shape
+        ) == replicated.devices_indices_map(source.shape)
+        np.testing.assert_array_equal(partitioned, source)
+        np.testing.assert_array_equal(whole, source)
+        return partitioned, whole
+
+    adapter = make_eager_core(
+        program=eager_program(
+            function=body,
+            arguments={
+                "partitioned": jax.ShapeDtypeStruct(
+                    source.shape, source.dtype, sharding=sharded
+                ),
+                "whole": jax.ShapeDtypeStruct(
+                    source.shape, source.dtype, sharding=replicated
+                ),
+            },
+        ),
+        execution_sharding=sharded,
+    )
+    adapter(partitioned=source, whole=source)
+    np.testing.assert_array_equal(source, np.arange(6).reshape(3, 2))
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(
+    "difference",
+    [
+        "wrong_device",
+        "reordered",
+        "replicated",
+        "axis_names",
+        "mesh_shape",
+        "memory_kind",
+    ],
+)
+def test_physical_layout_guard_rejects_actual_placement_changes(
+    *, difference: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = _ordered_eager_sharding()
+    actual = jax.NamedSharding(expected.mesh, jax.P("kind"))
+    assert runtime_shardings_match(actual=actual, expected=expected, ndim=2)
+    if difference == "wrong_device":
+        actual = jax.NamedSharding(
+            jax.sharding.Mesh(np.asarray(jax.devices()[:3]), ("kind",)), jax.P("kind")
+        )
+    elif difference == "reordered":
+        actual = jax.NamedSharding(
+            jax.sharding.Mesh(
+                np.asarray([jax.devices()[i] for i in (1, 3, 2)]), ("kind",)
+            ),
+            jax.P("kind"),
+        )
+    elif difference == "replicated":
+        actual = jax.NamedSharding(expected.mesh, jax.P())
+    elif difference == "axis_names":
+        actual = jax.NamedSharding(
+            jax.sharding.Mesh(expected.mesh.devices, ("other",)), jax.P("other")
+        )
+    elif difference == "mesh_shape":
+        expected = jax.NamedSharding(
+            jax.sharding.Mesh(np.asarray(jax.devices()).reshape(2, 2), ("a", "b")),
+            jax.P(),
+        )
+        actual = jax.NamedSharding(
+            jax.sharding.Mesh(np.asarray(jax.devices()).reshape(4, 1), ("a", "b")),
+            jax.P(),
+        )
+        assert actual.is_equivalent_to(expected, 2)
+    else:
+        # CPU metadata mutation: this backend need not expose a second memory kind.
+        monkeypatch.setattr(
+            jax.NamedSharding,
+            "memory_kind",
+            property(lambda self: "pinned_host" if self is actual else "device"),
+        )
+    assert not runtime_shardings_match(actual=actual, expected=expected, ndim=2)
+
+
+@_skip_pytest_parallel
+def test_equivalent_eager_output_flows_through_declared_transfer_unchanged() -> None:
+    planned = _ordered_eager_sharding()
+    template = jax.device_put(jnp.arange(6, dtype=jnp.float32).reshape(3, 2), planned)
+    layout = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=VALUE,
+    )
+    actual_sharding = jax.NamedSharding(
+        _ordered_eager_sharding(explicit=True).mesh, jax.P("kind")
+    )
+    output = jax.device_put(template, actual_sharding)
+    transfer = transfers_module.resolve_value_transfer(
+        target=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="working"
+        ),
+        source=ValueConsumerAddress(
+            source_period=0,
+            source_regime="working",
+            core_key="main",
+            channel=ValueInputChannel.NEXT_REGIME_VALUE,
+            path=("working",),
+        ),
+        kind=ValueTransferKind.ALIGNED_LOCAL,
+        stored_template=template,
+        source_sharding=planned,
+    )
+    original_key = transfer.specialization_key
+    assert_output_layout(output=output, layout=layout)
+    assert (
+        transfers_module.apply_value_transfer(value=output, transfer=transfer) is output
+    )
+    assert transfer.specialization_key == original_key
+    assert transfer.stored_sharding == planned
+    assert transfer.source_sharding == planned
+    wrong = jax.device_put(template, jax.NamedSharding(planned.mesh, jax.P()))
+    with pytest.raises(AssertionError, match="output sharding"):
+        assert_output_layout(output=wrong, layout=layout)
+    with pytest.raises(ValueError, match="sharding"):
+        transfers_module.apply_value_transfer(value=wrong, transfer=transfer)
+    np.testing.assert_array_equal(output, template)
+
+
 @categorical(ordered=False)
 class _ThreeTypeRegimeId:
     """Regime vocabulary of the three-valued-type model."""
@@ -104,6 +427,12 @@ class _Type:
     high: ScalarInt
 
 
+def _constant_retired_value(*, wealth: jax.Array, type1: jax.Array) -> jax.Array:
+    """Declare both state axes without reading either in the numerical body."""
+    del wealth, type1
+    return jnp.asarray(2.0)
+
+
 def _make_three_type_model(
     *,
     distributed: bool,
@@ -112,6 +441,7 @@ def _make_three_type_model(
     solver: Solver | None = None,
     budget_bytes: int | None = None,
     enable_jit: bool = True,
+    constant_retired: bool = False,
 ) -> Model:
     """A working regime over a three-valued type beside a single-device terminal one.
 
@@ -138,7 +468,13 @@ def _make_three_type_model(
     )
     retired = UserRegime(
         transition=None,
-        functions={"utility": lambda wealth: wealth * 0.5},
+        functions={
+            "utility": (
+                _constant_retired_value
+                if constant_retired
+                else (lambda wealth: wealth * 0.5)
+            )
+        },
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
     )
     return Model(
@@ -272,6 +608,44 @@ def _assert_only_planning_descriptors[Key: Hashable](
         for program in programs.values()
         for leaf in jax.tree.leaves(program.arguments)
     )
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("devices", [None, (1, 2, 3)])
+@pytest.mark.parametrize("constant_retired", [False, True])
+def test_eager_solve_respects_planned_regime_layouts(
+    *, devices: tuple[int, ...] | None, constant_retired: bool
+) -> None:
+    """Eager computations, including constant bodies, obey actual regime placement."""
+    eager = _make_three_type_model(
+        distributed=True,
+        enable_jit=False,
+        devices=devices,
+        constant_retired=constant_retired,
+    ).solve(params=_PARAMS, log_level="off")
+    compiled = _make_three_type_model(
+        distributed=True, devices=devices, constant_retired=constant_retired
+    ).solve(params=_PARAMS, log_level="off")
+
+    assert tuple(eager.values) == tuple(compiled.values)
+    for period, values in eager.values.items():
+        assert tuple(values) == tuple(compiled.values[period])
+        for regime, value in values.items():
+            expected = compiled.values[period][regime]
+            assert value.shape == expected.shape
+            assert value.dtype == expected.dtype
+            assert value.sharding.is_equivalent_to(expected.sharding, value.ndim)
+            assert value.sharding.memory_kind == expected.sharding.memory_kind
+            assert value.sharding.devices_indices_map(value.shape) == (
+                expected.sharding.devices_indices_map(expected.shape)
+            )
+            assert tuple(shard.data.shape for shard in value.addressable_shards) == (
+                tuple(shard.data.shape for shard in expected.addressable_shards)
+            )
+            if devices is not None:
+                assert value.devices() <= {jax.devices()[index] for index in devices}
+                assert jax.devices()[0] not in value.devices()
+            assert_agrees_to_ulp(got=value, expected=expected, n_ulp=8)
 
 
 @_skip_pytest_parallel
