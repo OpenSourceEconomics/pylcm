@@ -2,6 +2,8 @@ import dataclasses
 import logging
 import subprocess
 import sys
+from collections.abc import Mapping
+from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
 from typing import cast
@@ -12,6 +14,7 @@ import pandas as pd
 import pytest
 from jax import numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
+from numpy.typing import ArrayLike
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -57,7 +60,7 @@ from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.solver_api import DISSOLUTION_FLAG
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
@@ -116,6 +119,7 @@ def _make_correct_distributed_model(
     move_type2: bool = False,
     cell_width: int | None = None,
     subject_width: int | None = None,
+    exact_layout: bool = False,
 ) -> Model:
     @categorical(ordered=False)
     class RegimeId:
@@ -140,21 +144,25 @@ def _make_correct_distributed_model(
 
     working_life = UserRegime(
         functions={
-            "utility": lambda wealth, consumption, type1, type2: (
+            "utility": _calculate_exact_layout_utility
+            if exact_layout
+            else lambda wealth, consumption, type1, type2: (
                 (jnp.log(consumption) + wealth * 0.001) * type1 * type2
             ),
         },
         states={
-            "wealth": LinSpacedGrid(
-                start=1,
-                stop=100,
-                n_points=10,
-            ),
+            "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
+            if exact_layout
+            else LinSpacedGrid(start=1, stop=100, n_points=10)
         },
         state_transitions={
             "wealth": lambda wealth, consumption: wealth - consumption,
         },
-        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        actions={
+            "consumption": LinSpacedGrid(start=1, stop=9, n_points=9)
+            if exact_layout
+            else LinSpacedGrid(start=1, stop=50, n_points=10)
+        },
         transition=lambda age: jnp.where(
             age >= 4, RegimeId.retirement, RegimeId.working_life
         ),
@@ -177,7 +185,9 @@ def _make_correct_distributed_model(
         transition=None,
         functions={"utility": retirement_utility},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
+            if exact_layout
+            else LinSpacedGrid(start=1, stop=100, n_points=10)
         },
         active=lambda age: age >= 5,
     )
@@ -212,6 +222,106 @@ def _make_correct_distributed_model(
             ),
         ),
     )
+
+
+def _calculate_exact_layout_utility(
+    *, wealth: ScalarFloat, consumption: ScalarFloat, type1: ScalarInt, type2: ScalarInt
+) -> ScalarFloat:
+    """Keep layout witnesses independent of floating-point contraction choices."""
+    return (wealth + consumption) * type1 * type2
+
+
+def _get_exact_layout_values(
+    *, retirement_reads_type2: bool
+) -> dict[int, dict[str, np.ndarray]]:
+    """Enumerate the affine Bellman solution with rational arithmetic.
+
+    For each fixed type pair, V(w) = slope * w + intercept. Consumption affects
+    the intercept only, so enumerating the nine actions solves each period at
+    every wealth. The grid spacing eight, integer actions, and discount one-half
+    keep both this reference and the interpolated implementation representable.
+
+    Stored values have denominator dividing 64 and magnitude below 1296. The
+    extrapolation weights have denominator dividing 8 and absolute sum at most
+    13/4. Including discounting and integer utility, all arithmetic lies on the
+    1/1024 lattice with magnitude at most 729 + (13/8)*1296 = 2835. Numerators
+    stay below 2**22, so separate or fused multiply-add evaluation is exact.
+
+    Even expanding both coordinate weights gives an absolute coefficient sum
+    at most 1 + 2*(72/8 + 9/8 + 1) + 2*7 = 149/4. Next-period inputs have
+    denominator dividing 32, so expanded partial sums lie on the 1/512 lattice
+    and have magnitude at most 729 + (149/8)*1296 = 24867. Their numerators
+    stay below 2**24, within float32's significand under reassociation as well.
+    """
+    values: dict[int, dict[str, np.ndarray]] = {
+        period: {"working_life": np.empty((4, 4, 9))} for period in range(5)
+    }
+    terminal_shape = (4, 4, 9) if retirement_reads_type2 else (4, 9)
+    values[5] = {"retirement": np.empty(terminal_shape)}
+    for type1 in range(4):
+        for type2 in range(4):
+            slope = Fraction(type1 * (type2 if retirement_reads_type2 else 1), 2)
+            intercept = Fraction(0)
+            terminal = [float(slope * wealth) for wealth in range(8, 73, 8)]
+            index = (type1, type2) if retirement_reads_type2 else type1
+            values[5]["retirement"][index] = terminal
+            for period in reversed(range(5)):
+                intercept = intercept / 2 + max(
+                    (type1 * type2 - slope / 2) * consumption
+                    for consumption in range(1, 10)
+                )
+                slope = type1 * type2 + slope / 2
+                values[period]["working_life"][type1, type2] = [
+                    float(slope * wealth + intercept) for wealth in range(8, 73, 8)
+                ]
+    return values
+
+
+def _assert_exact_layout_values(
+    *, values: Mapping[int, Mapping[str, ArrayLike]], retirement_reads_type2: bool
+) -> None:
+    """Check every state and period against the independent rational solution."""
+    expected = _get_exact_layout_values(retirement_reads_type2=retirement_reads_type2)
+    assert values.keys() == expected.keys()
+    for period, by_regime in values.items():
+        assert by_regime.keys() == expected[period].keys()
+        for regime, value in by_regime.items():
+            np.testing.assert_array_equal(value, expected[period][regime])
+
+
+def _assert_exact_layout_grids(*, model: Model) -> None:
+    """Check the realized inputs on which the rational reference depends."""
+    for regime in model._regimes.values():
+        np.testing.assert_array_equal(
+            regime.solution.grids["wealth"].to_jax(), np.arange(8, 73, 8)
+        )
+    np.testing.assert_array_equal(
+        model._regimes["working_life"].solution.grids["consumption"].to_jax(),
+        np.arange(1, 10),
+    )
+
+
+@pytest.mark.parametrize("retirement_reads_type2", [True, False])
+@pytest.mark.parametrize("mutation", ["type1", "type2", "value"])
+def test_exact_layout_reference_rejects_misaligned_or_changed_values(
+    *, retirement_reads_type2: bool, mutation: str
+) -> None:
+    """Every type axis and an adjacent represented value remain observable."""
+    values = _get_exact_layout_values(retirement_reads_type2=retirement_reads_type2)
+    _assert_exact_layout_values(
+        values=values, retirement_reads_type2=retirement_reads_type2
+    )
+    working = values[0]["working_life"]
+    if mutation == "value":
+        working[1, 1, 0] = np.nextafter(working[1, 1, 0], np.inf)
+    else:
+        values[0]["working_life"] = np.roll(
+            working, 1, axis=0 if mutation == "type1" else 1
+        )
+    with pytest.raises(AssertionError):
+        _assert_exact_layout_values(
+            values=values, retirement_reads_type2=retirement_reads_type2
+        )
 
 
 def _make_one_axis_collective_model(*, distributed: bool) -> Model:
@@ -573,7 +683,7 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
 @_skip_pytest_parallel
 def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypatch):
     """Real AOT GridSearch outputs are born sharded without repair or collectives."""
-    model = _make_correct_distributed_model(distribute_type2=False)
+    model = _make_correct_distributed_model(distribute_type2=False, exact_layout=True)
     working_kernels = model._regimes["working_life"].solution.period_kernels
     assert working_kernels
     assert all(
@@ -585,11 +695,12 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
         core_program_graph(kernel=kernel)["main"].disposition_reason is None
         for kernel in working_kernels.values()
     )
-    single = (
-        _make_correct_distributed_model(distributed=False, distribute_type2=False)
-        .solve(log_level="off", params={"discount_factor": 0.95})
-        .values
+    single_model = _make_correct_distributed_model(
+        distributed=False, distribute_type2=False, exact_layout=True
     )
+    _assert_exact_layout_grids(model=model)
+    _assert_exact_layout_grids(model=single_model)
+    single = single_model.solve(log_level="off", params={"discount_factor": 0.5}).values
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
 
@@ -603,7 +714,7 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
         backward_induction, "_attach_resolved_output_layout", capture_planned_core
     )
 
-    distributed = model.solve(log_level="off", params={"discount_factor": 0.95}).values
+    distributed = model.solve(log_level="off", params={"discount_factor": 0.5}).values
 
     assert captured
     assert len({id(core.compiled) for core in captured}) < len(captured)
@@ -644,6 +755,9 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
             assert value.sharding.spec == PartitionSpec("type1", None, None)
             np.testing.assert_array_equal(value, single[period][regime_name])
 
+    _assert_exact_layout_values(values=single, retirement_reads_type2=True)
+    _assert_exact_layout_values(values=distributed, retirement_reads_type2=True)
+
 
 @_skip_pytest_parallel
 def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypatch):
@@ -651,6 +765,7 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
     model = _make_correct_distributed_model(
         distribute_type2=False,
         retirement_reads_type2=False,
+        exact_layout=True,
     )
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
@@ -664,7 +779,7 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
     monkeypatch.setattr(
         backward_induction, "_attach_resolved_output_layout", capture_planned_core
     )
-    params = {"discount_factor": 0.95}
+    params = {"discount_factor": 0.5}
     distributed = model.solve(log_level="off", params=params).values
 
     assert model._regimes["working_life"].solution.state_names == (
@@ -696,18 +811,21 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
     assert transfer.stored_sharding == target_sharding
     assert transfer.source_sharding == target_sharding
 
-    single = (
-        _make_correct_distributed_model(
-            distributed=False,
-            distribute_type2=False,
-            retirement_reads_type2=False,
-        )
-        .solve(log_level="off", params=params)
-        .values
+    single_model = _make_correct_distributed_model(
+        distributed=False,
+        distribute_type2=False,
+        retirement_reads_type2=False,
+        exact_layout=True,
     )
+    _assert_exact_layout_grids(model=model)
+    _assert_exact_layout_grids(model=single_model)
+    single = single_model.solve(log_level="off", params=params).values
     for period, regime_to_value in distributed.items():
         for regime_name, value in regime_to_value.items():
             np.testing.assert_array_equal(value, single[period][regime_name])
+
+    _assert_exact_layout_values(values=single, retirement_reads_type2=False)
+    _assert_exact_layout_values(values=distributed, retirement_reads_type2=False)
 
     hlo = core.compiled.as_text().lower()
     for collective in (
