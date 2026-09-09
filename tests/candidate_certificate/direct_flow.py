@@ -338,7 +338,7 @@ _SOURCE_SEALS = {
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
     SUPPORT_FINGERPRINT_SOURCE: "5ac9769fcb9545e7a83c813b9c12162eaa4ac26d0409b7a0a1a2040254a2e897",
-    UNIFORM_PROCESS_GRID_SOURCE: "e2c535f948ac1d9ec222d13e0de1e75a792a534a6d64422707be4ad1358651c3",
+    UNIFORM_PROCESS_GRID_SOURCE: "497ab1409b067489bc5b1517b69b616a59fbd8f0d3423a612863da4ef4e077a0",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "37627a347ff56b72d3a1487b428481b9952959cfd753e4b412776296a7516d6f",
     NATIVE_ARCHIVE_SOURCE: "a093e0a7368e45efb7b91411982ba60bf3a1931dc1a5a202388eda0bb89375ad",
@@ -6348,20 +6348,24 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/process_grids.py": (
-        "e985281d156256874060330eda5a4607cc3e4214131ac51a1649b4b533e946d6",
+        "e96496302be4cb1c23f681b2755d42dc25b526542ff9b06c107a9ccb02fd0a93",
         {
             "_shared_uniform_operations": "77e4fa81b76a13e05edecb8cbc14571226bb6e34a9a80842289ac345cef3ad6e",
-            "SimulationProcessGrids.supports": "1df5fcf1bf2fdcee2653519036655fb1c2f37446f3474c9d8ea02e24659c8a9c",
-            "SimulationProcessGrids.array_roots": "ea170bdcf0f95291d5b0bd2807981a14c60380a4932924ec60e41686e8b8ddca",
-            "SimulationProcessGrids.__call__": "dd385325ba36d52d18633873222e284ce462233bb926d5a0430c879adf9f7bad",
+            "SimulationProcessGrids.supports": "6aaa168e2d15bb40483c8af6dfb88783a6577dea05f350f640def014588ed99f",
+            "SimulationProcessGrids.array_roots": "24d15282a1f826daa93ab0d729c9f4c2e5e918e2a86bc8322b47fddc07731697",
+            "SimulationProcessGrids.__call__": "87e2a486bc3b43f9f2f43ac5223dc3e68984ee40bbe103ae5f269eb602ace1af",
             "SimulationProcessGrids.seal": "71dde0f63544df96a4c57b99a75f9dd844dd904be7c599ad30a3125262756e9d",
-            "SimulationProcessGrids.close": "50ab908c055d2e9e1ca3bcd0945865339ffe5b27e8ef49cf96c83265b7f1ea90",
-            "SimulationProcessGrids._produce": "1815168eaaba8d67dac4a20af9ab0298e60d1dc99e5d2633516ae08a99a5f9cc",
+            "SimulationProcessGrids.close": "1fbde590b371243da9503b714cc55b822e333e3e7a64f100ed57051209076a5a",
+            "SimulationProcessGrids._produce": "98a37744e897d5a1e4860891f87830faefd8693868f2bd1931423a7e528e3843",
             "SimulationProcessGrids.snapshot": "65d4d6df476276c3136bb02ba811eb5b8e1cfaddc248b6893375238f4800ca0b",
             "_uniform_parameters": "17402f2621240f3c7b362a7af8eb2c851fd0671288a75e11c04e3a5745ddffb7",
             "_parameter_bytes": "ba52d3f0bdc2e9c217e3e97f339e1ed57964216961fd129abb315e38ee67c491",
             "_abstract_grid_parameter": "2c8046d774f5d17556bc7efae30a2d0242b0405ad1fd9805710362310537fa6f",
             "_compute_uniform_grid": "546e82063b47b05523ad23c64e681adaaea44dfda66071aa6b6f2ec94cde9d89",
+            "SimulationProcessGrids._produce_normal": "27b0b6ba97637e24e0715ab93bc66c4cc9f56ac5491b6f5cb5dc98a0719e581e",
+            "_normal_parameters": "697447939334023c477f246465018d78f56f9c9707bd43174de9d00514379107",
+            "_normal_fixed_identity": "77b7f200afd6ecd055c0359b4d5214ea1d863af5182434b82301a3bafd18404c",
+            "_compute_normal_stage": "e49e8d6ed2760a94e39877a1717a6567220467d098de8f1670033411016d003f",
         },
     ),
 }
@@ -7039,6 +7043,158 @@ _UNIFORM_PROCESS_MUTATIONS = {
         1,
     ),
 }
+
+
+_NORMAL_PROCESS_MUTATIONS = {
+    "normal_grid:profile_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids.supports",
+        "expression",
+        "type(spec) is NormalIIDProcess and not spec.gauss_hermite",
+        "False",
+        1,
+    ),
+    "normal_grid:quadrature_scope_broadened": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids.supports",
+        "expression",
+        "not spec.gauss_hermite",
+        "True",
+        1,
+    ),
+    "normal_grid:fixed_binding_identity_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids.__call__",
+        "expression",
+        "_normal_fixed_identity(spec)",
+        "()",
+        1,
+    ),
+    "normal_grid:weak_array_identity_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids.__call__",
+        "expression",
+        "getattr(value, 'weak_type', False)",
+        "False",
+        1,
+    ),
+    "normal_grid:weak_host_identity_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids.__call__",
+        "expression",
+        "type(value) in (bool, int, float)",
+        "False",
+        1,
+    ),
+    "normal_grid:temporary_roots_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids.array_roots",
+        "expression",
+        "tuple(self.temporary_roots)",
+        "()",
+        1,
+    ),
+    "normal_grid:fixed_parameter_promotion_changed": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "_normal_parameters",
+        "expression",
+        "np.asarray(value, dtype=np.int32) if isinstance(value, bool | int) else value",
+        "np.asarray(value, dtype=canonical_float_dtype())",
+        1,
+    ),
+    "normal_grid:fixed_bytes_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "_normal_fixed_identity",
+        "expression",
+        "_parameter_bytes(value)",
+        "None",
+        1,
+    ),
+    "normal_grid:fixed_type_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "_normal_fixed_identity",
+        "expression",
+        "type(value)",
+        "None",
+        1,
+    ),
+    "normal_grid:placed_parameter_owner_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids._produce_normal",
+        "expression",
+        "self.temporary_roots.append(placed)",
+        "None",
+        1,
+    ),
+    "normal_grid:offset_owner_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids._produce_normal",
+        "expression",
+        "self.temporary_roots.append(offset)",
+        "None",
+        1,
+    ),
+    "normal_grid:endpoint_owner_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids._produce_normal",
+        "expression",
+        "self.temporary_roots.append(value)",
+        "None",
+        1,
+    ),
+    "normal_grid:failure_cleanup_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids._produce_normal",
+        "expression",
+        "self.temporary_roots.clear()",
+        "None",
+        1,
+    ),
+    "normal_grid:lower_sign_changed": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "_compute_normal_stage",
+        "expression",
+        "parameters['left'] - parameters['right']",
+        "parameters['left'] + parameters['right']",
+        1,
+    ),
+    "normal_grid:upper_sign_changed": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "_compute_normal_stage",
+        "expression",
+        "parameters['left'] + parameters['right']",
+        "parameters['left'] - parameters['right']",
+        1,
+    ),
+    "normal_grid:stage_identity_omitted": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids._produce",
+        "expression",
+        "MappingProxyType({'n_points': n_points, 'stage': stage})",
+        "MappingProxyType({'n_points': n_points})",
+        1,
+    ),
+    "normal_grid:stage_admission_bypassed": (
+        UNIFORM_PROCESS_GRID_SOURCE,
+        "SimulationProcessGrids.__call__",
+        "expression",
+        "self._produce_normal(parameters=complete, n_points=spec.n_points, required=required)",
+        "spec.compute_gridpoints(**complete)",
+        1,
+    ),
+}
+
+EXPECTED_NORMAL_PROCESS_MUTATION_COUNT = 17
+EXPECTED_NORMAL_PROCESS_MUTATION_NAMES_SHA256 = (
+    "4cccec12c8b31fcfd18df9c8ec2459c96c8300e4b0f76118c1f8fcc40a79858a"
+)
+
+
+def normal_process_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build normal stage, identity and temporary-ownership semantic controls."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_NORMAL_PROCESS_MUTATIONS
+    )
 
 
 def uniform_process_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
@@ -10402,6 +10558,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     grouped = grouped_mapper_mutation_specs(repo_root=root)
     guard = grouped_guard_mutation_specs(repo_root=root)
     allocation = allocation_reservation_mutation_specs(repo_root=root)
+    normal = normal_process_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -10418,6 +10575,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             | grouped
             | guard
             | allocation
+            | normal
         ).items():
             relative = spec["path"]
             target = temp_root / relative
@@ -10430,6 +10588,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+    normal_cases = {name: cases.pop(name) for name in normal}
+    normal_admitted = sorted(
+        name for name, result in normal_cases.items() if not result["rejected"]
+    )
+    normal_names_match = (
+        len(normal_cases) == EXPECTED_NORMAL_PROCESS_MUTATION_COUNT
+        and _mutation_name_digest(tuple(normal_cases))
+        == EXPECTED_NORMAL_PROCESS_MUTATION_NAMES_SHA256
+    )
     allocation_cases = {name: cases.pop(name) for name in allocation}
     allocation_admitted = sorted(
         name for name, result in allocation_cases.items() if not result["rejected"]
@@ -10509,6 +10676,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "expected_mutation_names_sha256": (EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256),
         "mutation_names_match_expected": names_match_expected,
         "admitted_mutations": admitted,
+        "normal_process_mutations": normal_cases,
+        "normal_process_mutation_count": len(normal_cases),
+        "normal_process_names_match_expected": normal_names_match,
+        "admitted_normal_process_mutations": normal_admitted,
         "allocation_reservation_mutations": allocation_cases,
         "allocation_reservation_mutation_count": len(allocation_cases),
         "allocation_reservation_names_match_expected": allocation_names_match,
@@ -10539,6 +10710,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "admitted_supplemental_mutations": supplemental_admitted,
         "all_rejected": (
             clean["ok"]
+            and not normal_admitted
+            and normal_names_match
             and not allocation_admitted
             and allocation_names_match
             and not admitted

@@ -3,22 +3,28 @@
 Run alone in a fresh four-CPU-device process.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from functools import partialmethod
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import jax
 import numpy as np
 import pytest
 
 from _lcm.dtypes import safe_to_int_dtype
+from _lcm.simulation import process_grids
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import SimulationEntryInputs
+from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.initial_conditions import canonicalize_initial_conditions
 from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
+from lcm import NormalIIDProcess
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import SolutionResult
+from lcm.typing import ValueND
 
 try:
     jax.config.update("jax_num_cpu_devices", 4)
@@ -271,7 +277,6 @@ def test_native_source_budget_includes_retained_bank_and_future_copy_scratch(
     *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A real excluded-source bank leaves no room for its profiled transfer scratch."""
-    from typing import Any  # noqa: PLC0415
 
     import lcm.model as model_module  # noqa: PLC0415
     from _lcm.simulation import chunk_admission  # noqa: PLC0415
@@ -402,7 +407,6 @@ def test_preflight_action_products_use_the_selected_entry_device(
     *, monkeypatch: pytest.MonkeyPatch, selected: tuple[int, ...]
 ) -> None:
     """Cartesian products land on the selected entry device beside live source grids."""
-    from typing import Any  # noqa: PLC0415
 
     from _lcm.simulation.action_grids import PreflightActionGrids  # noqa: PLC0415
     from _lcm.simulation.host_operations import (  # noqa: PLC0415
@@ -459,3 +463,84 @@ def test_preflight_action_products_use_the_selected_entry_device(
         .to_numpy(dtype=float),
         [1, 1, 6],
     )
+
+
+# keyword-only-exempt: library-callback=functools.partialmethod
+def _observe_selected_stages(
+    self: process_grids.SimulationProcessGrids,
+    *,
+    original: Callable[..., ValueND],
+    produced: list[ValueND],
+    **kwargs: Any,
+) -> ValueND:
+    assert self.temporary_roots
+    placed_parameters = self.temporary_roots[0]
+    assert isinstance(placed_parameters, Mapping)
+    for parameter in placed_parameters.values():
+        assert parameter.devices() == set(self.devices)
+        missing = resident_bytes_by_device(
+            live=measure_buffer_footprint(tree=parameter),
+            arguments=self.snapshot(),
+            devices=self.devices,
+        )
+        assert not any(missing.values())
+    for previous in produced:
+        missing = resident_bytes_by_device(
+            live=measure_buffer_footprint(tree=previous),
+            arguments=self.snapshot(),
+            devices=self.devices,
+        )
+        assert not any(missing.values())
+    result = original(self, **kwargs)
+    assert result.sharding == kwargs["required"]
+    assert result.devices() == kwargs["required"].device_set
+    produced.append(result)
+    return result
+
+
+@pytest.mark.parametrize("order", [(3, 1), (2, 3, 1)])
+def test_normal_stages_preserve_selected_mesh_and_cumulative_ownership(
+    *, monkeypatch: pytest.MonkeyPatch, order: tuple[int, ...]
+) -> None:
+    """Replicated scalars and support keep ordered devices and caller data."""
+    devices = tuple(jax.devices()[index] for index in order)
+    required = jax.NamedSharding(
+        jax.make_mesh((len(devices),), ("support",), devices=devices), jax.P()
+    )
+    dtype = np.float64 if jax.config.x64_enabled else np.float32
+    parameters = {
+        name: jax.device_put(np.asarray(value, dtype=dtype), jax.devices()[0])
+        for name, value in (("mu", 2.0), ("sigma", 1.0), ("n_std", 2.0))
+    }
+    owner = process_grids.SimulationProcessGrids(
+        live_footprint=lambda: measure_buffer_footprint(tree=parameters),
+        devices=devices,
+        budget_bytes=2**20,
+        operations=ProfiledSimulationOperations(),
+    )
+    produced: list[ValueND] = []
+    monkeypatch.setattr(
+        process_grids.SimulationProcessGrids,
+        "_produce",
+        partialmethod(
+            _observe_selected_stages,
+            original=process_grids.SimulationProcessGrids._produce,
+            produced=produced,
+        ),
+    )
+    grid = owner(
+        spec=NormalIIDProcess(n_points=5, gauss_hermite=False),
+        parameters=parameters,
+        required=required,
+    )
+    assert len(produced) == 5
+    np.testing.assert_array_equal(grid, [0.0, 1.0, 2.0, 3.0, 4.0])
+    assert grid.dtype == np.dtype(dtype)
+    assert isinstance(grid.sharding, jax.NamedSharding)
+    assert tuple(grid.sharding.mesh.devices.flat) == devices
+    for shard in grid.addressable_shards:
+        np.testing.assert_array_equal(shard.data, [0.0, 1.0, 2.0, 3.0, 4.0])
+    for name, value in (("mu", 2.0), ("sigma", 1.0), ("n_std", 2.0)):
+        assert parameters[name].devices() == {jax.devices()[0]}
+        np.testing.assert_array_equal(parameters[name], value)
+    assert not owner.temporary_roots
