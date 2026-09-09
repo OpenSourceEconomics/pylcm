@@ -43,7 +43,7 @@ def _primitive_input_shapes(*, graph: Any, name: str) -> list[tuple[int, ...]]:
 
 @pytest.mark.parametrize("width", [8, 30, 40])
 def test_tiled_product_limits_coordinate_only_nonlinear_work(*, width: int) -> None:
-    """The final coordinate's nonlinear work fits its grid and the planned window."""
+    """Grouped final-coordinate work fits its grid; flat work fits the window."""
     mapped = functools.partial(
         cast(
             "Callable[..., Any]",
@@ -61,7 +61,10 @@ def test_tiled_product_limits_coordinate_only_nonlinear_work(*, width: int) -> N
         last=jnp.asarray([0.0, 0.125, 0.25, 0.375, 0.5]),
     )
     shapes = _primitive_input_shapes(graph=traced, name="exp")
-    assert max((np.prod(shape) for shape in shapes), default=width + 1) <= min(width, 5)
+    maximum_window = 5 if width >= 10 else width
+    assert (
+        max((np.prod(shape) for shape in shapes), default=width + 1) <= maximum_window
+    )
 
 
 def test_full_product_bounds_prefix_nonlinear_rank() -> None:
@@ -109,7 +112,10 @@ def test_grouped_product_respects_combined_window(*, width: int) -> None:
     final = _primitive_input_shapes(graph=traced, name="exp")
     prefix_window = max((np.prod(shape) for shape in prefix), default=width + 1)
     final_window = max((np.prod(shape) for shape in final), default=width + 1)
-    assert prefix_window * final_window <= width
+    if width >= 10:
+        assert prefix_window * final_window <= width
+    else:
+        assert max(prefix_window, final_window) <= width
 
 
 @pytest.mark.parametrize("width", [1, 4, 8, 30, 40])
@@ -267,9 +273,11 @@ def test_flat_cell_indices_cannot_overflow_int32() -> None:
         )
 
 
-@pytest.mark.parametrize("width", [1, 4, 6])
-def test_state_width_changes_the_actual_compiled_loop(*, width: int) -> None:
-    """A partial Cartesian window scans the prefix; a full window vectorizes it."""
+@pytest.mark.parametrize(("width", "expected_lengths"), [(1, [6]), (4, [1]), (6, [])])
+def test_state_width_changes_the_actual_compiled_loop(
+    *, width: int, expected_lengths: list[int]
+) -> None:
+    """Small windows scan flat cells; two final-coordinate groups vectorize here."""
     mapped = functools.partial(
         _build_mapper(variables=("first", "second")), cell_width=width
     )
@@ -283,7 +291,7 @@ def test_state_width_changes_the_actual_compiled_loop(*, width: int) -> None:
         for equation in traced.jaxpr.eqns
         if equation.primitive.name == "scan"
     ]
-    assert lengths == ([2] if width < 6 else [])
+    assert lengths == expected_lengths
 
 
 @pytest.mark.parametrize("untiled", [("first",), ("second",)])

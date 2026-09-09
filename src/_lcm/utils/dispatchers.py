@@ -270,8 +270,8 @@ def tiled_productmap(
 
     The static width keyword is consumed by the mapper. Each output leaf recovers
     the original product axes followed by its own trailing axes. Coordinate grids
-    remain separate arrays. The coordinate prefix is decoded from a flat index,
-    and the final coordinate is mapped separately within the same width budget.
+    remain separate arrays. A window holding multiple prefix cells maps the final
+    coordinate separately; other windows decode every coordinate from a flat index.
     Untiled variables use ordinary outer vmaps. Their axes are restored to their
     original positions before the result leaves this boundary.
     """
@@ -376,7 +376,7 @@ class _TiledProductMap:
                 if name not in self.variables
             }
         )
-        if len(self.variables) > 1:
+        if len(self.variables) > 1 and width // min(width, shape[-1]) > 1:
             return _map_grouped_product(
                 func=self.func,
                 variables=self.variables,

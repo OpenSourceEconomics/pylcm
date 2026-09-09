@@ -408,7 +408,7 @@ _SOURCE_SEALS = {
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
-    DISPATCHERS_SOURCE: "46c6b6c27acbd2ec3cbe6b1d475eb24db6bcbe3628fb84e1fe0de3801530dfd3",
+    DISPATCHERS_SOURCE: "5f75190406d80c6e99aabd06000b8c690d32d343cc01b6fb653768fa6906a776",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "0838079e35ba498009d8af7e6ed717f870a96a2fdc628d25e80310cd630174a9",
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
@@ -6346,7 +6346,7 @@ _GROUPED_MAPPER_CONTRACTS = {
         "25b1ce052a4d1be8b7d0a851e92c47f1b354932b3e24cc2e657ba2a6c5c0a467",
         {
             "tiled_productmap": "5c90e484842166ba0eeee513fb39051c154d2f4c835f2b49bf53fa1bc6845222",
-            "_TiledProductMap.__call__": "80fa438c68372887c6a91998a17f414167638eeee1e976a579b282ba7967a5ed",
+            "_TiledProductMap.__call__": "045b36c13628348873fdaa040ae02b84359d381ee0d93082b1ab3a64fc365da2",
             "_map_grouped_product": "81bc7b2858fe526feaf9f5f5cff0e458ec94e028784a31aedbe092ac26e4838b",
             "_MapOverFinalCoordinate.__call__": "d4934af255cab7f3583631ee376e18eabc6bb6f7742ff945f1e95a260fdf3ece",
             "_EvaluateTiledCell.__call__": "6836bd1b2ab970e74485a818ace01e603a3e25d9b49337e0a11e39efe88e770a",
@@ -6511,6 +6511,70 @@ def grouped_mapper_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str
         ast.parse(mutated, filename=relative)
         result[name] = {"path": relative, "source": mutated}
     return result
+
+
+_GROUPED_GUARD_MUTATIONS = {
+    "grouped_guard:eligibility_omitted": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "width // min(width, shape[-1]) > 1",
+        "True",
+        1,
+    ),
+    "grouped_guard:eligibility_inverted": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "width // min(width, shape[-1]) > 1",
+        "width // min(width, shape[-1]) <= 1",
+        1,
+    ),
+    "grouped_guard:threshold_lowered": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "width // min(width, shape[-1]) > 1",
+        "width // min(width, shape[-1]) > 0",
+        1,
+    ),
+    "grouped_guard:threshold_raised": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "width // min(width, shape[-1]) > 1",
+        "width // min(width, shape[-1]) > 2",
+        1,
+    ),
+    "grouped_guard:fallback_width_unbounded": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "keyword",
+        "batch_size",
+        "n_cells",
+        1,
+    ),
+    "grouped_guard:fallback_strides_truncated": (
+        "src/_lcm/utils/dispatchers.py",
+        "_TiledProductMap.__call__",
+        "expression",
+        "shape[index + 1:]",
+        "shape[index + 1:-1]",
+        1,
+    ),
+}
+
+EXPECTED_GROUPED_GUARD_MUTATION_COUNT = 6
+EXPECTED_GROUPED_GUARD_MUTATION_NAMES_SHA256 = (
+    "e866f1cbeda39679ae30891885e1101904d48a5a571add28552fdacc7dd2f5ca"
+)
+
+
+def grouped_guard_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Keep route-eligibility controls separate from the accepted mapper population."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_GROUPED_GUARD_MUTATIONS
+    )
 
 
 _ACTION_GRID_CONTRACTS = {
@@ -10074,6 +10138,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     uniform = uniform_process_mutation_specs(repo_root=root)
     action_grid = action_grid_mutation_specs(repo_root=root)
     grouped = grouped_mapper_mutation_specs(repo_root=root)
+    guard = grouped_guard_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -10082,7 +10147,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(source, encoding="utf-8")
         for name, spec in (
-            registered | supplemental | uniform | action_grid | grouped
+            registered | supplemental | uniform | action_grid | grouped | guard
         ).items():
             relative = spec["path"]
             target = temp_root / relative
@@ -10095,6 +10160,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+    guard_cases = {name: cases.pop(name) for name in guard}
+    guard_admitted = sorted(
+        name for name, result in guard_cases.items() if not result["rejected"]
+    )
+    guard_names_match = (
+        len(guard_cases) == EXPECTED_GROUPED_GUARD_MUTATION_COUNT
+        and _mutation_name_digest(tuple(guard_cases))
+        == EXPECTED_GROUPED_GUARD_MUTATION_NAMES_SHA256
+    )
     grouped_cases = {name: cases.pop(name) for name in grouped}
     grouped_admitted = sorted(
         name for name, result in grouped_cases.items() if not result["rejected"]
@@ -10147,6 +10221,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "expected_mutation_names_sha256": (EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256),
         "mutation_names_match_expected": names_match_expected,
         "admitted_mutations": admitted,
+        "grouped_guard_mutations": guard_cases,
+        "grouped_guard_mutation_count": len(guard_cases),
+        "grouped_guard_names_match_expected": guard_names_match,
+        "admitted_grouped_guard_mutations": guard_admitted,
         "grouped_mapper_mutations": grouped_cases,
         "grouped_mapper_mutation_count": len(grouped_cases),
         "grouped_mapper_names_match_expected": grouped_names_match,
@@ -10170,6 +10248,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             and not uniform_admitted
             and not action_grid_admitted
             and not grouped_admitted
+            and not guard_admitted
+            and guard_names_match
             and grouped_names_match
             and action_grid_names_match
             and supplemental_names_match
