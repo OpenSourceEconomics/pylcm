@@ -74,7 +74,7 @@ def _assert_exact_distinct_output(*, source: jax.Array, output: jax.Array) -> No
     """A generous admission preserves both allocations, values and placement."""
     output.block_until_ready()
     assert source.unsafe_buffer_pointer() != output.unsafe_buffer_pointer()
-    assert output.sharding == source.sharding
+    assert output.sharding.is_equivalent_to(source.sharding, output.ndim)
     assert not source.is_deleted()
     np.testing.assert_array_equal(np.asarray(source), np.full(source.shape, -3))
     np.testing.assert_array_equal(np.asarray(output), np.arange(source.size))
