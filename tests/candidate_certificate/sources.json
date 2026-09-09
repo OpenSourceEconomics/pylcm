@@ -422,7 +422,7 @@
           },
           {
             "path": "src/_lcm/utils/dispatchers.py",
-            "sha256": "2b7efd1df0a3b8fdf0d90d6ea38b95456ca74b180cc617ebe63266a9f5dca03d"
+            "sha256": "46c6b6c27acbd2ec3cbe6b1d475eb24db6bcbe3628fb84e1fe0de3801530dfd3"
           },
           {
             "path": "src/_lcm/utils/functools.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "681908719c62f9ed29d419d455e8b8b3c2a6066f35ba0ad28022643fcb348e18"
+        "source_inventory_sha256": "b72466ca21cb70a2a63cf25d03f08a9a597241bf23b7ebedea649e72e080c620"
       },
       "fast": {
         "candidate_sources": [
@@ -892,7 +892,7 @@
           },
           {
             "path": "src/_lcm/utils/dispatchers.py",
-            "sha256": "2b7efd1df0a3b8fdf0d90d6ea38b95456ca74b180cc617ebe63266a9f5dca03d"
+            "sha256": "46c6b6c27acbd2ec3cbe6b1d475eb24db6bcbe3628fb84e1fe0de3801530dfd3"
           },
           {
             "path": "src/_lcm/utils/functools.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "681908719c62f9ed29d419d455e8b8b3c2a6066f35ba0ad28022643fcb348e18"
+        "source_inventory_sha256": "b72466ca21cb70a2a63cf25d03f08a9a597241bf23b7ebedea649e72e080c620"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "681908719c62f9ed29d419d455e8b8b3c2a6066f35ba0ad28022643fcb348e18",
+  "source_inventory_sha256": "b72466ca21cb70a2a63cf25d03f08a9a597241bf23b7ebedea649e72e080c620",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1366,7 +1366,7 @@
     },
     {
       "path": "src/_lcm/utils/dispatchers.py",
-      "sha256": "2b7efd1df0a3b8fdf0d90d6ea38b95456ca74b180cc617ebe63266a9f5dca03d"
+      "sha256": "46c6b6c27acbd2ec3cbe6b1d475eb24db6bcbe3628fb84e1fe0de3801530dfd3"
     },
     {
       "path": "src/_lcm/utils/functools.py",
