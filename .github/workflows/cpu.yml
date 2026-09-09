@@ -128,11 +128,22 @@ jobs:
           exit "$rc"
       - name: Run pytest
         shell: bash {0}
+        # Wall-time witnesses run after the parallel workers have exited.
         run: >-
           mkdir -p reports &&
           pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
+          --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off
+          --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off
           --policy-child --ci-policy=full --hardware-profile=cpu
           --junitxml=reports/junit-cpu-${{ runner.os }}.xml
+          && pixi run -e tests-cpu pytest
+          tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off
+          tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off
+          --precision=64 --policy-child --ci-policy=full --hardware-profile=cpu
+          --timeout=600 --timeout-method=thread -v -n 0
+          --junitxml=reports/junit-cpu-fp64-simulation-timing.xml
+          && pixi run -e tests-cpu python -m tests.ci.check_simulation_timing_report
+          reports/junit-cpu-fp64-simulation-timing.xml
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}
@@ -169,6 +180,8 @@ jobs:
             fi
           }
           pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
+            --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
+            --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
@@ -279,9 +292,18 @@ jobs:
             --timeout=600 --timeout-method=thread -v \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp64-test-distributed-template-placement.xml \
-            --cov=./ --cov-append --cov-report=xml -n 0 \
+            --cov=./ --cov-append --cov-report= -n 0 \
           && check_population \
-            reports/junit-cpu-fp64-test-distributed-template-placement.xml
+            reports/junit-cpu-fp64-test-distributed-template-placement.xml \
+          && pixi run -e tests-cpu pytest \
+            tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
+            tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
+            --precision=64 --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp64-simulation-timing.xml \
+            --cov=./ --cov-append --cov-report=xml \
+          && pixi run -e tests-cpu python -m tests.ci.check_simulation_timing_report \
+            reports/junit-cpu-fp64-simulation-timing.xml
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload JUnit reports
         # `always()` so a failing run still publishes its report: the XML is how
@@ -442,6 +464,8 @@ jobs:
             fi
           }
           pixi run -e tests-cpu pytest tests --precision=32 \
+            --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
+            --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
             -m "not slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
@@ -540,7 +564,15 @@ jobs:
             --junitxml=reports/junit-cpu-fp32-test-distributed-template-placement.xml \
             -n 0 \
           && check_population \
-            reports/junit-cpu-fp32-test-distributed-template-placement.xml
+            reports/junit-cpu-fp32-test-distributed-template-placement.xml \
+          && pixi run -e tests-cpu pytest \
+            tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
+            tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
+            --precision=32 --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp32-simulation-timing.xml \
+          && pixi run -e tests-cpu python -m tests.ci.check_simulation_timing_report \
+            reports/junit-cpu-fp32-simulation-timing.xml
       - name: Upload JUnit reports
         # `always()` so a failing run still publishes its report: the XML is how
         # a run's counts are read back, and a run that failed is exactly when
