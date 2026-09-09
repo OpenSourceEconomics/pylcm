@@ -11,7 +11,13 @@ on:
       - docs/**
       - '**.md'
       - '**.ipynb'
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      aca_memory_diagnostic:
+        description: Run one bounded ACA memory diagnostic and upload receipts
+        type: boolean
+        required: false
+        default: false
 jobs:
   run-benchmarks:
     name: Run benchmarks on GPU and make PR comment
@@ -90,11 +96,40 @@ jobs:
             exit "$status"
           fi
       - name: Setup ASV machine
+        if: >-
+          ${{ !(github.event_name == 'workflow_dispatch'
+          && inputs.aca_memory_diagnostic == true) }}
         run: pixi run -e benchmarks-cuda12 asv machine --yes
       - name: Verify external benchmark compatibility
+        if: >-
+          ${{ !(github.event_name == 'workflow_dispatch'
+          && inputs.aca_memory_diagnostic == true) }}
         run: pixi run -e benchmarks-cuda12 asv-preflight
       - name: Run benchmarks and post PR comment
+        if: >-
+          ${{ !(github.event_name == 'workflow_dispatch'
+          && inputs.aca_memory_diagnostic == true) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: pixi run -e benchmarks-cuda12 asv-run-and-pr-comment
+      - name: Diagnose one cold ACA solve
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch'
+          && inputs.aca_memory_diagnostic == true }}
+        timeout-minutes: 20
+        run: >-
+          pixi run -e benchmarks-cuda12 python
+          benchmarks/diagnostics/aca_memory/run_ci.py
+      - name: Upload ACA diagnostic receipts
+        if: >-
+          ${{ always() && (github.event_name == 'workflow_dispatch'
+          && inputs.aca_memory_diagnostic == true) }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: aca-memory-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/aca-memory-diagnostic/
+            reports/native-benchmark.json
+            !reports/aca-memory-diagnostic/**/jax-cache/**
+          if-no-files-found: warn
