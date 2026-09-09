@@ -11,10 +11,12 @@ from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.workspace_planning import (
     WorkspacePlan,
+    compiler_peak_bytes,
     plan_workspace,
     workspace_width_candidates,
 )
 from lcm.exceptions import ExecutionPlanningError
+from tests.execution.test_compiler_allocation_reservation import memory_stats
 
 
 class _Reduction:
@@ -109,7 +111,7 @@ def _tiled(
 
 
 def _stats(peak: object) -> SimpleNamespace:
-    return SimpleNamespace(peak_memory_in_bytes=peak)
+    return memory_stats(peak=peak)
 
 
 def test_no_axes_compile_the_empty_width_mapping_once_without_a_budget() -> None:
@@ -376,16 +378,8 @@ def test_per_device_peaks_are_maximized_not_summed() -> None:
 def test_strict_peak_normalization_accepts_jax_style_records(
     *, analysis: object, expected: int
 ) -> None:
-    compiler = _Compiler(lambda _widths: analysis)
-
-    plan = plan_workspace(
-        axes=(_axis(),),
-        fixed_widths={"action_product": 2},
-        compile_candidate=compiler,
-        budget_bytes=expected,
-    )
-
-    assert plan.peak_bytes == expected
+    executable = _Executable(analysis=analysis)
+    assert compiler_peak_bytes(compiled=executable, widths={}) == expected
 
 
 @pytest.mark.parametrize(
@@ -429,7 +423,7 @@ def test_strict_peak_normalization_accepts_jax_style_records(
 def test_malformed_memory_analysis_fails_closed(analysis: object) -> None:
     compiler = _Compiler(lambda _widths: analysis)
 
-    with pytest.raises(ExecutionPlanningError, match="no valid per-device peak"):
+    with pytest.raises(ExecutionPlanningError, match="no valid per-device reservation"):
         plan_workspace(
             axes=(_axis(),),
             fixed_widths={"action_product": 2},
@@ -490,7 +484,7 @@ def test_all_fixed_axes_compile_only_one_candidate_and_report_overbudget() -> No
 
     with pytest.raises(
         ExecutionPlanningError,
-        match="explicitly requested workspace widths require 11 peak bytes",
+        match="explicitly requested workspace widths require 11 reservation bytes",
     ):
         plan_workspace(
             axes=(
@@ -511,7 +505,7 @@ def test_no_feasible_candidate_is_reported_after_the_entire_frontier() -> None:
 
     with pytest.raises(
         ExecutionPlanningError,
-        match=r"smallest total is 12 bytes \(12 compiler peak plus 0 resident bytes",
+        match=r"smallest total is 12 bytes \(12 compiler reservation plus 0 resident",
     ):
         plan_workspace(
             axes=(_axis(extent=8),),

@@ -13,7 +13,7 @@ from typing import Protocol, runtime_checkable
 
 import jax
 
-from _lcm.execution.workspace_planning import compiler_peak_bytes
+from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.simulation.residency import DeviceBufferFootprint, resident_bytes_by_device
 from lcm.exceptions import ExecutionPlanningError
 
@@ -26,9 +26,11 @@ class SimulationStageProfile:
     executable: jax.stages.Compiled
     devices: tuple[jax.Device, ...]
     peak_bytes: int = field(init=False)
+    reservation_bytes: int = field(init=False)
+    """Represented compiler requirement, calculated before external residency."""
 
     def __post_init__(self) -> None:
-        """Read the compiler's raw peak separately from external reservations."""
+        """Read raw peak and compiler reservation before external residency."""
         _validate_devices(devices=self.devices)
         compiled_devices = set().union(
             *(
@@ -45,11 +47,9 @@ class SimulationStageProfile:
             )
         if not self.name:
             raise ExecutionPlanningError("A simulation chunk stage needs a name.")
-        object.__setattr__(
-            self,
-            "peak_bytes",
-            compiler_peak_bytes(compiled=self.executable, widths={}),
-        )
+        memory = compiler_memory_reservation(compiled=self.executable, widths={})
+        object.__setattr__(self, "peak_bytes", memory.peak_bytes)
+        object.__setattr__(self, "reservation_bytes", memory.reservation_bytes)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -185,7 +185,7 @@ def _required_bytes(
     resident: Mapping[jax.Device, int],
     devices: tuple[jax.Device, ...],
 ) -> Mapping[jax.Device, int]:
-    """Sum owners on each actual device before comparing separate stage peaks."""
+    """Sum device owners before comparing each stage's compiler reservation."""
     selected = set(devices)
     if profile.host_stages and (
         any(device.platform != "gpu" for device in devices)
@@ -216,7 +216,7 @@ def _required_bytes(
             + profile.output_reservation.get(device, 0)
             + max(
                 (
-                    stage.peak_bytes
+                    stage.reservation_bytes
                     for stage in profile.stages
                     if device in stage.devices
                 ),

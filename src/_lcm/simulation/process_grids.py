@@ -19,7 +19,7 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import UniformIIDProcess
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
-    _operation_peak,
+    _operation_memory,
     _OperationCompiler,
 )
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -186,7 +186,7 @@ class SimulationProcessGrids:
             ),
             budget_bytes=self.budget_bytes,
             resident_bytes=max(external.values()),
-            peak_bytes_for=_operation_peak,
+            memory_for=_operation_memory,
         )
         return cast("Float1D", plan.compiled.executable(**placed).block_until_ready())
 

@@ -16,7 +16,11 @@ from types import FunctionType, MappingProxyType
 
 import jax
 
-from _lcm.execution.workspace_planning import compiler_peak_bytes, plan_workspace
+from _lcm.execution.workspace_planning import (
+    CompilerMemoryReservation,
+    compiler_memory_reservation,
+    plan_workspace,
+)
 from _lcm.simulation.operand_placement import (
     place_simulation_arguments,
     subject_operand_sharding,
@@ -37,10 +41,21 @@ type StaticArgument = bool | int | float | str | tuple[StaticArgument, ...] | No
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _ProfiledOperation:
-    """One executable and its actual compiler-reported peak, without admission."""
+    """One executable and its complete compiler accounting, without admission."""
 
     executable: jax.stages.Compiled
-    peak_bytes: int
+    memory: CompilerMemoryReservation
+    """Complete compiler records, retaining raw peaks and computed reservations."""
+
+    @property
+    def peak_bytes(self) -> int:
+        """Preserve the actual compiler peak independently of allocated storage."""
+        return self.memory.peak_bytes
+
+    @property
+    def reservation_bytes(self) -> int:
+        """Return the represented requirement used for budget admission."""
+        return self.memory.reservation_bytes
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
@@ -130,7 +145,7 @@ class ProfiledSimulationOperations:
             ),
             budget_bytes=budget_bytes,
             resident_bytes=max(external.values()),
-            peak_bytes_for=_operation_peak,
+            memory_for=_operation_memory,
         )
         result = plan.compiled.executable(**placed)
         jax.block_until_ready(result)
@@ -150,7 +165,7 @@ class ProfiledSimulationOperations:
 
         Each operand must declare its exact required layout. Concrete inputs are
         refused; shared containers are canonicalized exactly as at dispatch. Only
-        executable code and its compiler peak enter the shared cache.
+        executable code and its complete compiler accounting enter the shared cache.
         """
         static = _validated_static_arguments(
             function=function,
@@ -206,7 +221,7 @@ class ProfiledSimulationOperations:
             # Bind only validated immutable metadata. A fresh callable also keeps
             # JAX's own static-argument cache from conflating signed float zeros.
             bound = partial(function, **static_arguments)
-            # Residency excludes arguments charged through the compiler's peak.
+            # Residency excludes arguments charged by the compiler reservation.
             # Keep shape-only inputs in that report while their callers own them.
             jitted = (
                 jax.jit(bound, keep_unused=True)
@@ -216,7 +231,7 @@ class ProfiledSimulationOperations:
             executable = jitted.lower(**arguments).compile()
             compiled = _ProfiledOperation(
                 executable=executable,
-                peak_bytes=compiler_peak_bytes(compiled=executable, widths={}),
+                memory=compiler_memory_reservation(compiled=executable, widths={}),
             )
         except BaseException as error:
             with self.lock:
@@ -373,6 +388,6 @@ def _static_identity(value: object) -> Hashable:
     )
 
 
-def _operation_peak(compiled: _ProfiledOperation) -> int:
-    """Return the actual executable report, not a guessed output multiplier."""
-    return compiled.peak_bytes
+def _operation_memory(compiled: _ProfiledOperation) -> CompilerMemoryReservation:
+    """Return the exact executable's complete cached memory accounting."""
+    return compiled.memory

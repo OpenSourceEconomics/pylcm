@@ -8,7 +8,10 @@ import jax
 import numpy as np
 import pytest
 
-from _lcm.execution.workspace_planning import compiler_peak_bytes
+from _lcm.execution.workspace_planning import (
+    CompilerMemoryReservation,
+    compiler_memory_reservation,
+)
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig
 from lcm.exceptions import ExecutionPlanningError
@@ -22,7 +25,8 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
     record_testsuite_property: Callable[[str, object], None],
 ) -> None:
     records: dict[
-        tuple[int, tuple[tuple[str, int], ...]], list[tuple[Any, int, int]]
+        tuple[int, tuple[tuple[str, int], ...]],
+        list[tuple[Any, CompilerMemoryReservation, int]],
     ] = {}
     resident = backward_induction._candidate_resident_bytes
     compile_all = backward_induction._compile_all_functions
@@ -33,9 +37,9 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
         executable = kwargs["compiled"]
         widths = kwargs["program"].tile_widths
         assert isinstance(executable, jax.stages.Compiled)
-        peak = compiler_peak_bytes(compiled=executable, widths=widths)
+        memory = compiler_memory_reservation(compiled=executable, widths=widths)
         records.setdefault((id(kwargs["inventory"]), tuple(widths.items())), []).append(
-            (executable, peak, actual)
+            (executable, memory, actual)
         )
         return actual
 
@@ -78,23 +82,23 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
         for pair in pairs
     )
     donor_ceiling = max(
-        peak + external
+        memory.reservation_bytes + external
         for variants in records.values()
-        for executable, peak, external in variants
+        for executable, memory, external in variants
         if len(variants) == 1 or id(executable) in donors
     )
     paired_ceiling = max(
-        peak + external
+        memory.reservation_bytes + external
         for variants in records.values()
-        for _, peak, external in variants
+        for _, memory, external in variants
     )
     assert paired_ceiling > donor_ceiling, (
         donor_ceiling,
         paired_ceiling,
         [
             [
-                (id(executable) in donors, peak, external)
-                for executable, peak, external in pair
+                (id(executable) in donors, memory.reservation_bytes, external)
+                for executable, memory, external in pair
             ]
             for pair in pairs
         ],
@@ -108,10 +112,11 @@ def test_budget_admits_both_real_variants_before_any_donating_dispatch(
                 [
                     {
                         "donating": id(executable) in donors,
-                        "raw_peak": peak,
+                        "raw_peak": memory.peak_bytes,
+                        "reservation": memory.reservation_bytes,
                         "resident": external,
                     }
-                    for executable, peak, external in pair
+                    for executable, memory, external in pair
                 ]
                 for pair in pairs
             ]

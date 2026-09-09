@@ -23,7 +23,11 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     resolve_value_transfer,
 )
-from _lcm.execution.workspace_planning import compiler_peak_bytes, plan_workspace
+from _lcm.execution.workspace_planning import (
+    CompilerMemoryReservation,
+    compiler_memory_reservation,
+    plan_workspace,
+)
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
     _abstract_operand,
@@ -321,7 +325,7 @@ class SimulationRuntime:
             budget_bytes=budget,
             resident_bytes=resident,
             resident_bytes_for=resident_lookup,
-            peak_bytes_for=_simulation_peak_bytes,
+            memory_for=_simulation_memory,
         )
         return plan.compiled
 
@@ -447,9 +451,13 @@ class _CachedSimulationCandidateCompiler:
         )
 
 
-def _simulation_peak_bytes(compiled: CompiledSimulationProgram) -> int:
-    """Read the genuine underlying executable's compiler-reported memory peak."""
-    return compiler_peak_bytes(compiled=compiled.executable, widths=compiled.widths)
+def _simulation_memory(
+    compiled: CompiledSimulationProgram,
+) -> CompilerMemoryReservation:
+    """Read the underlying executable's raw peak and represented allocations."""
+    return compiler_memory_reservation(
+        compiled=compiled.executable, widths=compiled.widths
+    )
 
 
 def _require_abstract_arguments(*, arguments: Mapping[str, object]) -> None:

@@ -6,7 +6,7 @@ import logging
 import weakref
 from collections.abc import Callable, Mapping
 from functools import partial, partialmethod
-from types import MappingProxyType, SimpleNamespace
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -28,6 +28,7 @@ from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
+from tests.execution.test_compiler_allocation_reservation import memory_stats
 from tests.simulation.test_program_runtime import _program
 
 
@@ -70,7 +71,7 @@ def _controlled_memory_analysis(
     width = executable_widths.get(id(self))
     if width is None:
         return original(self)
-    return SimpleNamespace(peak_memory_in_bytes={4: 80, 2: 67, 1: 40}[width])
+    return memory_stats(peak={4: 80, 2: 67, 1: 40}[width])
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod

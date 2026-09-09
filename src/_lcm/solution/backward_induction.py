@@ -102,7 +102,8 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from _lcm.execution.workspace_planning import (
-    compiler_peak_bytes,
+    CompilerMemoryReservation,
+    compiler_memory_reservation,
     plan_workspace,
     workspace_width_candidates,
 )
@@ -2985,7 +2986,7 @@ def _candidate_resident_bytes(
     Logical read occurrences identify scheduled storage. Template pointer aliases
     are deliberately irrelevant: representatives need not share the identities of
     the future runtime artifacts they size. Pruning changes neither declared reads
-    nor their release times; it changes only which buffers the raw peak includes.
+    nor their release times; it changes which inputs compiler accounting covers.
     """
     arguments = {**program.arguments, **internal_arguments}
     compiler_input_paths(compiled=compiled, arguments=arguments)
@@ -3390,7 +3391,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     )
     compiled: dict[Hashable, jax.stages.Compiled] = {}
     labels: dict[Hashable, str] = {}
-    peak_bytes_by_lowering_key: dict[Hashable, int] = {}
+    memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation] = {}
     resident_bytes_by_candidate: dict[_CoreCandidate, int] = {}
     admission_keys: dict[_CoreCandidate, Hashable] = {}
     pending: dict[_CoreTriple, int] = dict.fromkeys(
@@ -3480,17 +3481,17 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             )
             variant_residency: dict[Hashable, int] = {}
             for variant_key in variant_keys:
-                if variant_key not in peak_bytes_by_lowering_key:
-                    peak_bytes = compiler_peak_bytes(
+                if variant_key not in memory_by_lowering_key:
+                    memory = compiler_memory_reservation(
                         compiled=compiled[variant_key],
                         widths=resolved_programs[candidate].tile_widths,
                     )
-                    peak_bytes_by_lowering_key[variant_key] = peak_bytes
+                    memory_by_lowering_key[variant_key] = memory
                     _log_kernel_memory(
                         compiled=compiled[variant_key],
                         label=labels[variant_key],
                         logger=logger,
-                        precomputed_peak_bytes=peak_bytes,
+                        precomputed_peak_bytes=memory.peak_bytes,
                     )
                 variant_residency[variant_key] = _candidate_resident_bytes(
                     compiled=compiled[variant_key],
@@ -3498,13 +3499,13 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     internal_arguments=internal_templates[candidate],
                     inventory=resident_inventory[triple],
                 )
-            # Keep one variant's complete measured total intact. Combining a
-            # peak from one executable with another's kept-input subtraction
-            # can undercount retained buffers or invent a nonexistent peak.
+            # Keep each variant's compiler reservation paired with its own
+            # kept-input subtraction and retained owners.
             lowering_key = max(
                 variant_keys,
                 key=lambda key: (
-                    peak_bytes_by_lowering_key[key] + variant_residency[key]
+                    memory_by_lowering_key[key].reservation_bytes
+                    + variant_residency[key]
                 ),
             )
             admission_keys[candidate] = lowering_key
@@ -3523,7 +3524,10 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 dict(resident_inventory[triple].fixed_bytes),
                 resident_inventory[triple].internal_bytes,
             )
-            if peak_bytes_by_lowering_key[lowering_key] + resident <= budget_bytes:
+            if (
+                memory_by_lowering_key[lowering_key].reservation_bytes + resident
+                <= budget_bytes
+            ):
                 continue
             if position + 1 < len(candidates_by_triple[triple]):
                 next_pending[triple] = position + 1
@@ -3532,9 +3536,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         pending = next_pending
         wave += 1
 
-    peak_bytes_by_compiled_id = {
-        id(compiled[lowering_key]): peak_bytes
-        for lowering_key, peak_bytes in peak_bytes_by_lowering_key.items()
+    memory_by_compiled_id = {
+        id(compiled[lowering_key]): memory
+        for lowering_key, memory in memory_by_lowering_key.items()
     }
 
     # Select within each triple through the planner, which walks the same ranked
@@ -3562,11 +3566,11 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     compiled_by_width=compiled_by_width
                 ),
                 budget_bytes=budget_bytes,
-                peak_bytes_for=(
+                memory_for=(
                     None
                     if budget_bytes is None
-                    else _PeakBytesLookup(
-                        peak_bytes_by_compiled_id=peak_bytes_by_compiled_id
+                    else _CompilerMemoryLookup(
+                        memory_by_compiled_id=memory_by_compiled_id
                     )
                 ),
                 resident_bytes=resident_bytes_by_triple[triple],
@@ -3654,13 +3658,13 @@ class _CompiledCandidateLookup:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class _PeakBytesLookup:
-    """Serve the planner's peak queries from the waves' compiler reports."""
+class _CompilerMemoryLookup:
+    """Serve complete memory accounting from the compilation waves' reports."""
 
-    peak_bytes_by_compiled_id: Mapping[int, int]
+    memory_by_compiled_id: Mapping[int, CompilerMemoryReservation]
 
-    def __call__(self, executable: jax.stages.Compiled) -> int:
-        return self.peak_bytes_by_compiled_id[id(executable)]
+    def __call__(self, executable: jax.stages.Compiled) -> CompilerMemoryReservation:
+        return self.memory_by_compiled_id[id(executable)]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -4638,13 +4642,11 @@ def _log_kernel_memory(
     (its own per-period full-V transient) would otherwise have to be enabled to
     see them, masking the real kernel peak.
 
-    `temp_size_in_bytes` is the peak scratch buffer XLA plans for the kernel —
-    the transient that binds the device at run time. Because it is computed at
-    compile, it is available even for configs whose *execution* would OOM, so
-    the egm_step working set can be sized (and swept against grid knobs) without
-    running or exhausting the device. `argument`/`output` sizes bound the
-    per-call resident inputs/outputs (the carry and V). Pair with
-    `XLA_FLAGS=--xla_dump_to=DIR` to name the HLO op behind the peak buffer.
+    The temporary, argument, output, and raw peak counters describe compiler
+    buffer accounting and are available without executing the kernel. Admission
+    separately reserves the larger of the raw peak and argument + output - alias
+    + temporary bytes. Neither diagnostic establishes a complete runtime memory
+    bound. Pair with `XLA_FLAGS=--xla_dump_to=DIR` to inspect the compiler buffers.
     """
     if os.environ.get("LCM_LOG_KERNEL_MEMORY", "0") == "0":
         return

@@ -32,6 +32,80 @@ class _MemoryAnalyzable(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CompilerMemoryRecord:
+    """One device's raw peak and represented default-memory allocations."""
+
+    peak_bytes: int
+    """Unmodified compiler-reported peak for this device record."""
+    argument_bytes: int
+    """Storage assigned to the executable's input arguments."""
+    output_bytes: int
+    """Storage assigned to executable outputs, before subtracting aliases."""
+    alias_bytes: int
+    """Argument/output overlap to subtract once from represented storage."""
+    temporary_bytes: int
+    """Compiler-reported preallocated temporary storage."""
+
+    def __post_init__(self) -> None:
+        """Require complete counters and an argument/output overlap that can exist."""
+        for value in (
+            self.peak_bytes,
+            self.argument_bytes,
+            self.output_bytes,
+            self.alias_bytes,
+            self.temporary_bytes,
+        ):
+            _non_negative_bytes(value=value)
+        if self.alias_bytes > min(self.argument_bytes, self.output_bytes):
+            raise ValueError(
+                "Compiler aliases exceed represented arguments or outputs."
+            )
+
+    @property
+    def allocation_bytes(self) -> int:
+        """Count represented storage, removing argument/output overlap once."""
+        return (
+            self.argument_bytes
+            + self.output_bytes
+            - self.alias_bytes
+            + self.temporary_bytes
+        )
+
+    @property
+    def reservation_bytes(self) -> int:
+        """Enforce both reported requirements within the represented storage scope."""
+        return max(self.peak_bytes, self.allocation_bytes)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CompilerMemoryReservation:
+    """Complete per-device records, with raw peak kept separate from reservation.
+
+    Allocation counters represent arguments, outputs, their aliases, and
+    preallocated temporaries. This scope excludes generated code, allocator
+    overhead, thread stacks, and other runtime storage omitted by the report.
+    """
+
+    records: tuple[CompilerMemoryRecord, ...]
+    """Nonempty device records whose allocation fields remain paired."""
+
+    def __post_init__(self) -> None:
+        """Refuse an empty device report."""
+        if not self.records:
+            raise ValueError("Compiler memory reservation needs a device record.")
+
+    @property
+    def peak_bytes(self) -> int:
+        """Return the largest raw compiler peak across devices."""
+        return max(record.peak_bytes for record in self.records)
+
+    @property
+    def reservation_bytes(self) -> int:
+        """Return the largest reservation after accounting within each device."""
+        return max(record.reservation_bytes for record in self.records)
+
+
 @dataclass(frozen=True, slots=True)
 class WorkspacePlan[Compiled]:
     """One selected width mapping and its already-compiled executable."""
@@ -39,6 +113,8 @@ class WorkspacePlan[Compiled]:
     widths: Mapping[str, int]
     peak_bytes: int | None
     compiled: Compiled
+    reservation_bytes: int | None = None
+    """Selected represented compiler requirement, or None without a budget."""
 
     def __post_init__(self) -> None:
         """Own an immutable snapshot of the planner-selected widths."""
@@ -79,7 +155,7 @@ def plan_workspace[Compiled](
     fixed_widths: Mapping[str, int] = MappingProxyType({}),
     compile_candidate: Callable[[Mapping[str, int]], Compiled],
     budget_bytes: int | None = None,
-    peak_bytes_for: Callable[[Compiled], int] | None = None,
+    memory_for: Callable[[Compiled], CompilerMemoryReservation] | None = None,
     resident_bytes: int = 0,
     resident_bytes_for: Callable[[Compiled], int] | None = None,
 ) -> WorkspacePlan[Compiled]:
@@ -90,9 +166,11 @@ def plan_workspace[Compiled](
     `resident_bytes` is not consulted either.  With a budget, candidates are
     compiled and analyzed in rank order — descending width product, ties broken
     toward the lexicographically greatest width tuple in axis declaration order —
-    and the first whose compiler-reported peak fits is returned.
-    A candidate is feasible when its compiler-reported peak plus the bytes the plan
-    keeps resident on the device at the node's scheduled position fits the budget.
+    and the first whose compiler reservation fits is returned.
+    A candidate is feasible when its represented allocation reservation plus the
+    bytes the plan keeps resident at the node's scheduled position fits the budget.
+    The reservation enforces both raw peak and represented allocation storage;
+    storage omitted from those reports remains outside this accounting scope.
     That is the feasible maximum of the whole frontier, reached without compiling any
     candidate narrower than the winner; only a core that fits at no width compiles
     its entire frontier before failing.  A position whose resident bytes already
@@ -114,8 +192,8 @@ def plan_workspace[Compiled](
     if not callable(compile_candidate):
         msg = "The workspace candidate compiler must be callable."
         raise TypeError(msg)
-    if peak_bytes_for is not None and not callable(peak_bytes_for):
-        msg = "The workspace peak lookup must be callable or None."
+    if memory_for is not None and not callable(memory_for):
+        msg = "The workspace memory lookup must be callable or None."
         raise TypeError(msg)
     if resident_bytes_for is not None and not callable(resident_bytes_for):
         raise TypeError("The workspace residency lookup must be callable or None.")
@@ -140,11 +218,12 @@ def plan_workspace[Compiled](
 
     least_total: int | None = None
     least_peak: int | None = None
+    least_reservation: int | None = None
     least_resident = resident
     for widths in candidates:
         compiled = compile_candidate(widths)
-        peak_bytes = _peak_bytes_for_candidate(
-            compiled=compiled, widths=widths, peak_bytes_for=peak_bytes_for
+        memory = _memory_for_candidate(
+            compiled=compiled, widths=widths, memory_for=memory_for
         )
         candidate_resident = _resident_bytes_for_candidate(
             compiled=compiled,
@@ -152,27 +231,33 @@ def plan_workspace[Compiled](
             lower_bound=resident,
             resident_bytes_for=resident_bytes_for,
         )
-        total = peak_bytes + candidate_resident
+        total = memory.reservation_bytes + candidate_resident
         if least_total is None or total < least_total:
             least_total = total
-            least_peak = peak_bytes
+            least_peak = memory.peak_bytes
+            least_reservation = memory.reservation_bytes
             least_resident = candidate_resident
         if total <= budget:
             return WorkspacePlan(
-                widths=widths, peak_bytes=peak_bytes, compiled=compiled
+                widths=widths,
+                peak_bytes=memory.peak_bytes,
+                reservation_bytes=memory.reservation_bytes,
+                compiled=compiled,
             )
 
     if declared_axes and all(axis.name in widths_by_axis for axis in declared_axes):
         msg = (
             "The explicitly requested workspace widths require "
-            f"{least_peak} peak bytes, exceeding the {budget}-byte budget "
+            f"{least_reservation} reservation bytes (raw compiler peak {least_peak}), "
+            f"exceeding the {budget}-byte budget "
             f"with {least_resident} resident bytes at the node's position."
         )
     else:
         msg = (
             "No workspace-width candidate fits the "
             f"{budget}-byte budget; the smallest total is {least_total} bytes "
-            f"({least_peak} compiler peak plus {least_resident} resident bytes "
+            f"({least_reservation} compiler reservation plus {least_resident} resident "
+            f"bytes; raw compiler peak {least_peak}, "
             "at the node's position)."
         )
     raise ExecutionPlanningError(msg)
@@ -374,30 +459,29 @@ def _width_mapping(
     )
 
 
-def _peak_bytes_for_candidate[Compiled](
+def _memory_for_candidate[Compiled](
     *,
     compiled: Compiled,
     widths: Mapping[str, int],
-    peak_bytes_for: Callable[[Compiled], int] | None,
-) -> int:
-    """Read one candidate peak directly or through a caller-owned cache."""
-    if peak_bytes_for is None:
-        return compiler_peak_bytes(compiled=compiled, widths=widths)
+    memory_for: Callable[[Compiled], CompilerMemoryReservation] | None,
+) -> CompilerMemoryReservation:
+    """Read complete candidate accounting directly or from its compiler cache."""
+    if memory_for is None:
+        return compiler_memory_reservation(compiled=compiled, widths=widths)
 
     try:
-        value = peak_bytes_for(compiled)
+        value = memory_for(compiled)
     except Exception as exc:
-        msg = f"Compiler memory peak lookup failed for widths {dict(widths)!r}."
+        msg = f"Compiler memory reservation lookup failed for widths {dict(widths)!r}."
         raise ExecutionPlanningError(msg) from exc
 
-    try:
-        return _non_negative_bytes(value=value)
-    except Exception as exc:
+    if not isinstance(value, CompilerMemoryReservation):
         msg = (
-            "Compiler memory peak lookup returned an invalid byte count for widths "
+            "Compiler memory lookup returned no complete reservation for widths "
             f"{dict(widths)!r}."
         )
-        raise ExecutionPlanningError(msg) from exc
+        raise ExecutionPlanningError(msg)
+    return value
 
 
 def _resident_bytes_for_candidate[Compiled](
@@ -424,10 +508,53 @@ def _resident_bytes_for_candidate[Compiled](
     return resident
 
 
+def compiler_memory_reservation[Compiled](
+    *, compiled: Compiled, widths: Mapping[str, int]
+) -> CompilerMemoryReservation:
+    """Reserve complete reported default-memory allocations and the raw peak.
+
+    Accept one scalar record or a nonempty sequence/mapping of device records.
+    Every record must supply nonnegative integral peak, argument, output, alias,
+    and temporary counters, including the four host allocation counters. Nonzero
+    host allocations are refused: the peak report does not reliably separate
+    their memory space. Separately compiled CPU assembly remains a CPU profile.
+    Generated-code metadata does not establish host allocation residency.
+
+    The reservation enforces represented requirements. It does not establish a
+    complete runtime upper bound for storage omitted by the compiler report.
+    """
+    analysis = _compiler_memory_analysis(compiled=compiled, widths=widths)
+    try:
+        records = _allocation_records(analysis=analysis)
+        return CompilerMemoryReservation(
+            records=tuple(_allocation_record(record=record) for record in records)
+        )
+    except Exception as exc:
+        raise ExecutionPlanningError(
+            "Compiler memory analysis returned no valid per-device reservation "
+            f"for widths {dict(widths)!r}: {exc}"
+        ) from exc
+
+
 def compiler_peak_bytes[Compiled](
     *, compiled: Compiled, widths: Mapping[str, int]
 ) -> int:
     """Read and strictly normalize one candidate's compiler-reported peak."""
+    analysis = _compiler_memory_analysis(compiled=compiled, widths=widths)
+    try:
+        return _peak_from_analysis(analysis=analysis)
+    except Exception as exc:
+        msg = (
+            "Compiler memory analysis returned no valid per-device peak for widths "
+            f"{dict(widths)!r}."
+        )
+        raise ExecutionPlanningError(msg) from exc
+
+
+def _compiler_memory_analysis[Compiled](
+    *, compiled: Compiled, widths: Mapping[str, int]
+) -> object:
+    """Read an executable report once without numerical dispatch."""
     try:
         analyze = cast("_MemoryAnalyzable", compiled).memory_analysis
     except Exception as exc:
@@ -437,18 +564,70 @@ def compiler_peak_bytes[Compiled](
         msg = f"Compiler memory analysis is unavailable for widths {dict(widths)!r}."
         raise ExecutionPlanningError(msg)
     try:
-        analysis = analyze()
+        return analyze()
     except Exception as exc:
         msg = f"Compiler memory analysis failed for widths {dict(widths)!r}."
         raise ExecutionPlanningError(msg) from exc
+
+
+def _allocation_records(*, analysis: object) -> tuple[object, ...]:
+    """Keep fields paired within their record before reducing across devices."""
+    if _peak_field(record=analysis) is not _MISSING:
+        return (analysis,)
+    if isinstance(analysis, Mapping):
+        records = tuple(analysis.values())
+    elif isinstance(analysis, (list, tuple)):
+        records = tuple(analysis)
+    else:
+        raise TypeError("Memory analysis must expose a complete allocation record.")
+    if not records:
+        raise ValueError("Per-device memory analysis must not be empty.")
+    return records
+
+
+def _allocation_record(*, record: object) -> CompilerMemoryRecord:
+    """Validate a scalar device record and its separately reported host space."""
+    names = (
+        "peak_memory_in_bytes",
+        "argument_size_in_bytes",
+        "output_size_in_bytes",
+        "alias_size_in_bytes",
+        "temp_size_in_bytes",
+        "host_argument_size_in_bytes",
+        "host_output_size_in_bytes",
+        "host_alias_size_in_bytes",
+        "host_temp_size_in_bytes",
+    )
+    fields = {
+        name: record.get(name, _MISSING)
+        if isinstance(record, Mapping)
+        else getattr(record, name, _MISSING)
+        for name in names
+    }
     try:
-        return _peak_from_analysis(analysis=analysis)
-    except Exception as exc:
-        msg = (
-            "Compiler memory analysis returned no valid per-device peak for widths "
-            f"{dict(widths)!r}."
+        values = {
+            name: _non_negative_bytes(value=value) for name, value in fields.items()
+        }
+        _fail_if_host_allocations(values=values)
+        return CompilerMemoryRecord(
+            peak_bytes=values["peak_memory_in_bytes"],
+            argument_bytes=values["argument_size_in_bytes"],
+            output_bytes=values["output_size_in_bytes"],
+            alias_bytes=values["alias_size_in_bytes"],
+            temporary_bytes=values["temp_size_in_bytes"],
         )
-        raise ExecutionPlanningError(msg) from exc
+    except Exception as exc:
+        snapshot = {
+            name: "unavailable" if value is _MISSING else value
+            for name, value in fields.items()
+        }
+        raise ValueError(f"{exc} Reported allocation fields: {snapshot!r}") from exc
+
+
+def _fail_if_host_allocations(*, values: Mapping[str, int]) -> None:
+    """Refuse a mixed-space peak whose default-memory share is unavailable."""
+    if any(value for name, value in values.items() if name.startswith("host_")):
+        raise ValueError("Mixed host/default allocation spaces are unsupported.")
 
 
 def _peak_from_analysis(*, analysis: object) -> int:
@@ -503,14 +682,14 @@ def _normalize_peak_field(*, value: object) -> int:
 def _non_negative_bytes(*, value: object) -> int:
     """Accept integer-like byte counts while rejecting booleans and lossy casts."""
     if isinstance(value, bool):
-        msg = "A compiler-reported peak must be an integer byte count, not bool."
+        msg = "A compiler memory counter must be an integer byte count, not bool."
         raise TypeError(msg)
     try:
         normalized = operator.index(cast("SupportsIndex", value))
     except TypeError as exc:
-        msg = "A compiler-reported peak must be an integer byte count."
+        msg = "A compiler memory counter must be an integer byte count."
         raise TypeError(msg) from exc
     if normalized < 0:
-        msg = "A compiler-reported peak must be non-negative."
+        msg = "A compiler memory counter must be non-negative."
         raise ValueError(msg)
     return normalized

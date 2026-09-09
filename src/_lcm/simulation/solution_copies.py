@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from _lcm.execution.workspace_planning import plan_workspace
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
-    _operation_peak,
+    _operation_memory,
     _OperationCompiler,
 )
 from _lcm.simulation.residency import (
@@ -97,7 +97,7 @@ def copy_solution_leaf(
         ),
         budget_bytes=budget_bytes,
         resident_bytes=max(external.values()),
-        peak_bytes_for=_operation_peak,
+        memory_for=_operation_memory,
     )
     result = plan.compiled.executable(value=leaf).block_until_ready()
     copied = measure_buffer_footprint(tree=result)

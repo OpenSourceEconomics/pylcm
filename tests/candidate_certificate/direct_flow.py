@@ -338,7 +338,7 @@ _SOURCE_SEALS = {
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
     SUPPORT_FINGERPRINT_SOURCE: "5ac9769fcb9545e7a83c813b9c12162eaa4ac26d0409b7a0a1a2040254a2e897",
-    UNIFORM_PROCESS_GRID_SOURCE: "63cd5cff65d3627767556399bd0ca7f8e1e4540b6c9a63b01dcc3b96e7450fa3",
+    UNIFORM_PROCESS_GRID_SOURCE: "e2c535f948ac1d9ec222d13e0de1e75a792a534a6d64422707be4ad1358651c3",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "37627a347ff56b72d3a1487b428481b9952959cfd753e4b412776296a7516d6f",
     NATIVE_ARCHIVE_SOURCE: "a093e0a7368e45efb7b91411982ba60bf3a1931dc1a5a202388eda0bb89375ad",
@@ -351,14 +351,14 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_ADMISSION_SOURCE: "2d3d0bdceeddb9c8a9c7a85d5c12bdbb44b2727438678d1a0065ee19f47bf854",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "ebb5e00669a33d9486c3e3f7a6d5752937bf2751ec95ac360903274b6d81304d",
     COMBINED_CHUNK_OPERATIONS_SOURCE: "4c05c30ef0788a67165e8c595d70a2ca50a00f1a511c43730a4932b2269a4e0c",
-    COMBINED_CHUNK_PLANNING_SOURCE: "d0d1ecc124e912a331ba7db7465ce2e1f803c0419d9bfba63392f092782c8d2f",
+    COMBINED_CHUNK_PLANNING_SOURCE: "1723febe963085ec0ef156d9dd331cc76c8b495cff91eed974782b1e0ad0241e",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "530f4ff6cb61120d052d1993e0b0265799f5b81f4c4a8a21b473137c593cedb3",
     COMBINED_CHUNK_PROFILES_SOURCE: "88c16b60ce3cf7fc90c8b2ecbaca049e5c9324eeae4aa027c07f9d806884030e",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "11bd98abce6007610e4bc38a5386dd7beb2ce881df91ca956fdc07a5e38eaf3c",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32",
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "01e626e177210d9638ce1d359f67de44cdb950b63155f6c6f643173147570fbc",
-    COMBINED_SOLUTION_COPIES_SOURCE: "4fb09ef5993a4e351397b0e342f7debfee9e583201066c03a31021964a1c4a2d",
+    COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
     COMBINED_RESULT_SNAPSHOT_SOURCE: "bc147e911b468992604e9318b8e68ac717188f9220c0570c06f54f62392d4f64",
     COMBINED_VALIDATE_V_SOURCE: "1d2c6813216af2e75111f12f730adec3337d03d47c883e50d07717e13e28d029",
     COMBINED_LOGGING_SOURCE: "c6636e7f19da9495e7d3518240702700646289145bf54570b7380e6efd6f403c",
@@ -375,7 +375,7 @@ _SOURCE_SEALS = {
     COMPILER_INPUTS_SOURCE: "c28ac1ab4acab2166120867158dec5eb866c082cdd05f7cb7877f2dc3c52ef8a",
     SIMULATION_OPERANDS_SOURCE: "4c0333036fd861ace225a0a38c925fa2a694433e3eddcc47d9fe1c0eea2ee9f8",
     SIMULATION_UNIT_SOURCE: "40e5914f402a4d22b0273758d8f9fcb2a17a5bc87447e2f05b54bd32118b2590",
-    SIMULATION_HOST_SOURCE: "6a08e86536b4f59f99632390e55f400d27ba7554312297b67002157c38f04638",
+    SIMULATION_HOST_SOURCE: "4c3332e84ce9c758033dcaf541af9a9bdf935e28f6fbaf67c3645a3cc8c2a6b4",
     SIMULATION_MEMORY_SOURCE: "14b8ddb6e9462519ac79d49dea17e0cba44a508b143d4e0ba08e6f7ce78ac7c5",
     SIMULATION_PERIOD_INPUTS_SOURCE: "e29c50dd464cd01f5f48a2c6574e13d454c577afb979e51195fa8394d1099c7f",
     SIMULATION_REPLAY_INPUTS_SOURCE: "6a8f9e1eafbebb264b11d7b6be5535c1e9cdf90e2ec1e17f2343eddc222b01b9",
@@ -390,10 +390,10 @@ _SOURCE_SEALS = {
     SCHEDULER_SOURCE: "0d6c5bb74f8229fca43231142c4d53cbe3753949fc4e05e4c216f5cc683620ea",
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
-    WORKSPACE_PLANNING_SOURCE: "05972cd1ecf48b86c6a9ad4828e7b750ca62c130c1945118735ff002ac586f48",
+    WORKSPACE_PLANNING_SOURCE: "6d42fb80e7d5f2084fe35bd406f77405cc3ffcc7c7a4911fcc63bef262fcdc88",
     SIMULATION_PROGRAMS_SOURCE: "dc05c99c5b3e083e20e5b909ffe3a7910b94697cfb3d0fd9b9426d9cd80d5f1e",
     SIMULATION_PROGRAM_TYPES_SOURCE: "3b22c1399e032629734dcff54e29e9e4c00ccd03638d2fafd969f697975c8c6c",
-    SIMULATION_RUNTIME_SOURCE: "94ed044fd82571025536cb03f81f5c73521fae9c9988ac93ab5c4a6dd805a900",
+    SIMULATION_RUNTIME_SOURCE: "be59d95a87921528287909529bcb1496a90d60ba1bd5a057fb387e1b0a3a9d92",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
@@ -421,7 +421,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "e8e766d55bf0367827170fb6a8210c076197827f8fe8bb32f89bfc536d50c073",
     MODEL_SOURCE: "302ab30af028df87d7e4d04ec7c02899b417fd4e5a563e9386152d00eac78cce",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "1f7b4f611a42a1d80e80dbb80f65399b5907822d5d763f20ae39b7ba63094faf",
+    BACKWARD_INDUCTION_SOURCE: "433d19ea290989d0229f9416007342a645012f58ea75a0f2279975abc52da730",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "4927b23307825c5f767a9bbd007a338204d9d4857495735d7f0fe99129bde6d8",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
@@ -3113,13 +3113,13 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_RUNTIME_SOURCE: (
-            "d4f2f375313ef3b4710764d9e766d27939972ecd736650f37014ec89bad67b67",
+            "64e8b442e3b5fec2e163c5eca4762a43181554c12a14d522bca57ca405b9565f",
             {
                 "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
                 "SimulationRuntime.dispatch": "b936af2fdda53d89102dc39ee6846e1c53072222a216aeeca3e69f34df201165",
                 "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
                 "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
-                "SimulationRuntime._prepare_materialized": "4bec71f699b5608516ec9caf02f8ed8fb5161fbace0e46b7b5823feb9031c9d7",
+                "SimulationRuntime._prepare_materialized": "81f08f68234a734a0d5a4ac0cf45d5cad6bcae7426a6291f61e9d7b1635d0cc2",
                 "execute_simulation_program": "b75e87e597dcb01eb814282f6f89eafdfbb1121ae0f93ea4ae4fbea68e7f10d8",
                 "_SimulationCandidateCompiler.__call__": "dade37339f26c3fe19d5ed40d4ce60388aea8e51f3d2598257459e576f97b8e3",
                 "_with_subject_extent": "c48502d31e8f9fb29221122b0de6d10f38f3d6f740854a82512c2b964079e463",
@@ -3128,7 +3128,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
                 "SimulationRuntime._require_budget_context": "6818040f38e55d623ae48f58b61ab3f1858d7ecd79df5b3f68321c364bfa6910",
                 "SimulationRuntime.compile_candidate": "cbf425168b6b69b05ff6217f9b30f83e428e051b841da5ef5f4d44dc27d77192",
                 "_CachedSimulationCandidateCompiler.__call__": "28dcd8f5efac82c89e21143112cf45402a5dde3585423bd912f4c7b455e62107",
-                "_simulation_peak_bytes": "d78167b86cd2b5e0c77fe41aa86ae64b66f4e372bb187f68f4893d323cdce78d",
+                "_simulation_memory": "2b46bbf16cb577d332d14cc1c3189e0fadd55e507fea51a2857850238565e75a",
                 "_SimulationResidentBytes.__call__": "1de7cce7b963299d2803cc325d95389fe99fad8282a3b9a707bdddbb3dccd450",
             },
         ),
@@ -3403,14 +3403,16 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SIMULATION_HOST_SOURCE: (
-        "fd430edbfc9c19226acb99617ed54f2fdb34e0cce58b934fb88c0eb9fbbe3acc",
+        "1c7fbc31967717f107d2123ef3758a7439def437e4584591ccc8350bdfac5bf3",
         {
-            "ProfiledSimulationOperations.dispatch": "541a1b08e69ed32c5c3b62473359051fc05fdbd31dbbd9e8d2f710345a31667f",
-            "ProfiledSimulationOperations.compile_candidate": "beec6504b97db1a6dd3456ea28534ad9b8dda2d05c7c1f32535a6e82b3534c45",
+            "ProfiledSimulationOperations.dispatch": "ab0de23b9e2e2f2a4a77a8ab63ce013abd3f6c5d2016de55ff623060882714aa",
+            "ProfiledSimulationOperations.compile_candidate": "9e37dcf4f899fefed27c26a69ed44fb7e99e8cd6b09fea84ef2fcad9d63b0a7a",
             "_OperationCompiler.__call__": "4f2d9bccfcd9524fef520a64eef658fe2f88484ff7443700e0b987f62f0e9913",
             "_abstract_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
             "_static_identity": "23489d8dc1669d265b3206adce1b77cf1cd2d2162444a2431ec141f3b0ce317a",
-            "_operation_peak": "e103a5109d610acb69e4b52428086d1f39e7be16cb72c818eb468aea9fb79b2e",
+            "_operation_memory": "0754b599ab28c5933dc5e22c38d09eec65b32d22dee37c1e8b8b314027abdce5",
+            "_ProfiledOperation.peak_bytes": "39cfc33459a34e6157f26e7de46841b13d60fb4a866854dbf9c7c89bf94f31d7",
+            "_ProfiledOperation.reservation_bytes": "ad8fe8e77b995ab9398031a06d9492d3d9080b408f68124ea048f81449bb73e5",
         },
     ),
     SIMULATION_MEMORY_SOURCE: (
@@ -3598,12 +3600,12 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     WORKSPACE_PLANNING_SOURCE: (
-        "9e1cd92d569a21fb7c55a4184e6598fadcfe0a9ea4d8b75d1ea6720c29970245",
+        "8e42e935db1bc9326aa6f3e802f494e56aca67b1c70a070cdffd6a16d6072590",
         {
             "_MemoryAnalyzable.memory_analysis": "28c38165b967325e04356285a49a7f1abab248c1d61cf92c8dffa33408d9637f",
             "WorkspacePlan.__post_init__": "d5aac605f11a499bf65418187c83f288a9e6302e341aac6334a697ebf514982e",
             "workspace_width_candidates": "22699fdc99a437deb660d94cb7849edd184c9a14c5eb05d0b4580afe21cabc5d",
-            "plan_workspace": "035374113c39bd1c55b0c97c84602d45c237c9136ea704c28e46f6f3b05e564c",
+            "plan_workspace": "70f76985234df33e358d21ea9bb07372c58b0b12d6af42a189c3da316ac357cc",
             "_validate_axes": "0df42ff02f11f7f4e5460fe7c518c300621718ae27f95408ad0aa1696d7ccb5e",
             "_validate_axis": "05e956236b961d3872faf3ab84245b3651f169a912890465a02e43784db1cf6d",
             "_validate_coordinates": "5453bf694d34197a0496b8af31085a2c6cf57bd46e866f0981ec932b8dfe9e53",
@@ -3618,14 +3620,25 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "_admissible_width": "700c5a09ca990b703df2c4fba65642482c9ca0c27dad02f7c3b6b15016679ee6",
             "_smallest_admissible_width": "6f80c9145d0d2b9d2d674b0a3ba8fbcde84f3cacad677d099317f4c077117193",
             "_width_mapping": "237667842db07b3505f6c2d66395e802071b8bee98047aa4794956f793826c27",
-            "_peak_bytes_for_candidate": "7545380aa2825e2e5f9d30e1569dbe547708215f2b965d6d44ad79a126561e86",
-            "compiler_peak_bytes": "ac63e2a80d44b3f413982ac2d62fcfda1c2173c880b6dfbaced3ec0602e1a54d",
+            "_memory_for_candidate": "95e7e8b701c9098afb3320d6024503baf0d74b30a9ff6acea9a8459274677734",
+            "compiler_peak_bytes": "20c6570dec9b66a87be17f771e7de5b63836bba4b61e37c39c18cdec13153596",
             "_peak_from_analysis": "20e1716c5e7566e14bbba657c83b000d7c25ae803513f67228b43f6e06b90dab",
             "_peak_from_device_record": "464f6137698a234195e54180be8d525c402f80ecd35b27ba1e15c224e7b159fe",
             "_peak_field": "05c48f60a52e95836191e153adfb1afa3efbdf6617dd7ade2f50f801cbb9e341",
             "_normalize_peak_field": "017c42bd9ac7a4d410032ff677952d73a2999657554295c1dce234b45d92502d",
-            "_non_negative_bytes": "fffd8515cfa416aea879c3725b903b4a0ba7773bef20f7344cae8997905de008",
+            "_non_negative_bytes": "6a68d448313aee7f5b1a85c7f65405bffd1be6b1a546e1ed5d6379ed8f9b9707",
             "_resident_bytes_for_candidate": "365e0864a5ae864c0594a64c5d6877623f6dfc9a50b5c696b50ffe904ff593c3",
+            "CompilerMemoryRecord.__post_init__": "ce6b673f2e4078e9fbd5cb66c194074fbce0b9f1b3555eb403d7d15ec0e77ec8",
+            "CompilerMemoryRecord.allocation_bytes": "5555d63d219382decf78853463017ba5df55d7e567714110f64226f7a691ee7e",
+            "CompilerMemoryRecord.reservation_bytes": "3bab6af91a467633cbcad7d4853eff1a27741d1b7a888c24eff51c89ffb8a0e5",
+            "CompilerMemoryReservation.__post_init__": "a9f6a5d3a7afa2a595904bb54fb7f0978eb8d53364294f494ef22d5c58c7ed1e",
+            "CompilerMemoryReservation.peak_bytes": "86e8e6c586154b1c40ef2f9938a1a8eb27c6f4911d016eab73d46fedda418bb7",
+            "CompilerMemoryReservation.reservation_bytes": "dcaa109c5f2be124f904fbf9f9311650d9443d234f3442b22bcd0347ada332a4",
+            "compiler_memory_reservation": "8dd28b8aa933a259c323de0ff67da2fafdf6a0d171da2799b3ddec8823aed3d1",
+            "_compiler_memory_analysis": "a17e65641f9cb14f1107abc2dc733839a4d9310b125e4327d14d45aecfb6d34c",
+            "_allocation_records": "9856b69e2ce973cb857a6146bb7be5f5ec537207133a5e66b02a0a5839b26305",
+            "_allocation_record": "0ff0ac3d21c198e596f104c2d5c86773040240a0200d57048f5befcce2793593",
+            "_fail_if_host_allocations": "83cbc5f652a502ae8cdea81ae129fd8a89aedb4955e3ca4f251636b5931363a6",
         },
     ),
 }
@@ -3724,8 +3737,8 @@ _SIMULATION_ADAPTER_MUTATIONS = {
     ),
     "simulation_adapter:selected_executable_changed": (
         WORKSPACE_PLANNING_SOURCE,
-        "widths=widths, peak_bytes=peak_bytes, compiled=compiled",
-        "widths=widths, peak_bytes=peak_bytes, compiled=candidate_filter(compiled)",
+        "                compiled=compiled,\n            )",
+        "                compiled=candidate_filter(compiled),\n            )",
     ),
 }
 
@@ -3839,9 +3852,9 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "9e34dc08e7c5b82cc9cf7cf81ffb71ceb9d23e969c941c84b3339c95cf4d0b25",
+        "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9",
         {
-            "_compile_all_functions": "7197032da60d44602edefc1c9a4b495c1b37760a5c6a6d6b675eebfa7747d21f",
+            "_compile_all_functions": "816c061720ac8d6131b00fd7e5478eece175fc3d10c2592e008a596b50a6e38d",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -3921,7 +3934,7 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "9e34dc08e7c5b82cc9cf7cf81ffb71ceb9d23e969c941c84b3339c95cf4d0b25",
+        "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9",
         {
             "solve": "caa95220392e0168fe7e938fcad8fa81ece3b692c60f2194e5fad6ee5878067e",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
@@ -4018,14 +4031,14 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_PLANNING_SOURCE: (
-        "3f11d8ac6a6f7cd2c8d703ccd7ca6fdae2cb02ec44dda559c5f3d3e9750f0e0c",
+        "3f9bbcf6cebd35aad34eab31558b52e6daaf2e2cbf5dcbcda9165e1ddb84f622",
         {
-            "SimulationStageProfile.__post_init__": "3c81a739572b4f8f4c6137a61f172deec19934abe9a430ffdabbfe887e857700",
+            "SimulationStageProfile.__post_init__": "526b720fc140e20990ead6e317444427f991107447e1f106094f4a0cc96a35ba",
             "SimulationChunkProfile.__post_init__": "dc35ef9a8a3b963fa62d6f3fb2f54eb645e6d7d2f024a50bf4174d0a32bba602",
             "SimulationChunkPlan.__post_init__": "f6c3be86ea1d1f22e94c94743dc6fea1275027095004ccfdb30684bca8428cca",
             "ChunkProfiler.__call__": "0d8cfb4c8530d329393a4f74150d216e68bb03a061b10b6fe93e401a33c6dc51",
             "plan_simulation_chunks": "56f7031e6be4dfbd264314cc8c6203b969e10c61f7a740c4aebff16e66a1d122",
-            "_required_bytes": "b621b093cae3c8cc1893c4f80fc918e62b15a2379314db01aa4fd62a64948ec6",
+            "_required_bytes": "41c7b9e4758796454b1eb87ec5d943331e76849976f567dec0e0628abeaeeeca",
             "_validate_devices": "c7387fae49d5a96a9a3b0454ffd74e0d5c7a798a8b4c837bd2c66d6751cd7c3e",
         },
     ),
@@ -4097,9 +4110,9 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_SOLUTION_COPIES_SOURCE: (
-        "6870a0971a3ab4fbc1c19017518cadc320f775dae7f95b00d8f4da8f6186f5cd",
+        "5894fd162877de03428bf8bc4b8c2ba446943541a5f78f4394f13e9194878dea",
         {
-            "copy_solution_leaf": "ed4920f470e9c5922b96575ae7b70518d2fc7248aba499a8ffab43c1fe0ecda9",
+            "copy_solution_leaf": "7967a1766bfeeec72757ded50d7a17a32089f9395c95710da8afb2acf40c50df",
             "_copy_value_leaf": "70a9b70985afb5ad1252e4e430e7884366a8e19a09c363ae2efbcaa07d0970fb",
         },
     ),
@@ -4175,7 +4188,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "9e34dc08e7c5b82cc9cf7cf81ffb71ceb9d23e969c941c84b3339c95cf4d0b25",
+        "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9",
         {
             "_prepare_abstract_program": "d9674a5ecfc16c6811cc7858d84f09b9ba3ff6538174e0b014b6b75ee8d28030",
         },
@@ -4212,12 +4225,14 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/host_operations.py": (
-        "fd430edbfc9c19226acb99617ed54f2fdb34e0cce58b934fb88c0eb9fbbe3acc",
+        "1c7fbc31967717f107d2123ef3758a7439def437e4584591ccc8350bdfac5bf3",
         {
             "ProfiledSimulationOperations.prepare_abstract": "2089b909bf07f0a9b3eeb7ac48e3a4427948ac7750ab280a06c66aa586466fca",
             "_abstract_operation_tree": "932535e222497f01d8a3325ea8e5f7a9f670458ce46923f9871f33aeea7a9053",
             "_operation_key": "e1cae5437921c1875b3b40d5217304cf20141329ea6010ecf90fb36e7b98af73",
             "_validated_static_arguments": "c61715eed695e4912cf3e0b6e08414893c8783261203333a96bb5b801c735f54",
+            "_ProfiledOperation.peak_bytes": "39cfc33459a34e6157f26e7de46841b13d60fb4a866854dbf9c7c89bf94f31d7",
+            "_ProfiledOperation.reservation_bytes": "ad8fe8e77b995ab9398031a06d9492d3d9080b408f68124ea048f81449bb73e5",
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
@@ -4245,7 +4260,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/runtime.py": (
-        "d4f2f375313ef3b4710764d9e766d27939972ecd736650f37014ec89bad67b67",
+        "64e8b442e3b5fec2e163c5eca4762a43181554c12a14d522bca57ca405b9565f",
         {
             "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
             "SimulationRuntime.prepare_abstract": "842dba8c1e48637eba99548bebb2858a25116785451901451be656ad3ab55a76",
@@ -4366,7 +4381,8 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "7197032da60d44602edefc1c9a4b495c1b37760a5c6a6d6b675eebfa7747d21f",
+            "_compile_all_functions": "816c061720ac8d6131b00fd7e5478eece175fc3d10c2592e008a596b50a6e38d",
+            "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
             "_resolve_output_layouts_and_lowering_keys": "bc1377bdb7e9656f00e34515da8eade6355e1eb503187eafabe8b4731e0155b3",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
@@ -4396,7 +4412,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "9e34dc08e7c5b82cc9cf7cf81ffb71ceb9d23e969c941c84b3339c95cf4d0b25"
+        != "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6067,8 +6083,11 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
     ),
     "donation:paired_residency_omitted": (
         BACKWARD_INDUCTION_SOURCE,
-        "peak_bytes_by_lowering_key[key] + variant_residency[key]",
-        "peak_bytes_by_lowering_key[key]",
+        (
+            "memory_by_lowering_key[key].reservation_bytes\n"
+            "                    + variant_residency[key]"
+        ),
+        "memory_by_lowering_key[key].reservation_bytes",
     ),
     "simulation_taste_stream:global_row_high_word_ignored": (
         SIMULATION_TASTE_STREAM_SOURCE,
@@ -6245,13 +6264,13 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "9e34dc08e7c5b82cc9cf7cf81ffb71ceb9d23e969c941c84b3339c95cf4d0b25",
+        "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9",
         {
             "solve": "caa95220392e0168fe7e938fcad8fa81ece3b692c60f2194e5fad6ee5878067e",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
             "_iter_edge_topologies": "de3078515a59f624e07889c6f3e05c8ac948472416c81a993c8d02f29905789b",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "7197032da60d44602edefc1c9a4b495c1b37760a5c6a6d6b675eebfa7747d21f",
+            "_compile_all_functions": "816c061720ac8d6131b00fd7e5478eece175fc3d10c2592e008a596b50a6e38d",
             "_resolve_output_layouts_and_lowering_keys": "bc1377bdb7e9656f00e34515da8eade6355e1eb503187eafabe8b4731e0155b3",
         },
     ),
@@ -6329,7 +6348,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/process_grids.py": (
-        "dff9aee64d9a34fdd0d4ee6f0ce1eccdeca7c33750bae45877f560400ae5077d",
+        "e985281d156256874060330eda5a4607cc3e4214131ac51a1649b4b533e946d6",
         {
             "_shared_uniform_operations": "77e4fa81b76a13e05edecb8cbc14571226bb6e34a9a80842289ac345cef3ad6e",
             "SimulationProcessGrids.supports": "1df5fcf1bf2fdcee2653519036655fb1c2f37446f3474c9d8ea02e24659c8a9c",
@@ -6337,7 +6356,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "SimulationProcessGrids.__call__": "dd385325ba36d52d18633873222e284ce462233bb926d5a0430c879adf9f7bad",
             "SimulationProcessGrids.seal": "71dde0f63544df96a4c57b99a75f9dd844dd904be7c599ad30a3125262756e9d",
             "SimulationProcessGrids.close": "50ab908c055d2e9e1ca3bcd0945865339ffe5b27e8ef49cf96c83265b7f1ea90",
-            "SimulationProcessGrids._produce": "f18af790fd871243568dd534f77a07414a534d43ddfb0ae4a731d05d2316e15f",
+            "SimulationProcessGrids._produce": "1815168eaaba8d67dac4a20af9ab0298e60d1dc99e5d2633516ae08a99a5f9cc",
             "SimulationProcessGrids.snapshot": "65d4d6df476276c3136bb02ba811eb5b8e1cfaddc248b6893375238f4800ca0b",
             "_uniform_parameters": "17402f2621240f3c7b362a7af8eb2c851fd0671288a75e11c04e3a5745ddffb7",
             "_parameter_bytes": "ba52d3f0bdc2e9c217e3e97f339e1ed57964216961fd129abb315e38ee67c491",
@@ -6862,10 +6881,10 @@ _UNIFORM_PROCESS_MUTATIONS = {
     "uniform_grid:peak_admission_ignored": (
         UNIFORM_PROCESS_GRID_SOURCE,
         "SimulationProcessGrids._produce",
-        "expression",
-        "_operation_peak",
-        "lambda _: 0",
-        1,
+        "keyword",
+        "budget_bytes",
+        "None",
+        2,
     ),
     "uniform_grid:shared_cache_keeps_operands": (
         UNIFORM_PROCESS_GRID_SOURCE,
@@ -7138,6 +7157,136 @@ def feasibility_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     """Protect feasibility producers without changing historical control sets."""
     return _callable_mutation_specs(
         repo_root=repo_root, mutations=_FEASIBILITY_MUTATIONS
+    )
+
+
+_ALLOCATION_RESERVATION_MUTATIONS = {
+    "allocation_reservation:temporary_omitted": (
+        WORKSPACE_PLANNING_SOURCE,
+        "CompilerMemoryRecord.allocation_bytes",
+        "expression",
+        "self.temporary_bytes",
+        "0",
+        1,
+    ),
+    "allocation_reservation:alias_added": (
+        WORKSPACE_PLANNING_SOURCE,
+        "CompilerMemoryRecord.allocation_bytes",
+        "expression",
+        "self.argument_bytes + self.output_bytes - self.alias_bytes",
+        "self.argument_bytes + self.output_bytes + self.alias_bytes",
+        1,
+    ),
+    "allocation_reservation:alias_bound_relaxed": (
+        WORKSPACE_PLANNING_SOURCE,
+        "CompilerMemoryRecord.__post_init__",
+        "expression",
+        "min(self.argument_bytes, self.output_bytes)",
+        "max(self.argument_bytes, self.output_bytes)",
+        1,
+    ),
+    "allocation_reservation:missing_mapping_counter_zeroed": (
+        WORKSPACE_PLANNING_SOURCE,
+        "_allocation_record",
+        "expression",
+        "record.get(name, _MISSING)",
+        "record.get(name, 0)",
+        1,
+    ),
+    "allocation_reservation:missing_attribute_counter_zeroed": (
+        WORKSPACE_PLANNING_SOURCE,
+        "_allocation_record",
+        "expression",
+        "getattr(record, name, _MISSING)",
+        "getattr(record, name, 0)",
+        1,
+    ),
+    "allocation_reservation:host_space_ignored": (
+        WORKSPACE_PLANNING_SOURCE,
+        "_fail_if_host_allocations",
+        "expression",
+        'any(value for name, value in values.items() if name.startswith("host_"))',
+        "False",
+        1,
+    ),
+    "allocation_reservation:devices_summed": (
+        WORKSPACE_PLANNING_SOURCE,
+        "CompilerMemoryReservation.reservation_bytes",
+        "expression",
+        "max(record.reservation_bytes for record in self.records)",
+        "sum(record.reservation_bytes for record in self.records)",
+        1,
+    ),
+    "allocation_reservation:raw_peak_relabeled": (
+        WORKSPACE_PLANNING_SOURCE,
+        "CompilerMemoryReservation.peak_bytes",
+        "expression",
+        "record.peak_bytes",
+        "record.reservation_bytes",
+        1,
+    ),
+    "allocation_reservation:planner_peak_only": (
+        WORKSPACE_PLANNING_SOURCE,
+        "plan_workspace",
+        "expression",
+        "memory.reservation_bytes + candidate_resident",
+        "memory.peak_bytes + candidate_resident",
+        1,
+    ),
+    "allocation_reservation:chunk_peak_only": (
+        "src/_lcm/simulation/chunk_planning.py",
+        "_required_bytes",
+        "expression",
+        "stage.reservation_bytes",
+        "stage.peak_bytes",
+        1,
+    ),
+    "allocation_reservation:solve_wave_peak_only": (
+        BACKWARD_INDUCTION_SOURCE,
+        "_compile_all_functions",
+        "expression",
+        "memory_by_lowering_key[lowering_key].reservation_bytes + resident",
+        "memory_by_lowering_key[lowering_key].peak_bytes + resident",
+        1,
+    ),
+    "allocation_reservation:donation_variant_peak_only": (
+        BACKWARD_INDUCTION_SOURCE,
+        "_compile_all_functions",
+        "expression",
+        "memory_by_lowering_key[key].reservation_bytes + variant_residency[key]",
+        "memory_by_lowering_key[key].peak_bytes + variant_residency[key]",
+        1,
+    ),
+    "allocation_reservation:operation_cache_peak_only": (
+        SIMULATION_HOST_SOURCE,
+        "_operation_memory",
+        "expression",
+        "compiled.memory",
+        "compiled.memory.peak_bytes",
+        1,
+    ),
+    "allocation_reservation:runtime_peak_only": (
+        SIMULATION_RUNTIME_SOURCE,
+        "_simulation_memory",
+        "expression",
+        "compiler_memory_reservation(compiled=compiled.executable, widths=compiled.widths)",
+        "compiler_peak_bytes(compiled=compiled.executable, widths=compiled.widths)",
+        1,
+    ),
+}
+
+EXPECTED_ALLOCATION_RESERVATION_MUTATION_COUNT = 14
+EXPECTED_ALLOCATION_RESERVATION_MUTATION_NAMES_SHA256 = (
+    "9a89ae87e2e3dc1d57111e141657e92fe29b90c3594f3afdffc39fb7c572171c"
+)
+
+
+def allocation_reservation_mutation_specs(
+    *, repo_root: Path
+) -> dict[str, dict[str, str]]:
+    """Keep represented-allocation controls separately identifiable."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_ALLOCATION_RESERVATION_MUTATIONS
     )
 
 
@@ -10252,6 +10401,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     feasibility = feasibility_mutation_specs(repo_root=root)
     grouped = grouped_mapper_mutation_specs(repo_root=root)
     guard = grouped_guard_mutation_specs(repo_root=root)
+    allocation = allocation_reservation_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -10267,6 +10417,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             | feasibility
             | grouped
             | guard
+            | allocation
         ).items():
             relative = spec["path"]
             target = temp_root / relative
@@ -10279,6 +10430,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+    allocation_cases = {name: cases.pop(name) for name in allocation}
+    allocation_admitted = sorted(
+        name for name, result in allocation_cases.items() if not result["rejected"]
+    )
+    allocation_names_match = (
+        len(allocation_cases) == EXPECTED_ALLOCATION_RESERVATION_MUTATION_COUNT
+        and _mutation_name_digest(tuple(allocation_cases))
+        == EXPECTED_ALLOCATION_RESERVATION_MUTATION_NAMES_SHA256
+    )
     feasibility_cases = {name: cases.pop(name) for name in feasibility}
     feasibility_admitted = sorted(
         name for name, result in feasibility_cases.items() if not result["rejected"]
@@ -10349,6 +10509,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "expected_mutation_names_sha256": (EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256),
         "mutation_names_match_expected": names_match_expected,
         "admitted_mutations": admitted,
+        "allocation_reservation_mutations": allocation_cases,
+        "allocation_reservation_mutation_count": len(allocation_cases),
+        "allocation_reservation_names_match_expected": allocation_names_match,
+        "admitted_allocation_reservation_mutations": allocation_admitted,
         "feasibility_mutations": feasibility_cases,
         "feasibility_mutation_count": len(feasibility_cases),
         "feasibility_names_match_expected": feasibility_names_match,
@@ -10375,6 +10539,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "admitted_supplemental_mutations": supplemental_admitted,
         "all_rejected": (
             clean["ok"]
+            and not allocation_admitted
+            and allocation_names_match
             and not admitted
             and not supplemental_admitted
             and not uniform_admitted

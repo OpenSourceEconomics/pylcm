@@ -17,6 +17,7 @@ from _lcm.execution.core_program import TiledOutputAxis
 from _lcm.execution.workspace_planning import plan_workspace
 from _lcm.simulation import residency
 from lcm.exceptions import ExecutionPlanningError
+from tests.execution.test_compiler_allocation_reservation import memory_stats
 
 
 def test_repeated_array_references_occupy_one_resident_buffer() -> None:
@@ -252,7 +253,7 @@ class _CompiledCandidate:
 
     def memory_analysis(self) -> SimpleNamespace:
         """Report known candidate peaks for the selection oracle."""
-        return SimpleNamespace(peak_memory_in_bytes=self.peak_bytes)
+        return memory_stats(peak=self.peak_bytes)
 
 
 def test_fresh_admission_uses_current_residency_with_cached_width_candidates() -> None:
