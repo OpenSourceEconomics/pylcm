@@ -276,6 +276,35 @@ def test_comparison_matches_combined_aca_metrics_to_legacy_names(tmp_path: Path)
     assert {row.ratio for row in rows} == {0.5}
 
 
+def test_benchmark_report_labels_reduced_aca_and_cold_warm_measurements() -> None:
+    """The report distinguishes the reduced ACA workload and timing phases."""
+    rows = [
+        pr_comment._BenchmarkRow(
+            "AcaBaseline",
+            "track_compilation_time",
+            "",
+            "9.0 s",
+            "10.0 s",
+            1.11,
+        ),
+        pr_comment._BenchmarkRow(
+            "AcaBaseline",
+            "time_execution",
+            "",
+            "1.5 s",
+            "1.6 s",
+            1.07,
+        ),
+    ]
+
+    table = pr_comment._build_grouped_table(rows)
+
+    assert "ACA reduced benchmark" in table
+    assert "tiny continuous grids, 2 preference types, 1,000 subjects" in table
+    assert "cold solve + simulate (first run, includes compilation)" in table
+    assert "warm solve + simulate (reuses compiled code)" in table
+
+
 def test_mahler_policy_identities_do_not_compare_to_legacy_default(tmp_path: Path):
     """Matching configured identities compare only within their own series."""
     base_file = tmp_path / "base.json"
@@ -324,8 +353,11 @@ def test_mahler_policy_identities_do_not_compare_to_legacy_default(tmp_path: Pat
     assert timing.ratio == 1.25
     assert memory.ratio is None
     table = pr_comment._build_grouped_table(rows)
-    assert "Mahler-Yum GPU fp64 (capacity-half-a64-c4096-v1)" in table
-    assert "Mahler-Yum GPU fp64 memory (capacity-half-a64-c4096-v1)" in table
+    assert "Mahler-Yum GPU fp64 configured series (capacity-half-a64-c4096-v1)" in table
+    assert (
+        "Mahler-Yum GPU fp64 configured series, memory "
+        "(capacity-half-a64-c4096-v1)" in table
+    )
 
 
 def test_mahler_configured_identity_has_no_ratio_against_legacy_default(
