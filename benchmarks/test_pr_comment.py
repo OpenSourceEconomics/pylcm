@@ -276,6 +276,125 @@ def test_comparison_matches_combined_aca_metrics_to_legacy_names(tmp_path: Path)
     assert {row.ratio for row in rows} == {0.5}
 
 
+def test_benchmark_report_labels_are_specific_to_verified_workloads(
+    tmp_path: Path,
+) -> None:
+    """Only verified automatic solve-and-simulate workloads get phase labels."""
+    rows = [
+        pr_comment._BenchmarkRow(
+            "AcaBaseline",
+            "track_compilation_time",
+            "",
+            "9.0 s",
+            "10.0 s",
+            1.11,
+        ),
+        pr_comment._BenchmarkRow(
+            "AcaBaseline",
+            "time_execution",
+            "",
+            "1.5 s",
+            "1.6 s",
+            1.07,
+        ),
+        pr_comment._BenchmarkRow(
+            "MahlerYumBudgetedGpu",
+            "track_compilation_time",
+            "",
+            "9.0 s",
+            "10.0 s",
+            1.11,
+        ),
+        pr_comment._BenchmarkRow(
+            "MahlerYumBudgetedGpu",
+            "time_execution",
+            "",
+            "1.5 s",
+            "1.6 s",
+            1.07,
+        ),
+        pr_comment._BenchmarkRow(
+            "CollectiveHouseholdConstruct",
+            "time_execution",
+            "",
+            "1.5 s",
+            "1.6 s",
+            1.07,
+        ),
+        pr_comment._BenchmarkRow(
+            "PrecautionarySavingsSimulate",
+            "time_execution",
+            "",
+            "10 ms",
+            "11 ms",
+            1.07,
+        ),
+        pr_comment._BenchmarkRow(
+            "CollectiveHouseholdSolve",
+            "track_compilation_time",
+            "",
+            "1.5 s",
+            "1.6 s",
+            1.07,
+        ),
+    ]
+
+    table = pr_comment._build_grouped_table(rows)
+
+    assert "ACA reduced benchmark" in table
+    assert "tiny continuous grids, 2 preference types, 1,000 subjects" in table
+    assert table.count("cold solve + simulate (first run, includes compilation)") == 2
+    assert table.count("warm solve + simulate (reuses compiled code)") == 2
+    assert table.count("execution time") == 2
+    assert table.count("first call (including compilation)") == 1
+
+    result_file = tmp_path / "head.json"
+    result_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_aca_baseline.AcaBaseline.track_compilation_time": [
+                        [10.0],
+                        [],
+                    ],
+                    "bench_aca_baseline.AcaBaseline.time_execution": [[1.6], []],
+                    ("bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time"): [
+                        [10.0],
+                        [],
+                    ],
+                    "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution": [
+                        [1.6],
+                        [],
+                    ],
+                    (
+                        "bench_collective_household.CollectiveHouseholdConstruct."
+                        "time_execution"
+                    ): [[1.6], []],
+                    (
+                        "bench_precautionary_savings.PrecautionarySavingsSimulate."
+                        "time_execution"
+                    ): [[0.011], []],
+                    (
+                        "bench_collective_household.CollectiveHouseholdSolve."
+                        "track_compilation_time"
+                    ): [[1.6], []],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    raw_table = pr_comment._format_raw_results(
+        result_file=result_file, head_sha="77ebdd72"
+    )
+
+    assert (
+        raw_table.count("cold solve + simulate (first run, includes compilation)") == 2
+    )
+    assert raw_table.count("warm solve + simulate (reuses compiled code)") == 2
+    assert raw_table.count("execution time") == 2
+    assert raw_table.count("first call (including compilation)") == 1
+
+
 def test_mahler_policy_identities_do_not_compare_to_legacy_default(tmp_path: Path):
     """Matching configured identities compare only within their own series."""
     base_file = tmp_path / "base.json"
@@ -324,8 +443,11 @@ def test_mahler_policy_identities_do_not_compare_to_legacy_default(tmp_path: Pat
     assert timing.ratio == 1.25
     assert memory.ratio is None
     table = pr_comment._build_grouped_table(rows)
-    assert "Mahler-Yum GPU fp64 (capacity-half-a64-c4096-v1)" in table
-    assert "Mahler-Yum GPU fp64 memory (capacity-half-a64-c4096-v1)" in table
+    assert "Mahler-Yum GPU fp64 configured series (capacity-half-a64-c4096-v1)" in table
+    assert (
+        "Mahler-Yum GPU fp64 configured series, memory "
+        "(capacity-half-a64-c4096-v1)" in table
+    )
 
 
 def test_mahler_configured_identity_has_no_ratio_against_legacy_default(
