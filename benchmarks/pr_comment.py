@@ -517,7 +517,11 @@ def _expand_params(params: list[list[str]]) -> list[str]:
 
 def _format_value(*, bench_name: str, value: float) -> str:
     """Format a benchmark value with appropriate units."""
-    if "peakmem" in bench_name or "gpu_peak_mem" in bench_name:
+    if (
+        "peakmem" in bench_name
+        or "gpu_peak_mem" in bench_name
+        or "track_peak_gpu_mem" in bench_name
+    ):
         if value >= 1e9:
             return f"{value / 1e9:.2f} GB"
         return f"{value / 1e6:.0f} MB"

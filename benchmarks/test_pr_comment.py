@@ -12,6 +12,46 @@ import pytest
 from benchmarks import pr_comment
 
 
+@pytest.mark.parametrize(
+    ("bench_name", "value", "expected"),
+    [
+        (
+            (
+                "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+                "track_peak_gpu_mem_automatic_solve_simulate"
+            ),
+            2_500_000_000.0,
+            "2.50 GB",
+        ),
+        (
+            (
+                "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+                "track_peak_gpu_mem_solve_save_all_persistable"
+            ),
+            32_000_000.0,
+            "32 MB",
+        ),
+        (
+            (
+                "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+                "track_peak_gpu_mem_load_supplied_solution_simulate"
+            ),
+            1_000_000_000.0,
+            "1.00 GB",
+        ),
+        ("bench_example.Example.peakmem_execution", 32_000_000.0, "32 MB"),
+        ("bench_example.Example.track_gpu_peak_mem", 2_500_000_000.0, "2.50 GB"),
+        ("bench_example.Example.track_compilation_time", 2.5, "2.50 s"),
+        ("bench_mahler_yum.MahlerYumBudgetedGpu.time_execution", 0.125, "125.0 ms"),
+    ],
+)
+def test_format_value_uses_memory_and_timing_units(
+    *, bench_name: str, value: float, expected: str
+) -> None:
+    """GPU memory phases display bytes in MB or GB; timing metrics keep time units."""
+    assert pr_comment._format_value(bench_name=bench_name, value=value) == expected
+
+
 def test_grouped_table_uses_canonical_family_and_numeric_parameter_order():
     """CPU/GPU statistics stay together and parameter values sort numerically."""
     rows = [
