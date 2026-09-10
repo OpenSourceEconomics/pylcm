@@ -43,6 +43,10 @@ _CLASS_DISPLAY = {
     "AcaBaselineDebugLogGpuPeakMem": "aca-baseline-debug",
     "MahlerYum": "Mahler-Yum",
     "MahlerYumGpuPeakMem": "Mahler-Yum",
+    "MahlerYumBudgetedGpu": "Mahler-Yum GPU fp64 (capacity-half-a64-c4096-v1)",
+    "MahlerYumBudgetedGpuPeakMem": (
+        "Mahler-Yum GPU fp64 memory (capacity-half-a64-c4096-v1)"
+    ),
     "PrecautionarySavingsSolve": "Precautionary Savings - Solve",
     "PrecautionarySavingsSolveGpuPeakMem": "Precautionary Savings - Solve",
     "PrecautionarySavingsSimulate": "Precautionary Savings - Simulate",

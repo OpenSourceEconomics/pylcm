@@ -274,3 +274,88 @@ def test_comparison_matches_combined_aca_metrics_to_legacy_names(tmp_path: Path)
         "track_gpu_peak_mem",
     }
     assert {row.ratio for row in rows} == {0.5}
+
+
+def test_mahler_policy_identities_do_not_compare_to_legacy_default(tmp_path: Path):
+    """Matching configured identities compare only within their own series."""
+    base_file = tmp_path / "base.json"
+    head_file = tmp_path / "head.json"
+    base_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_mahler_yum.MahlerYum.time_execution": [[10.0], []],
+                    "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution": [
+                        [20.0],
+                        [],
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    head_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution": [
+                        [25.0],
+                        [],
+                    ],
+                    (
+                        "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+                        "track_peak_gpu_mem_automatic_solve_simulate"
+                    ): [
+                        [100.0],
+                        [],
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = pr_comment._build_comparison_rows(base_file=base_file, head_file=head_file)
+
+    timing = next(row for row in rows if row.class_name == "MahlerYumBudgetedGpu")
+    memory = next(
+        row for row in rows if row.class_name == "MahlerYumBudgetedGpuPeakMem"
+    )
+    assert timing.ratio == 1.25
+    assert memory.ratio is None
+    table = pr_comment._build_grouped_table(rows)
+    assert "Mahler-Yum GPU fp64 (capacity-half-a64-c4096-v1)" in table
+    assert "Mahler-Yum GPU fp64 memory (capacity-half-a64-c4096-v1)" in table
+
+
+def test_mahler_configured_identity_has_no_ratio_against_legacy_default(
+    tmp_path: Path,
+) -> None:
+    """The raw parser ignores ASV version when it joins comparison keys."""
+    base_file = tmp_path / "base.json"
+    head_file = tmp_path / "head.json"
+    base_file.write_text(
+        json.dumps(
+            {"results": {"bench_mahler_yum.MahlerYum.time_execution": [[10.0], []]}}
+        ),
+        encoding="utf-8",
+    )
+    head_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution": [
+                        [20.0],
+                        [],
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = pr_comment._build_comparison_rows(base_file=base_file, head_file=head_file)
+
+    assert len(rows) == 1
+    assert rows[0].class_name == "MahlerYumBudgetedGpu"
+    assert rows[0].ratio is None
