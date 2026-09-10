@@ -119,7 +119,7 @@ def test_growing_residency_rechecks_the_cached_taste_profile(
     profile = next(iter(memory.operations.cache.values()))
     memory.close_unit()
     del result
-    memory.budget_bytes = profile.peak_bytes + 16
+    memory.budget_bytes = profile.reservation_bytes + 16
     calls: list[jax.stages.Compiled] = []
     monkeypatch.setattr(
         jax.stages.Compiled,
