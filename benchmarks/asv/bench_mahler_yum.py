@@ -4,9 +4,8 @@ import gc
 import pathlib
 import time
 
-from benchmarks._mahler_execution import create_mahler_gpu_model
-
 from . import _gpu_mem
+from ._mahler_execution import create_mahler_gpu_model
 
 _N_SUBJECTS = 100
 
