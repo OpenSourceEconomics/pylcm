@@ -15,7 +15,7 @@ from uuid import UUID
 import jax
 import pytest
 
-from benchmarks import _mahler_execution
+from benchmarks.asv import _mahler_execution
 
 _MIB = 2**20
 _UUID_A = "GPU-11111111-1111-1111-1111-111111111111"
@@ -72,7 +72,7 @@ def test_capacity_policy_uses_uuid_matched_limiting_headroom(
     """Visible ordinal order cannot mix physical and allocator observations."""
     jax.config.update("jax_enable_x64", val=True)
     stdout = f"{_UUID_B}, B, 1, 24, 6\n{_UUID_A}, A, 1, 16, 10\n"
-    ordinals = _install_capacity_boundaries(monkeypatch, stdout=stdout)
+    ordinals = _install_capacity_boundaries(monkeypatch=monkeypatch, stdout=stdout)
     report = tmp_path / "capacity.json"
     devices = (
         _Device(42, 1, {"bytes_limit": 8 * _MIB + 3, "bytes_in_use": 3 * _MIB}),
@@ -118,7 +118,7 @@ def test_capacity_policy_refuses_bad_or_exhausted_observations(
 ) -> None:
     """A receipt is durable even when capacity admission rejects the workload."""
     jax.config.update("jax_enable_x64", val=True)
-    _install_capacity_boundaries(monkeypatch, stdout=stdout)
+    _install_capacity_boundaries(monkeypatch=monkeypatch, stdout=stdout)
     report = tmp_path / "capacity.json"
 
     with pytest.raises(ValueError, match="Cannot configure the Mahler GPU benchmark"):
@@ -155,4 +155,6 @@ def test_receipt_paths_are_unique_and_retained_under_asv_directory(
 
     assert first != second
     assert first.parent == second.parent == tmp_path
-    assert ".asv" in str(_mahler_execution._RECEIPT_DIRECTORY)
+    assert (
+        Path(__file__).resolve().parents[1] / ".asv" / "mahler-receipts"
+    ) == _mahler_execution._RECEIPT_DIRECTORY

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 POLICY_LABEL = "capacity-half-a64-c4096-v1-fp64"
 _FORMULA = "min(physical_free_bytes, allocator_limit_bytes - allocator_used_bytes) // 2"
 _WORKLOAD_MODULE = "lcm_examples.mahler_yum_2024"
-_RECEIPT_DIRECTORY = Path(__file__).resolve().parent.parent / ".asv" / "mahler-receipts"
+_RECEIPT_DIRECTORY = Path(__file__).resolve().parents[2] / ".asv" / "mahler-receipts"
 
 
 def create_mahler_gpu_model() -> tuple[Model, Path]:
@@ -242,7 +242,7 @@ def _source_hash() -> str:
         capture_output=True,
         text=True,
         check=False,
-        cwd=Path(__file__).resolve().parent.parent,
+        cwd=Path(__file__).resolve().parents[2],
     )
     source_hash = result.stdout.strip()
     if result.returncode or len(source_hash) != 40:
