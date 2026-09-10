@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from asv_runner.discovery import disc_benchmarks, update_sys_path
 
 from benchmarks.asv import _gpu_mem, bench_mahler_yum
 from benchmarks.asv._gpu_mem import _PROJECT_ROOT, _subprocess_env
@@ -309,12 +310,12 @@ def test_mahler_yum_asv_surface_has_exact_phase_trackers(
 
     def _measure(*, bench_module: str, bench_class: str) -> dict[str, int]:
         assert bench_module == "benchmarks.asv.bench_mahler_yum"
-        assert bench_class == "MahlerYum"
+        assert bench_class == "MahlerYumBudgetedGpu"
         return measured
 
     monkeypatch.setattr(_gpu_mem, "measure_gpu_memory_profile", _measure)
 
-    instance = bench_mahler_yum.MahlerYumGpuPeakMem()
+    instance = bench_mahler_yum.MahlerYumBudgetedGpuPeakMem()
     cache = instance.setup_cache()
     instance.setup(cache)
 
@@ -365,7 +366,7 @@ def test_mahler_yum_gpu_memory_phases_dispatch_exact_workloads(
     saved = _FakeMahlerSolution()
     loaded = _FakeMahlerSolution()
     model = _FakeMahlerModel(saved)
-    benchmark = bench_mahler_yum.MahlerYum()
+    benchmark = bench_mahler_yum.MahlerYumBudgetedGpu()
     benchmark.model = model
     benchmark.model_params = {"p": 1}
     benchmark.initial_conditions = {"state": object()}
@@ -412,3 +413,102 @@ def test_mahler_yum_gpu_memory_phases_dispatch_exact_workloads(
         "solution": loaded,
         "log_level": "off",
     }
+
+
+def test_mahler_yum_asv_discovers_only_the_budgeted_fp64_series() -> None:
+    """ASV discovers only the configured timing and memory-phase identities."""
+    benchmark_root = _PROJECT_ROOT / "benchmarks" / "asv"
+    original_meta_path = sys.meta_path.copy()
+    original_asv_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "asv" or name.startswith("asv.")
+    }
+    for name in original_asv_modules:
+        del sys.modules[name]
+
+    try:
+        update_sys_path(str(benchmark_root))
+        discovered = {
+            benchmark.name
+            for benchmark in disc_benchmarks(str(benchmark_root))
+            if benchmark.name.startswith("bench_mahler_yum.")
+        }
+    finally:
+        sys.meta_path[:] = original_meta_path
+        for name in tuple(sys.modules):
+            if name == "asv" or name.startswith("asv."):
+                del sys.modules[name]
+        sys.modules.update(original_asv_modules)
+
+    assert discovered == {
+        "bench_mahler_yum.MahlerYumBudgetedGpu.peakmem_execution",
+        "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution",
+        "bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time",
+        (
+            "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+            "track_peak_gpu_mem_automatic_solve_simulate"
+        ),
+        (
+            "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+            "track_peak_gpu_mem_load_supplied_solution_simulate"
+        ),
+        (
+            "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+            "track_peak_gpu_mem_solve_save_all_persistable"
+        ),
+    }
+
+
+def test_budgeted_mahler_build_keeps_production_input_arguments(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model = object()
+    receipt = tmp_path / "capacity.json"
+    input_calls: list[dict[str, object]] = []
+
+    def _configured_model() -> tuple[object, Path]:
+        return model, receipt
+
+    def _create_inputs(**kwargs: object) -> tuple[dict[str, object], dict[str, object]]:
+        input_calls.append(kwargs)
+        return {"params": 1}, {"initial": 2}
+
+    benchmark = bench_mahler_yum.MahlerYumBudgetedGpu()
+    monkeypatch.setattr(bench_mahler_yum, "create_mahler_gpu_model", _configured_model)
+    monkeypatch.setattr(
+        bench_mahler_yum,
+        "_load_inputs_api",
+        lambda: ({"start": 1}, _create_inputs),
+    )
+
+    benchmark._build()
+
+    assert benchmark.model is model
+    assert benchmark.capacity_receipt == receipt
+    assert benchmark.model_params == {"params": 1}
+    assert benchmark.initial_conditions == {"initial": 2}
+    assert input_calls == [
+        {"seed": 0, "n_simulation_subjects": 100, "params": {"start": 1}}
+    ]
+
+
+def test_budgeted_mahler_refusal_precedes_input_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = bench_mahler_yum.MahlerYumBudgetedGpu()
+    monkeypatch.setattr(
+        bench_mahler_yum,
+        "create_mahler_gpu_model",
+        lambda: (_ for _ in ()).throw(ValueError("refused")),
+    )
+    monkeypatch.setattr(
+        bench_mahler_yum,
+        "_load_inputs_api",
+        lambda: pytest.fail("input creation must follow capacity admission"),
+    )
+
+    with pytest.raises(ValueError, match="refused"):
+        benchmark._build()
