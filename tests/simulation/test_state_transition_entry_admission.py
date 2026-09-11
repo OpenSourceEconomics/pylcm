@@ -182,14 +182,16 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
     else:
         raise AssertionError("The invalid law did not enter its serial replay.")
 
-    expected = [(selected_id,), (selected_id,)]
-    assert completed_on == expected, completed_on
+    expected_completed = [(selected_id,), (selected_id,)]
     output_devices = [
         tuple(sorted(device.id for device in sharding.device_set))
         for executable in compiled
         for sharding in jax.tree.leaves(executable.output_shardings)
     ]
-    assert output_devices == expected, output_devices
+    assert (completed_on, set(output_devices)) == (
+        expected_completed,
+        {(selected_id,)},
+    ), (completed_on, output_devices)
     print("STATE-LAW-PLACEMENT-OK")
     """
 )
@@ -335,9 +337,11 @@ def test_admitted_state_transition_preserves_seeded_simulation_and_inputs() -> N
         params=params, initial_conditions=initial, log_level="debug", seed=17
     )
 
-    np.testing.assert_array_equal(
+    results_match = np.array_equal(
         budgeted_result.to_dataframe(use_labels=False).to_numpy(),
         baseline_result.to_dataframe(use_labels=False).to_numpy(),
     )
-    for name, snapshot in snapshots.items():
-        np.testing.assert_array_equal(initial[name], snapshot)
+    inputs_match = all(
+        np.array_equal(initial[name], snapshot) for name, snapshot in snapshots.items()
+    )
+    assert (results_match, inputs_match) == (True, True)

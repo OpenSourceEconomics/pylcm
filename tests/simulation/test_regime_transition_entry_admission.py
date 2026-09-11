@@ -176,6 +176,5 @@ def test_regime_law_workspace_refuses_before_completed_user_output(
             log_level="warning",
         )
 
-    assert completed == []
-    assert "controlled refusal" not in str(error.value)
+    assert (completed, "controlled refusal" in str(error.value)) == ([], False)
     compiler_boundary.require_declined_regime_law()

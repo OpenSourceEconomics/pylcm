@@ -437,11 +437,13 @@ def test_admitted_joint_producers_preserve_seeded_simulation_and_inputs() -> Non
         params=params, initial_conditions=initial, log_level="debug", seed=17
     )
 
-    assert budgeted_result.to_dataframe(use_labels=False).equals(
+    results_match = budgeted_result.to_dataframe(use_labels=False).equals(
         baseline_result.to_dataframe(use_labels=False)
     )
-    for name, snapshot in snapshots.items():
-        np.testing.assert_array_equal(initial[name], snapshot)
+    inputs_match = all(
+        np.array_equal(initial[name], snapshot) for name, snapshot in snapshots.items()
+    )
+    assert (results_match, inputs_match) == (True, True)
 
 
 def test_joint_mapping_owners_expose_all_array_leaves(

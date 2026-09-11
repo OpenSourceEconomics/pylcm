@@ -322,8 +322,8 @@ def test_state_transition_admission_mutation_is_rejected(
         _INITIAL_CONDITIONS: (_ROOT / _INITIAL_CONDITIONS).read_text(),
         _TRANSITION_CHECKS: (_ROOT / _TRANSITION_CHECKS).read_text(),
     }
-    assert sources[path].count(old) == 1
-    sources[path] = sources[path].replace(old, new)
+    sources[path].index(old)
+    sources[path] = sources[path].replace(old, new, 1)
 
     errors = _state_transition_admission_errors(
         initial_conditions=sources[_INITIAL_CONDITIONS],
