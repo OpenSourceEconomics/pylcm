@@ -176,9 +176,6 @@ def test_candidate_frontier_describes_dynamic_arguments_once(
             log_level="off",
         )
 
-    assert candidate_count > frontier_count > 0
-    assert argument_key_count == frontier_count
-
     monkeypatch.setattr(
         backward_induction, "_abstract_arguments_key", original_argument_key
     )
@@ -207,7 +204,15 @@ def test_candidate_frontier_describes_dynamic_arguments_once(
             placement_key=regime.solution.submesh_device_ids,
             compiler_options=program.compiler_options,
         )
-    assert lowering_keys == expected
+    assert (
+        candidate_count > frontier_count > 0,
+        argument_key_count,
+        lowering_keys,
+    ) == (
+        True,
+        frontier_count,
+        expected,
+    )
 
 
 def test_lowering_key_ignores_callable_identity() -> None:
