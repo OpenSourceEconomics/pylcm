@@ -53,7 +53,7 @@ def _mutate_definition(*, source: str, name: str, old: str, new: str) -> str:
     return "".join(lines)
 
 
-def _regime_transition_admission_errors(  # noqa: C901, PLR0912
+def _regime_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
     *, source: str
 ) -> list[str]:
     tree = ast.parse(source)
@@ -155,26 +155,36 @@ def _regime_transition_admission_errors(  # noqa: C901, PLR0912
             errors.append(message)
 
     owner = _definition(tree=tree, name="_check_and_release_regime_probability")
-    owner_source = ast.unparse(owner)
-    for message, expression in {
-        "regime outputs must become temporary owners": (
-            "memory.set_derived((regime_transition_probs, state_action_values))"
-        ),
-        "regime validation must receive current memory": (
-            "_validate_regime_transition_probs("
-        ),
-        "temporary regime outputs must be released": (
-            "finally:\n        if memory is not None:\n            memory.set_derived(())"
-        ),
-    }.items():
-        if expression not in owner_source:
-            errors.append(message)
+    ownership = _calls(node=owner, name="_set_transition_outputs")
+    observed_outputs = {
+        (_keyword(call=call, name="memory"), _keyword(call=call, name="outputs"))
+        for call in ownership
+    }
+    if (
+        "memory",
+        "(regime_transition_probs, state_action_values)",
+    ) not in observed_outputs:
+        errors.append("regime outputs must become temporary owners")
+    if ("memory", "()") not in observed_outputs:
+        errors.append("temporary regime outputs must be released")
     validation_calls = _calls(node=owner, name="_validate_regime_transition_probs")
     if (
         len(validation_calls) != 1
         or _keyword(call=validation_calls[0], name="memory") != "memory"
     ):
         errors.append("regime validation must receive current memory")
+
+    setter = _definition(tree=tree, name="_set_transition_outputs")
+    setter_source = ast.unparse(setter)
+    normalizer = _definition(tree=tree, name="_transition_owner_tree")
+    normalizer_source = ast.unparse(normalizer)
+    if (
+        "memory.set_derived(_transition_owner_tree(outputs))" not in setter_source
+        or "if isinstance(tree, Mapping):" not in normalizer_source
+        or "return {key: _transition_owner_tree(value) for key, value in tree.items()}"
+        not in normalizer_source
+    ):
+        errors.append("regime mapping owners must expose every array leaf")
 
     validator = _definition(tree=tree, name="_validate_regime_transition_probs")
     admitted = _calls(node=validator, name="run_simulation_operation")
@@ -224,15 +234,21 @@ def test_regime_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_check_and_release_regime_probability",
-            "        memory.set_derived((regime_transition_probs, state_action_values))",
-            "        memory.set_derived(())",
+            "        memory=memory, outputs=(regime_transition_probs, state_action_values)",
+            "        memory=memory, outputs=()",
             "regime outputs must become temporary owners",
         ),
         (
             "_check_and_release_regime_probability",
-            "    finally:\n        if memory is not None:\n            memory.set_derived(())",
-            "    finally:\n        if memory is not None:\n            memory.set_derived(regime_transition_probs)",
+            "        _set_transition_outputs(memory=memory, outputs=())",
+            "        _set_transition_outputs(memory=memory, outputs=regime_transition_probs)",
             "temporary regime outputs must be released",
+        ),
+        (
+            "_transition_owner_tree",
+            "    if isinstance(tree, Mapping):",
+            "    if False:",
+            "regime mapping owners must expose every array leaf",
         ),
         (
             "_evaluate_admitted_transition_producer",

@@ -30,9 +30,11 @@ inspect grids, signatures, and Python source) are a separate concern.
 import inspect
 import logging
 import struct
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
+from math import prod
 from types import MappingProxyType
 from typing import Any, cast, no_type_check
 
@@ -72,6 +74,7 @@ _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType(
 type _RegimeProbabilityOutput = tuple[
     Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]
 ]
+type _SupportSchema = tuple[str, int, object, tuple[tuple[tuple[int, ...], str], ...]]
 
 
 class _SerialValidationRequired(Exception):  # noqa: N818
@@ -314,6 +317,7 @@ def _validate_transition_sequence(
         logger=logger,
         summary=summary,
         process_grid_resolver=process_grid_resolver,
+        memory=memory,
     )
 
 
@@ -598,8 +602,9 @@ def _check_and_release_regime_probability(
     memory: SimulationMemory | None,
 ) -> None:
     """Own completed regime-law outputs through their admitted validation."""
-    if memory is not None:
-        memory.set_derived((regime_transition_probs, state_action_values))
+    _set_transition_outputs(
+        memory=memory, outputs=(regime_transition_probs, state_action_values)
+    )
     try:
         _validate_regime_transition_probs(
             regime_transition_probs=regime_transition_probs,
@@ -613,8 +618,7 @@ def _check_and_release_regime_probability(
             memory=memory,
         )
     finally:
-        if memory is not None:
-            memory.set_derived(())
+        _set_transition_outputs(memory=memory, outputs=())
 
 
 def _validate_regime_transition_probs(
@@ -853,7 +857,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
                     raise_or_warn(logger=logger, error=error)
 
 
-def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912, PLR0915
+def validate_joint_transitions_all_periods(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -861,6 +865,7 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912, PLR0915
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate every transition-local lottery before solve or simulation."""
     if not validation_enabled(logger):
@@ -871,10 +876,10 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912, PLR0915
     # every active period and both phases in this one preflight instead.  Values
     # may differ, but tree structure, event shapes, and dtypes are a static JIT/AOT
     # contract and must not depend on period or perceived/realized phase.
-    support_schemas: dict[
-        tuple[RegimeName, RegimeName, str],
-        tuple[str, int, object, tuple[tuple[tuple[int, ...], str], ...]],
-    ] = {}
+    support_schemas: dict[tuple[RegimeName, RegimeName, str], _SupportSchema] = {}
+    current_memory = (
+        summary.memory if summary is not None and summary.memory is not None else memory
+    )
 
     for period in range(ages.n_periods - 1):
         period_int32 = jnp.int32(period)
@@ -943,146 +948,196 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912, PLR0915
                         phase_name=phase_name,
                         logger=logger,
                         summary=summary,
+                        memory=current_memory,
                     )
                     if evaluated is None:
                         continue
                     weights, n_cells = evaluated
-                    for kernel_name, law in joint_laws.items():
-                        support_provider_name = law.support_provider_name
-                        if support_provider_name is None:
-                            raise RegimeInitializationError(
-                                f"Joint transition {kernel_name!r} has no "
-                                "support provider in its canonical plan."
-                            )
-                        support = _evaluate_joint_support(
-                            func=phase.transitions[target][support_provider_name],
-                            regime_params=flat_params[regime_name],
-                            period=period_int32,
-                            age=age,
+                    _validate_joint_laws(
+                        joint_laws=joint_laws,
+                        transitions=phase.transitions[target],
+                        weights=weights,
+                        n_cells=n_cells,
+                        regime_params=flat_params[regime_name],
+                        period=period_int32,
+                        period_index=period,
+                        age=age,
+                        regime_name=regime_name,
+                        phase_name=phase_name,
+                        target=target,
+                        logger=logger,
+                        summary=summary,
+                        support_schemas=support_schemas,
+                        memory=current_memory,
+                    )
+
+
+@contextmanager
+def _own_transition_outputs(
+    *, memory: SimulationMemory | None, outputs: object, restore: object = ()
+) -> Iterator[None]:
+    """Publish temporary roots for admitted checks and release them reliably."""
+    _set_transition_outputs(memory=memory, outputs=outputs)
+    try:
+        yield
+    finally:
+        _set_transition_outputs(memory=memory, outputs=restore)
+
+
+def _set_transition_outputs(
+    *, memory: SimulationMemory | None, outputs: object
+) -> None:
+    """Expose every temporary mapping leaf to residency accounting."""
+    if memory is not None:
+        memory.set_derived(_transition_owner_tree(outputs))
+
+
+def _transition_owner_tree(tree: object) -> object:
+    """Convert opaque mapping containers into ordinary JAX pytree nodes."""
+    if isinstance(tree, Mapping):
+        return {key: _transition_owner_tree(value) for key, value in tree.items()}
+    if isinstance(tree, tuple):
+        return tuple(_transition_owner_tree(value) for value in tree)
+    if isinstance(tree, list):
+        return [_transition_owner_tree(value) for value in tree]
+    return tree
+
+
+def _validate_joint_laws(
+    *,
+    joint_laws: Mapping[str, Any],
+    transitions: Mapping[str, Callable[..., Any]],
+    weights: Mapping[str, FloatND | IntND],
+    n_cells: int | None,
+    regime_params: FlatRegimeParams,
+    period: ScalarInt,
+    period_index: int,
+    age: ScalarInt | ScalarFloat,
+    regime_name: RegimeName,
+    phase_name: str,
+    target: RegimeName,
+    logger: logging.Logger,
+    summary: _ValidationSummary | None,
+    support_schemas: dict[tuple[RegimeName, RegimeName, str], _SupportSchema],
+    memory: SimulationMemory | None,
+) -> None:
+    """Validate one target's supports and weights while retaining their owners."""
+    with _own_transition_outputs(memory=memory, outputs=weights):
+        for kernel_name, law in joint_laws.items():
+            support_provider_name = law.support_provider_name
+            if support_provider_name is None:
+                raise RegimeInitializationError(
+                    f"Joint transition {kernel_name!r} has no support provider in "
+                    "its canonical plan."
+                )
+            support = _evaluate_joint_support(
+                func=transitions[support_provider_name],
+                regime_params=regime_params,
+                period=period,
+                age=age,
+                kernel_name=kernel_name,
+                regime_name=regime_name,
+                phase_name=phase_name,
+                target=target,
+                logger=logger,
+                summary=summary,
+                memory=memory,
+            )
+            if support is not None:
+                with _own_transition_outputs(
+                    memory=memory, outputs=(weights, support), restore=weights
+                ):
+                    valid_support = _validate_joint_support(
+                        support=support,
+                        support_size=law.support_signature.size,
+                        kernel_name=kernel_name,
+                        regime_name=regime_name,
+                        phase_name=phase_name,
+                        target=target,
+                        age=age,
+                        logger=logger,
+                        summary=summary,
+                        memory=memory,
+                    )
+                    if valid_support:
+                        _check_joint_support_schema(
+                            support=support,
                             kernel_name=kernel_name,
-                            support_size=law.support_signature.size,
                             regime_name=regime_name,
                             phase_name=phase_name,
                             target=target,
+                            period=period_index,
                             logger=logger,
                             summary=summary,
+                            support_schemas=support_schemas,
                         )
-                        if support is not None:
-                            leaves, tree = jax.tree_util.tree_flatten(support)
-                            leaf_schema = tuple(
-                                (tuple(leaf.shape[1:]), str(leaf.dtype))
-                                for leaf in leaves
-                            )
-                            signature_key = (regime_name, target, kernel_name)
-                            previous = support_schemas.get(signature_key)
-                            if previous is None:
-                                support_schemas[signature_key] = (
-                                    phase_name,
-                                    period,
-                                    tree,
-                                    leaf_schema,
-                                )
-                            else:
-                                (
-                                    previous_phase,
-                                    previous_period,
-                                    previous_tree,
-                                    previous_leaves,
-                                ) = previous
-                                if (
-                                    tree != previous_tree
-                                    or leaf_schema != previous_leaves
-                                ):
-                                    if summary is not None:
-                                        raise _SerialValidationRequired
-                                    changed_support = (
-                                        "Joint transition "
-                                        f"{kernel_name}.support changed its "
-                                        "static pytree signature between "
-                                        f"{previous_phase} period "
-                                        f"{previous_period} and {phase_name} "
-                                        f"period {period} of regime "
-                                        f"{regime_name}, target {target}. "
-                                        "Support values may differ, but "
-                                        "pytree structure, leaf event shapes, "
-                                        "and dtypes must remain identical "
-                                        "across periods and phases; got "
-                                        f"{previous_leaves} and {leaf_schema}."
-                                    )
-                                    raise_or_warn(
-                                        logger=logger,
-                                        error=RegimeInitializationError(
-                                            changed_support
-                                        ),
-                                    )
-                        probs = weights[f"weight_{target}__{kernel_name}"]
-                        expected_shape = (
-                            (law.support_signature.size,)
-                            if n_cells is None
-                            else (n_cells, law.support_signature.size)
-                        )
-                        if probs.shape != expected_shape:
-                            if summary is not None:
-                                raise _SerialValidationRequired
-                            owes = (
-                                "reads no grid variable, so it owes exactly one "
-                                "probability vector"
-                                if n_cells is None
-                                else f"is evaluated over {n_cells} source cells"
-                            )
-                            raise_or_warn(
-                                logger=logger,
-                                error=InvalidStateTransitionProbabilitiesError(
-                                    f"Joint transition {kernel_name}.probabilities "
-                                    f"returned shape {probs.shape}; expected "
-                                    f"{expected_shape}. The function {owes}, and "
-                                    f"support_size is {law.support_signature.size} "
-                                    f"({phase_name} phase of regime {regime_name}, "
-                                    f"target {target}, age {age}). An axis beyond "
-                                    "those has no declared source variable, so no "
-                                    "row of it can be attributed to a source cell."
-                                ),
-                            )
-                        if summary is not None:
-                            summary.append(
-                                function=_joint_probability_flags,
-                                arguments={"probabilities": probs},
-                            )
-                            continue
-                        invalid_values = (
-                            jnp.any(~jnp.isfinite(probs))
-                            or jnp.any(probs < 0)
-                            or jnp.any(probs > 1)
-                            or jnp.any(_unit_mass_violations(jnp.sum(probs, axis=-1)))
-                        )
-                        if invalid_values:
-                            raise_or_warn(
-                                logger=logger,
-                                error=InvalidStateTransitionProbabilitiesError(
-                                    f"Joint transition {kernel_name}.probabilities "
-                                    "contains nonfinite or out-of-range values, "
-                                    "or rows that do not sum to one "
-                                    f"({phase_name} phase of regime {regime_name}, "
-                                    f"target {target}, age {age})."
-                                ),
-                            )
+            probs = weights[f"weight_{target}__{kernel_name}"]
+            _validate_joint_probabilities(
+                probs=probs,
+                support_size=law.support_signature.size,
+                n_cells=n_cells,
+                kernel_name=kernel_name,
+                regime_name=regime_name,
+                phase_name=phase_name,
+                target=target,
+                age=age,
+                logger=logger,
+                summary=summary,
+                memory=memory,
+            )
 
 
-def _evaluate_joint_support(  # noqa: C901
+def _check_joint_support_schema(
+    *,
+    support: object,
+    kernel_name: str,
+    regime_name: RegimeName,
+    phase_name: str,
+    target: RegimeName,
+    period: int,
+    logger: logging.Logger,
+    summary: _ValidationSummary | None,
+    support_schemas: dict[tuple[RegimeName, RegimeName, str], _SupportSchema],
+) -> None:
+    """Preserve one support's pytree, event shapes, dtypes, and phase identity."""
+    leaves, tree = jax.tree_util.tree_flatten(support)
+    leaf_schema = tuple((tuple(leaf.shape[1:]), str(leaf.dtype)) for leaf in leaves)
+    signature_key = (regime_name, target, kernel_name)
+    previous = support_schemas.get(signature_key)
+    if previous is None:
+        support_schemas[signature_key] = (phase_name, period, tree, leaf_schema)
+        return
+    previous_phase, previous_period, previous_tree, previous_leaves = previous
+    if tree == previous_tree and leaf_schema == previous_leaves:
+        return
+    if summary is not None:
+        raise _SerialValidationRequired
+    changed_support = (
+        f"Joint transition {kernel_name}.support changed its static pytree signature "
+        f"between {previous_phase} period {previous_period} and {phase_name} period "
+        f"{period} of regime {regime_name}, target {target}. Support values may "
+        "differ, but pytree structure, leaf event shapes, and dtypes must remain "
+        f"identical across periods and phases; got {previous_leaves} and "
+        f"{leaf_schema}."
+    )
+    raise_or_warn(logger=logger, error=RegimeInitializationError(changed_support))
+
+
+def _evaluate_joint_support(
     *,
     func: Callable[..., Any],
     regime_params: FlatRegimeParams,
     period: ScalarInt,
     age: ScalarInt | ScalarFloat,
     kernel_name: str,
-    support_size: int,
     regime_name: RegimeName,
     phase_name: str,
     target: RegimeName,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
+    memory: SimulationMemory | None = None,
 ) -> Any:  # noqa: ANN401
-    """Evaluate and validate one parameter-bound joint-support provider."""
+    """Bind and admit one complete parameter-bound joint-support provider."""
     kwargs: dict[str, object] = {}
     for name in inspect.signature(func).parameters:
         if name == "period":
@@ -1104,7 +1159,29 @@ def _evaluate_joint_support(  # noqa: C901
             )
             return None
 
-    support = func(**kwargs)
+    if memory is None:
+        return func(**kwargs)
+    return _evaluate_admitted_transition_producer(
+        function=func,
+        arguments=MappingProxyType(kwargs),
+        memory=memory,
+    )
+
+
+def _validate_joint_support(
+    *,
+    support: object,
+    support_size: int,
+    kernel_name: str,
+    regime_name: RegimeName,
+    phase_name: str,
+    target: RegimeName,
+    age: ScalarInt | ScalarFloat,
+    logger: logging.Logger,
+    summary: _ValidationSummary | None,
+    memory: SimulationMemory | None,
+) -> bool:
+    """Validate one completed support while its full pytree remains owned."""
     leaves, _ = jax.tree_util.tree_flatten(support)
     invalid_shapes = [
         getattr(leaf, "shape", None)
@@ -1125,18 +1202,25 @@ def _evaluate_joint_support(  # noqa: C901
         # The caller compares static schemas only for structurally valid
         # supports. In warning mode validation continues, so returning the invalid
         # pytree here would make the comparison itself dereference missing shapes.
-        return None
+        return False
 
     if summary is not None:
         summary.append(
             function=_support_finiteness_flags,
             arguments={"leaves": tuple(leaves)},
         )
-        return support
+        return True
     try:
-        has_nonfinite = any(
-            not bool(jax.numpy.all(jax.numpy.isfinite(leaf))) for leaf in leaves
+        flags = (
+            _support_finiteness_flags(leaves=tuple(leaves))
+            if memory is None
+            else run_simulation_operation(
+                memory=memory,
+                function=_support_finiteness_flags,
+                arguments={"leaves": tuple(leaves)},
+            )
         )
+        has_nonfinite = bool(np.asarray(flags).any())
     except TypeError:
         has_nonfinite = True
     if has_nonfinite:
@@ -1148,7 +1232,69 @@ def _evaluate_joint_support(  # noqa: C901
                 f"{regime_name}, target {target}, age {age})."
             ),
         )
-    return support
+    return True
+
+
+def _validate_joint_probabilities(
+    *,
+    probs: FloatND | IntND,
+    support_size: int,
+    n_cells: int | None,
+    kernel_name: str,
+    regime_name: RegimeName,
+    phase_name: str,
+    target: RegimeName,
+    age: ScalarInt | ScalarFloat,
+    logger: logging.Logger,
+    summary: _ValidationSummary | None,
+    memory: SimulationMemory | None,
+) -> None:
+    """Validate one completed joint weight array while its mapping stays owned."""
+    expected_shape = (support_size,) if n_cells is None else (n_cells, support_size)
+    if probs.shape != expected_shape:
+        if summary is not None:
+            raise _SerialValidationRequired
+        owes = (
+            "reads no grid variable, so it owes exactly one probability vector"
+            if n_cells is None
+            else f"is evaluated over {n_cells} source cells"
+        )
+        raise_or_warn(
+            logger=logger,
+            error=InvalidStateTransitionProbabilitiesError(
+                f"Joint transition {kernel_name}.probabilities returned shape "
+                f"{probs.shape}; expected {expected_shape}. The function {owes}, and "
+                f"support_size is {support_size} ({phase_name} phase of regime "
+                f"{regime_name}, target {target}, age {age}). An axis beyond those "
+                "has no declared source variable, so no row of it can be attributed "
+                "to a source cell."
+            ),
+        )
+    if summary is not None:
+        summary.append(
+            function=_joint_probability_flags,
+            arguments={"probabilities": probs},
+        )
+        return
+    flags = (
+        _joint_probability_flags(probabilities=probs)
+        if memory is None
+        else run_simulation_operation(
+            memory=memory,
+            function=_joint_probability_flags,
+            arguments={"probabilities": probs},
+        )
+    )
+    if np.asarray(flags).any():
+        raise_or_warn(
+            logger=logger,
+            error=InvalidStateTransitionProbabilitiesError(
+                f"Joint transition {kernel_name}.probabilities contains nonfinite or "
+                "out-of-range values, or rows that do not sum to one "
+                f"({phase_name} phase of regime {regime_name}, target {target}, "
+                f"age {age})."
+            ),
+        )
 
 
 def _evaluate_joint_weights(
@@ -1163,6 +1309,7 @@ def _evaluate_joint_weights(
     phase_name: str,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
+    memory: SimulationMemory | None = None,
 ) -> tuple[Mapping[str, FloatND | IntND], int | None] | None:
     """Evaluate one compiled probability DAG on its accepted grids.
 
@@ -1209,17 +1356,46 @@ def _evaluate_joint_weights(
             )
             return None
 
-    if not grid_args:
-        return func(**scalar_kwargs), None
-
-    grid_var_names = list(grid_args)
-    mesh = jnp.meshgrid(*grid_args.values(), indexing="ij")
-    flat_arrays = [array.ravel() for array in mesh]
-
-    grid_point_call = _GridPointCall(
-        names=tuple(grid_var_names), scalar_kwargs=scalar_kwargs, func=func
+    function = partial(
+        _joint_weight_law,
+        grid_names=tuple(grid_args),
+        func=func,
     )
-    return jax.vmap(grid_point_call)(*flat_arrays), int(flat_arrays[0].size)
+    arguments = MappingProxyType(
+        {
+            "grid_args": MappingProxyType(grid_args),
+            "scalar_kwargs": MappingProxyType(scalar_kwargs),
+        }
+    )
+    produced = (
+        function(grid_args=grid_args, scalar_kwargs=scalar_kwargs)
+        if memory is None
+        else _evaluate_admitted_transition_producer(
+            function=function,
+            arguments=arguments,
+            memory=memory,
+        )
+    )
+    weights = cast("Mapping[str, FloatND | IntND]", produced)
+    n_cells = prod(array.size for array in grid_args.values()) if grid_args else None
+    return MappingProxyType(weights), n_cells
+
+
+def _joint_weight_law(
+    *,
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: Mapping[str, object],
+    grid_names: tuple[StateOrActionName, ...],
+    func: Callable[..., Mapping[str, FloatND | IntND]],
+) -> Mapping[str, FloatND | IntND]:
+    """Evaluate a joint weight DAG and its Cartesian grid in one producer."""
+    if not grid_names:
+        return func(**scalar_kwargs)
+    mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
+    flat_arrays = tuple(array.ravel() for array in mesh)
+    return jax.vmap(
+        _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
+    )(*flat_arrays)
 
 
 def _state_transition_unused_in_period(
