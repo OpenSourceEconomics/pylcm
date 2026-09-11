@@ -1,10 +1,12 @@
 """Joint transition preflight admits weight and support producers."""
 
 import dataclasses
+import gc
 import os
 import subprocess
 import sys
 import textwrap
+import weakref
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,10 @@ import pytest
 from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.residency import (
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+)
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -247,15 +253,17 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
         [(selected_id,), (selected_id,)],
         [(selected_id,), (selected_id,)],
     ]
-    assert weight_devices == expected_weights, weight_devices
-    assert support_devices == expected_supports, support_devices
     output_devices = [
         tuple(sorted(device.id for device in sharding.device_set))
         for executable in compiled
         for sharding in jax.tree.leaves(executable.output_shardings)
     ]
     # The shared compiler also sees the valid regime producer in summary and serial.
-    assert output_devices == [(selected_id,)] * 11, output_devices
+    assert (weight_devices, support_devices, output_devices) == (
+        expected_weights,
+        expected_supports,
+        [(selected_id,)] * 11,
+    ), (weight_devices, support_devices, output_devices)
     print("JOINT-PRODUCER-PLACEMENT-OK")
     """
 )
@@ -276,9 +284,11 @@ class _CompilerBoundary:
         profiles = [
             item for item in self.profiled if "sort" in (item[0].as_text() or "")
         ]
-        assert len(profiles) == 1
-        declined, offset = profiles[0]
-        assert all(declined is not item for item in self.dispatched[offset:])
+        declined = profiles[0] if len(profiles) == 1 else None
+        preserved = declined is not None and all(
+            declined[0] is not item for item in self.dispatched[declined[1] :]
+        )
+        assert (len(profiles), preserved) == (1, True)
 
 
 @pytest.fixture
@@ -341,8 +351,7 @@ def test_joint_weight_workspace_refuses_before_completed_user_output(
             log_level="warning",
         )
 
-    assert completed == []
-    assert "controlled refusal" not in str(error.value)
+    assert (completed, "controlled refusal" in str(error.value)) == ([], False)
     compiler_boundary.require_declined_sort_producer()
 
 
@@ -380,8 +389,7 @@ def test_joint_support_workspace_refuses_before_completed_user_output(
             log_level="warning",
         )
 
-    assert completed == []
-    assert "controlled refusal" not in str(error.value)
+    assert (completed, "controlled refusal" in str(error.value)) == ([], False)
     compiler_boundary.require_declined_sort_producer()
 
 
@@ -467,6 +475,153 @@ def test_joint_mapping_owners_expose_all_array_leaves(
     )
 
     assert 3 in observed_leaf_counts
+
+
+def _released_or_charged(
+    *, references: list[weakref.ReferenceType[jax.Array]], memory: SimulationMemory
+) -> bool:
+    """Accept a prior output only when it is gone or in the next live inventory."""
+    gc.collect()
+    live = [value for reference in references if (value := reference()) is not None]
+    if not live:
+        return True
+    missing = resident_bytes_by_device(
+        live=measure_buffer_footprint(tree=live),
+        arguments=memory.snapshot(),
+        devices=memory.devices,
+    )
+    return not any(missing.values())
+
+
+def test_joint_support_is_charged_through_probability_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A support local remains visible when its probability check is admitted."""
+    references: list[weakref.ReferenceType[jax.Array]] = []
+    observations: list[bool] = []
+    original_support = transition_checks._evaluate_joint_support
+    original_operation = transition_checks.run_simulation_operation
+
+    def support_and_record(**kwargs: Any) -> Any:
+        support = original_support(**kwargs)
+        if support is not None:
+            references[:] = [weakref.ref(leaf) for leaf in support.values()]
+        return support
+
+    def operation_and_check(**kwargs: Any) -> Any:
+        if kwargs["function"] is transition_checks._joint_probability_flags:
+            observations.append(
+                _released_or_charged(
+                    references=references,
+                    memory=kwargs["memory"],
+                )
+            )
+        return original_operation(**kwargs)
+
+    monkeypatch.setattr(
+        transition_checks, "_evaluate_joint_support", support_and_record
+    )
+    monkeypatch.setattr(
+        transition_checks, "run_simulation_operation", operation_and_check
+    )
+    model, params, initial = _inputs(
+        probabilities=_joint_probabilities,
+        support=_joint_support,
+        budget=2**28,
+    )
+    solution = model.solve(params=params, log_level="off")
+
+    model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=solution,
+        log_level="debug",
+    )
+
+    assert (bool(observations), all(observations)) == (True, True)
+
+
+def test_previous_joint_weights_are_released_or_charged_before_next_producer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Successive weight producers account for any prior mapping still alive."""
+    references: list[weakref.ReferenceType[jax.Array]] = []
+    observations: list[bool] = []
+    original_weights = transition_checks._evaluate_joint_weights
+
+    def weights_and_check(**kwargs: Any) -> Any:
+        if references:
+            observations.append(
+                _released_or_charged(
+                    references=references,
+                    memory=kwargs["memory"],
+                )
+            )
+        evaluated = original_weights(**kwargs)
+        if evaluated is not None:
+            references[:] = [weakref.ref(leaf) for leaf in evaluated[0].values()]
+        return evaluated
+
+    monkeypatch.setattr(transition_checks, "_evaluate_joint_weights", weights_and_check)
+    model, params, initial = _inputs(
+        probabilities=_joint_probabilities,
+        support=_joint_support,
+        budget=2**28,
+    )
+    solution = model.solve(params=params, log_level="off")
+
+    model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=solution,
+        log_level="debug",
+    )
+
+    assert (bool(observations), all(observations)) == (True, True)
+
+
+def test_joint_owner_contexts_restore_memory_after_probability_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probability-check exception releases every scoped derived owner."""
+    memories: list[SimulationMemory] = []
+    original_set_derived = SimulationMemory.set_derived
+
+    # keyword-only-exempt: library-callback=SimulationMemory.set_derived
+    def set_derived_and_keep(self: SimulationMemory, tree: object) -> None:
+        if all(self is not memory for memory in memories):
+            memories.append(self)
+        original_set_derived(self, tree)
+
+    def raise_controlled_probability_error(**kwargs: Any) -> None:
+        del kwargs
+        raise RuntimeError("controlled joint probability failure")
+
+    monkeypatch.setattr(SimulationMemory, "set_derived", set_derived_and_keep)
+    monkeypatch.setattr(
+        transition_checks,
+        "_validate_joint_probabilities",
+        raise_controlled_probability_error,
+    )
+    model, params, initial = _inputs(
+        probabilities=_joint_probabilities,
+        support=_joint_support,
+        budget=2**28,
+    )
+    solution = model.solve(params=params, log_level="off")
+
+    with pytest.raises(RuntimeError, match="controlled joint probability failure"):
+        model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            log_level="debug",
+        )
+
+    assert (bool(memories), all(memory.derived == () for memory in memories)) == (
+        True,
+        True,
+    )
 
 
 def test_admitted_joint_weight_diagnostic_matches_unbudgeted_path() -> None:

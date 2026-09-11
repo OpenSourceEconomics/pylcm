@@ -108,6 +108,7 @@ def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         errors.append("joint mapping owners must expose every array leaf")
 
     laws = _definition(tree=tree, name="_validate_joint_laws")
+    laws_source = ast.unparse(laws)
     ownership = _calls(node=laws, name="_own_transition_outputs")
     observed_owners = {
         (_keyword(call=call, name="outputs"), _keyword(call=call, name="restore"))
@@ -115,8 +116,27 @@ def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
     }
     if ("weights", None) not in observed_owners:
         errors.append("weight mapping must remain owned through all joint checks")
-    if ("(weights, support)", "weights") not in observed_owners:
+    if (
+        "owned = weights if support is None else (weights, support)" not in laws_source
+        or ("owned", "weights") not in observed_owners
+    ):
         errors.append("support pytree must be co-owned with its weight mapping")
+    support_scopes = [
+        child
+        for child in ast.walk(laws)
+        if isinstance(child, ast.With)
+        and any(
+            isinstance(item.context_expr, ast.Call)
+            and _keyword(call=item.context_expr, name="outputs") == "owned"
+            for item in child.items
+        )
+    ]
+    if len(support_scopes) != 1 or not _calls(
+        node=support_scopes[0], name="_validate_joint_probabilities"
+    ):
+        errors.append("support ownership must span probability admission")
+    if "del owned, support" not in laws_source:
+        errors.append("completed support locals must release after their last use")
     for name, message in (
         ("_evaluate_joint_support", "support producer must receive current memory"),
         ("_validate_joint_support", "support checks must receive current memory"),
@@ -128,7 +148,6 @@ def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         calls = _calls(node=laws, name=name)
         if len(calls) != 1 or _keyword(call=calls[0], name="memory") != "memory":
             errors.append(message)
-    laws_source = ast.unparse(laws)
     if laws_source.index("_validate_joint_support(") > laws_source.index(
         "_check_joint_support_schema("
     ):
@@ -145,6 +164,7 @@ def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         errors.append("complete support provider must use admitted producer")
 
     support_check = _definition(tree=tree, name="_validate_joint_support")
+    support_check_source = ast.unparse(support_check)
     admitted = _calls(node=support_check, name="run_simulation_operation")
     if (
         len(admitted) != 1
@@ -152,8 +172,11 @@ def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         or _keyword(call=admitted[0], name="function") != "_support_finiteness_flags"
     ):
         errors.append("serial support finiteness must use admitted reduction")
+    if "memory.hold(tree=support)" not in support_check_source:
+        errors.append("summary support inputs must survive asynchronous checks")
 
     probability_check = _definition(tree=tree, name="_validate_joint_probabilities")
+    probability_check_source = ast.unparse(probability_check)
     admitted = _calls(node=probability_check, name="run_simulation_operation")
     if (
         len(admitted) != 1
@@ -161,6 +184,11 @@ def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         or _keyword(call=admitted[0], name="function") != "_joint_probability_flags"
     ):
         errors.append("serial joint weights must use admitted reduction")
+    if "memory.hold(tree=probs)" not in probability_check_source:
+        errors.append("summary weight inputs must survive asynchronous checks")
+
+    if "del evaluated, weights" not in sweep_source:
+        errors.append("completed weight locals must release after their last use")
 
     weights = _definition(tree=tree, name="_evaluate_joint_weights")
     weights_source = ast.unparse(weights)
@@ -220,8 +248,8 @@ def test_joint_transition_admission_contract_is_complete() -> None:
         ),
         (
             "validate_joint_transitions_all_periods",
-            "                        support_schemas=support_schemas,\n                        memory=current_memory,\n                    )",
-            "                        support_schemas=support_schemas,\n                        memory=None,\n                    )",
+            "                            support_schemas=support_schemas,\n                            memory=current_memory,\n                        )",
+            "                            support_schemas=support_schemas,\n                            memory=None,\n                        )",
             "joint owners must receive current memory",
         ),
         (
@@ -250,15 +278,33 @@ def test_joint_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_validate_joint_laws",
-            "memory=memory, outputs=(weights, support), restore=weights",
-            "memory=memory, outputs=support, restore=weights",
+            "            owned = weights if support is None else (weights, support)",
+            "            owned = weights",
             "support pytree must be co-owned with its weight mapping",
         ),
         (
             "_validate_joint_laws",
-            "memory=memory, outputs=(weights, support), restore=weights",
-            "memory=memory, outputs=(weights, support), restore=()",
+            "            with _own_transition_outputs(memory=memory, outputs=owned, restore=weights):",
+            "            with _own_transition_outputs(memory=memory, outputs=owned, restore=()):",
             "support pytree must be co-owned with its weight mapping",
+        ),
+        (
+            "_validate_joint_laws",
+            "            with _own_transition_outputs(memory=memory, outputs=owned, restore=weights):",
+            "            with _own_transition_outputs(memory=memory, outputs=weights, restore=weights):",
+            "support ownership must span probability admission",
+        ),
+        (
+            "_validate_joint_laws",
+            "            del owned, support",
+            "            del owned",
+            "completed support locals must release after their last use",
+        ),
+        (
+            "validate_joint_transitions_all_periods",
+            "                        del evaluated, weights",
+            "                        del evaluated",
+            "completed weight locals must release after their last use",
         ),
         (
             "_evaluate_joint_support",
@@ -273,10 +319,22 @@ def test_joint_transition_admission_contract_is_complete() -> None:
             "serial support finiteness must use admitted reduction",
         ),
         (
+            "_validate_joint_support",
+            "            memory.hold(tree=support)",
+            "            memory.hold(tree=())",
+            "summary support inputs must survive asynchronous checks",
+        ),
+        (
             "_validate_joint_probabilities",
             "            memory=memory,\n            function=_joint_probability_flags,",
             "            memory=None,\n            function=_joint_probability_flags,",
             "serial joint weights must use admitted reduction",
+        ),
+        (
+            "_validate_joint_probabilities",
+            "            memory.hold(tree=probs)",
+            "            memory.hold(tree=())",
+            "summary weight inputs must survive asynchronous checks",
         ),
         (
             "_evaluate_joint_weights",

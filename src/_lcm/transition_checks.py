@@ -953,23 +953,26 @@ def validate_joint_transitions_all_periods(
                     if evaluated is None:
                         continue
                     weights, n_cells = evaluated
-                    _validate_joint_laws(
-                        joint_laws=joint_laws,
-                        transitions=phase.transitions[target],
-                        weights=weights,
-                        n_cells=n_cells,
-                        regime_params=flat_params[regime_name],
-                        period=period_int32,
-                        period_index=period,
-                        age=age,
-                        regime_name=regime_name,
-                        phase_name=phase_name,
-                        target=target,
-                        logger=logger,
-                        summary=summary,
-                        support_schemas=support_schemas,
-                        memory=current_memory,
-                    )
+                    try:
+                        _validate_joint_laws(
+                            joint_laws=joint_laws,
+                            transitions=phase.transitions[target],
+                            weights=weights,
+                            n_cells=n_cells,
+                            regime_params=flat_params[regime_name],
+                            period=period_int32,
+                            period_index=period,
+                            age=age,
+                            regime_name=regime_name,
+                            phase_name=phase_name,
+                            target=target,
+                            logger=logger,
+                            summary=summary,
+                            support_schemas=support_schemas,
+                            memory=current_memory,
+                        )
+                    finally:
+                        del evaluated, weights
 
 
 @contextmanager
@@ -1043,10 +1046,9 @@ def _validate_joint_laws(
                 summary=summary,
                 memory=memory,
             )
-            if support is not None:
-                with _own_transition_outputs(
-                    memory=memory, outputs=(weights, support), restore=weights
-                ):
+            owned = weights if support is None else (weights, support)
+            with _own_transition_outputs(memory=memory, outputs=owned, restore=weights):
+                if support is not None:
                     valid_support = _validate_joint_support(
                         support=support,
                         support_size=law.support_signature.size,
@@ -1071,20 +1073,21 @@ def _validate_joint_laws(
                             summary=summary,
                             support_schemas=support_schemas,
                         )
-            probs = weights[f"weight_{target}__{kernel_name}"]
-            _validate_joint_probabilities(
-                probs=probs,
-                support_size=law.support_signature.size,
-                n_cells=n_cells,
-                kernel_name=kernel_name,
-                regime_name=regime_name,
-                phase_name=phase_name,
-                target=target,
-                age=age,
-                logger=logger,
-                summary=summary,
-                memory=memory,
-            )
+                probs = weights[f"weight_{target}__{kernel_name}"]
+                _validate_joint_probabilities(
+                    probs=probs,
+                    support_size=law.support_signature.size,
+                    n_cells=n_cells,
+                    kernel_name=kernel_name,
+                    regime_name=regime_name,
+                    phase_name=phase_name,
+                    target=target,
+                    age=age,
+                    logger=logger,
+                    summary=summary,
+                    memory=memory,
+                )
+            del owned, support
 
 
 def _check_joint_support_schema(
@@ -1205,6 +1208,8 @@ def _validate_joint_support(
         return False
 
     if summary is not None:
+        if memory is not None:
+            memory.hold(tree=support)
         summary.append(
             function=_support_finiteness_flags,
             arguments={"leaves": tuple(leaves)},
@@ -1271,6 +1276,8 @@ def _validate_joint_probabilities(
             ),
         )
     if summary is not None:
+        if memory is not None:
+            memory.hold(tree=probs)
         summary.append(
             function=_joint_probability_flags,
             arguments={"probabilities": probs},
