@@ -1208,8 +1208,6 @@ def _validate_joint_support(
         return False
 
     if summary is not None:
-        if memory is not None:
-            memory.hold(tree=support)
         summary.append(
             function=_support_finiteness_flags,
             arguments={"leaves": tuple(leaves)},
@@ -1276,8 +1274,6 @@ def _validate_joint_probabilities(
             ),
         )
     if summary is not None:
-        if memory is not None:
-            memory.hold(tree=probs)
         summary.append(
             function=_joint_probability_flags,
             arguments={"probabilities": probs},

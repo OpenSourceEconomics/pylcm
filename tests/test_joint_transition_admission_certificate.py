@@ -164,7 +164,11 @@ def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         errors.append("complete support provider must use admitted producer")
 
     support_check = _definition(tree=tree, name="_validate_joint_support")
-    support_check_source = ast.unparse(support_check)
+    if any(
+        _keyword(call=call, name="tree") == "support"
+        for call in _calls(node=support_check, name="hold")
+    ):
+        errors.append("completed support must not survive its synchronous reduction")
     admitted = _calls(node=support_check, name="run_simulation_operation")
     if (
         len(admitted) != 1
@@ -172,11 +176,13 @@ def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         or _keyword(call=admitted[0], name="function") != "_support_finiteness_flags"
     ):
         errors.append("serial support finiteness must use admitted reduction")
-    if "memory.hold(tree=support)" not in support_check_source:
-        errors.append("summary support inputs must survive asynchronous checks")
 
     probability_check = _definition(tree=tree, name="_validate_joint_probabilities")
-    probability_check_source = ast.unparse(probability_check)
+    if any(
+        _keyword(call=call, name="tree") == "probs"
+        for call in _calls(node=probability_check, name="hold")
+    ):
+        errors.append("completed weights must not survive their synchronous reduction")
     admitted = _calls(node=probability_check, name="run_simulation_operation")
     if (
         len(admitted) != 1
@@ -184,8 +190,6 @@ def _joint_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         or _keyword(call=admitted[0], name="function") != "_joint_probability_flags"
     ):
         errors.append("serial joint weights must use admitted reduction")
-    if "memory.hold(tree=probs)" not in probability_check_source:
-        errors.append("summary weight inputs must survive asynchronous checks")
 
     if "del evaluated, weights" not in sweep_source:
         errors.append("completed weight locals must release after their last use")
@@ -314,27 +318,27 @@ def test_joint_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_validate_joint_support",
+            "    if summary is not None:\n        summary.append(",
+            "    if summary is not None:\n        memory.hold(tree=support)\n        summary.append(",
+            "completed support must not survive its synchronous reduction",
+        ),
+        (
+            "_validate_joint_support",
             "                memory=memory,\n                function=_support_finiteness_flags,",
             "                memory=None,\n                function=_support_finiteness_flags,",
             "serial support finiteness must use admitted reduction",
         ),
         (
-            "_validate_joint_support",
-            "            memory.hold(tree=support)",
-            "            memory.hold(tree=())",
-            "summary support inputs must survive asynchronous checks",
+            "_validate_joint_probabilities",
+            "    if summary is not None:\n        summary.append(",
+            "    if summary is not None:\n        memory.hold(tree=probs)\n        summary.append(",
+            "completed weights must not survive their synchronous reduction",
         ),
         (
             "_validate_joint_probabilities",
             "            memory=memory,\n            function=_joint_probability_flags,",
             "            memory=None,\n            function=_joint_probability_flags,",
             "serial joint weights must use admitted reduction",
-        ),
-        (
-            "_validate_joint_probabilities",
-            "            memory.hold(tree=probs)",
-            "            memory.hold(tree=())",
-            "summary weight inputs must survive asynchronous checks",
         ),
         (
             "_evaluate_joint_weights",

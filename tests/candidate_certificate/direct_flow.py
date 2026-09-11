@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "a5bba6df6581106f60e54f1e9cc84bcdf8df0ee55c9ce330c0ffab477844b2d7",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "a0c97f47c961052dd6147110b462030ae784ab99e4f76d8aef50446283e6215f",
     SUPPORT_DIAGNOSTICS_SOURCE: "031dc0d584faec8d055d25b3099d71e4f76c71cbb4670ad8e85cb2a4746bbb09",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -6330,8 +6330,8 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_validate_joint_laws": "64789515b4b4c810b18f1bc0be46d6ab79a0d2e06e65401f71b0ce4a88ba1659",
             "_check_joint_support_schema": "72019c8e11b917975cc895995038f59d6ca3d714d9d56915a20ba6c45a7a2845",
             "_evaluate_joint_support": "1e3cebbb2287dad9b0b97e0f9e23884b0c6e10235244f524187ef43c73e69ca4",
-            "_validate_joint_support": "284167561047f90a43475761cce2c3b0a3440c8580a28df5f5b2cf05b3f4c2e8",
-            "_validate_joint_probabilities": "2a63587c727be4008e4c8075ec68b4d02023c4c39c89e06cecd32727df1a3462",
+            "_validate_joint_support": "71f984d86873cb59c4a3ce9780190b313bf4633b105a1813984dd5460c79eb7b",
+            "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
             "_evaluate_joint_weights": "8f772f549ba1c742f81a32792b89e61f4bdd92f75ef9300053681e1301664e8f",
             "_joint_weight_law": "2e388ad1cf1799cf701f0ce29ad53eded7130cf14896b2b6feac46605adb3d5b",
             "_validate_state_transition_single": "f921dc60816dc77adc95a9a543bf3b3c60950836604e657cbf79a10aaf8e9253",

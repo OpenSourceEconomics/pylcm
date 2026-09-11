@@ -1,7 +1,6 @@
 """Joint transition preflight admits weight and support producers."""
 
 import dataclasses
-import gc
 import os
 import subprocess
 import sys
@@ -481,7 +480,6 @@ def _released_or_charged(
     *, references: list[weakref.ReferenceType[jax.Array]], memory: SimulationMemory
 ) -> bool:
     """Accept a prior output only when it is gone or in the next live inventory."""
-    gc.collect()
     live = [value for reference in references if (value := reference()) is not None]
     if not live:
         return True
@@ -541,28 +539,57 @@ def test_joint_support_is_charged_through_probability_admission(
     assert (bool(observations), all(observations)) == (True, True)
 
 
-def test_previous_joint_weights_are_released_or_charged_before_next_producer(
+def test_previous_joint_weights_are_released_before_next_weight_producer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Successive weight producers account for any prior mapping still alive."""
+    """A completed weight mapping is gone before the next weight producer."""
     references: list[weakref.ReferenceType[jax.Array]] = []
     observations: list[bool] = []
     original_weights = transition_checks._evaluate_joint_weights
 
     def weights_and_check(**kwargs: Any) -> Any:
         if references:
-            observations.append(
-                _released_or_charged(
-                    references=references,
-                    memory=kwargs["memory"],
-                )
-            )
+            observations.append(all(reference() is None for reference in references))
         evaluated = original_weights(**kwargs)
         if evaluated is not None:
             references[:] = [weakref.ref(leaf) for leaf in evaluated[0].values()]
         return evaluated
 
     monkeypatch.setattr(transition_checks, "_evaluate_joint_weights", weights_and_check)
+    model, params, initial = _inputs(
+        probabilities=_joint_probabilities,
+        support=_joint_support,
+        budget=2**28,
+    )
+    solution = model.solve(params=params, log_level="off")
+
+    model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=solution,
+        log_level="debug",
+    )
+
+    assert (bool(observations), all(observations)) == (True, True)
+
+
+def test_previous_joint_support_is_released_before_next_support_producer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed support has no full-array owner at the next support producer."""
+    references: list[weakref.ReferenceType[jax.Array]] = []
+    observations: list[bool] = []
+    original_support = transition_checks._evaluate_joint_support
+
+    def support_and_check(**kwargs: Any) -> Any:
+        if references:
+            observations.append(all(reference() is None for reference in references))
+        support = original_support(**kwargs)
+        if support is not None:
+            references[:] = [weakref.ref(leaf) for leaf in support.values()]
+        return support
+
+    monkeypatch.setattr(transition_checks, "_evaluate_joint_support", support_and_check)
     model, params, initial = _inputs(
         probabilities=_joint_probabilities,
         support=_joint_support,
