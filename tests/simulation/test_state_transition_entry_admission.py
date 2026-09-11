@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
 from lcm import (
     AgeGrid,
@@ -154,6 +155,7 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
 def test_state_transition_workspace_refuses_before_user_law_dispatch(
     *,
     compiler_boundary: _CompilerBoundary,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """A small probability output cannot hide its sorting workspace."""
@@ -163,8 +165,16 @@ def test_state_transition_workspace_refuses_before_user_law_dispatch(
     )
     solution = load_solution(path=path)
     consumer, _, _ = _inputs(budget=16 * 1024)
+    completed: list[FloatND] = []
+    original_check = transition_checks._check_state_probs
 
-    with pytest.raises(ExecutionPlanningError, match="compiler peak"):
+    def observe_completed_law(**kwargs: Any) -> None:
+        completed.append(kwargs["probs"])
+        original_check(**kwargs)
+
+    monkeypatch.setattr(transition_checks, "_check_state_probs", observe_completed_law)
+
+    with pytest.raises(ExecutionPlanningError):
         consumer.simulate(
             params=params,
             initial_conditions=initial,
@@ -172,6 +182,7 @@ def test_state_transition_workspace_refuses_before_user_law_dispatch(
             log_level="debug",
         )
 
+    assert completed == []
     profiles = compiler_boundary.transition_profiles()
     assert len(profiles) == 1
     declined, offset = profiles[0]
