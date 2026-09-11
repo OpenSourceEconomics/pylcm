@@ -69,6 +69,9 @@ from lcm.exceptions import (
 from lcm.typing import BoolND, FloatND, IntND, ScalarFloat, ScalarInt
 
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
+type _RegimeProbabilityOutput = tuple[
+    Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]
+]
 
 
 class _SerialValidationRequired(Exception):  # noqa: N818
@@ -293,6 +296,7 @@ def _validate_transition_sequence(
         logger=logger,
         summary=summary,
         process_grid_resolver=process_grid_resolver,
+        memory=memory,
     )
     validate_state_transitions_all_periods(
         regimes=regimes,
@@ -380,6 +384,7 @@ def validate_regime_transitions_all_periods(
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate regime transition probabilities for all periods before solve.
 
@@ -450,6 +455,7 @@ def validate_regime_transitions_all_periods(
                     ages=ages,
                     summary=summary,
                     process_grid_resolver=process_grid_resolver,
+                    memory=memory,
                 )
             except InvalidRegimeTransitionProbabilitiesError as error:
                 if summary is not None:
@@ -467,6 +473,7 @@ def _validate_regime_transition_single(
     ages: AgeGrid,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate regime transition probabilities for a single regime and period.
 
@@ -495,50 +502,119 @@ def _validate_regime_transition_single(
         k: v for k, v in state_action_space.states.items() if k in accepted_params
     } | {k: v for k, v in state_action_space.actions.items() if k in accepted_params}
 
-    # Build flat Cartesian product and vmap over all combinations
-    grid_var_names = list(grids.keys())
-    grid_arrays = list(grids.values())
-
     # Pin to int32: a Python-int `period` traced through `jax.vmap` becomes
     # int64 under x64, breaking any int32 `period` contract downstream.
     period_int32 = jnp.int32(period)
-
-    if grid_arrays:
-        mesh = jnp.meshgrid(*grid_arrays, indexing="ij")
-        flat_arrays = [m.ravel() for m in mesh]
-
-        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = jax.vmap(
-            _GridPointCall(
-                names=tuple(grid_var_names),
-                scalar_kwargs={
-                    **filtered_params,
-                    "period": period_int32,
-                    "age": ages.values[period],  # noqa: PD011
-                },
-                func=regime_transition_func,  # ty: ignore[invalid-argument-type]
-            )
-        )(*flat_arrays)
-        point = dict(zip(grid_var_names, flat_arrays, strict=True))
-    else:
-        regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
-            regime_transition_func(  # ty: ignore[call-non-callable]
+    current_memory = (
+        summary.memory if summary is not None and summary.memory is not None else memory
+    )
+    regime_transition_probs, point = _evaluate_regime_probability_law(
+        func=cast(
+            "Callable[..., Mapping[RegimeName, FloatND]]", regime_transition_func
+        ),
+        grid_args=MappingProxyType(grids),
+        scalar_kwargs=MappingProxyType(
+            {
                 **filtered_params,
-                period=period_int32,
-                age=ages.values[period],  # noqa: PD011
-            )
-        )
-        point: dict[StateOrActionName, FloatND | IntND] = {}
-
-    _validate_regime_transition_probs(
+                "period": period_int32,
+                "age": ages.values[period],  # noqa: PD011
+            }
+        ),
+        memory=current_memory,
+    )
+    _check_and_release_regime_probability(
         regime_transition_probs=regime_transition_probs,
         active_regimes_next_period=active_regimes_next_period,
         regime_name=regime_name,
         age=ages.values[period],  # noqa: PD011
         next_age=ages.values[period + 1],  # noqa: PD011
         period=period,
-        state_action_values=MappingProxyType(point),
+        state_action_values=point,
         summary=summary,
+        memory=current_memory,
     )
+
+
+def _evaluate_regime_probability_law(
+    *,
+    func: Callable[..., Mapping[RegimeName, FloatND]],
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: Mapping[str, object],
+    memory: SimulationMemory | None,
+) -> tuple[
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[StateOrActionName, FloatND | IntND],
+]:
+    """Admit one regime-law mapping and its diagnostic grid coordinates."""
+    function = partial(
+        _regime_probability_law,
+        grid_names=tuple(grid_args),
+        func=func,
+    )
+    arguments = MappingProxyType(
+        {"grid_args": grid_args, "scalar_kwargs": scalar_kwargs}
+    )
+    produced = (
+        function(grid_args=grid_args, scalar_kwargs=scalar_kwargs)
+        if memory is None
+        else _evaluate_admitted_transition_producer(
+            function=function,
+            arguments=arguments,
+            memory=memory,
+        )
+    )
+    probabilities, point = cast("_RegimeProbabilityOutput", produced)
+    return MappingProxyType(probabilities), MappingProxyType(point)
+
+
+def _regime_probability_law(
+    *,
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: Mapping[str, object],
+    grid_names: tuple[StateOrActionName, ...],
+    func: Callable[..., Mapping[RegimeName, FloatND]],
+) -> tuple[Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]]:
+    """Evaluate one regime law and retain its Cartesian diagnostic coordinates."""
+    if not grid_names:
+        return func(**scalar_kwargs), {}
+    mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
+    flat_arrays = tuple(array.ravel() for array in mesh)
+    probabilities = jax.vmap(
+        _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
+    )(*flat_arrays)
+    return probabilities, dict(zip(grid_names, flat_arrays, strict=True))
+
+
+def _check_and_release_regime_probability(
+    *,
+    regime_transition_probs: MappingProxyType[RegimeName, FloatND],
+    active_regimes_next_period: tuple[RegimeName, ...],
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+    next_age: float | ScalarInt | ScalarFloat,
+    period: int,
+    state_action_values: MappingProxyType[StateOrActionName, FloatND | IntND],
+    summary: _ValidationSummary | None,
+    memory: SimulationMemory | None,
+) -> None:
+    """Own completed regime-law outputs through their admitted validation."""
+    if memory is not None:
+        memory.set_derived((regime_transition_probs, state_action_values))
+    try:
+        _validate_regime_transition_probs(
+            regime_transition_probs=regime_transition_probs,
+            active_regimes_next_period=active_regimes_next_period,
+            regime_name=regime_name,
+            age=age,
+            next_age=next_age,
+            period=period,
+            state_action_values=state_action_values,
+            summary=summary,
+            memory=memory,
+        )
+    finally:
+        if memory is not None:
+            memory.set_derived(())
 
 
 def _validate_regime_transition_probs(
@@ -552,6 +628,7 @@ def _validate_regime_transition_probs(
     state_action_values: MappingProxyType[StateOrActionName, FloatND | IntND]
     | None = None,
     summary: _ValidationSummary | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate regime transition probabilities.
 
@@ -575,35 +652,48 @@ def _validate_regime_transition_probs(
             regimes.
 
     """
+    names = tuple(regime_transition_probs)
+    inactive = tuple(set(names) - set(active_regimes_next_period))
+    flag_arguments = {"probabilities": tuple(regime_transition_probs.values())}
+    static_arguments = {
+        "inactive_indices": tuple(names.index(name) for name in inactive)
+    }
     if summary is not None:
-        names = tuple(regime_transition_probs)
-        inactive = set(names) - set(active_regimes_next_period)
         summary.append(
             function=_regime_probability_flags,
-            arguments={"probabilities": tuple(regime_transition_probs.values())},
-            static_arguments={
-                "inactive_indices": tuple(names.index(name) for name in inactive)
-            },
+            arguments=flag_arguments,
+            static_arguments=static_arguments,
         )
         return
-    all_probs = jnp.stack(list(regime_transition_probs.values()))
-
-    if jnp.any(~jnp.isfinite(all_probs)):
+    flags = (
+        _regime_probability_flags(**flag_arguments, **static_arguments)
+        if memory is None
+        else run_simulation_operation(
+            memory=memory,
+            function=_regime_probability_flags,
+            arguments=flag_arguments,
+            static_arguments=static_arguments,
+        )
+    )
+    nonfinite, outside_bounds, invalid_mass, *inactive_flags = np.asarray(
+        flags
+    ).tolist()
+    if nonfinite:
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Non-finite values in regime transition probabilities from "
             f"'{regime_name}' between ages {age} and {next_age}. Check the "
             f"'next_regime' function of the '{regime_name}' regime."
         )
 
-    if jnp.any(all_probs < 0) or jnp.any(all_probs > 1):
+    if outside_bounds:
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Regime transition probabilities from '{regime_name}' between ages {age} "
             f"and {next_age} contain values outside [0, 1]. Check the 'next_regime' "
             f"function of the '{regime_name}' regime."
         )
 
-    sum_all = jnp.sum(all_probs, axis=0)
-    if jnp.any(_unit_mass_violations(sum_all)):
+    if invalid_mass:
+        sum_all = jnp.sum(jnp.stack(list(regime_transition_probs.values())), axis=0)
         detail = _format_sum_violation(
             sum_all=sum_all,
             state_action_values=state_action_values,
@@ -614,9 +704,8 @@ def _validate_regime_transition_probs(
             f"Check the 'next_regime' function of the '{regime_name}' regime."
         )
 
-    inactive = set(regime_transition_probs) - set(active_regimes_next_period)
-    for r in inactive:
-        if jnp.any(regime_transition_probs[r] > 0):
+    for r, has_mass in zip(inactive, inactive_flags, strict=True):
+        if has_mass:
             period_detail = "" if period is None else f" in period {period}"
             raise InvalidRegimeTransitionProbabilitiesError(
                 f"Regime '{r}' is inactive at age {next_age} but has positive "
@@ -1333,6 +1422,47 @@ def _evaluate_state_probability_law(
     return cast("FloatND", plan.compiled(**placed).block_until_ready())
 
 
+def _evaluate_admitted_transition_producer(
+    *,
+    function: Callable[..., object],
+    arguments: Mapping[str, object],
+    memory: SimulationMemory,
+) -> object:
+    """Place, profile, admit, and complete one transition validation producer."""
+    placed = place_simulation_arguments(
+        arguments=arguments,
+        subject_arg_names=(),
+        value_reads=(),
+        devices=memory.subject_devices,
+        budget_bytes=memory.budget_bytes,
+        live_footprint=memory.snapshot(),
+        budget_devices=memory.devices,
+    )
+    argument_buffers = measure_buffer_footprint(tree=placed)
+    live = union_buffer_footprints(
+        footprints=(memory.snapshot(additional=arguments), argument_buffers)
+    )
+    external = resident_bytes_by_device(
+        live=live, arguments=argument_buffers, devices=memory.subject_devices
+    )
+    output_sharding = simulation_value_sharding(
+        stored_sharding=jax.sharding.SingleDeviceSharding(memory.subject_devices[0]),
+        devices=(memory.subject_devices[0],),
+    )
+    compiler = _TransitionLawCompiler(
+        function=function,
+        arguments=jax.tree.map(_abstract_transition_operand, dict(placed)),
+        output_sharding=output_sharding,
+    )
+    plan = plan_workspace(
+        axes=(),
+        compile_candidate=compiler,
+        budget_bytes=memory.budget_bytes,
+        resident_bytes=max(external.values()),
+    )
+    return plan.compiled(**placed).block_until_ready()
+
+
 def _state_probability_law(
     *,
     grid_args: Mapping[StateOrActionName, FloatND | IntND],
@@ -1354,7 +1484,7 @@ def _state_probability_law(
 class _TransitionLawCompiler:
     """Keep one user law call-local while compiling its concrete producer shape."""
 
-    function: Callable[..., FloatND]
+    function: Callable[..., object]
     """Complete user-law producer with grid construction inside its boundary."""
 
     arguments: Mapping[str, object]
