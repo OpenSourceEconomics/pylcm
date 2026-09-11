@@ -393,7 +393,7 @@ _SOURCE_SEALS = {
     WORKSPACE_PLANNING_SOURCE: "6d42fb80e7d5f2084fe35bd406f77405cc3ffcc7c7a4911fcc63bef262fcdc88",
     SIMULATION_PROGRAMS_SOURCE: "dc05c99c5b3e083e20e5b909ffe3a7910b94697cfb3d0fd9b9426d9cd80d5f1e",
     SIMULATION_PROGRAM_TYPES_SOURCE: "3b22c1399e032629734dcff54e29e9e4c00ccd03638d2fafd969f697975c8c6c",
-    SIMULATION_RUNTIME_SOURCE: "be59d95a87921528287909529bcb1496a90d60ba1bd5a057fb387e1b0a3a9d92",
+    SIMULATION_RUNTIME_SOURCE: "e5201dd231fbb3a0fd91d030358bce1899dc2bcea97da3d092a2b0b7629973cf",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
@@ -3113,7 +3113,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_RUNTIME_SOURCE: (
-            "64e8b442e3b5fec2e163c5eca4762a43181554c12a14d522bca57ca405b9565f",
+            "6cdf4d1e111d8988e185d56adec3a51d573407b33864b824658522fcc2058b90",
             {
                 "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
                 "SimulationRuntime.dispatch": "b936af2fdda53d89102dc39ee6846e1c53072222a216aeeca3e69f34df201165",
@@ -4260,11 +4260,11 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/runtime.py": (
-        "64e8b442e3b5fec2e163c5eca4762a43181554c12a14d522bca57ca405b9565f",
+        "6cdf4d1e111d8988e185d56adec3a51d573407b33864b824658522fcc2058b90",
         {
             "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
             "SimulationRuntime.prepare_abstract": "842dba8c1e48637eba99548bebb2858a25116785451901451be656ad3ab55a76",
-            "_dispatch_widths": "3ba962b2590f67b9d50e907111232d81eb2b9c48c2191a76292f288b09a986f1",
+            "_dispatch_widths": "99f9bbca64acb98540f9f15393ce9f7bcd3c36065378892272b28208c7d4dbd4",
             "_require_abstract_arguments": "c99bca4f2c8dad3b1454441b13b5e25f81ca67fc44b98acddc00d325458bb073",
         },
     ),

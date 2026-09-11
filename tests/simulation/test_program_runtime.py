@@ -211,14 +211,14 @@ def _program() -> CoreProgram:
 
 
 def _runtime(
-    *, width: int = 3, enable_jit: bool = True, budget: int | None = None
+    *, width: int | None = 3, enable_jit: bool = True, budget: int | None = None
 ) -> SimulationRuntime:
-    """Build an executor with a fixed subject tile and an explicit budget policy."""
+    """Build an executor with an optional subject tile and budget policy."""
     return SimulationRuntime(
         execution=ResolvedExecution(
             device_ids=(0,),
             sharded_states=frozenset(),
-            axis_widths=MappingProxyType({"subject": width}),
+            axis_widths=MappingProxyType({} if width is None else {"subject": width}),
             device_memory_bytes=budget,
         ),
         enable_jit=enable_jit,
@@ -240,6 +240,34 @@ def test_subject_tiles_preserve_every_output(
         period=0,
         n_subjects=n_subjects,
     )
+    np.testing.assert_array_equal(output, np.arange(n_subjects) + 1)
+
+
+@pytest.mark.parametrize(("n_subjects", "expected_width"), [(7, 7), (4097, 4096)])
+def test_unbudgeted_simulation_uses_the_subject_specific_inner_width(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    n_subjects: int,
+    expected_width: int,
+) -> None:
+    """The default inner tile is wide while the outer population stays complete."""
+    selected: list[tuple[dict[str, int], int]] = []
+    original = runtime_module.plan_workspace
+
+    def observe(**kwargs: Any) -> Any:
+        plan = original(**kwargs)
+        selected.append((dict(plan.widths), kwargs["axes"][0].extent))
+        return plan
+
+    monkeypatch.setattr(runtime_module, "plan_workspace", observe)
+    output = _runtime(width=None).dispatch(
+        program=_program(),
+        arguments={"state": jnp.arange(n_subjects, dtype=float)},
+        period=0,
+        n_subjects=n_subjects,
+    )
+
+    assert selected == [({"subject": expected_width}, n_subjects)]
     np.testing.assert_array_equal(output, np.arange(n_subjects) + 1)
 
 
