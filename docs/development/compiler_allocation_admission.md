@@ -98,16 +98,17 @@ the original asynchronous failure site remains outside its conclusions.
 
 ## Migration inventory
 
-| Budgeted consumer                                            | Reservation and ownership behavior                                                                                                                                                                  |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `execution/workspace_planning.py`                            | Computes complete compiler records, ranks widths by reservation plus external residency, returns separate raw peak and reservation metadata.                                                        |
-| `solution/backward_induction.py`                             | Caches complete reports by lowering, pairs each donation variant with its own residency, compares reservations in compilation waves and final selection, logs raw peaks under their existing label. |
-| `simulation/runtime.py`                                      | Reads the exact executable's complete report and rechecks call-owned original, placed, and compiler-eliminated arguments through the existing residency inventory.                                  |
-| `simulation/host_operations.py`                              | Caches complete accounting with executable code; preserves `keep_unused=True` and fresh physical-buffer residency for each call.                                                                    |
-| `simulation/solution_copies.py`                              | Uses complete cached accounting while retaining original and earlier private copies.                                                                                                                |
-| `simulation/process_grids.py`                                | Uses complete accounting for the supported uniform-grid and staged normal-support producers, including cumulative call-owned support and temporary buffers.                                         |
-| `simulation/chunk_planning.py`                               | Adds stage reservations to actual retained and future output storage; retains raw stage peaks separately and preserves separate CPU assembly.                                                       |
-| Feasibility, action-grid, padding, and diagnostic operations | Reach the central planner directly or through the profiled-operation owner, preserving refusal before dispatch.                                                                                     |
+| Budgeted consumer                                            | Reservation and ownership behavior                                                                                                                                                                                                                               |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `execution/workspace_planning.py`                            | Computes complete compiler records, ranks widths by reservation plus external residency, returns separate raw peak and reservation metadata.                                                                                                                     |
+| `solution/backward_induction.py`                             | Caches complete reports by lowering, pairs each donation variant with its own residency, compares reservations in compilation waves and final selection, logs raw peaks under their existing label.                                                              |
+| `simulation/runtime.py`                                      | Reads the exact executable's complete report and rechecks call-owned original, placed, and compiler-eliminated arguments through the existing residency inventory.                                                                                               |
+| `simulation/host_operations.py`                              | Caches complete accounting with executable code; preserves `keep_unused=True` and fresh physical-buffer residency for each call.                                                                                                                                 |
+| `simulation/solution_copies.py`                              | Uses complete cached accounting while retaining original and earlier private copies.                                                                                                                                                                             |
+| `simulation/process_grids.py`                                | Uses complete accounting for the supported uniform-grid and staged normal-support producers, including cumulative call-owned support and temporary buffers.                                                                                                      |
+| `simulation/chunk_planning.py`                               | Adds stage reservations to actual retained and future output storage; retains raw stage peaks separately and preserves separate CPU assembly.                                                                                                                    |
+| Feasibility, action-grid, padding, and diagnostic operations | Reach the central planner directly or through the profiled-operation owner, preserving refusal before dispatch.                                                                                                                                                  |
+| Stochastic state-transition validation                       | Places the concrete grid and scalar operands, compiles the complete Cartesian law producer, charges external residency, and dispatches only the admitted executable. Serial invalid-input replay admits its probability reduction through the same memory owner. |
 
 Compiler aliases only remove represented argument/output overlap. Existing physical
 buffer unioning and compiler-input metadata determine which caller-owned spans can be
@@ -126,6 +127,14 @@ refusal witness. Existing feasibility tests check sufficient-budget values, sele
 actions, caller arrays, and diagnostics. The two downstream diagnostic-pressure cases
 use cheap predicates so their intended gathers and per-constraint producers can be
 reached before refusal.
+
+`tests/simulation/test_state_transition_entry_admission.py` records that a constrained
+simulation refuses before a stochastic state law finishes, exercises the admitted
+summary and serial invalid-input replay, and compares sufficient-budget simulation
+results and caller inputs with the unbudgeted route. The corresponding semantic
+certificate pins memory transport, input placement, external residency, compiler
+admission, readiness, temporary ownership, and the admitted diagnostic reduction.
+Regime-transition and joint-transition law producers remain separate inventory items.
 
 The gather-pressure test still requires exactly two cohort gathers, for summary and
 serial replay, followed by refusal before the diagnostic-subset gather dispatches. The

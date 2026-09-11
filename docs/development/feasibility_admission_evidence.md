@@ -60,7 +60,9 @@ before `jax.stages.Compiled.__call__`.
 
 The central follow-up captures the exact executable and refuses it before dispatch using
 represented allocation accounting. It preserves the raw 90-byte peak separately from its
-computed reservation. The broader producer inventory also retains transition-law
-evaluation, composite stochastic-process grids, and remaining structural invalid-input
-operations as open work. This feasibility change provides no general guarantee for those
-allocations or for memory omitted from a backend's reported peak.
+computed reservation. Stochastic state-transition validation now has a separate admitted
+producer and serial replay contract. The broader producer inventory still retains
+regime-transition and joint-transition law evaluation, composite stochastic process
+grids, and remaining structural invalid-input operations as open work. This feasibility
+change provides no general guarantee for those allocations or for memory omitted from a
+backend's reported peak.
