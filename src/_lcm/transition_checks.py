@@ -1460,7 +1460,7 @@ def _evaluate_admitted_transition_producer(
         budget_bytes=memory.budget_bytes,
         resident_bytes=max(external.values()),
     )
-    return plan.compiled(**placed).block_until_ready()
+    return jax.block_until_ready(plan.compiled(**placed))
 
 
 def _state_probability_law(

@@ -147,7 +147,7 @@ def _regime_transition_admission_errors(  # noqa: C901, PLR0912
             "resident_bytes=max(external.values())"
         ),
         "only admitted transition producer may dispatch": (
-            "plan.compiled(**placed).block_until_ready()"
+            "jax.block_until_ready(plan.compiled(**placed))"
         ),
     }
     for message, expression in required_producer.items():
@@ -236,8 +236,8 @@ def test_regime_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_evaluate_admitted_transition_producer",
-            "        resident_bytes=max(external.values()),\n    )\n    return plan.compiled(**placed).block_until_ready()",
-            "        resident_bytes=0,\n    )\n    return plan.compiled(**placed).block_until_ready()",
+            "        resident_bytes=max(external.values()),\n    )\n    return jax.block_until_ready(plan.compiled(**placed))",
+            "        resident_bytes=0,\n    )\n    return jax.block_until_ready(plan.compiled(**placed))",
             "largest transition residency must be charged",
         ),
         (
@@ -248,7 +248,7 @@ def test_regime_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_evaluate_admitted_transition_producer",
-            "return plan.compiled(**placed).block_until_ready()",
+            "return jax.block_until_ready(plan.compiled(**placed))",
             "return plan.compiled(**placed)",
             "only admitted transition producer may dispatch",
         ),

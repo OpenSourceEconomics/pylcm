@@ -47,11 +47,20 @@ def _invalid_costly_regime_probabilities() -> FloatND:
     return jnp.stack((probability, probability))
 
 
-def _inputs(*, budget: int) -> tuple[Model, UserParams, UserInitialConditions]:
+def _valid_regime_probabilities() -> FloatND:
+    return jnp.asarray([0, 1], dtype=_FLOAT_DTYPE)
+
+
+def _inputs(
+    *, budget: int, valid: bool = False
+) -> tuple[Model, UserParams, UserInitialConditions]:
+    probabilities = (
+        _valid_regime_probabilities if valid else _invalid_costly_regime_probabilities
+    )
     model = Model(
         regimes={
             "alive": Regime(
-                transition=MarkovTransition(_invalid_costly_regime_probabilities),
+                transition=MarkovTransition(probabilities),
                 active=_active_alive,
                 functions={"utility": _utility},
             ),
@@ -119,6 +128,22 @@ def compiler_boundary(monkeypatch: pytest.MonkeyPatch) -> _CompilerBoundary:
 def _controlled_post_validation_refusal(*args: Any, **kwargs: Any) -> Any:
     del args, kwargs
     raise ExecutionPlanningError("controlled refusal after transition validation")
+
+
+@pytest.mark.requires(device="cpu")
+def test_admitted_regime_probability_pytree_completes() -> None:
+    """A successful budgeted regime law completes every output leaf."""
+    model, params, initial = _inputs(budget=2**28, valid=True)
+    solution = model.solve(params=params, log_level="off")
+
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial,
+        solution=solution,
+        log_level="debug",
+    )
+
+    assert result.n_subjects == 1
 
 
 @pytest.mark.requires(device="cpu")

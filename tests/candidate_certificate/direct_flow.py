@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "b5f89d266beae4cffb16048646bda347dc6bcf2e053918ce3bc067cdcf754541",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "48de89171a12df7243c18be9746cb6a135390c14ffa85db6f0a423cfb1b6d341",
     SUPPORT_DIAGNOSTICS_SOURCE: "031dc0d584faec8d055d25b3099d71e4f76c71cbb4670ad8e85cb2a4746bbb09",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -6327,7 +6327,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_validate_state_transition_single": "f921dc60816dc77adc95a9a543bf3b3c60950836604e657cbf79a10aaf8e9253",
             "_check_and_release_state_probability": "8479b8303c3958300ec8cf224c9f117541745c5fc9a8ac971ed83951043c7f2e",
             "_evaluate_state_probability_law": "22ace1a5635bc79575af8e7bc19017d6fa17dc0b96b26ded67bbfb6119cad85a",
-            "_evaluate_admitted_transition_producer": "26df91ef77a51d71fdb40e7075943e9ae2b8d4c4283aae46cefd1713984beafe",
+            "_evaluate_admitted_transition_producer": "4fba1f197856602a1f48adbf090a2086e5e25c1209a59ae7fa4e6096e2e73941",
             "_state_probability_law": "d058c6e928b67b7c8a30380cdd92b0eb76811c17e5fbf3fd85e36716221c3f3d",
             "_TransitionLawCompiler.__call__": "03fa9e5ad84f0058889242afbb6cec599166b870db09e4ce7d84c4f1856e2da2",
             "_abstract_transition_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",

@@ -414,7 +414,7 @@
           },
           {
             "path": "src/_lcm/transition_checks.py",
-            "sha256": "b5f89d266beae4cffb16048646bda347dc6bcf2e053918ce3bc067cdcf754541"
+            "sha256": "48de89171a12df7243c18be9746cb6a135390c14ffa85db6f0a423cfb1b6d341"
           },
           {
             "path": "src/_lcm/utils/containers.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "51cc26f0ca79a5f402804e518f807d8f2f3370983162ba3dae5a0b59d242d6de"
+        "source_inventory_sha256": "15445108d25ce87cd1803d48f3890346e2a31cfcdd23c054bc767e8d5b28ca32"
       },
       "fast": {
         "candidate_sources": [
@@ -884,7 +884,7 @@
           },
           {
             "path": "src/_lcm/transition_checks.py",
-            "sha256": "b5f89d266beae4cffb16048646bda347dc6bcf2e053918ce3bc067cdcf754541"
+            "sha256": "48de89171a12df7243c18be9746cb6a135390c14ffa85db6f0a423cfb1b6d341"
           },
           {
             "path": "src/_lcm/utils/containers.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "51cc26f0ca79a5f402804e518f807d8f2f3370983162ba3dae5a0b59d242d6de"
+        "source_inventory_sha256": "15445108d25ce87cd1803d48f3890346e2a31cfcdd23c054bc767e8d5b28ca32"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "51cc26f0ca79a5f402804e518f807d8f2f3370983162ba3dae5a0b59d242d6de",
+  "source_inventory_sha256": "15445108d25ce87cd1803d48f3890346e2a31cfcdd23c054bc767e8d5b28ca32",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1358,7 +1358,7 @@
     },
     {
       "path": "src/_lcm/transition_checks.py",
-      "sha256": "b5f89d266beae4cffb16048646bda347dc6bcf2e053918ce3bc067cdcf754541"
+      "sha256": "48de89171a12df7243c18be9746cb6a135390c14ffa85db6f0a423cfb1b6d341"
     },
     {
       "path": "src/_lcm/utils/containers.py",
