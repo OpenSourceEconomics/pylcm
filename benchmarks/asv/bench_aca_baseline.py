@@ -25,12 +25,11 @@ shipped in aca-model — no aca-data pipeline run required.
 
 ASV wiring notes:
 
-- Each class's `setup_cache` launches one isolated subprocess through
-  `_gpu_mem.measure_combined`. That process builds once, runs one cold
-  simulation while recording compilation time and CPU/GPU peak memory,
-  then immediately times one warm simulation. Four cheap `track_*`
-  methods read the shared result. This avoids recompiling the model once
-  per metric while retaining four independent ASV series.
+- Each class's `setup_cache` retains the combined cold/warm timing and CPU-memory
+  measurement, then launches the exact GPU-memory profile. That profile runs
+  automatic solve+simulate, ALL_PERSISTABLE solve+save, and load+supplied-solution
+  simulate sequentially in three fresh isolated processes. Six cheap `track_*`
+  methods read the shared results. No reported phase peak is summed or subtracted.
 - `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives
   the debug configuration a separate combined subprocess.
 - XLA autotuning is disabled and preallocation is off in the measurement
@@ -49,8 +48,8 @@ _N_SUBJECTS = 1000
 
 _LOG_DIR_PREFIX = "aca-bench-debug-log-"
 
-# Longer than the combined subprocess timeout, so the sweep below can never
-# remove a directory belonging to a live run.
+# Longer than any individual measurement subprocess timeout, so the sweep below
+# can never remove a directory belonging to a live run.
 _STALE_LOG_DIR_AGE_SECONDS = 24 * 3600
 
 
@@ -79,6 +78,21 @@ def _make_log_dir() -> str:
     path = tempfile.mkdtemp(prefix=_LOG_DIR_PREFIX)
     atexit.register(shutil.rmtree, path, ignore_errors=True)
     return path
+
+
+def _measure_all(*, bench_class: str) -> dict[str, float]:
+    """Collect stable timing series plus the exact three-phase GPU profile."""
+    measurements = _gpu_mem.measure_combined(
+        bench_module="benchmarks.asv.bench_aca_baseline",
+        bench_class=bench_class,
+    )
+    profile = _gpu_mem.measure_gpu_memory_profile(
+        bench_module="benchmarks.asv.bench_aca_baseline",
+        bench_class=bench_class,
+    )
+    if measurements.keys() & profile.keys():
+        raise RuntimeError("ACA measurement protocols returned overlapping labels.")
+    return {**measurements, **profile}
 
 
 def _build() -> tuple[object, object, object]:
@@ -129,16 +143,13 @@ class AcaBaseline:
     # Stable version stamp so asv keeps continuity across benchmark-body
     # refactors that don't change what's measured.
     version = "1"
-    timeout = 3600
+    timeout = 14400
     # Simulate logging configuration; `AcaBaselineDebugLog` overrides both.
     log_level = "off"
     log_path: str | None = None
 
     def setup_cache(self) -> dict[str, float]:
-        return _gpu_mem.measure_combined(
-            bench_module="benchmarks.asv.bench_aca_baseline",
-            bench_class="AcaBaseline",
-        )
+        return _measure_all(bench_class="AcaBaseline")
 
     def setup(self, cache: dict[str, float]) -> None:
         self._measurements = cache
@@ -156,6 +167,42 @@ class AcaBaseline:
             log_path=self.log_path,
         )
 
+    def execute_gpu_memory_phase(
+        self,
+        *,
+        phase: str,
+        archive_path: pathlib.Path,
+    ) -> None:
+        """Run one exact solution-lifecycle phase in its dedicated child process."""
+        if phase == _gpu_mem.AUTOMATIC_SOLVE_SIMULATE:
+            self.execute_for_measurement()
+            return
+        if phase == _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE:
+            from lcm.solver_api import ResultRetention
+
+            solution = self.model.solve(
+                params=self.model_params,
+                log_level=self.log_level,
+                retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+                log_path=self.log_path,
+            )
+            solution.save(path=archive_path)
+            return
+        if phase == _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE:
+            from lcm.persistence import load_solution
+
+            solution = load_solution(path=archive_path)
+            self.model.simulate(
+                params=self.model_params,
+                initial_conditions=self.initial_conditions,
+                solution=solution,
+                log_level=self.log_level,
+                log_path=self.log_path,
+            )
+            return
+        msg = f"Unknown GPU memory profile phase: {phase!r}."
+        raise ValueError(msg)
+
     def track_execution_time(self, cache: dict[str, float] | None = None) -> float:
         return self._measurements["execution_time"]
 
@@ -166,10 +213,26 @@ class AcaBaseline:
 
     track_peak_cpu_mem.unit = "bytes"
 
-    def track_peak_gpu_mem(self, cache: dict[str, float] | None = None) -> float:
-        return self._measurements["peak_gpu_mem"]
+    def track_peak_gpu_mem_automatic_solve_simulate(
+        self, cache: dict[str, float] | None = None
+    ) -> float:
+        return self._measurements[_gpu_mem.AUTOMATIC_SOLVE_SIMULATE]
 
-    track_peak_gpu_mem.unit = "bytes"
+    track_peak_gpu_mem_automatic_solve_simulate.unit = "bytes"
+
+    def track_peak_gpu_mem_solve_save_all_persistable(
+        self, cache: dict[str, float] | None = None
+    ) -> float:
+        return self._measurements[_gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE]
+
+    track_peak_gpu_mem_solve_save_all_persistable.unit = "bytes"
+
+    def track_peak_gpu_mem_load_supplied_solution_simulate(
+        self, cache: dict[str, float] | None = None
+    ) -> float:
+        return self._measurements[_gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE]
+
+    track_peak_gpu_mem_load_supplied_solution_simulate.unit = "bytes"
 
     def track_compilation_time(self, cache: dict[str, float] | None = None) -> float:
         return self._measurements["compilation_time"]
@@ -189,10 +252,7 @@ class AcaBaselineDebugLog(AcaBaseline):
     log_level = "debug"
 
     def setup_cache(self) -> dict[str, float]:
-        return _gpu_mem.measure_combined(
-            bench_module="benchmarks.asv.bench_aca_baseline",
-            bench_class="AcaBaselineDebugLog",
-        )
+        return _measure_all(bench_class="AcaBaselineDebugLog")
 
     def setup_for_gpu_measurement(self) -> None:
         # Mirror `setup`'s log_path setup so the measurement subprocess

@@ -2,15 +2,14 @@
 
 The finite solve must reproduce stored reference outputs rather than an
 independently reimplemented aggregation. The fixture
-`tests/data/n_nbegm_finite_baseline.npz` holds, per
-`outer_batch_size` in {0, 1, 4} on the smooth two-asset toy (x64, 3 periods):
-every alive period's collapsed `V_arr` and complete candidate-bank `EGMCarry`
-leaves as returned by
-`_NNBEGMPeriodKernel.__call__`, plus the public `Model.solve` output.
+`tests/data/n_nbegm_finite_baseline.npz` holds, on the smooth two-asset toy
+(x64, 3 periods), every alive period's collapsed `V_arr` and complete
+candidate-bank `EGMCarry` leaves as returned by `_NNBEGMPeriodKernel.__call__`,
+plus the public `Model.solve` output.
 
-The reference includes the corrected lower-savings corner from `78dfa1a9` and
-the explicit candidate carry bank required for exact policy replay by
-`37582328`.
+The outer collapse is a host loop over the candidate nodes, so its dispatch
+width reschedules the loop without changing the fold order; every width is
+compared against the same capture.
 
 `V` and carry value/grid agree within 1e-12; carry marginals agree within 1e-11.
 """
@@ -25,6 +24,7 @@ import pytest
 from jax import config as jax_config
 
 import _lcm.solution.nnbegm as solvers_mod
+from lcm import ExecutionConfig
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.typing import FloatND
 from tests.test_models import n_nbegm_toy as toy
@@ -45,11 +45,28 @@ _CARRY_LEAVES = {
 }
 
 
+def _host_copy(*, result: KernelOutput) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
+    """Copy one period's value and carry leaves to the host as they are produced.
+
+    The nested node declares the leaves it reads, so the solve releases a
+    period's carry once the period that reads it has run; a recorder holding the
+    device arrays would read them after that release.
+    """
+    carry = result.continuations[EGM_CONTINUATION]
+    return (
+        np.asarray(result.value),
+        tuple(np.asarray(leaf) for leaf in jax.tree_util.tree_leaves(carry)),
+    )
+
+
 def _solve_recording_kernel_results(
-    *, outer_batch_size: int, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Mapping[int, Mapping[str, FloatND]], dict[int, KernelOutput]]:
-    """Solve the toy, recording each period's raw `KernelOutput`."""
-    recorded: dict[int, KernelOutput] = {}
+    *, width: int | None, monkeypatch: pytest.MonkeyPatch
+) -> tuple[
+    Mapping[int, Mapping[str, FloatND]],
+    dict[int, tuple[np.ndarray, tuple[np.ndarray, ...]]],
+]:
+    """Solve the toy, recording each period's `KernelOutput` arrays on the host."""
+    recorded: dict[int, tuple[np.ndarray, tuple[np.ndarray, ...]]] = {}
     original_call = solvers_mod._NNBEGMPeriodKernel.__call__
 
     def recording_call(
@@ -57,7 +74,7 @@ def _solve_recording_kernel_results(
         **kwargs: object,
     ) -> KernelOutput:
         result = original_call(self, **kwargs)  # ty: ignore[invalid-argument-type]
-        recorded[cast("int", kwargs["period"])] = result
+        recorded[cast("int", kwargs["period"])] = _host_copy(result=result)
         return result
 
     monkeypatch.setattr(
@@ -68,8 +85,10 @@ def _solve_recording_kernel_results(
     solution = (
         toy.build_model(
             variant="n_nbegm",
-            outer_batch_size=outer_batch_size,
             n_periods=_N_PERIODS,
+            execution_config=ExecutionConfig(
+                axis_widths={} if width is None else {"outer_candidate": width}
+            ),
         )
         .solve(params=_PARAMS, log_level="debug")
         .values
@@ -77,45 +96,42 @@ def _solve_recording_kernel_results(
     return solution, recorded
 
 
-@pytest.mark.parametrize("outer_batch_size", [0, 1, 2, 4, 7])
+@pytest.mark.parametrize("width", [None, 1, 2, 4, 7])
 def test_finite_streaming_fold_matches_frozen_corrected_baseline(
-    *, outer_batch_size: int, monkeypatch: pytest.MonkeyPatch
+    *, width: int | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The streaming solve reproduces the frozen corrected finite-search arrays.
 
-    Batch sizes 0/1/4 compare against their own frozen capture; 2 and 7 (the
-    remaining supported chunk shapes compare against the batch-0 capture,
-    which is valid because the fold order is the node order regardless of
-    chunking.
+    Every dispatch width compares against the whole-axis capture, which is
+    valid because the fold order is the node order regardless of chunking.
     """
     if not jax_config.read("jax_enable_x64"):
         pytest.skip("baseline frozen under x64")
     baseline = np.load(_BASELINE)
-    tag = f"b{outer_batch_size}" if outer_batch_size in (0, 1, 4) else "b0"
+    tag = "b0"
 
     solution, recorded = _solve_recording_kernel_results(
-        outer_batch_size=outer_batch_size, monkeypatch=monkeypatch
+        width=width, monkeypatch=monkeypatch
     )
 
     for period in _ALIVE_PERIODS:
-        result = recorded[period]
+        value, leaves = recorded[period]
         np.testing.assert_allclose(
-            np.asarray(result.value),
+            value,
             baseline[f"{tag}:p{period}:V_arr"],
             rtol=1e-12,
             atol=1e-12,
-            err_msg=f"V_arr at period {period}, batch {outer_batch_size}",
+            err_msg=f"V_arr at period {period}, width {width}",
         )
-        leaves = jax.tree_util.tree_leaves(result.continuations[EGM_CONTINUATION])
         assert len(leaves) == len(_CARRY_LEAVES)
         for index, leaf in enumerate(leaves):
             name, rtol, atol = _CARRY_LEAVES[index]
             np.testing.assert_allclose(
-                np.asarray(leaf),
+                leaf,
                 baseline[f"{tag}:p{period}:carry[<flat index {index}>]"],
                 rtol=rtol,
                 atol=atol,
-                err_msg=(f"carry.{name} at period {period}, batch {outer_batch_size}"),
+                err_msg=f"carry.{name} at period {period}, width {width}",
             )
 
     for period, regime_to_v in solution.items():

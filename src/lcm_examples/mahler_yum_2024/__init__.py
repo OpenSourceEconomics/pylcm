@@ -98,6 +98,7 @@ from scipy.interpolate import make_interp_spline
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     MarkovTransition,
     Model,
@@ -710,28 +711,38 @@ DEAD_REGIME = Regime(
 
 _SURVIVAL_PROBS = _load_survival_probs()
 
-MAHLER_YUM_MODEL = Model(
-    regimes={
-        "working": WORKING_REGIME,
-        "retirement": RETIREMENT_REGIME,
-        "dead": DEAD_REGIME,
-    },
-    ages=ages,
-    regime_id_class=RegimeId,
-    fixed_params={
-        "effort_grid": effort_grid,
-        "productivity_type_multiplier": productivity_type_multiplier,
-        "sigma": risk_aversion,
-        "health_intercept": health_intercept,
-        "health_age_effects": health_age_effects,
-        "good_health_coefficient": good_health_coefficient,
-        "health_type_coefficient": health_type_coefficient,
-        "college_coefficient": college_coefficient,
-        "health_effort_coefficient": health_effort_coefficient,
-        "lagged_health_effort_coefficient": lagged_health_effort_coefficient,
-        "survival_probs": _SURVIVAL_PROBS,
-    },
-)
+
+def create_model(
+    *,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
+    """Build the lifecycle model with the requested hardware-local controls."""
+    return Model(
+        regimes={
+            "working": WORKING_REGIME,
+            "retirement": RETIREMENT_REGIME,
+            "dead": DEAD_REGIME,
+        },
+        ages=ages,
+        regime_id_class=RegimeId,
+        fixed_params={
+            "effort_grid": effort_grid,
+            "productivity_type_multiplier": productivity_type_multiplier,
+            "sigma": risk_aversion,
+            "health_intercept": health_intercept,
+            "health_age_effects": health_age_effects,
+            "good_health_coefficient": good_health_coefficient,
+            "health_type_coefficient": health_type_coefficient,
+            "college_coefficient": college_coefficient,
+            "health_effort_coefficient": health_effort_coefficient,
+            "lagged_health_effort_coefficient": lagged_health_effort_coefficient,
+            "survival_probs": _SURVIVAL_PROBS,
+        },
+        execution_config=execution_config,
+    )
+
+
+MAHLER_YUM_MODEL = create_model()
 
 
 START_PARAMS = {

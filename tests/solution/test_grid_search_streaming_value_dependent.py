@@ -15,9 +15,8 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     MaterializedCoreProgram,
-    StreamableProductAxis,
+    ReducedAxis,
     core_program_graph,
-    initial_core_tile_widths,
     materialize_core_program,
     resolve_core_program,
 )
@@ -39,7 +38,7 @@ from _lcm.solution.backward_induction import (
 from _lcm.solution.grid_search import (
     _GridSearchArgumentBuilder,
     _GridSearchPeriodKernel,
-    _target_value_accesses,
+    _value_reads,
 )
 from lcm import Model
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
@@ -99,7 +98,7 @@ def _aligned_transfer_plan(
 ) -> tuple[ResolvedValueTransfer, ...]:
     """Resolve identity adapters for this test's already local JAX arrays."""
     result: list[ResolvedValueTransfer] = []
-    for access in program.requirements.target_value_accesses:
+    for access in program.requirements.value_reads:
         leaf: object = program.arguments[access.source.channel.value]
         for segment in access.source.path:
             assert isinstance(leaf, Mapping)
@@ -151,8 +150,8 @@ def _consent_case() -> Model:
                 "single_f_terminal": {},
             },
             (("single_f",), (), ()),
-            CoreExecutionDisposition.DENSE,
-            "deliberately_dense:collective_resource_regression",
+            CoreExecutionDisposition.PLANNED,
+            None,
             id="same-period-reference",
         ),
         pytest.param(
@@ -189,7 +188,7 @@ def test_value_dependent_model_declares_its_required_program_disposition(
     ) == expected_channels
     assert program.disposition is expected_disposition
     assert program.disposition_reason == expected_reason
-    assert bool(program.requirements.streamable_axes) is (
+    assert bool(program.requirements.axes) is (
         expected_disposition is CoreExecutionDisposition.PLANNED
     )
     transfer_plan = (
@@ -199,7 +198,7 @@ def test_value_dependent_model_declares_its_required_program_disposition(
     )
     resolved = resolve_core_program(
         program=program,
-        tile_widths=initial_core_tile_widths(program=program),
+        tile_widths={axis.name: axis.extent for axis in program.requirements.axes},
         input_transfer_plan=transfer_plan,
     )
     actual = resolved.function(**resolved.arguments, **resolved.static_kwargs)
@@ -264,9 +263,9 @@ def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]
         function=streamed,
         argument_builder=lambda _context: arguments,
         requirements=CoreExecutionRequirements(
-            streamable_axes=(
-                StreamableProductAxis(
-                    name="action",
+            reduced_axes=(
+                ReducedAxis(
+                    name="action_product",
                     coordinate_names=("choice",),
                     coordinate_extents=(3,),
                     canonical_order="c",
@@ -274,7 +273,7 @@ def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]
                     width_keyword="_lcm_action_block_width",
                 ),
             ),
-            target_value_accesses=_target_value_accesses(
+            value_reads=_value_reads(
                 regime_name="source",
                 period=0,
                 target_regimes=("target",),
@@ -307,7 +306,7 @@ def test_value_dependent_reference_matches_dense_eager_jit_and_aot(width: int) -
     dense = dense_function(**program.arguments)
     resolved = resolve_core_program(
         program=program,
-        tile_widths={"action": width},
+        tile_widths={"action_product": width},
         input_transfer_plan=_aligned_transfer_plan(program=program),
     )
     eager = resolved.function(**resolved.arguments, **resolved.static_kwargs)

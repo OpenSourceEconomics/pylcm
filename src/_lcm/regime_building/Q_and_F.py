@@ -1893,7 +1893,8 @@ def _get_pointwise_gated_interpolator(
             "continuation co-maps as fixed distributed state(s). A co-mapped "
             "axis is sliced off before the continuation is read, so there is "
             "no landing coordinate to evaluate the gate at. Read the state "
-            "through a gate reference, or drop `distributed=True` from it."
+            "through a gate reference, or remove it from "
+            "ExecutionConfig.sharded_states."
         )
         raise ValueError(msg)
     interpolator_args = tuple(get_union_of_args([base_interpolator]))

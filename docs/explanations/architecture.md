@@ -347,6 +347,77 @@ everything that constructs the inputs (parameters, grids, transitions, compiled
 callables) lives in `regime_building/` and is read out of the canonical `Regime`
 instances.
 
+Workspace admission combines a represented compiler allocation reservation with external
+resident storage. The reservation enforces both the raw peak and
+`argument + output - alias + temporary` bytes for each complete device record. Profiled
+simulation operations place all dynamic arguments on the execution devices and compile
+with `keep_unused=True`, so their reported argument storage includes inputs used only
+for shape or dtype.
+
+Solve and simulation cores allow the compiler to eliminate unused arguments. Each
+candidate's public `Compiled.input_shardings` tree identifies the surviving dynamic
+input occurrences; eliminated arguments remain in external residency while their owners
+are live. Simulation subtracts only surviving inputs' actual buffer spans, preserving
+uncovered portions of larger aliased owners. Solve queries its schedule inventory for
+the exact regime, period, core, and widths, excluding only surviving declared reads on
+their stored layout. Logical artifact aliases determine solve residency; template arrays
+do not establish aliases between future outputs. These exclusions change neither the
+declared reads nor their consumer lifetimes, and do not require moving unused inputs to
+the core's devices.
+
+Solve also charges its concrete fixed owners throughout the solve, reserves shared
+transfer destinations for the whole period, and reserves internal producer outputs
+within their regime-period cell. Fixed-owner aliases are unioned on each actual device;
+abstract shape templates own no device storage. Known internal output shardings
+determine their per-device payload; missing layouts use a full-payload bound. These
+reservations can overlap compiler-counted inputs, intentionally over-counting storage.
+Width selection is widest under this declared bound, rather than an allocator-optimal
+choice.
+
+Compiler peaks remain the actual executable reports. Complete allocation counters must
+include retained input payloads; unavailable or mismatched input metadata refuses
+budgeted core planning. Executable reuse still requires a fresh residency check. The
+remaining limits of whole-call simulation accounting are recorded in the
+[architecture transition ledger](../development/architecture_transition_ledger.md).
+
+Budgeted simulation entry retains the original caller arrays and existing model grids,
+fixed parameters, regime IDs and ages while canonicalizing plain numeric parameters and
+initial conditions. Host dtype conversion and the existing range checks run first; each
+upload admits its destination payload and declared transfer scratch before allocating on
+the first selected device. This staging device is explicit even when device zero is
+excluded. Padding profiles the unchanged last-row repeat and concatenate operation
+against its represented compiler reservation. Completed leaves remain owned and charged
+before the next leaf is admitted; the full canonical input mapping remains live
+throughout padding. Subsequent subject placement uses the ordered simulation devices
+after padding. Series and DataFrame values are assembled on the host and use the same
+upload admission. Automatic solves retain and charge these simulation inputs alongside
+their solve inputs.
+
+Foreign eager value stores use an explicit call-local allocator for every private JAX
+copy. Each copy preserves the source shape, dtype, sharding and device order, and admits
+the exact compiled copy's memory report against the originals and earlier copies. The
+entry owner retains intermediate copies until validation commits the resolved values;
+failure releases that transient bank. A remembered validated view needs no new copies.
+Source devices outside the simulation subset still count when they use the same backend.
+Mixed CPU/accelerator foreign copies are refused before copying; an accelerator device
+ceiling is not a host-memory budget. Trusted native GridSearch value archives use a
+call-local loader after metadata, authority and coordinate validation. Each host leaf is
+checked against its archived address, shape, dtype and checksum before an admitted
+upload; dtype narrowing is refused before upload. Unloaded values stage on the first
+selected device because archives do not serialize source sharding. Preloaded cache
+arrays keep their actual source layout. Both detached copies are admitted while the
+original cache and earlier copies remain live. A failed upload leaves the entry
+unloaded; failure during a later copy preserves its already published private cache.
+
+Native cache construction has a separate serialization lock from its brief cache
+peek/publication lock. Admission snapshots never hold a cache lock across loading or
+allocation, so simultaneous entry loads can inspect the complete cached bank. These
+locks protect entry memoization; they do not coordinate budgets across concurrent
+mutations of an entire result. Loader callbacks remain call-local and do not enter the
+archive cache or consumed-view memo. Budgeted foreign artifact authorities, native
+artifact payloads and arbitrary lazy decoders remain unprofiled and are refused before
+their copying or upload callbacks. Their unbudgeted behavior is unchanged.
+
 ## The solver seam: keys and routes
 
 Two declarations connect a solver to the engine without either reading the other's
@@ -376,10 +447,13 @@ re-exported by `lcm.solvers`.
 
 `model_authority.py` builds authority from the canonical model and consuming route. A
 restored or caller-supplied result is canonicalized once; required lazy entries are
-materialized and checksum checked; then pylcm validation, plugin validation, reader
-construction, and the forward loop consume that same immutable snapshot. Descriptors
-transported in `SolutionMetadata` remain descriptive and cannot authenticate their own
-payloads.
+materialized and checksum checked; then pylcm and plugin validation preflight every
+required cell before forward execution. Each period acquires its own placed payload and
+coordinate copies. The plugin validates that exact immutable snapshot and context again
+immediately before reader construction; the reader receives those same objects.
+Authority and descriptive metadata retain their validated identities through placement.
+Descriptors transported in `SolutionMetadata` remain descriptive and cannot authenticate
+their own payloads.
 
 ## Solution identity and persistence
 

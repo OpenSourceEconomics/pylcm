@@ -4,7 +4,7 @@ import itertools
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -33,8 +33,10 @@ from _lcm.engine import (
     PeriodRegimeSimulationData,
     Regime,
     StateActionSpace,
+    placed_devices_for_ids,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.ndimage import map_coordinates
@@ -44,23 +46,79 @@ from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
 )
+from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
+from _lcm.simulation.assembly import concatenate_arrays
+from _lcm.simulation.chunk_admission import PreparedSimulationChunks
+from _lcm.simulation.chunk_inputs import (
+    SimulationCallInputs,
+    prepare_simulation_call_inputs,
+    prepare_simulation_chunk_inputs,
+)
+from _lcm.simulation.chunk_offload import chunk_host_device, offload_chunk
+from _lcm.simulation.diagnostic_operations import (
+    owned_value_nan_count,
+    period_value_flags,
+    profiled_transition_counts,
+)
 from _lcm.simulation.gated_routing import (
-    route_gated_edges,
-    substitute_gated_edge_continuations,
+    simulation_gate_fold,
+    simulation_gate_route,
 )
 from _lcm.simulation.initial_conditions import (
-    MISSING_CAT_CODE,
     build_initial_states,
     trim_pad_from_raw_results,
 )
-from _lcm.simulation.random import draw_random_seed, generate_simulation_keys
+from _lcm.simulation.membership import (
+    activate_subject_membership,
+    initialize_subject_membership,
+)
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.period_inputs import (
+    GATE_FOLD,
+    GATE_ROUTE,
+    POLICY_SCORE,
+    acquire_decision_inputs,
+    acquire_gate_inputs,
+    decision_reads,
+    gate_reads,
+    unit_value_reads,
+)
+from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
+from _lcm.simulation.policy_programs import ReplayPayload
+from _lcm.simulation.program_arguments import (
+    decision_arguments,
+    policy_prepare_arguments,
+    policy_rank_arguments,
+)
+from _lcm.simulation.random import (
+    create_simulation_key,
+    draw_random_seed,
+    split_simulation_key,
+)
+from _lcm.simulation.replay_inputs import PreparedReplayReader, place_replay_payload
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resolve_budget_devices,
+    union_buffer_footprints,
+)
+from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
+from _lcm.simulation.taste_stream import (
+    build_taste_stream_addresses,
+    create_taste_shock_key,
+    prepare_decision_taste_keys,
+)
 from _lcm.simulation.transitions import (
     calculate_next_regime_membership,
     calculate_next_states,
     create_regime_state_action_space,
 )
-from _lcm.solution.validate_V import validate_V
+from _lcm.simulation.unit_executor import SimulationUnitExecutor
+from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.solution.continuation_reads import rekeyed_value_reads
+from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.typing import (
     ActionName,
     EconFunctionArg,
@@ -79,22 +137,24 @@ from _lcm.typing import (
 from _lcm.utils.containers import invert_regime_ids
 from _lcm.utils.logging import (
     format_duration,
-    log_nan_in_V,
+    log_non_finite_values,
     log_period_header,
     log_period_timing,
     log_regime_transitions,
+    non_finite_by_regime,
     raise_or_warn,
     validation_enabled,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
+    ExecutionPlanningError,
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
-from lcm.solver_api import ActionOutput, ReplayReader
+from lcm.solver_api import SIMULATION_POLICY, ActionOutput, ReplayReader
 from lcm.typing import (
     BoolND,
     Float1D,
@@ -106,21 +166,12 @@ from lcm.typing import (
     ScalarInt,
 )
 
-# What `substitute_gated_edge_continuations` returns for one (regime, period):
-# the substituted continuation values, and the same-period mapping each firing
-# edge was folded on.
-type _GatedEdgeFolds = tuple[
-    MappingProxyType[RegimeName, FloatND],
-    MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]],
+type _PeriodToRegimeToReplayReader = Mapping[
+    int, Mapping[RegimeName, PreparedReplayReader | ReplayReader]
 ]
 
-# Gated-edge folds already evaluated, keyed by source regime and period.
-type _GatedEdgeFoldCache = dict[tuple[RegimeName, int], _GatedEdgeFolds]
 
-type _PeriodToRegimeToReplayReader = Mapping[int, Mapping[RegimeName, ReplayReader]]
-
-
-def simulate(
+def simulate(  # noqa: C901, PLR0915
     *,
     flat_params: FlatParams,
     initial_conditions: InitialConditions,
@@ -137,11 +188,16 @@ def simulate(
         MappingProxyType({})
     ),
     seed: int | None = None,
+    taste_shock_seed: int | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
     period_to_regime_to_dissolution_flags: MappingProxyType[
         int, MappingProxyType[RegimeName, BoolND]
     ] = MappingProxyType({}),
+    device_ids: tuple[int, ...] = (),
+    retained_footprint: DeviceBufferFootprint | None = None,
+    prepared_chunks: PreparedSimulationChunks | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -173,9 +229,10 @@ def simulate(
             used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
-        subject_batch_size: Concrete subject chunk size, already resolved by the
-            caller (`Model.simulate` maps the user-facing `0`/`>0` knob to
-            an int here). `0` or a value `>= n_subjects` simulates the whole
+        taste_shock_seed: Independent taste seed, or None for the ordinary stream.
+        subject_batch_size: Concrete outer subject chunk extent, resolved by
+            `Model.simulate` from ExecutionConfig and whole-chunk admission.
+            `0` or a value `>= n_subjects` simulates the whole
             population in a single pass; a smaller value chunks the subjects,
             bounding the per-period device workspace at the cost of re-running the
             period loop per chunk. Results are invariant to this knob: per-subject
@@ -193,6 +250,8 @@ def simulate(
             flag as an addressed replay artifact in ``SolutionResult``;
             ``Model.simulate(solution=...)`` validates and projects those artifacts,
             and its automatic-solve path threads them through directly.
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -200,6 +259,23 @@ def simulate(
     """
     if seed is None:
         seed = draw_random_seed()
+
+    taste_addresses = (
+        MappingProxyType({})
+        if taste_shock_seed is None
+        else build_taste_stream_addresses(
+            ages=ages,
+            discrete_actions_by_regime={
+                name: {
+                    action: grid
+                    for action in regime.solution.action_names
+                    if isinstance(grid := regime.solution.grids[action], DiscreteGrid)
+                }
+                for name, regime in regimes.items()
+                if regime.has_taste_shocks
+            },
+        )
+    )
 
     logger.info("Starting simulation")
     total_start = time.monotonic()
@@ -211,25 +287,113 @@ def simulate(
         for k, v in initial_conditions.items()
         if k not in {"regime_id", "own_stakeholder"}
     }
-    initial_own_stakeholder = _initial_own_stakeholder(
-        initial_conditions=initial_conditions,
-        regimes=regimes,
-        regime_names_to_ids=regime_names_to_ids,
-    )
 
     # Forward-simulate one subject chunk at a time. Subjects are independent across
     # the forward path (no cross-subject reduction), so each chunk runs the full
     # period loop on its own slice and the per-chunk results are concatenated on the
     # subject axis. Chunking bounds the per-period device workspace; the chunk size
-    # is `subject_batch_size` (the whole population in one pass when `None`).
+    # is `subject_batch_size` (the whole population in one pass when zero).
     n_subjects = int(initial_conditions["regime_id"].shape[0])
     batch_size = (
         n_subjects if subject_batch_size == 0 else min(subject_batch_size, n_subjects)
     )
 
-    starting_periods = _compute_starting_periods(
-        initial_ages=initial_states["age"], ages=ages
+    runtime = next(iter(regimes.values())).simulation.programs.executor
+    memory = None
+    if (
+        isinstance(runtime, SimulationRuntime)
+        and runtime.execution.device_memory_bytes is not None
+    ):
+        if retained_footprint is None:
+            raise ExecutionPlanningError(
+                "Budgeted simulation requires retained solution residency."
+            )
+        if not runtime.enable_jit or any(
+            regime.gated_edges
+            or (
+                regime.simulation.replay_route.policy_applicable
+                and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+            )
+            or regime.simulation.external_replay_route is not None
+            for regime in regimes.values()
+        ):
+            raise ExecutionPlanningError(
+                "Budgeted simulation currently requires compiled decision programs; "
+                "host gated/replay adapters require their own workspace accounting."
+            )
+        inputs = union_buffer_footprints(
+            footprints=(
+                retained_footprint,
+                measure_buffer_footprint(
+                    tree=(
+                        initial_conditions,
+                        flat_params,
+                        ages.values,  # noqa: PD011
+                        period_to_regime_to_V_arr,
+                        period_to_regime_to_dissolution_flags,
+                        period_to_regime_to_sim_policy,
+                    )
+                ),
+            )
+        )
+        memory = SimulationMemory(
+            budget_bytes=runtime.execution.device_memory_bytes,
+            axis_widths=MappingProxyType({})
+            if prepared_chunks is None
+            else prepared_chunks.plan.profile.axis_widths,
+            subject_devices=runtime.subject_devices,
+            operations=runtime.operations,
+            devices=resolve_budget_devices(
+                execution_devices=placed_devices_for_ids(
+                    submesh_device_ids=(), visible_device_ids=device_ids
+                ),
+                live=inputs,
+            ),
+            inputs=inputs,
+        )
+        memory.check_resident()
+
+    call_inputs = (
+        prepare_simulation_call_inputs(
+            flat_params=flat_params,
+            regimes=regimes,
+            device_ids=device_ids,
+            memory=memory,
+            process_grid_resolver=process_grid_resolver,
+        )
+        if prepared_chunks is None
+        else prepared_chunks.call_inputs
     )
+    if memory is not None:
+        memory.inputs = union_buffer_footprints(
+            footprints=(
+                memory.inputs,
+                measure_buffer_footprint(tree=call_inputs.array_roots),
+            )
+        )
+        memory.close_unit()
+
+    initial_own_stakeholder = _initial_own_stakeholder(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        memory=memory,
+    )
+    starting_periods = _compute_starting_periods(
+        initial_ages=initial_states["age"], ages=ages, memory=memory
+    )
+    if memory is not None:
+        # These arrays survive every chunk. Transfer their metadata to the
+        # permanent inventory before releasing setup's temporary summaries.
+        memory.inputs = union_buffer_footprints(
+            footprints=(
+                memory.inputs,
+                measure_buffer_footprint(
+                    tree=(initial_own_stakeholder, starting_periods)
+                ),
+            )
+        )
+        memory.close_unit()
     # Build reverse lookup for regime transition logging. `regime_names_to_ids`
     # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict keys
     # directly; `invert_regime_ids` coerces them to Python `int`.
@@ -240,28 +404,29 @@ def simulate(
     # device residency to a single chunk. A single pass (batch_size == n_subjects)
     # keeps results on the compute device (no memory pressure, and no host
     # round-trip for downstream targets).
-    host_device = jax.devices("cpu")[0] if batch_size < n_subjects else None
-
-    # A gated edge's `Wbar` fold reads the solved value arrays, the dissolution
-    # flags, the params and the target's own period-`t + 1` grid — nothing that
-    # says which subjects are being simulated — so every chunk after the first
-    # would recompute an identical array. Memoize it per (source regime,
-    # period) and share it across chunks.
-    #
-    # The store keeps one target-V-shaped `Wbar` per (regime, period, edge)
-    # alive until the last chunk finishes, rather than letting each period's
-    # drop. A chunked run pays that to stop re-folding; a single pass visits
-    # each (regime, period) once and has nothing to save, so it keeps nothing —
-    # and neither does a model that declares no edge.
-    gated_edge_fold_cache: _GatedEdgeFoldCache | None = (
-        {}
+    host_device = (
+        chunk_host_device(subject_devices=call_inputs.devices)
         if batch_size < n_subjects
-        and any(regime.gated_edges for regime in regimes.values())
         else None
     )
 
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
+    completed_setup = (
+        None
+        if prepared_chunks is None
+        else measure_buffer_footprint(
+            tree=(initial_conditions, initial_own_stakeholder, starting_periods)
+        )
+    )
     for chunk_start in range(0, n_subjects, batch_size):
+        if prepared_chunks is not None:
+            if memory is None:
+                raise ExecutionPlanningError(
+                    "A prepared chunk requires its live memory owner."
+                )
+            prepared_chunks.require_chunk(
+                memory=memory, completed_setup=completed_setup
+            )
         # `n_subjects` is padded up to a multiple of `batch_size` upstream (see
         # `pad_initial_conditions_to_multiple`), so every chunk — including the
         # last — is exactly `batch_size` rows; the trailing pad rows are dropped
@@ -269,11 +434,29 @@ def simulate(
         subject_slice = slice(chunk_start, chunk_start + batch_size)
         chunk = _simulate_subject_chunk(
             initial_states={
-                name: array[subject_slice] for name, array in initial_states.items()
+                name: chunk_operations.slice_population(
+                    array=array, start=chunk_start, width=batch_size, memory=memory
+                )
+                for name, array in initial_states.items()
             },
-            initial_regime_ids=initial_conditions["regime_id"][subject_slice],
-            initial_own_stakeholder=initial_own_stakeholder[subject_slice],
-            starting_periods=starting_periods[subject_slice],
+            initial_regime_ids=chunk_operations.slice_population(
+                array=initial_conditions["regime_id"],
+                start=chunk_start,
+                width=batch_size,
+                memory=memory,
+            ),
+            initial_own_stakeholder=chunk_operations.slice_population(
+                array=initial_own_stakeholder,
+                start=chunk_start,
+                width=batch_size,
+                memory=memory,
+            ),
+            starting_periods=chunk_operations.slice_population(
+                array=starting_periods,
+                start=chunk_start,
+                width=batch_size,
+                memory=memory,
+            ),
             n_subjects=n_subjects,
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
@@ -287,18 +470,27 @@ def simulate(
             flat_params=flat_params,
             ages=ages,
             seed=seed,
+            taste_shock_seed=taste_shock_seed,
+            taste_addresses=taste_addresses,
             logger=logger,
-            gated_edge_fold_cache=gated_edge_fold_cache,
+            device_ids=device_ids,
+            memory=memory,
+            call_inputs=call_inputs,
+            process_grid_resolver=process_grid_resolver,
         )
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
             # continues, so the chunk's device buffers become free for the next
             # chunk; the host-resident copies stay `jax.Array` (CPU-backed).
-            chunk = jax.block_until_ready(jax.device_put(chunk, host_device))
+            chunk = offload_chunk(tree=chunk, host_device=host_device, memory=memory)
         chunk_results.append(chunk)
+        if memory is not None:
+            memory.close_unit()
+            memory.set_chunk_inputs(tree=())
+            memory.replace_outputs(tree=chunk_results)
 
     simulation_results = _concatenate_chunk_results(
-        chunk_results=chunk_results, regimes=regimes
+        chunk_results=chunk_results, regimes=regimes, memory=memory
     )
 
     # Drain the per-period compute graph before returning. Mirrors solve's
@@ -328,6 +520,7 @@ def simulate(
         wrapped_results = trim_pad_from_raw_results(
             raw_results=wrapped_results,
             original_n_subjects=original_n_subjects,
+            memory=memory,
         )
 
     # Which regimes can publish a nested continuous-outer read. Their declared
@@ -349,6 +542,34 @@ def simulate(
         subject_batch_size=subject_batch_size,
         nested_policy_regimes=nested_policy_regimes,
     )
+
+
+def _initialize_chunk_state(
+    *,
+    initial_states: dict[StateOrActionName, Float1D | IntND],
+    initial_regime_ids: Int1D,
+    initial_own_stakeholder: Int1D,
+    regimes: MappingProxyType[RegimeName, Regime],
+    device_ids: tuple[int, ...],
+    seed: int,
+    memory: SimulationMemory | None,
+) -> tuple[StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
+    """Build a chunk's carriers, enrolling completed arrays before the next step."""
+    key = create_simulation_key(seed=seed, memory=memory)
+    states = build_initial_states(
+        initial_states=initial_states,
+        regimes=regimes,
+        device_ids=device_ids,
+        memory=memory,
+    )
+    if memory is not None:
+        memory.hold(tree=(states, key))
+    regime_ids, own_stakeholder = initialize_subject_membership(
+        initial_regime_ids=initial_regime_ids,
+        initial_own_stakeholder=initial_own_stakeholder,
+        memory=memory,
+    )
+    return states, regime_ids, own_stakeholder, key
 
 
 def _simulate_subject_chunk(
@@ -377,7 +598,14 @@ def _simulate_subject_chunk(
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
-    gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
+    device_ids: tuple[int, ...] = (),
+    memory: SimulationMemory | None = None,
+    call_inputs: SimulationCallInputs | None = None,
+    taste_shock_seed: int | None = None,
+    taste_addresses: Mapping[
+        tuple[int, RegimeName], tuple[int, ...]
+    ] = MappingProxyType({}),
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -389,47 +617,85 @@ def _simulate_subject_chunk(
     `initial_own_stakeholder`: each subject's seeded role, already sliced to
     this chunk. It is carried through the period loop and updated wherever a
     gated edge routes a row, so a dissolution follows the row's own leg.
-    `gated_edge_fold_cache`: the caller's chunk-spanning store of gated-edge
-    folds, or `None` to evaluate each fold locally.
+    `device_ids`: the model's device ids, ascending; empty names every device
+    JAX reports.
 
     Returns the per-(regime, period) results for this chunk's subjects.
     """
-    key = jax.random.key(seed=seed)
-    states = build_initial_states(initial_states=initial_states, regimes=regimes)
-    subject_regime_ids = jnp.full_like(
-        initial_regime_ids, MISSING_CAT_CODE, dtype=jnp.int32
+    chunk_inputs = prepare_simulation_chunk_inputs(
+        initial_states=initial_states,
+        initial_regime_ids=initial_regime_ids,
+        initial_own_stakeholder=initial_own_stakeholder,
+        starting_periods=starting_periods,
+        flat_params=flat_params,
+        regimes=regimes,
+        device_ids=device_ids,
+        memory=memory,
+        call_inputs=call_inputs,
+        process_grid_resolver=process_grid_resolver,
     )
-    own_stakeholder = jnp.full_like(initial_own_stakeholder, NO_ROLE, dtype=jnp.int32)
+    devices = chunk_inputs.devices
+    flat_params = chunk_inputs.flat_params
+    initial_regime_ids = chunk_inputs.initial_regime_ids
+    initial_own_stakeholder = chunk_inputs.initial_own_stakeholder
+    starting_periods = chunk_inputs.starting_periods
+    base_state_action_spaces = chunk_inputs.base_state_action_spaces
+    states, subject_regime_ids, own_stakeholder, key = _initialize_chunk_state(
+        initial_states=initial_states,
+        initial_regime_ids=initial_regime_ids,
+        initial_own_stakeholder=initial_own_stakeholder,
+        regimes=regimes,
+        device_ids=device_ids,
+        seed=seed,
+        memory=memory,
+    )
+
+    taste_key = create_taste_shock_key(
+        seed=taste_shock_seed if taste_addresses else None,
+        memory=memory,
+        live_inputs=(states, subject_regime_ids, own_stakeholder, key),
+    )
 
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in regimes
     }
 
-    # The params-completed base space is period-invariant within one simulate
-    # call (params are fixed), so build it once per regime — runtime-grid
-    # completion (e.g. process gridpoint computation) rides on it and would
-    # otherwise rerun every period.
-    base_state_action_spaces = {
-        regime_name: regime.solution.state_action_space(
-            regime_params=flat_params[regime_name]
-        )
-        for regime_name, regime in regimes.items()
-    }
-
-    for period, age in enumerate(ages.values):
+    for period in range(ages.n_periods):
         period_start = time.monotonic()
-
-        # Activate subjects whose starting period matches the current period
-        subject_regime_ids = jnp.where(
-            starting_periods == period,
-            initial_regime_ids,
-            subject_regime_ids,
+        if memory is not None:
+            memory.unit_inputs = (
+                states,
+                subject_regime_ids,
+                own_stakeholder,
+                key,
+                taste_key,
+            )
+        original_age = chunk_operations.period_age(
+            values=ages.values, period=period, memory=memory
         )
+        age = cast(
+            "ScalarInt | ScalarFloat",
+            place_simulation_arguments(
+                arguments={"age": original_age},
+                subject_arg_names=(),
+                value_reads=(),
+                devices=devices,
+                budget_bytes=None if memory is None else memory.budget_bytes,
+                live_footprint=None if memory is None else memory.snapshot(),
+                budget_devices=() if memory is None else memory.devices,
+            )["age"],
+        )
+        if memory is not None:
+            memory.hold(tree=age)
 
-        # A subject's seeded role arrives with it, in the same period its
-        # seeded regime does; before that it occupies none.
-        own_stakeholder = jnp.where(
-            starting_periods == period, initial_own_stakeholder, own_stakeholder
+        subject_regime_ids, own_stakeholder = activate_subject_membership(
+            period=period,
+            starting_periods=starting_periods,
+            initial_regime_ids=initial_regime_ids,
+            initial_own_stakeholder=initial_own_stakeholder,
+            regime_ids=subject_regime_ids,
+            own_stakeholder=own_stakeholder,
+            memory=memory,
         )
 
         prev_regime_ids = subject_regime_ids
@@ -444,12 +710,54 @@ def _simulate_subject_chunk(
 
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
 
+        period_policies = (period_to_regime_to_sim_policy or {}).get(period, {})
+        period_readers = period_to_regime_to_replay_reader.get(period, {})
+        executor = next(iter(regimes.values())).simulation.programs.executor
+        owner = PeriodSimulationReads(
+            period=period,
+            devices=devices,
+            reads_by_unit={
+                name: unit_value_reads(
+                    regime=active,
+                    name=name,
+                    period=period,
+                    values=period_to_regime_to_V_arr,
+                    flags=period_to_regime_to_dissolution_flags,
+                    policy=period_policies.get(name),
+                    reader=period_readers.get(name),
+                )
+                for name, active in active_regimes.items()
+            },
+            release_enabled=isinstance(executor, SimulationRuntime)
+            and executor.enable_jit,
+            before_transfer=None if memory is None else memory.before_transfer,
+        )
+        if memory is not None:
+            memory.period_owner = owner
+
         for regime_name, regime in active_regimes.items():
+            dispatched_regime = _bind_unit_executor(
+                regime=regime,
+                memory=memory,
+                inputs=(
+                    states,
+                    subject_regime_ids,
+                    new_subject_regime_ids,
+                    own_stakeholder,
+                    new_own_stakeholder,
+                    key,
+                    taste_key,
+                    age,
+                ),
+            )
             result, new_states, new_subject_regime_ids, new_own_stakeholder, key = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
-                    regime=regime,
+                    regime=dispatched_regime,
                     regimes=regimes,
+                    value_owner=owner,
+                    subject_devices=devices,
+                    memory=memory,
                     base_state_action_space=base_state_action_spaces[regime_name],
                     period=period,
                     age=age,
@@ -482,6 +790,8 @@ def _simulate_subject_chunk(
                         )
                     ),
                     key=key,
+                    taste_key=taste_key,
+                    taste_address=taste_addresses.get((period, regime_name)),
                     logger=logger,
                     n_subjects=n_subjects,
                     subject_slice=subject_slice,
@@ -490,34 +800,59 @@ def _simulate_subject_chunk(
                     new_own_stakeholder=new_own_stakeholder,
                     gated_edge_fold_age=(
                         ages.period_to_age(period + 1)
-                        if period + 1 < ages.n_periods
+                        if regime.gated_edges and period + 1 < ages.n_periods
                         else None
                     ),
-                    gated_edge_fold_cache=gated_edge_fold_cache,
                 )
             )
             states = new_states
             simulation_results[regime_name][period] = result
+            if memory is not None:
+                memory.publish(tree=result)
+            owner.commit(
+                unit=regime_name,
+                outputs=(
+                    result,
+                    states,
+                    new_subject_regime_ids,
+                    new_own_stakeholder,
+                    key,
+                ),
+            )
+            if memory is not None:
+                cast(
+                    "SimulationUnitExecutor",
+                    dispatched_regime.simulation.programs.executor,
+                ).close()
+                memory.close_unit()
 
-            # Out-of-regime subjects carry placeholder entries (possibly -inf,
-            # when their state is infeasible under this regime's problem);
-            # validate only the subjects simulated in this regime.
-            #
-            # A collective regime's `V_arr` carries a
-            # trailing stakeholder axis (`(n_subjects, n_stakeholders)`), so
-            # `in_regime` (always `(n_subjects,)`) needs trailing singleton
-            # axes to broadcast against it; a singleton regime's `V_arr` is
-            # already `(n_subjects,)` and this is a no-op reshape.
-            in_regime_broadcast = result.in_regime.reshape(
-                result.in_regime.shape
-                + (1,) * (result.V_arr.ndim - result.in_regime.ndim)
+        owner.finish()
+        if memory is not None:
+            memory.period_owner = None
+            # Unit-local owners were released after publication. The period's
+            # current carry and both memberships still live through diagnostics.
+            memory.unit_inputs = (
+                states,
+                prev_regime_ids,
+                subject_regime_ids,
+                new_subject_regime_ids,
+                own_stakeholder,
+                new_own_stakeholder,
+                key,
+                taste_key,
+                original_age,
+                age,
             )
-            log_nan_in_V(
-                logger=logger,
-                regime_name=regime_name,
-                age=age,
-                V_arr=jnp.where(in_regime_broadcast, result.V_arr, 0.0),
-            )
+
+        _validate_period_values(
+            logger=logger,
+            age=age,
+            memory=memory,
+            period_results=tuple(
+                (regime_name, simulation_results[regime_name][period])
+                for regime_name in active_regimes
+            ),
+        )
 
         subject_regime_ids = new_subject_regime_ids
         own_stakeholder = new_own_stakeholder
@@ -527,6 +862,17 @@ def _simulate_subject_chunk(
             prev_regime_ids=prev_regime_ids,
             new_regime_ids=subject_regime_ids,
             regime_ids_to_names=regime_ids_to_names,
+            counts_factory=(
+                None
+                if memory is None
+                else functools.partial(
+                    profiled_transition_counts,
+                    memory=memory,
+                    prev_regime_ids=prev_regime_ids,
+                    new_regime_ids=subject_regime_ids,
+                    sorted_ids=tuple(sorted(regime_ids_to_names)),
+                )
+            ),
         )
 
         elapsed = time.monotonic() - period_start
@@ -535,10 +881,38 @@ def _simulate_subject_chunk(
     return simulation_results
 
 
+def _bind_unit_executor(
+    *, regime: Regime, memory: SimulationMemory | None, inputs: object
+) -> Regime:
+    """Bind live unit residency without changing any persistent regime bundle."""
+    if memory is None:
+        return regime
+    memory.unit_inputs = inputs
+    return replace(
+        regime,
+        simulation=replace(
+            regime.simulation,
+            programs=replace(
+                regime.simulation.programs,
+                executor=SimulationUnitExecutor(
+                    runtime=cast(
+                        "SimulationRuntime", regime.simulation.programs.executor
+                    ),
+                    live_footprint=memory.snapshot,
+                    budget_devices=memory.devices,
+                    axis_widths=memory.axis_widths,
+                    on_output=memory.hold,
+                ),
+            ),
+        ),
+    )
+
+
 def _concatenate_chunk_results(
     *,
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]],
     regimes: MappingProxyType[RegimeName, Regime],
+    memory: SimulationMemory | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Concatenate per-chunk simulation results along the subject axis.
 
@@ -556,30 +930,14 @@ def _concatenate_chunk_results(
     for regime_name, period_data in chunk_results[0].items():
         for period in period_data:
             per_chunk = [chunk[regime_name][period] for chunk in chunk_results]
-            combined[regime_name][period] = PeriodRegimeSimulationData(
-                V_arr=jnp.concatenate([data.V_arr for data in per_chunk]),
-                actions=MappingProxyType(
-                    {
-                        name: jnp.concatenate(
-                            [data.actions[name] for data in per_chunk]
-                        )
-                        for name in per_chunk[0].actions
-                    }
-                ),
-                states=MappingProxyType(
-                    {
-                        name: jnp.concatenate([data.states[name] for data in per_chunk])
-                        for name in per_chunk[0].states
-                    }
-                ),
-                in_regime=jnp.concatenate([data.in_regime for data in per_chunk]),
-                own_stakeholder=jnp.concatenate(
-                    [data.own_stakeholder for data in per_chunk]
-                ),
-                nested_policy_fallback=jnp.concatenate(
-                    [data.nested_policy_fallback for data in per_chunk]
-                ),
-            )
+            merged = {
+                field.name: jax.tree.map(
+                    lambda *arrays: concatenate_arrays(arrays=arrays, memory=memory),
+                    *(getattr(data, field.name) for data in per_chunk),
+                )
+                for field in fields(PeriodRegimeSimulationData)
+            }
+            combined[regime_name][period] = replace(per_chunk[0], **merged)
     return combined
 
 
@@ -809,6 +1167,71 @@ def _canonicalize_external_replay_actions(
     return MappingProxyType(actions)
 
 
+def _validate_period_values(
+    *,
+    logger: logging.Logger,
+    age: ScalarInt | ScalarFloat,
+    period_results: tuple[tuple[RegimeName, PeriodRegimeSimulationData], ...],
+    memory: SimulationMemory | None = None,
+) -> None:
+    """Validate one period's simulated values for every regime active in it.
+
+    The per-regime NaN and Inf reductions run as one compiled program over
+    the period's value arrays, so a period costs a single device-to-host
+    transfer whatever the number of regimes. Only a regime the NaN row accuses
+    pays for the enriched value-function report, which reads the device again
+    to describe what it found. At `log_level="off"` no reduction is issued at
+    all.
+
+    Every offending regime of the period is named first, then the enriched
+    reports run. At `log_level="debug"` the first enriched report raises, so
+    naming the period's regimes first is what keeps the other offenders --- an
+    Inf-only regime among them, which the enriched report never speaks about
+    --- in the record of the aborted run.
+
+    Args:
+        logger: Logger carrying the runtime-validation policy.
+        age: Age corresponding to the current period.
+        period_results: Tuple of (regime name, that regime's simulated data for
+            this period) pairs, in the order the period simulated them.
+        memory: Optional current-period owner for profiled diagnostic admission.
+
+    """
+    if not validation_enabled(logger) or not period_results:
+        return
+    regime_names = tuple(regime_name for regime_name, _ in period_results)
+    arguments = {
+        "values": tuple(data.V_arr for _, data in period_results),
+        "in_regime": tuple(data.in_regime for _, data in period_results),
+    }
+    flags = (
+        non_finite_by_regime(**arguments)
+        if memory is None
+        else memory.run(
+            function=period_value_flags,
+            arguments=arguments,
+            subject_arg_names=("values", "in_regime"),
+        )
+    )
+    has_nan, has_non_finite = flags.tolist()
+    log_non_finite_values(
+        logger=logger,
+        age=age,
+        regime_names=regime_names,
+        flags=tuple(has_non_finite),
+    )
+    for (regime_name, data), flag in zip(period_results, has_nan, strict=True):
+        if flag:
+            _validate_simulated_value(
+                value=data.V_arr,
+                subject_ids_in_regime=data.in_regime,
+                age=age,
+                regime_name=regime_name,
+                logger=logger,
+                memory=memory,
+            )
+
+
 def _validate_simulated_value(
     *,
     value: FloatND,
@@ -816,11 +1239,28 @@ def _validate_simulated_value(
     age: ScalarInt | ScalarFloat,
     regime_name: RegimeName,
     logger: logging.Logger,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate values only for subjects whose current regime owns the rows."""
     if not validation_enabled(logger):
         return
     try:
+        if memory is not None:
+            n_nan = int(
+                memory.run(
+                    function=owned_value_nan_count,
+                    arguments={"value": value, "in_regime": subject_ids_in_regime},
+                    subject_arg_names=("value", "in_regime"),
+                )
+            )
+            if n_nan:
+                raise value_function_nan_error(
+                    n_nan=n_nan,
+                    total=int(value.size),
+                    age=age,
+                    regime_name=regime_name,
+                )
+            return
         # Out-of-regime subjects carry placeholder entries (their state is
         # meaningless under this regime's problem). A collective value carries a
         # trailing stakeholder axis, so broadcast the ownership mask over it.
@@ -842,6 +1282,9 @@ def _simulate_regime_in_period(
     regime_name: RegimeName,
     regime: Regime,
     regimes: Mapping[RegimeName, Regime],
+    value_owner: PeriodSimulationReads,
+    subject_devices: tuple[jax.Device, ...],
+    memory: SimulationMemory | None,
     base_state_action_space: StateActionSpace,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     period: int,
@@ -870,8 +1313,9 @@ def _simulate_regime_in_period(
     sim_policy: (
         EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
     ) = None,
-    replay_reader: ReplayReader | None = None,
-    gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
+    replay_reader: PreparedReplayReader | ReplayReader | None = None,
+    taste_key: PRNGKeyND | None = None,
+    taste_address: tuple[int, ...] | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -926,12 +1370,8 @@ def _simulate_regime_in_period(
             (`regime.simulation.egm_policy_read`).
         replay_reader: Model-preflighted external policy reader for this exact
             result cell, or ``None`` for an engine-owned replay route.
-        gated_edge_fold_cache: Store of gated-edge folds already evaluated for
-            some (regime, period), shared across subject chunks by `simulate`.
-            The fold depends on no subject, so a chunk that finds its
-            (regime, period) there reuses it instead of recomputing an
-            identical array. `None` evaluates the fold locally and keeps
-            nothing, which is what an unchunked run wants.
+        value_owner: This period's owner of addressed copies.
+        subject_devices: Actual ordered devices evaluating the population.
 
     Returns:
         Tuple containing:
@@ -943,8 +1383,10 @@ def _simulate_regime_in_period(
 
     """
     # Select subjects in the current regime
-    subject_ids_in_regime = jnp.asarray(
-        regime_names_to_ids[regime_name] == subject_regime_ids
+    subject_ids_in_regime = chunk_operations.regime_mask(
+        regime_ids=subject_regime_ids,
+        regime_id=regime_names_to_ids[regime_name],
+        memory=memory,
     )
 
     state_action_space = create_regime_state_action_space(
@@ -952,10 +1394,8 @@ def _simulate_regime_in_period(
         regime_states=states[regime_name],
         base=base_state_action_space,
     )
-    # Compute optimal actions
-    # We need to pass the value function array of the next period to the
-    # argmax_and_max_Q_over_a function, as the current Q-function requires the
-    # next period's value function. In the last period, we pass an empty dict.
+    # The decision reads the next period's reachable values. In the last period
+    # it receives an empty mapping because no continuation is consumed.
     next_period_values = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
     next_regime_to_V_arr = _require_next_period_values(
         next_period_values=next_period_values,
@@ -964,42 +1404,38 @@ def _simulate_regime_in_period(
         source_period=period,
     )
 
-    # The simulate value router. A regime declaring
-    # `gated_edges` must have its OWN action choice informed by the gated
-    # continuation `Wbar`, not the target's raw (ungated) value — substitute
-    # it into `next_regime_to_V_arr` exactly like the solve-side kernel does
-    # (`_with_edge_substitution`), computed here from the already-solved
-    # next-period arrays. `same_period_mappings` (the target V / `D` /
-    # reference-V arrays each firing edge was folded on, per target) feeds
-    # the REGIME-ROUTING step below, after the action and candidate
-    # next-states are known — `route_gated_edges` RECOMPUTES the gate from
-    # these rather than interpolating a baked boolean.
-    # No-op (returns the inputs unchanged) for a regime without
-    # `gated_edges`.
-    #
-    # Every input the fold reads is fixed for the whole `simulate` call, so a
-    # chunked run evaluates it once per (regime, period) and reads the rest off
-    # `gated_edge_fold_cache` (see `simulate`). Both halves of the result are
-    # immutable and consumed read-only, so sharing them across chunks is a
-    # reuse, not an aliasing hazard.
-    cache = gated_edge_fold_cache if regime.gated_edges else None
-    folds = None if cache is None else cache.get((regime_name, period))
-    if folds is None:
-        folds = substitute_gated_edge_continuations(
-            regime=regime,
-            regime_name=regime_name,
-            regimes=regimes,
-            period=period,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            base_state_action_spaces=base_state_action_spaces,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
-            flat_params=flat_params,
-            fold_age=gated_edge_fold_age,
-        )
-        if cache is not None:
-            cache[regime_name, period] = folds
-    next_regime_to_V_arr, same_period_mappings = folds
+    # Fold only this period's addressed raw values. Copies are shared across
+    # readers in the period and no fold survives into another subject chunk.
+    raw_gate_reads = gate_reads(
+        regime=regime,
+        name=regime_name,
+        period=period,
+        values=period_to_regime_to_V_arr,
+        flags=period_to_regime_to_dissolution_flags,
+    )
+    gate_values, gate_flags = acquire_gate_inputs(
+        reads=tuple(
+            read for read in raw_gate_reads if read.source.core_key == GATE_FOLD
+        ),
+        owner=value_owner,
+        name=regime_name,
+        values=period_to_regime_to_V_arr,
+        flags=period_to_regime_to_dissolution_flags,
+    )
+    next_regime_to_V_arr = simulation_gate_fold(
+        regime=regime,
+        regime_name=regime_name,
+        regimes=regimes,
+        period=period,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        base_state_action_spaces=base_state_action_spaces,
+        edge_values=gate_values,
+        edge_flags=gate_flags,
+        flat_params=flat_params,
+        fold_age=gated_edge_fold_age,
+        subject_devices=subject_devices,
+        on_derived=None if memory is None else memory.set_derived,
+    )
     referenced_value_kwargs = _referenced_value_kwargs(
         regime=regime,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
@@ -1007,14 +1443,51 @@ def _simulate_regime_in_period(
         period=period,
     )
 
+    selected_reads = decision_reads(
+        regime=regime, period=period, policy=sim_policy, reader=replay_reader
+    )
+    # All same-unit occurrences resolve from the same original source objects.
+    policy_reads = (
+        rekeyed_value_reads(
+            reads=regime.simulation.programs.decision[period].requirements.value_reads,
+            core_key=POLICY_SCORE,
+        )
+        if sim_policy is not None
+        and replay_reader is None
+        and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+        else ()
+    )
+    next_regime_to_V_arr, referenced_value_kwargs = acquire_decision_inputs(
+        reads=(*selected_reads, *policy_reads),
+        owner=value_owner,
+        name=regime_name,
+        next_values=next_regime_to_V_arr,
+        referenced=referenced_value_kwargs,
+        stored_values=period_to_regime_to_V_arr,
+    )
+    if sim_policy is not None and replay_reader is None:
+        sim_policy = place_replay_payload(
+            payload=sim_policy,
+            key=SIMULATION_POLICY,
+            period=period,
+            regime=regime_name,
+            core="simulation_policy_replay",
+            owner=value_owner,
+        )
+    built_reader = (
+        replay_reader.build(owner=value_owner, devices=subject_devices)
+        if isinstance(replay_reader, PreparedReplayReader)
+        else replay_reader
+    )
+
     n_chunk_subjects = subject_ids_in_regime.shape[0]
     replay_route = regime.simulation.replay_route
     direct_nnbegm_replay = replay_route.consumer_route == "nnbegm_finite" and (
         isinstance(sim_policy, NNBEGMSimPolicy)
     )
-    if replay_reader is not None:
+    if built_reader is not None:
         optimal_actions, V_arr = _read_external_replay(
-            reader=replay_reader,
+            reader=built_reader,
             regime_name=regime_name,
             regime=regime,
             period=period,
@@ -1030,56 +1503,71 @@ def _simulate_regime_in_period(
     elif direct_nnbegm_replay:
         # The payload names the complete finite candidate set, so the unrelated
         # Cartesian simulation argmax is neither compiled nor executed.
-        optimal_actions, V_arr = _replay_nnbegm_candidates(
-            optimal_actions=MappingProxyType({}),
+        optimal_actions, V_arr, nested_fallback = _execute_finite_replay(
             regime=regime,
             sim_policy=sim_policy,
             states=states[regime_name],
+            canonical_states=state_action_space.states,
             flat_params=flat_params[regime_name],
             period=period,
             age=age,
-            canonical_states=state_action_space.states,
-            action_names=state_action_space.action_names,
+            n_subjects=n_chunk_subjects,
             next_regime_to_V_arr=next_regime_to_V_arr,
             referenced_value_kwargs=referenced_value_kwargs,
             logger=logger,
+            memory=memory,
         )
-        nested_fallback = None
     else:
-        argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
-
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:
-            key, gumbel_keys = generate_simulation_keys(
+            key, gumbel_keys = prepare_decision_taste_keys(
                 key=key,
-                names=["taste_shock"],
-                n_initial_states=n_subjects,
+                taste_key=taste_key,
+                taste_address=taste_address,
+                n_subjects=n_subjects,
                 subject_slice=subject_slice,
                 original_n_subjects=original_n_subjects,
+                memory=memory,
             )
-            taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
+            taste_shock_kwargs = {"taste_shock_key": gumbel_keys}
 
-        indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
-            **state_action_space.states,
-            **state_action_space.discrete_actions,
-            **state_action_space.continuous_actions,
-            **taste_shock_kwargs,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            **referenced_value_kwargs,
-            **flat_params[regime_name],
-            period=jnp.int32(period),
-            age=age,
+        indices_optimal_actions, V_arr = cast(
+            "tuple[IntND, FloatND]",
+            execute_simulation_program(
+                programs=regime.simulation.programs,
+                family="decision",
+                period=period,
+                n_subjects=n_chunk_subjects,
+                arguments=decision_arguments(
+                    states=state_action_space.states,
+                    discrete_actions=state_action_space.discrete_actions,
+                    continuous_actions=state_action_space.continuous_actions,
+                    taste_keys=taste_shock_kwargs,
+                    next_values=next_regime_to_V_arr,
+                    references=referenced_value_kwargs,
+                    params=flat_params[regime_name],
+                    period=jnp.int32(period) if memory is None else np.int32(period),
+                    age=age,
+                ),
+            ),
         )
         # A stateless collective result lacks the leading subject axis that
         # every downstream simulation operation expects.
         if regime.stakeholders is not None and not state_action_space.states:
-            indices_optimal_actions = jnp.broadcast_to(
-                jnp.asarray(indices_optimal_actions), (n_chunk_subjects,)
+            indices_optimal_actions, V_arr = chunk_operations.broadcast_collective(
+                indices=indices_optimal_actions,
+                value=V_arr,
+                n_subjects=n_chunk_subjects,
+                memory=memory,
             )
-            V_arr = jnp.broadcast_to(V_arr[None, ...], (n_chunk_subjects, *V_arr.shape))
-        optimal_actions = _lookup_values_from_indices(
-            flat_indices=indices_optimal_actions,
-            grids=state_action_space.actions,
+        optimal_actions = run_simulation_operation(
+            memory=memory,
+            function=_lookup_values_from_indices,
+            arguments={
+                "flat_indices": indices_optimal_actions,
+                "grids": state_action_space.actions,
+            },
+            subject_arg_names=("flat_indices",) if indices_optimal_actions.ndim else (),
         )
         optimal_actions, V_arr, nested_fallback = (
             _replace_continuous_action_with_policy_read(
@@ -1100,25 +1588,19 @@ def _simulate_regime_in_period(
             )
         )
 
-    _validate_simulated_value(
-        value=V_arr,
-        subject_ids_in_regime=subject_ids_in_regime,
-        age=age,
-        regime_name=regime_name,
-        logger=logger,
-    )
-
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match this chunk's subject count.
     if V_arr.ndim == 0:
-        V_arr = jnp.broadcast_to(V_arr, (n_chunk_subjects,))
+        V_arr = chunk_operations.broadcast_value(
+            value=V_arr, n_subjects=n_chunk_subjects, memory=memory
+        )
 
     # `None` from the reader means no nested continuous-outer read ran for
     # this regime-period (no payload, the flat single-EGM path, passive rows,
     # the discrete-branch redecide), so no subject fell back on that path.
     nested_policy_fallback = (
-        jnp.zeros(n_chunk_subjects, dtype=bool)
+        chunk_operations.empty_fallback(mask=subject_ids_in_regime, memory=memory)
         if nested_fallback is None
         else nested_fallback
     )
@@ -1134,7 +1616,11 @@ def _simulate_regime_in_period(
 
     # Update states and regime membership for next period
     if not regime.terminal:
-        next_states_key, next_regime_key, key = jax.random.split(key=key, num=3)
+        next_states_key, next_regime_key, key = split_simulation_key(
+            key=key, memory=memory
+        )
+        if memory is not None:
+            memory.hold(tree=(simulation_result, next_states_key, next_regime_key, key))
 
         next_states = calculate_next_states(
             regime=regime,
@@ -1149,7 +1635,10 @@ def _simulate_regime_in_period(
             n_subjects=n_subjects,
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
+            memory=memory,
         )
+        if memory is not None:
+            memory.hold(tree=next_states)
         # The realized regime draw reads current-period carried values, so it
         # runs against the pre-advance carrier; only then do the next-period
         # states replace it.
@@ -1169,6 +1658,7 @@ def _simulate_regime_in_period(
             n_subjects=n_subjects,
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
+            memory=memory,
         )
         # The value router's routing half. A gated
         # edge's target is always ALSO an ordinary declared transition
@@ -1179,21 +1669,32 @@ def _simulate_regime_in_period(
         # and OVERRIDES both — the target when open, a leg's fallback (with
         # its own projected states) when closed — for every subject in this
         # regime. No-op for a regime without `gated_edges`.
-        next_states, new_subject_regime_ids, new_own_stakeholder = route_gated_edges(
-            regime=regime,
-            # `same_period_mappings` holds the `period + 1` arrays
-            # `substitute_gated_edge_continuations` folded above, so the gate
-            # is recomputed against that period's grids.
-            fold_period=period + 1,
-            same_period_mappings=same_period_mappings,
-            next_states=next_states,
-            regime_names_to_ids=regime_names_to_ids,
-            new_subject_regime_ids=new_subject_regime_ids,
-            subjects_in_regime=subject_ids_in_regime,
-            flat_params=flat_params,
-            own_stakeholder=own_stakeholder,
-            new_own_stakeholder=new_own_stakeholder,
-            fold_age=gated_edge_fold_age,
+        route_values, route_flags = acquire_gate_inputs(
+            reads=tuple(
+                read for read in raw_gate_reads if read.source.core_key == GATE_ROUTE
+            ),
+            owner=value_owner,
+            name=regime_name,
+            values=period_to_regime_to_V_arr,
+            flags=period_to_regime_to_dissolution_flags,
+        )
+        next_states, new_subject_regime_ids, new_own_stakeholder = (
+            simulation_gate_route(
+                regime=regime,
+                subject_devices=subject_devices,
+                fold_period=period + 1,
+                edge_values=route_values,
+                edge_flags=route_flags,
+                next_states=next_states,
+                regime_names_to_ids=regime_names_to_ids,
+                new_subject_regime_ids=new_subject_regime_ids,
+                subjects_in_regime=subject_ids_in_regime,
+                flat_params=flat_params,
+                own_stakeholder=own_stakeholder,
+                new_own_stakeholder=new_own_stakeholder,
+                fold_age=gated_edge_fold_age,
+                on_derived=None if memory is None else memory.set_derived,
+            )
         )
         states = next_states
 
@@ -1203,6 +1704,71 @@ def _simulate_regime_in_period(
         new_subject_regime_ids,
         new_own_stakeholder,
         key,
+    )
+
+
+def _execute_finite_replay(
+    *,
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    referenced_value_kwargs: Mapping[str, object],
+    logger: logging.Logger,
+    memory: SimulationMemory | None = None,
+) -> tuple[MappingProxyType, FloatND, BoolND]:
+    """Run declared reconstruction, its host diagnostic, and canonical ranking."""
+    payload = ReplayPayload.from_policy(sim_policy)
+    bank = execute_simulation_program(
+        programs=regime.simulation.programs,
+        family="policy_prepare",
+        period=period,
+        n_subjects=n_subjects,
+        arguments=policy_prepare_arguments(
+            payload=payload,
+            states=states,
+            params=flat_params,
+            age=age,
+        ),
+    )
+    bank = cast("tuple[FloatND, FloatND, BoolND, BoolND]", bank)
+    if validation_enabled(logger):
+        n_dropped, total = run_simulation_operation(
+            memory=memory,
+            function=dropped_candidate_counts,
+            arguments={"live": bank[2], "represented": bank[3]},
+            subject_arg_names=("live", "represented"),
+        ).tolist()
+        if n_dropped:
+            _report_dropped_outer_candidates(
+                logger=logger,
+                n_dropped=n_dropped,
+                total=total,
+                regime_name=regime.name,
+                period=period,
+            )
+    return cast(
+        "tuple[MappingProxyType, FloatND, BoolND]",
+        execute_simulation_program(
+            programs=regime.simulation.programs,
+            family="policy_rank",
+            period=period,
+            n_subjects=n_subjects,
+            arguments=policy_rank_arguments(
+                payload=payload,
+                bank=bank,
+                canonical_states=canonical_states,
+                params=flat_params,
+                age=age,
+                next_values=next_regime_to_V_arr,
+                references=referenced_value_kwargs,
+            ),
+        ),
     )
 
 
@@ -2793,7 +3359,53 @@ def _replay_nnbegm_candidates(
     logger: logging.Logger,
     referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
-    """Replay and canonical-score the exact solve candidate product."""
+    """Reconstruct, validate, then rank the exact solve candidate product."""
+    candidate_inner, candidate_outer, live, represented = (
+        _prepare_nnbegm_candidate_bank(
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+        )
+    )
+    # Keep this diagnostic before canonical scoring: debug refuses an
+    # unrepresentable solve candidate before evaluating the remaining bank.
+    _announce_dropped_outer_candidates(
+        logger=logger,
+        dropped=live & ~represented,
+        n_live=live,
+        regime_name=regime.name,
+        period=period,
+    )
+    return _rank_nnbegm_candidate_bank(
+        candidate_inner=candidate_inner,
+        candidate_outer=candidate_outer,
+        represented=represented,
+        optimal_actions=optimal_actions,
+        regime=regime,
+        sim_policy=sim_policy,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        referenced_value_kwargs=referenced_value_kwargs,
+    )
+
+
+def _prepare_nnbegm_candidate_bank(
+    *,
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[FloatND, FloatND, BoolND, BoolND]:
+    """Pure reconstruction with live/represented masks for the host diagnostic."""
     n_subjects = next(iter(states.values())).shape[0]
     coordinates = []
     in_support = jnp.ones((n_subjects,), dtype=bool)
@@ -2834,14 +3446,26 @@ def _replay_nnbegm_candidates(
         & jnp.isfinite(candidate_value)
     )
     represented = live & outer_represented
-    _announce_dropped_outer_candidates(
-        logger=logger,
-        dropped=live & ~outer_represented,
-        n_live=live,
-        regime_name=regime.name,
-        period=period,
-    )
+    return candidate_inner, candidate_outer, live, represented
 
+
+def _rank_nnbegm_candidate_bank(
+    *,
+    candidate_inner: FloatND,
+    candidate_outer: FloatND,
+    represented: BoolND,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    referenced_value_kwargs: Mapping[str, object],
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
+    """Pure canonical scoring and first-maximum ranking of the represented bank."""
     n_candidates = candidate_inner.shape[0]
     canonical_values, canonical_feasible = _score_nnbegm_candidate_bank(
         optimal_actions=optimal_actions,
@@ -2921,6 +3545,24 @@ def _announce_dropped_outer_candidates(
     if n_dropped == 0:
         return
     total = int(jnp.sum(n_live))
+    _report_dropped_outer_candidates(
+        logger=logger,
+        n_dropped=n_dropped,
+        total=total,
+        regime_name=regime_name,
+        period=period,
+    )
+
+
+def _report_dropped_outer_candidates(
+    *,
+    logger: logging.Logger,
+    n_dropped: int,
+    total: int,
+    regime_name: RegimeName,
+    period: int,
+) -> None:
+    """Build the host report from admitted exact candidate counts."""
     error = UnrepresentableOuterCandidateError(
         f"Regime {regime_name!r} at period {period}: {n_dropped} of {total} "
         "live outer candidates could not be reconstructed at their realized "
@@ -3267,6 +3909,7 @@ def _initial_own_stakeholder(
     initial_conditions: InitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
+    memory: SimulationMemory | None = None,
 ) -> Int1D:
     """Read and validate each subject's seeded role.
 
@@ -3335,7 +3978,17 @@ def _initial_own_stakeholder(
         occupied = sorted(
             name
             for name in starts_needing_a_role
-            if bool(jnp.any(regime_ids == regime_names_to_ids[name]))
+            if bool(
+                run_simulation_operation(
+                    memory=memory,
+                    function=population_operations.regime_is_occupied,
+                    arguments={
+                        "regime_ids": regime_ids,
+                        "regime_id": regime_names_to_ids[name],
+                    },
+                    subject_arg_names=("regime_ids",),
+                )
+            )
         )
         if occupied:
             reachable_routes = sorted(
@@ -3352,11 +4005,21 @@ def _initial_own_stakeholder(
                 "pick."
             )
             raise InvalidInitialConditionsError(msg)
-        return jnp.full_like(regime_ids, NO_ROLE, dtype=jnp.int32)
+        return run_simulation_operation(
+            memory=memory,
+            function=population_operations.default_roles,
+            arguments={"regime_ids": regime_ids},
+            subject_arg_names=("regime_ids",),
+            subject_outputs=True,
+        )
 
-    own_stakeholder = jnp.asarray(declared, dtype=jnp.int32)
-    known = jnp.asarray([NO_ROLE, *role_ids.values()], dtype=jnp.int32)
-    if not bool(jnp.all(jnp.isin(own_stakeholder, known))):
+    own_stakeholder, roles_known = run_simulation_operation(
+        memory=memory,
+        function=population_operations.canonical_roles,
+        arguments={"declared": declared, "known_role_ids": tuple(role_ids.values())},
+        subject_arg_names=("declared",),
+    )
+    if not bool(roles_known):
         msg = (
             f"`own_stakeholder` carries codes outside the model's role "
             f"vocabulary {dict(role_ids)} (the no-role sentinel {NO_ROLE} is "
@@ -3370,11 +4033,20 @@ def _initial_own_stakeholder(
     # every row in a collective regime carries one of ITS roles, so the leg
     # selection always has a leg to find.
     for name in collective_names:
-        starts_here = regime_ids == regime_names_to_ids[name]
-        declared_here = jnp.asarray(
-            [role_ids[s] for s in regimes[name].stakeholders or ()], dtype=jnp.int32
+        mismatch = run_simulation_operation(
+            memory=memory,
+            function=population_operations.role_mismatch,
+            arguments={
+                "roles": own_stakeholder,
+                "regime_ids": regime_ids,
+                "regime_id": regime_names_to_ids[name],
+                "role_ids": tuple(
+                    role_ids[s] for s in regimes[name].stakeholders or ()
+                ),
+            },
+            subject_arg_names=("roles", "regime_ids"),
         )
-        if bool(jnp.any(starts_here & ~jnp.isin(own_stakeholder, declared_here))):
+        if bool(mismatch):
             msg = (
                 f"Subjects starting in the collective regime {name!r} carry an "
                 "`own_stakeholder` that is not one of its stakeholders "
@@ -3389,6 +4061,7 @@ def _compute_starting_periods(
     *,
     initial_ages: Float1D,
     ages: AgeGrid,
+    memory: SimulationMemory | None = None,
 ) -> Int1D:
     """Convert per-subject initial ages to starting period indices.
 
@@ -3403,19 +4076,16 @@ def _compute_starting_periods(
         ValueError: If any initial age is not a valid age grid point.
 
     """
-    age_values = jnp.asarray(ages.values)
-    starting_periods = jnp.searchsorted(age_values, initial_ages)
-
-    # Clamp indices to valid range before accessing age_values. searchsorted can
-    # return len(age_values) for ages beyond the grid maximum.
-    safe_idx = jnp.clip(starting_periods, 0, len(age_values) - 1)
-
-    # Validate that all initial ages are actual grid points. Use isclose instead
-    # of strict equality to handle floating-point representation of sub-annual ages.
-    in_bounds = starting_periods < len(age_values)
-    valid = in_bounds & jnp.isclose(age_values[safe_idx], initial_ages)
-    if not jnp.all(valid):
-        invalid_ages = initial_ages[~valid]
+    starting_periods, valid, all_valid = run_simulation_operation(
+        memory=memory,
+        function=population_operations.starting_periods,
+        arguments={"initial_ages": initial_ages, "age_values": ages.values},  # noqa: PD011
+        subject_arg_names=("initial_ages",),
+    )
+    if not bool(all_valid):
+        # Error-detail selection stays on the host after the admitted predicate;
+        # no data-dependent device gather can bypass the operation's profile.
+        invalid_ages = np.asarray(initial_ages)[~np.asarray(valid)]
         msg = (
             f"Initial ages {invalid_ages.tolist()} are not valid age grid points. "
             f"Valid ages: {ages.values}."  # noqa: PD011

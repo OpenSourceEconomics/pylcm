@@ -24,6 +24,7 @@ from lcm._solver_api.authority import (
     _snapshot_artifact_template_once,  # noqa: F401
     _validate_axes_and_leaves,  # noqa: F401
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm._solver_api.contract import (
     ArtifactRef,
     OmissionReason,
@@ -67,10 +68,13 @@ from lcm._solver_api.identity import (
 from lcm._solver_api.replay import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
     ActionOutput,
     ContinuationArtifact,
+    ContinuationCapabilities,
+    ContinuationReader,
     ExecutableReplayRoute,
     KernelOutput,
     ReplayModelContext,
@@ -92,6 +96,7 @@ from lcm._solver_api.stores import (
 __all__ = [
     "DISSOLUTION_FLAG",
     "EGM_CONTINUATION",
+    "EGM_ENDOGENOUS_COORDINATE",
     "PYLCM_VERSION",
     "SIMULATION_POLICY",
     "SOLUTION_FORMAT_VERSION",
@@ -110,6 +115,8 @@ __all__ = [
     "AxisRole",
     "CategoryDomain",
     "ContinuationArtifact",
+    "ContinuationCapabilities",
+    "ContinuationReader",
     "DeclaredReplay",
     "ExecutableReplayRoute",
     "KernelOutput",
@@ -130,6 +137,7 @@ __all__ = [
     "SolutionMetadata",
     "SolutionResult",
     "SolutionSource",
+    "SolverExecutionCapabilities",
     "SolverIdentity",
     "TreePath",
     "ValueArraySchema",

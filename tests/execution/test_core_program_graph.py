@@ -11,6 +11,7 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -28,6 +29,13 @@ from _lcm.execution.output_layout import VALUE
 from _lcm.solution import backward_induction, period_replay
 from _lcm.solution.backward_induction import _resolve_program_for_execution
 from lcm.solver_api import ArtifactKey
+from lcm.solvers import (
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+    ValueRead,
+)
 
 
 def _identity(*, value: object) -> object:
@@ -47,6 +55,35 @@ def _context() -> CoreBuildContext:
         period=0,
         ages=object(),
     )
+
+
+def _read() -> ValueRead:
+    """One next-period regime-value read of a `working` source at period 3."""
+    return ValueRead(
+        target=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=4, regime="retired"
+        ),
+        source=ValueConsumerAddress(
+            source_period=3,
+            source_regime="working",
+            core_key="main",
+            channel=ValueInputChannel.NEXT_REGIME_VALUE,
+            path=("retired",),
+        ),
+    )
+
+
+def test_a_core_declares_its_value_reads_under_the_public_name() -> None:
+    """A solver names what it reads across a regime-period boundary as
+    `value_reads`, and the record type is public."""
+    requirements = CoreExecutionRequirements(value_reads=(_read(),))
+
+    assert isinstance(requirements.value_reads[0], ValueRead)
+
+
+def test_a_core_no_longer_carries_the_engine_private_declaration_name() -> None:
+    """`value_reads` is the only name a core declares its reads under."""
+    assert not hasattr(CoreExecutionRequirements(), "target_value_accesses")
 
 
 class _NativeKernel:
@@ -69,6 +106,40 @@ def _native_program(
         disposition=CoreExecutionDisposition.DENSE,
         disposition_reason=reason,
     )
+
+
+def test_compiler_options_survive_materialization_and_resolution() -> None:
+    """Compiler metadata survives planning without entering numerical kwargs."""
+    options = (("scan_unroll", 1),)
+    declaration = dataclasses.replace(_native_program(), compiler_options=options)
+    materialized = materialize_core_program(program=declaration, context=_context())
+    resolved = resolve_core_program(program=materialized, tile_widths={})
+    assert (
+        materialized.compiler_options,
+        resolved.compiler_options,
+        tuple(resolved.arguments),
+        dict(resolved.static_kwargs),
+    ) == (options, options, ("value",), {})
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [("scan_unroll", 1)],
+        (["scan_unroll", 1],),
+        (("", 1),),
+        (("scan_unroll", True),),
+        (("scan_unroll", 1.0),),
+        (("scan_unroll", 1), ("scan_unroll", 2)),
+    ],
+)
+def test_compiler_options_refuse_mutable_or_ambiguous_metadata(options: object) -> None:
+    """Compile identity requires immutable, uniquely named integer options."""
+    with pytest.raises(
+        (TypeError, ValueError, BeartypeCallHintParamViolation),
+        match="compiler_options",
+    ):
+        dataclasses.replace(_native_program(), compiler_options=options)
 
 
 def test_native_graph_is_snapshotted_and_materialized_through_one_builder() -> None:
@@ -104,6 +175,7 @@ def test_shared_resolver_preserves_the_entire_native_program_contract() -> None:
                 program=declaration,
                 context=_context(),
             ),
+            tile_widths={},
             source_value_template=jnp.asarray(0.0),
             source=("source", 0, "main"),
         )
@@ -139,7 +211,9 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
     assert len(compile_calls["_select_period_programs"]) == 1
     assert len(compile_calls["_resolve_output_layouts_and_lowering_keys"]) == 1
     assert len(collect_calls["materialize_core_program"]) == 1
-    assert len(collect_calls["_resolve_program_for_execution"]) == 1
+    assert len(collect_calls["resolve_core_program_candidates"]) == 1
+    resolver_calls = _direct_call_lines(_function_tree(resolve_core_program))
+    assert len(resolver_calls["resolve_core_program_candidates"]) == 1
     assert len(replay_calls["core_program_graph"]) == 1
     assert len(replay_calls["materialize_core_program"]) == 1
     assert len(replay_calls["_resolve_program_for_execution"]) == 1
@@ -186,6 +260,7 @@ def test_dense_reason_is_part_of_resolved_specialization_identity() -> None:
         program=materialize_core_program(
             program=_native_program(reason="first_dense_reason"), context=context
         ),
+        tile_widths={},
         source_value_template=jnp.asarray(0.0),
         source=("source", 0, "main"),
     )
@@ -193,6 +268,7 @@ def test_dense_reason_is_part_of_resolved_specialization_identity() -> None:
         program=materialize_core_program(
             program=_native_program(reason="second_dense_reason"), context=context
         ),
+        tile_widths={},
         source_value_template=jnp.asarray(0.0),
         source=("source", 0, "main"),
     )
@@ -216,7 +292,7 @@ def test_native_graph_key_and_declared_name_must_match() -> None:
         "streamed_core",
         "build_lower_args",
         "build_core_program",
-        "target_value_accesses",
+        "value_reads",
         "output_roles",
         "core_for_output_layout",
     ],
@@ -245,6 +321,12 @@ def test_native_graph_rejects_every_parallel_declaration_seam(
             "unexpected",
             "cannot declare a reason",
             id="planned-with-reason",
+        ),
+        pytest.param(
+            CoreExecutionDisposition.HOST_DRIVEN,
+            None,
+            "must declare a non-empty",
+            id="host-driven-without-reason",
         ),
     ],
 )
@@ -284,11 +366,13 @@ def test_core_program_graph_rejects_a_kernel_without_a_native_graph() -> None:
         core_program_graph(kernel=_CoresOnlyKernel())
 
 
-def test_every_disposition_is_planned_or_dense() -> None:
-    """The engine plans a program or runs it deliberately dense; nothing else."""
+def test_every_disposition_is_planned_dense_or_host_driven() -> None:
+    """The engine plans a program, runs it deliberately dense, or lets a host
+    driver dispatch it a data-dependent number of times; nothing else."""
     assert {member.value for member in CoreExecutionDisposition} == {
         "planned",
         "dense",
+        "host_driven",
     }
 
 
@@ -465,6 +549,7 @@ def test_program_scope_is_part_of_resolved_specialization_identity() -> None:
             program=materialize_core_program(
                 program=_scoped_program(name="main", scope=scope), context=context
             ),
+            tile_widths={},
             source_value_template=jnp.asarray(0.0),
             source=("source", 0, "main"),
         )

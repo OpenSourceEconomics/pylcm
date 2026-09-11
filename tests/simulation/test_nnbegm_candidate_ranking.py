@@ -14,12 +14,19 @@ from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import NNBEGMPolicyRead, Regime
+from _lcm.simulation import compile as simulation_compile
 from _lcm.simulation.simulate import _replay_nnbegm_candidates
 from _lcm.utils.logging import get_logger
-from lcm import LinSpacedGrid
+from lcm import ExecutionConfig, LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.typing import ContinuousAction, ContinuousState
+from tests.conftest import assert_agrees_to_ulp
+from tests.simulation.test_finite_replay_payload_transport import (
+    CandidateBank,
+    RankedBank,
+    _RecordingRuntime,
+)
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.n_nbegm_toy import RegimeId
 
@@ -39,7 +46,15 @@ def _simulate_rows(
     *, wealth: np.ndarray, illiquid: np.ndarray, subject_batch_size: int = 0
 ):
     n_subjects = len(wealth)
-    result = toy.build_model(variant="n_nbegm", n_periods=2).simulate(
+    result = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        execution_config=ExecutionConfig(
+            axis_widths={}
+            if subject_batch_size == 0
+            else {"subject": subject_batch_size}
+        ),
+    ).simulate(
         params=_PARAMS,
         initial_conditions={
             "wealth": jnp.asarray(wealth),
@@ -49,7 +64,6 @@ def _simulate_rows(
         },
         log_level="debug",
         seed=17,
-        subject_batch_size=subject_batch_size,
     )
     return (
         result.to_dataframe()
@@ -574,26 +588,113 @@ def test_scalar_bank_oracle_matches_public_replay_on_off_grid_mutations() -> Non
     np.testing.assert_allclose(dense["value"], -18.0981, rtol=0.0, atol=2e-3)
 
 
-def test_candidate_ranking_is_invariant_to_subject_batching() -> None:
-    """Chunking subjects cannot change candidate identity, actions, or attained Q."""
+def _recorded_bank_and_owners(
+    runtime: _RecordingRuntime,
+) -> tuple[tuple[np.ndarray, ...], tuple[tuple[int, ...], ...]]:
+    """Read actual stage boundaries and every matching selected-bank position."""
+    prepared = [
+        cast("CandidateBank", call.result)
+        for call in runtime.calls
+        if call.program.name == "simulate_policy_prepare"
+    ]
+    ranked = [
+        cast("RankedBank", call.result)
+        for call in runtime.calls
+        if call.program.name == "simulate_policy_rank"
+    ]
+    assert len(prepared) == len(ranked)
+    bank = tuple(
+        np.concatenate([np.asarray(value[i]) for value in prepared])[:7]
+        for i in range(4)
+    )
+    consumption = np.concatenate(
+        [np.asarray(value[0]["consumption"]) for value in ranked]
+    )[:7]
+    outer_action = np.concatenate(
+        [np.asarray(value[0]["illiquid_investment"]) for value in ranked]
+    )[:7]
+    matching = (bank[0] == consumption[:, None]) & (bank[1] == outer_action[:, None])
+    owners = tuple(tuple(np.flatnonzero(row).tolist()) for row in matching)
+    assert all(owners)
+    runtime.calls.clear()
+    return bank, owners
+
+
+def test_candidate_ranking_is_invariant_to_subject_batching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chunk widths preserve bank identity and bound emitted floating-point levels."""
     wealth = np.array([1.0467, 0.83, 1.37, 2.21, 3.42, 4.73, 7.11])
     illiquid = np.array([2.04, 1.31, 2.63, 3.79, 5.27, 7.41, 10.13])
-    whole = _simulate_rows(wealth=wealth, illiquid=illiquid, subject_batch_size=0)
-    chunked = _simulate_rows(wealth=wealth, illiquid=illiquid, subject_batch_size=3)
-
-    whole_target = (
-        whole["illiquid"].to_numpy() + whole["illiquid_investment"].to_numpy()
-    )
-    chunked_target = (
-        chunked["illiquid"].to_numpy() + chunked["illiquid_investment"].to_numpy()
-    )
-    np.testing.assert_array_equal(whole_target, chunked_target)
-    for column in ("illiquid_investment", "consumption", "value"):
-        np.testing.assert_array_equal(
-            whole[column].to_numpy(),
-            chunked[column].to_numpy(),
-            err_msg=column,
+    monkeypatch.setattr(simulation_compile, "SimulationRuntime", _RecordingRuntime)
+    width_models = {
+        width: toy.build_model(
+            variant="n_nbegm",
+            n_periods=2,
+            execution_config=ExecutionConfig(axis_widths={"subject": width}),
         )
+        for width in (7, 3, 1)
+    }
+    # In-memory results belong to their model instance; each arm owns its solve.
+    solutions = {
+        width: width_model.solve(params=_PARAMS, log_level="off")
+        for width, width_model in width_models.items()
+    }
+    for scale, shift in ((1.0, 0.0), (1.0, 0.25), (1.25, 0.0)):
+        initial = {
+            "wealth": wealth * scale + shift,
+            "illiquid": illiquid * scale + shift,
+            "age": np.full(7, 20.0),
+            "regime_id": np.zeros(7, dtype=np.int32),
+        }
+        observations = {}
+        for width, width_model in width_models.items():
+            result = width_model.simulate(
+                params=_PARAMS,
+                solution=solutions[width],
+                initial_conditions=initial,
+                log_level="off",
+                seed=17,
+            )
+            frame = (
+                result.to_dataframe()
+                .query("regime_name == 'alive' and period == 0")
+                .sort_index()
+            )
+            runtime = width_model._runtime_regimes_for_shape(compile_batch_size=width)[
+                "alive"
+            ].simulation.programs.executor
+            assert isinstance(runtime, _RecordingRuntime)
+            bank, owners = _recorded_bank_and_owners(runtime)
+            observations[width] = (frame, bank, owners)
+        whole, whole_bank, whole_owners = observations[7]
+        whole_target = (
+            whole["illiquid"].to_numpy() + whole["illiquid_investment"].to_numpy()
+        )
+        for width in (3, 1):
+            chunked, chunked_bank, owners = observations[width]
+            assert owners == whole_owners
+            for index in (1, 2, 3):
+                np.testing.assert_array_equal(whole_bank[index], chunked_bank[index])
+            for expected, got in zip(whole_bank, chunked_bank, strict=True):
+                np.testing.assert_array_equal(np.isfinite(expected), np.isfinite(got))
+            np.testing.assert_array_equal(
+                whole_target,
+                chunked["illiquid"].to_numpy()
+                + chunked["illiquid_investment"].to_numpy(),
+            )
+            np.testing.assert_array_equal(
+                whole["illiquid_investment"].to_numpy(),
+                chunked["illiquid_investment"].to_numpy(),
+            )
+            # Transformed division rounds continuous coordinates differently. Even
+            # eager replay has this width dependence; candidate identities and
+            # masks above remain exact while only emitted levels receive ULP room.
+            for column in ("consumption", "value"):
+                expected, got = whole[column].to_numpy(), chunked[column].to_numpy()
+                assert expected.dtype == got.dtype == np.dtype(jnp.asarray(0.0).dtype)
+                np.testing.assert_array_equal(np.isfinite(expected), np.isfinite(got))
+                assert_agrees_to_ulp(got=got, expected=expected, n_ulp=8)
 
 
 def test_a_bank_with_every_candidate_dropped_emits_no_winner() -> None:

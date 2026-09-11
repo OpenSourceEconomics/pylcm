@@ -107,6 +107,7 @@ def build_model(
     n_savings: int = 150,
     savings_floor: float = 0.0,
     savings_max: float = 28.0,
+    execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
     **solver_kwargs: object,
 ) -> Model:
     """Create the (alive, dead) toy whose next-asset law jumps at a liquid cliff."""
@@ -139,6 +140,7 @@ def build_model(
         )
 
     return make_alive_dead_model(
+        execution_config=execution_config,
         n_periods=n_periods,
         n_liquid=n_liquid,
         liquid_max=liquid_max,

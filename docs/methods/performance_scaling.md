@@ -86,13 +86,15 @@ Each planned read also authenticates its declared
 channel and argument-tree path are resolved. Agreement among declarations cannot make a
 different source node authoritative.
 
-The exact declarations also support conservative remaining-consumer accounting. A
-logical artifact is counted once per planned dispatch and its count is committed only
-after that dispatch returns successfully. Reaching zero means only that an unpinned
-artifact is eligible for a later scheduler decision. The current planner does not
-physically release, donate, or offload arrays. Dense compatibility routes and consumers
-without a complete plan remain pinned, so this bookkeeping is not a graph-wide
-peak-memory claim.
+The exact declarations also support remaining-consumer accounting. A logical artifact is
+counted once per planned dispatch and its count is committed only after that dispatch
+returns successfully. The solve scheduler releases eligible closed continuation buffers
+after the period's outputs are ready; published values remain owned by the solution.
+Eligible standalone NB-EGM programs can donate an exclusively owned marginal input, with
+an ordinary fallback admitted alongside it. Retained or aliased inputs and consumers
+without a complete plan remain protected. See
+[buffer release, donation and placement](../reference/runtime_and_results.md#solve-execution-lifetime)
+for the eligibility rules and the limits of the memory accounting.
 
 A large GPU should not be treated as a faster small GPU automatically. Independent
 tests, regimes, branches, subjects, or candidate chunks can improve occupancy, but only

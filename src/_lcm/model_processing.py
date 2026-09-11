@@ -17,6 +17,7 @@ from jax import Array
 
 from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
+from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
 from _lcm.params.processing import (
@@ -45,6 +46,7 @@ from _lcm.regime_building.processing import (
     compute_active_periods_by_regime,
     process_regimes,
 )
+from _lcm.simulation.policy_programs import declare_finite_replay_programs
 from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.typing import (
@@ -73,6 +75,7 @@ def build_regimes_and_template(
     fixed_params: UserParams,
     params_already_consumed: frozenset[str],
     prepared_structure: PreparedModelStructure,
+    execution: ResolvedExecution | None = None,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and params template in a single pass.
 
@@ -90,6 +93,8 @@ def build_regimes_and_template(
             acted on. They are broadcasts, so they stay in `fixed_params` for
             the slots they may still serve; naming them here keeps a broadcast
             that served only a bound process from reading as an unknown key.
+        execution: The hardware-local facts the model resolved, or `None` to
+            resolve the inert configuration against every visible device.
 
     Returns:
         Tuple of (regimes, params_template).
@@ -102,6 +107,7 @@ def build_regimes_and_template(
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
             prepared_structure=prepared_structure,
+            execution=execution,
         )
         params_template = create_params_template(regimes)
     else:
@@ -113,8 +119,17 @@ def build_regimes_and_template(
             fixed_params=fixed_params,
             params_already_consumed=params_already_consumed,
             prepared_structure=prepared_structure,
+            execution=execution,
         )
 
+    # Replay bodies must consume the canonical functions after fixed parameters
+    # have been bound, exactly as the ordinary forward decision does.
+    regimes = MappingProxyType(
+        {
+            name: declare_finite_replay_programs(regime)
+            for name, regime in regimes.items()
+        }
+    )
     return regimes, params_template
 
 
@@ -127,6 +142,7 @@ def _build_regimes_and_template_with_fixed_params(
     fixed_params: UserParams,
     params_already_consumed: frozenset[str],
     prepared_structure: PreparedModelStructure,
+    execution: ResolvedExecution | None = None,
 ) -> tuple[MappingProxyType[RegimeName, Regime], ParamsTemplate]:
     """Build canonical regimes and template, then partial in fixed params.
 
@@ -139,6 +155,8 @@ def _build_regimes_and_template_with_fixed_params(
         fixed_params: Parameters to fix at model initialization.
         params_already_consumed: Flat keys the process-law binder resolved and
             acted on.
+        execution: The hardware-local facts the model resolved, or `None` to
+            resolve the inert configuration against every visible device.
 
     Returns:
         Tuple of regimes and params_template with fixed params
@@ -151,6 +169,7 @@ def _build_regimes_and_template_with_fixed_params(
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
         prepared_structure=prepared_structure,
+        execution=execution,
     )
     raw_params_template = create_params_template(raw_regimes)
 
@@ -875,11 +894,24 @@ def _partial_fixed_params_into_regimes(
         simulation = regime.simulation
         new_simulate = dataclasses.replace(
             simulation,
-            argmax_and_max_Q_over_a=MappingProxyType(
-                {
-                    period: functools.partial(func, **regime_fixed)
-                    for period, func in simulation.argmax_and_max_Q_over_a.items()
-                }
+            programs=dataclasses.replace(
+                simulation.programs,
+                **{
+                    family: MappingProxyType(
+                        {
+                            period: dataclasses.replace(
+                                program,
+                                function=functools.partial(
+                                    program.function, **regime_fixed
+                                ),
+                            )
+                            for period, program in getattr(
+                                simulation.programs, family
+                            ).items()
+                        }
+                    )
+                    for family in ("decision", "transition", "route")
+                },
             ),
             Q_and_F=MappingProxyType(
                 {

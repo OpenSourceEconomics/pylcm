@@ -169,9 +169,9 @@ def test_save_to_cliff_candidates_are_invariant_to_the_batch_width(
 
 
 @pytest.mark.parametrize("chunk_size", [1, 4, 6])
-@pytest.mark.parametrize("envelope_segment_block_size", [0, 7])
+@pytest.mark.parametrize("envelope_segment_width", [0, 7])
 def test_envelope_blocking_and_batch_width_do_not_interact(
-    *, chunk_size, envelope_segment_block_size, monkeypatch
+    *, chunk_size, envelope_segment_width, monkeypatch
 ) -> None:
     """Streaming the envelope over segment blocks is orthogonal to interval batching."""
     inputs = _build_inputs(n_intervals=7)
@@ -179,12 +179,12 @@ def test_envelope_blocking_and_batch_width_do_not_interact(
         inputs=inputs,
         chunk_size=1,
         monkeypatch=monkeypatch,
-        envelope_segment_block_size=0,
+        envelope_segment_width=0,
     )
     got = _solve_at(
         inputs=inputs,
         chunk_size=chunk_size,
         monkeypatch=monkeypatch,
-        envelope_segment_block_size=envelope_segment_block_size,
+        envelope_segment_width=envelope_segment_width,
     )
     _assert_same(got=got, expected=reference)

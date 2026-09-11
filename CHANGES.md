@@ -5,6 +5,167 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Common taste shocks across counterfactuals
+
+- `Model.simulate(taste_shock_seed=...)` selects an independent Threefry stream for
+  EV1 taste shocks. Matching exact ages, initial subject rows and ordered discrete
+  action domains share standardized draws across policies and regimes, independently
+  of the ordinary seed, horizon endpoints, chunking and padding. Omitting the argument
+  preserves the ordinary seeded behavior. Reordering or resizing a discrete action
+  domain changes its stream.
+- Cached simulation key generation now follows changes to JAX's Threefry partition
+  setting between calls, including when an executable has already been compiled.
+
+### Solver API version 3
+
+- `SOLVER_API_VERSION` is 3. Every solver implements `capabilities`, returning the
+  frozen `SolverExecutionCapabilities` exported by `lcm.solver_api` and `lcm.solvers`.
+  Its structural requirements, execution axes and supported preference features drive
+  the solver reference tables. Concrete model programs remain the authority for
+  accepted execution widths. Custom plugins must implement this property and target
+  API 3. Solver identities and model fingerprints change with this compatibility
+  version; API 2 solution archives are not automatically migrated.
+- A core program declares what it publishes to another
+  program of the same kernel graph with `InternalOutputSpec`, and a consumer names what
+  it reads with `InternalInputRef`; both are published through `lcm.solvers`. The engine
+  lowers producers before consumers against the exact shapes, dtypes and weak typing the
+  references select, so a consumer no longer runs against a stand-in filled in later.
+  NEGM's keeper-to-sweep dependency uses the typed edge.
+- A program graph's typed internal edges lower for every admitted shape, not only for
+  a dense one-hop edge. A producer's abstract output is computed from the complete
+  invocation the engine lowers — its arguments, the internal inputs it reads itself,
+  and the widths the execution planner owns — so a chain of producers and a `PLANNED`
+  producer both reach their consumers. Weak typing is part of the template a consumer
+  is lowered against, since equal shapes and dtypes can still promote differently in a
+  consumer: a handed-over leaf whose weak typing departs from what the consumer was
+  traced with is refused at dispatch, naming the program and the argument. A producer
+  whose published output would change with the selected width — its weak typing
+  included — is refused with an `ExecutionPlanningError`.
+- `CoreExecutionDisposition.HOST_DRIVEN` declares a program whose host loop dispatches
+  it a data-dependent number of times. Like `DENSE` it owns its own width and must carry
+  a `disposition_reason`; the engine plans nothing for it.
+- A compiled solve executable is keyed by program identity — the durable model
+  fingerprint, the regime name, the core name, the engine's per-period signature
+  (`SolutionPhase.period_signatures`), and the solver's own period group key
+  (`SolutionKernels.period_group_keys`) — instead of the identity of a Python callable.
+  Equivalent programs built separately within one solve share one executable, and a
+  solver whose published group key is coarser than what it actually specialized is
+  refused at build time with an `ExecutionPlanningError` naming both colliding
+  programs.
+- The value-transfer catalogue names one operator for every stored/required layout pair
+  the planner produces: `ALIGNED_LOCAL`, `COPY_TO_SOURCE_LAYOUT`, `ALL_GATHER`,
+  `LOCAL_SLICE`, `RESHARD`, and `CROSS_MESH_COPY`. Two device meshes that share devices
+  while neither contains the other are the one pair no single collective serves, and are
+  refused while the period is planned with an `ExecutionPlanningError` naming both
+  device sets.
+- A published continuation answers questions about itself. `ContinuationReader` is the
+  protocol a parent queries — `value_at`, `marginal_at` in a named state, and `leaves()`
+  for the payload's addressable arrays — and `ContinuationCapabilities` is the payload's
+  own statement of what it can answer. A parent declares what it needs in
+  `Solver.required_continuation_capabilities`; every endogenous-grid solver demands the
+  value and the marginal in `EGM_ENDOGENOUS_COORDINATE`, and the shipped `EGMCarry`
+  publishes both. A reachable target whose payload is not a reader, or whose reader
+  answers less than the parent asks, is refused while the model builds.
+- A dense EGM-family core declares the continuation leaves it reads instead of being
+  pinned conservatively against every reachable value. Which leaves exist is a fact
+  about the target's published template, so a solver names them in the new
+  `Solver.declare_continuation_reads`, which the engine calls once per
+  continuation-reading regime after every regime is built, with
+  `SolverBuildContext.continuation_specs` filled. The default declares nothing; the hook
+  may only attach `value_reads` to the programs the kernels already publish, so no
+  kernel is built twice. Only the returned container's `period_kernels` are honoured,
+  and a hook that moves any other field, or that declares reads for a regime whose
+  continuation the engine publishes on the solver's behalf, is refused at model build.
+- The engine's gated-edge fold declares the same-period values it reads. Folding one
+  edge at one period is a dispatch in its own right, so the target's value and each
+  reference regime's value are counted consumers rather than values pinned wholesale
+  because nobody had named them.
+- Solution archives written under solver API version 1 are rejected with
+  `IncompatibleSolutionError`. Compatibility remains exact; pylcm does not migrate an
+  archive across a solver API version.
+- Backward induction releases every cross-period input after its final consumer and
+  donates sole-consumer inputs a program names in `donation_candidates`; the donation
+  set is part of the compilation key. Regime values are never released. Under
+  `log_level="debug"` every release and donation is logged with the artifact key and
+  the closing dispatch.
+- On several devices every regime is placed on a submesh before compilation: a
+  distributed state of extent three solves on three of four devices, single-device
+  regimes fill idle devices, and independent regimes of a period dispatch concurrently.
+  Two placements of one model publish values that name the same real number — each
+  partition is vectorized at its own width, so they agree to within a few units in
+  the last place rather than bit for bit. One device or one regime per period is
+  placed as before.
+- A streaming width fits when its compiler-reported peak plus accounted external
+  residency fits `ExecutionConfig.device_memory_bytes`. Retained owners and
+  compiler-eliminated operands remain in residency; only the overlapping spans of
+  actual compiler-kept inputs are excluded to avoid counting them twice. Fixed
+  model inputs and scheduled transfer copies are included conservatively.
+
+### Execution configuration and solve/simulate memory attribution
+
+- Pass `ExecutionConfig` to `Model(...)` to select devices, sharded states, execution
+  widths and a per-device memory budget for both phases. Grids describe economic
+  support; their `batch_size` and `distributed` constructor arguments and the
+  corresponding solver execution knobs are removed. Explicit `axis_widths` names the
+  actual compiled program axes; a flattened state-cell width is not a per-state grid
+  width. Execution policy does not enter the durable model fingerprint.
+- With a budget, solve planning compiles candidates along a deterministic widest-first
+  frontier and selects the first whose compiler peak plus accounted residency fits.
+  Without a budget, streamed solve axes use their bootstrap widths, capped at 64,
+  unless an explicit width is supplied. An omitted width requests planning, and zero
+  is not a full-width sentinel in `axis_widths`.
+- Budgeted solves wait for earlier compiled work before dispatching another core
+  whose execution or transfer devices overlap. Completion retains auxiliary outputs
+  and copy witnesses through validation and error cleanup, and runs before eligible
+  buffers are deleted or donated. Work with disjoint complete device footprints may
+  remain asynchronous. This does not bound compiler autotuning or unprofiled host
+  allocations.
+- Configure subject chunks with `ExecutionConfig(axis_widths={"subject": width})`;
+  `Model.simulate(subject_batch_size=...)` is removed. Device alignment can increase
+  the outer chunk extent while preserving the requested inner width. With a budget
+  and no fixed subject width, complete chunk profiles include retained results,
+  numerical programs, RNG, diagnostics, padding and assembly. Chunk boundaries
+  preserve each original subject's random stream. `Model(n_subjects=...)` remains a
+  prewarm hint.
+- Solve candidate preparation uses shape and layout descriptors instead of allocating
+  transfer copies for each width. Budgeted foreign eager solution values use compiled
+  copy admission and retain intermediate copies through validation. Native archive
+  materialization, artifact copies and mixed-backend foreign copies remain unsupported
+  under a budget.
+- Budgeted simulation accepts built-in native GridSearch value archives, admitting
+  verified uploads and both private copies while retaining the archive cache. Actual
+  source devices on the execution backend participate in residency and transfer-scratch
+  accounting even when they are outside the selected execution subset.
+- Simulation programs whose inputs are all removed by the compiler still run on
+  their selected devices, preserving inferred scalar and vector output layouts.
+- Eager solve inputs now bind weakly typed values to matching declared strong types,
+  preserving compiled type promotion and their actual device layout. Shape and dtype
+  mismatches remain errors; normalization copies are shared within each call and
+  released with that call.
+- Eager solve cores place ordinary inputs on their planned submesh before executing
+  the numerical body, including bodies that create constant outputs. Repeated inputs
+  share a placement when their complete descriptors match. Equivalent runtime layouts
+  are accepted without changing declared transfer or compilation identities. Declared
+  producer outputs reach subsequent eager cores with their actual validated layouts.
+- Solve operand profiling uses a shared descriptor callable, allowing model disposal
+  to release every per-program nested function.
+- Finite NNBEGM simulation admits its declared candidate preparation, dropped-candidate
+  diagnostics and canonical ranking under the chunk budget. The full candidate bank
+  remains owned and counted through ranking, with addressed policy transfers shared
+  across both programs.
+- Supplied solutions on regime submeshes are accepted by simulation. Forward programs
+  and profiled allocation operations recheck current retained inputs and growing
+  results at dispatch. Unprofiled eager or host-driven programs fail visibly under a
+  budget. These checks do not yet bound every allocation across the whole call or
+  memory used during compilation.
+- Period captures record the selected tile widths, so `replay_period` and the
+  compiler-memory analyzer lower exactly the executable the solve dispatched.
+- The ASV GPU-memory series for the ACA baseline and Mahler–Yum rows are split into
+  three independently measured phases — automatic solve+simulate,
+  `ALL_PERSISTABLE_ARTIFACTS` solve+save, and load+supplied-solution simulate — each in
+  a fresh, phase-isolated child process with exact provenance. The combined
+  timing/CPU subprocess no longer reports a GPU peak.
+
 ### The MSS upper envelope decides its orderings from the stored operands
 
 - The envelope's comparison arithmetic is selectable: `MSSEnvelope(arithmetic=...)` takes
@@ -152,7 +313,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   grids), or `DeclaredReplay.UNSUPPORTED` (the model solves but refuses to simulate,
   naming the regime and solver). A solver outside the shipped set that leaves the route
   unset is refused at model build. `DeclaredReplay` is exported from `lcm.solvers`.
-- `TargetValueAccess`, `ValueArtifactAddress`, `ValueArtifactKind`,
+- `ValueRead`, `ValueArtifactAddress`, `ValueArtifactKind`,
   `ValueConsumerAddress`, and `ValueInputChannel` are public through `lcm.solvers`, so a
   core program that reads next-period stored values can declare each access;
   `SolverBuildContext.solution_reachability.targets(period=..., source=...)` names the

@@ -2,8 +2,9 @@ import functools
 import inspect
 import math
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import Any, ClassVar, cast
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +32,7 @@ from _lcm.typing import (
     StateName,
     _ParamsLeaf,
 )
-from _lcm.utils.dispatchers import productmap, vmap_1d
+from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d
 from _lcm.utils.functools import allow_args, allow_only_kwargs
 from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
 
@@ -71,6 +72,8 @@ def get_max_Q_over_a(
     fold_state_names: tuple[StateName, ...] = (),
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
+    cell_width_keyword: str | None = None,
+    untiled_state_names: tuple[StateName, ...] = (),
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -96,7 +99,12 @@ def get_max_Q_over_a(
             value of that combination and whether the state-action combination is
             feasible.
         batch_sizes: Mapping of state variable names to batch sizes for the outer
-            productmap over states. A batch size of 0 means no batching.
+            productmap over states when no cell-width keyword is supplied. A batch
+            size of 0 means no batching.
+        cell_width_keyword: Optional static keyword sizing the flattened inner
+            state product. The execution planner binds it before lowering.
+        untiled_state_names: Non-co-mapped states evaluated by ordinary outer
+            vmaps, keeping sharded coordinate axes outside the cell loop.
         action_names: Tuple of action variable names (discrete first, continuous
             last — the `StateActionSpace.action_names` order).
         state_names: Tuple of state names.
@@ -177,9 +185,13 @@ def get_max_Q_over_a(
         batch_sizes=dict.fromkeys(action_names, 0),
     )
 
+    max_Q_over_a: Callable[..., FloatND | tuple[FloatND, BoolND]]
     if has_taste_shocks:
-
-        @with_signature(
+        max_Q_over_a = with_signature(
+            _SmoothedMaxQOverA(
+                Q_and_F=Q_and_F,
+                n_discrete_action_axes=n_discrete_action_axes,
+            ),
             args=[
                 "next_regime_to_V_arr",
                 *action_names,
@@ -189,29 +201,13 @@ def get_max_Q_over_a(
             return_annotation="FloatND",
             enforce=False,
         )
-        def max_Q_over_a(
-            next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-            **states_actions_params: _ParamsLeaf,
-        ) -> FloatND:
-            Q_arr, F_arr = Q_and_F(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                **states_actions_params,
-            )
-            Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
-            continuous_axes = tuple(range(n_discrete_action_axes, Q_arr.ndim))
-            Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked
-            smoothed, _ = logsum_and_softmax(
-                values=Qc,
-                scale=cast(
-                    "ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]
-                ),
-                axes=tuple(range(Qc.ndim)),
-            )
-            return smoothed
-
     else:
-
-        @with_signature(
+        max_Q_over_a = with_signature(
+            _HardMaxQOverA(
+                Q_and_F=Q_and_F,
+                stakeholders=stakeholders,
+                pareto_weights=pareto_weights,
+            ),
             args=[
                 "next_regime_to_V_arr",
                 *action_names,
@@ -223,54 +219,23 @@ def get_max_Q_over_a(
             ),
             enforce=False,
         )
-        def max_Q_over_a(
-            next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-            **states_actions_params: _ParamsLeaf,
-        ) -> FloatND | tuple[FloatND, BoolND]:
-            Q_arr, F_arr = Q_and_F(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                **states_actions_params,
-            )
-            if stakeholders is not None:
-                # Q_arr carries a trailing
-                # stakeholder axis (the action product-map keeps it last);
-                # F_arr does not — where the regime declares value constraints
-                # F_arr already includes them, ANDed in by Q_and_F AFTER computing
-                # Q^s. Split Q_arr per stakeholder, take the household argmax
-                # of the scalarization over the masked action axes, and read
-                # off each stakeholder's OWN value at that shared argmax. The
-                # returned pair is the stakeholder value vector (re-stacked on
-                # a trailing axis, which the outer state product-map turns
-                # into `(*states, n_stakeholders)`) plus the dissolution flag D —
-                # `True` where NO action is feasible (empty mask), published
-                # alongside V and never conflated with a numeric -inf value
-                # (which occurs on-path).
-                action_axes = tuple(range(F_arr.ndim))
-                stakeholder_Q = {
-                    name: Q_arr[..., index] for index, name in enumerate(stakeholders)
-                }
-                values, dissolution = collective_readout(
-                    stakeholder_Q=stakeholder_Q,
-                    feasibility=F_arr,
-                    weights=_evaluate_pareto_weights(
-                        pareto_weights=pareto_weights,
-                        states_actions_params=states_actions_params,
-                    ),
-                    action_axes=action_axes,
-                )
-                return (
-                    jnp.stack([values[name] for name in stakeholders], axis=-1),
-                    dissolution,
-                )
-            return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
     inner_state_names = tuple(
         name for name in state_names if name not in co_map_state_names
     )
-    mapped = productmap(
-        func=max_Q_over_a,
-        variables=inner_state_names,
-        batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+    mapped = (
+        tiled_productmap(
+            func=max_Q_over_a,
+            variables=inner_state_names,
+            width_keyword=cell_width_keyword,
+            untiled_variables=untiled_state_names,
+        )
+        if cell_width_keyword is not None
+        else productmap(
+            func=max_Q_over_a,
+            variables=inner_state_names,
+            batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+        )
     )
 
     if fold_state_names:
@@ -285,7 +250,10 @@ def get_max_Q_over_a(
             inner_state_names=inner_state_names,
             action_names=action_names,
             state_names=state_names,
-            extra_param_names=extra_param_names,
+            extra_param_names=[
+                *extra_param_names,
+                *((cell_width_keyword,) if cell_width_keyword is not None else ()),
+            ],
         )
 
     if not co_map_state_names:
@@ -312,6 +280,114 @@ def get_max_Q_over_a(
     return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
 
 
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SmoothedMaxQOverA:
+    """The EV1-smoothed maximum of Q over the actions, at one state cell.
+
+    Every value the reduction reads is an explicit field, so the regime's
+    action kernel stays reachable only through this instance, which the model
+    build drops with the value function it was built for. The caller wraps it
+    in `dags.with_signature` to advertise the arguments the state productmap
+    binds by name.
+    """
+
+    __name__: ClassVar[str] = "max_Q_over_a"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    """The regime's action value and feasibility, mapped over the action product."""
+
+    n_discrete_action_axes: int
+    """Number of leading discrete-action axes the smoothed maximum reduces."""
+
+    def __call__(
+        self,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        **states_actions_params: Any,  # noqa: ANN401
+    ) -> FloatND:
+        """Return the expected maximum over the discrete actions at this cell."""
+        Q_arr, F_arr = self.Q_and_F(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **states_actions_params,
+        )
+        Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
+        continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim))
+        Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked
+        smoothed, _ = logsum_and_softmax(
+            values=Qc,
+            scale=cast("ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
+            axes=tuple(range(Qc.ndim)),
+        )
+        return smoothed
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _HardMaxQOverA:
+    """The hard maximum of Q over the feasible actions, at one state cell.
+
+    Every value the reduction reads is an explicit field, so the regime's
+    action kernel stays reachable only through this instance, which the model
+    build drops with the value function it was built for. The caller wraps it
+    in `dags.with_signature` to advertise the arguments the state productmap
+    binds by name.
+    """
+
+    __name__: ClassVar[str] = "max_Q_over_a"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    """The regime's action value and feasibility, mapped over the action product."""
+
+    stakeholders: tuple[str, ...] | None
+    """Ordered stakeholder names of a collective regime, or `None` for a singleton."""
+
+    pareto_weights: ParetoWeights | None
+    """The household's Pareto weight evaluator, or `None` for a singleton."""
+
+    def __call__(
+        self,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        **states_actions_params: Any,  # noqa: ANN401
+    ) -> FloatND | tuple[FloatND, BoolND]:
+        """Return the cell's value, plus the dissolution flag for a household."""
+        Q_arr, F_arr = self.Q_and_F(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **states_actions_params,
+        )
+        if self.stakeholders is not None:
+            # Q_arr carries a trailing
+            # stakeholder axis (the action product-map keeps it last);
+            # F_arr does not — where the regime declares value constraints
+            # F_arr already includes them, ANDed in by Q_and_F AFTER computing
+            # Q^s. Split Q_arr per stakeholder, take the household argmax
+            # of the scalarization over the masked action axes, and read
+            # off each stakeholder's OWN value at that shared argmax. The
+            # returned pair is the stakeholder value vector (re-stacked on
+            # a trailing axis, which the outer state product-map turns
+            # into `(*states, n_stakeholders)`) plus the dissolution flag D —
+            # `True` where NO action is feasible (empty mask), published
+            # alongside V and never conflated with a numeric -inf value
+            # (which occurs on-path).
+            action_axes = tuple(range(F_arr.ndim))
+            stakeholder_Q = {
+                name: Q_arr[..., index] for index, name in enumerate(self.stakeholders)
+            }
+            values, dissolution = collective_readout(
+                stakeholder_Q=stakeholder_Q,
+                feasibility=F_arr,
+                weights=_evaluate_pareto_weights(
+                    pareto_weights=self.pareto_weights,
+                    states_actions_params=states_actions_params,
+                ),
+                action_axes=action_axes,
+            )
+            return (
+                jnp.stack([values[name] for name in self.stakeholders], axis=-1),
+                dissolution,
+            )
+        return Q_arr.max(where=F_arr, initial=-jnp.inf)
+
+
 def get_streaming_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
@@ -328,6 +404,8 @@ def get_streaming_max_Q_over_a(
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
     action_width_keyword: str = "_lcm_action_block_width",
+    cell_width_keyword: str | None = None,
+    untiled_state_names: tuple[StateName, ...] = (),
 ) -> MaxQOverAFunction:
     """Build a singleton or collective V kernel that streams the action product.
 
@@ -382,7 +460,17 @@ def get_streaming_max_Q_over_a(
         extra_param_names=extra_param_names,
     )
 
-    @with_signature(
+    streamed_max_Q_over_a = with_signature(
+        _StreamedMaxQOverA(
+            Q_and_F=Q_and_F,
+            action_names=action_names,
+            n_discrete_action_axes=n_discrete_action_axes,
+            has_taste_shocks=has_taste_shocks,
+            stakeholders=stakeholders,
+            pareto_weights=pareto_weights,
+            q_and_f_arg_names=q_and_f_arg_names,
+            action_width_keyword=action_width_keyword,
+        ),
         args=[
             "next_regime_to_V_arr",
             *action_names,
@@ -395,72 +483,23 @@ def get_streaming_max_Q_over_a(
         ),
         enforce=False,
     )
-    def streamed_max_Q_over_a(
-        *,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: _ParamsLeaf,
-    ) -> FloatND | tuple[FloatND, BoolND]:
-        action_block_width = cast("int", states_actions_params[action_width_keyword])
-        q_and_f_params = {
-            name: value
-            for name, value in states_actions_params.items()
-            if name in q_and_f_arg_names
-        }
-        if has_taste_shocks:
-            ev1_cell = build_streaming_ev1_max_Q_over_a(
-                Q_and_F=Q_and_F,
-                action_names=action_names,
-                n_discrete_action_axes=n_discrete_action_axes,
-                block_width=action_block_width,
-                scale=cast(
-                    "ScalarFloat",
-                    states_actions_params[TASTE_SHOCK_SCALE_PARAM],
-                ),
-            )
-            ev1_result = ev1_cell(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                **q_and_f_params,
-            )
-            return ev1_result.smoothed_value
-
-        if stakeholders is None:
-            fixed_cell = build_streaming_max_Q_over_a(
-                Q_and_F=Q_and_F,
-                action_names=action_names,
-                block_width=action_block_width,
-            )
-            result = fixed_cell(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                **q_and_f_params,
-            )
-            return result.best_value
-
-        collective_cell = build_streaming_collective_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            action_names=action_names,
-            block_width=action_block_width,
-            stakeholders=stakeholders,
-            weights=_evaluate_pareto_weights(
-                pareto_weights=pareto_weights,
-                states_actions_params=states_actions_params,
-            ),
-        )
-        collective_result = collective_cell(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            **q_and_f_params,
-        )
-        return (
-            collective_result.best_stakeholder_values,
-            ~collective_result.any_feasible,
-        )
 
     inner_state_names = tuple(
         name for name in state_names if name not in co_map_state_names
     )
-    mapped = productmap(
-        func=streamed_max_Q_over_a,
-        variables=inner_state_names,
-        batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+    mapped = (
+        tiled_productmap(
+            func=streamed_max_Q_over_a,
+            variables=inner_state_names,
+            width_keyword=cell_width_keyword,
+            untiled_variables=untiled_state_names,
+        )
+        if cell_width_keyword is not None
+        else productmap(
+            func=streamed_max_Q_over_a,
+            variables=inner_state_names,
+            batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+        )
     )
     if fold_state_names:
         _fail_if_collective(
@@ -474,7 +513,11 @@ def get_streaming_max_Q_over_a(
             inner_state_names=inner_state_names,
             action_names=action_names,
             state_names=state_names,
-            extra_param_names=[*extra_param_names, action_width_keyword],
+            extra_param_names=[
+                *extra_param_names,
+                action_width_keyword,
+                *((cell_width_keyword,) if cell_width_keyword is not None else ()),
+            ],
         )
     if not co_map_state_names:
         return cast("MaxQOverAFunction", mapped)
@@ -495,6 +538,108 @@ def get_streaming_max_Q_over_a(
             callable_with="only_args",
         )
     return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _StreamedMaxQOverA:
+    """The maximum of Q over a streamed action product, at one state cell.
+
+    Every value the reduction reads is an explicit field, so the regime's
+    action kernel stays reachable only through this instance, which the model
+    build drops with the value function it was built for. The caller wraps it
+    in `dags.with_signature` to advertise the arguments the state productmap
+    binds by name, the planner-owned action width included.
+    """
+
+    __name__: ClassVar[str] = "streamed_max_Q_over_a"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    """The regime's action value and feasibility, evaluated per action block."""
+
+    action_names: tuple[ActionName, ...]
+    """Action variable names, discrete first, spanning the streamed product."""
+
+    n_discrete_action_axes: int
+    """Number of leading discrete-action axes an EV1 route log-sums over."""
+
+    has_taste_shocks: bool
+    """Whether the regime declares EV1 taste shocks on its discrete actions."""
+
+    stakeholders: tuple[str, ...] | None
+    """Ordered stakeholder names of a collective regime, or `None` for a singleton."""
+
+    pareto_weights: ParetoWeights | None
+    """The household's Pareto weight evaluator, or `None` for a singleton."""
+
+    q_and_f_arg_names: frozenset[str]
+    """The argument names `Q_and_F` declares, which select what it is handed."""
+
+    action_width_keyword: str
+    """Name of the planner-bound static action-block width in the call."""
+
+    def __call__(
+        self,
+        *,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        **states_actions_params: Any,  # noqa: ANN401
+    ) -> FloatND | tuple[FloatND, BoolND]:
+        """Return the cell's value, plus the dissolution flag for a household."""
+        action_block_width = cast(
+            "int", states_actions_params[self.action_width_keyword]
+        )
+        q_and_f_params = {
+            name: value
+            for name, value in states_actions_params.items()
+            if name in self.q_and_f_arg_names
+        }
+        if self.has_taste_shocks:
+            ev1_cell = build_streaming_ev1_max_Q_over_a(
+                Q_and_F=self.Q_and_F,
+                action_names=self.action_names,
+                n_discrete_action_axes=self.n_discrete_action_axes,
+                block_width=action_block_width,
+                scale=cast(
+                    "ScalarFloat",
+                    states_actions_params[TASTE_SHOCK_SCALE_PARAM],
+                ),
+            )
+            ev1_result = ev1_cell(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                **q_and_f_params,
+            )
+            return ev1_result.smoothed_value
+
+        if self.stakeholders is None:
+            fixed_cell = build_streaming_max_Q_over_a(
+                Q_and_F=self.Q_and_F,
+                action_names=self.action_names,
+                block_width=action_block_width,
+            )
+            result = fixed_cell(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                **q_and_f_params,
+            )
+            return result.best_value
+
+        collective_cell = build_streaming_collective_max_Q_over_a(
+            Q_and_F=self.Q_and_F,
+            action_names=self.action_names,
+            block_width=action_block_width,
+            stakeholders=self.stakeholders,
+            weights=_evaluate_pareto_weights(
+                pareto_weights=self.pareto_weights,
+                states_actions_params=states_actions_params,
+            ),
+        )
+        collective_result = collective_cell(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **q_and_f_params,
+        )
+        return (
+            collective_result.best_stakeholder_values,
+            ~collective_result.any_feasible,
+        )
 
 
 def _fail_if_action_width_keyword_collides(
@@ -943,9 +1088,13 @@ def get_argmax_and_max_Q_over_a(
         batch_sizes=dict.fromkeys(action_names, 0),
     )
 
+    argmax_and_max_Q_over_a: ArgmaxQOverAFunction
     if has_taste_shocks:
-
-        @with_signature(
+        argmax_and_max_Q_over_a = with_signature(
+            _TasteShockArgmaxQOverA(
+                Q_and_F=Q_and_F,
+                n_discrete_action_axes=n_discrete_action_axes,
+            ),
             args=[
                 "next_regime_to_V_arr",
                 "taste_shock_key",
@@ -956,40 +1105,13 @@ def get_argmax_and_max_Q_over_a(
             return_annotation="tuple[IntND, FloatND]",
             enforce=False,
         )
-        def argmax_and_max_Q_over_a(
-            next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-            **states_actions_params: _ParamsLeaf,
-        ) -> tuple[IntND, FloatND]:
-            taste_shock_key = cast(
-                "Array", states_actions_params.pop("taste_shock_key")
-            )
-            Q_arr, F_arr = Q_and_F(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                **states_actions_params,
-            )
-            Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
-            n_discrete_cells = math.prod(Q_arr.shape[:n_discrete_action_axes])
-            n_continuous_cells = math.prod(Q_arr.shape[n_discrete_action_axes:])
-            Q_flat = Q_masked.reshape(n_discrete_cells, n_continuous_cells)
-            continuous_argmax = jnp.argmax(Q_flat, axis=1)
-            Qc = Q_flat.max(axis=1)
-            scale = cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM])
-            noise = draw_taste_shock_noise(
-                key=taste_shock_key, shape=Qc.shape, scale=scale
-            )
-            # An infeasible discrete cell stays infeasible: the noise is
-            # finite, so `-inf + noise` is still `-inf`.
-            noisy_Qc = Qc + noise
-            discrete_argmax = jnp.argmax(noisy_Qc)
-            flat_index = (
-                discrete_argmax * n_continuous_cells
-                + continuous_argmax[discrete_argmax]
-            )
-            return flat_index.astype(jnp.int32), Qc[discrete_argmax]
-
     else:
-
-        @with_signature(
+        argmax_and_max_Q_over_a = with_signature(
+            _HardMaxArgmaxQOverA(
+                Q_and_F=Q_and_F,
+                stakeholders=stakeholders,
+                pareto_weights=pareto_weights,
+            ),
             args=[
                 "next_regime_to_V_arr",
                 *action_names,
@@ -999,42 +1121,118 @@ def get_argmax_and_max_Q_over_a(
             return_annotation="tuple[IntND, FloatND]",
             enforce=False,
         )
-        def argmax_and_max_Q_over_a(
-            next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-            **states_actions_params: _ParamsLeaf,
-        ) -> tuple[IntND, FloatND]:
-            Q_arr, F_arr = Q_and_F(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                **states_actions_params,
-            )
-            if stakeholders is not None:
-                # Mirrors the solve-side collective
-                # branch in `get_max_Q_over_a` — split the stacked Q by
-                # stakeholder, argmax the household scalarization once over
-                # the value-masked feasible action set, and gather
-                # each stakeholder's OWN value at that shared index. The
-                # simulate-only addition vs. the solve readout
-                # (`collective_readout`) is the argmax index itself, needed
-                # to look up which JOINT action both stakeholders actually
-                # took (`_lookup_values_from_indices` in `simulate.py`).
-                action_axes = tuple(range(F_arr.ndim))
-                stakeholder_Q = {
-                    name: Q_arr[..., index] for index, name in enumerate(stakeholders)
-                }
-                argmax_flat, values, _dissolution = collective_argmax_and_readout(
-                    stakeholder_Q=stakeholder_Q,
-                    feasibility=F_arr,
-                    weights=_evaluate_pareto_weights(
-                        pareto_weights=pareto_weights,
-                        states_actions_params=states_actions_params,
-                    ),
-                    action_axes=action_axes,
-                )
-                V_stacked = jnp.stack([values[name] for name in stakeholders], axis=-1)
-                return argmax_flat, V_stacked
-            return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)
 
     return argmax_and_max_Q_over_a
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _TasteShockArgmaxQOverA:
+    """The Gumbel-max discrete draw and its value, at one state cell.
+
+    Every value the draw reads is an explicit field, so the regime's action
+    kernel stays reachable only through this instance, which the model build
+    drops with the policy function it was built for. The caller wraps it in
+    `dags.with_signature` to advertise the arguments the simulation space map
+    binds by name.
+    """
+
+    __name__: ClassVar[str] = "argmax_and_max_Q_over_a"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    """The regime's action value and feasibility, mapped over the action product."""
+
+    n_discrete_action_axes: int
+    """Number of leading discrete-action axes the noisy draw chooses among."""
+
+    def __call__(
+        self,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        **states_actions_params: Any,  # noqa: ANN401
+    ) -> tuple[IntND, FloatND]:
+        """Return the flat index of the drawn action and its noise-free value."""
+        taste_shock_key = cast("Array", states_actions_params.pop("taste_shock_key"))
+        Q_arr, F_arr = self.Q_and_F(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **states_actions_params,
+        )
+        Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
+        n_discrete_cells = math.prod(Q_arr.shape[: self.n_discrete_action_axes])
+        n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes :])
+        Q_flat = Q_masked.reshape(n_discrete_cells, n_continuous_cells)
+        continuous_argmax = jnp.argmax(Q_flat, axis=1)
+        Qc = Q_flat.max(axis=1)
+        scale = cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM])
+        noise = draw_taste_shock_noise(key=taste_shock_key, shape=Qc.shape, scale=scale)
+        # An infeasible discrete cell stays infeasible: the noise is
+        # finite, so `-inf + noise` is still `-inf`.
+        noisy_Qc = Qc + noise
+        discrete_argmax = jnp.argmax(noisy_Qc)
+        flat_index = (
+            discrete_argmax * n_continuous_cells + continuous_argmax[discrete_argmax]
+        )
+        return flat_index.astype(jnp.int32), Qc[discrete_argmax]
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _HardMaxArgmaxQOverA:
+    """The argmax of Q over the feasible actions and its value, at one state cell.
+
+    Every value the argmax reads is an explicit field, so the regime's action
+    kernel stays reachable only through this instance, which the model build
+    drops with the policy function it was built for. The caller wraps it in
+    `dags.with_signature` to advertise the arguments the simulation space map
+    binds by name.
+    """
+
+    __name__: ClassVar[str] = "argmax_and_max_Q_over_a"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    """The regime's action value and feasibility, mapped over the action product."""
+
+    stakeholders: tuple[str, ...] | None
+    """Ordered stakeholder names of a collective regime, or `None` for a singleton."""
+
+    pareto_weights: ParetoWeights | None
+    """The household's Pareto weight evaluator, or `None` for a singleton."""
+
+    def __call__(
+        self,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        **states_actions_params: Any,  # noqa: ANN401
+    ) -> tuple[IntND, FloatND]:
+        """Return the flat index of the chosen action and the value it attains."""
+        Q_arr, F_arr = self.Q_and_F(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **states_actions_params,
+        )
+        if self.stakeholders is not None:
+            # Mirrors the solve-side collective
+            # branch in `get_max_Q_over_a` — split the stacked Q by
+            # stakeholder, argmax the household scalarization once over
+            # the value-masked feasible action set, and gather
+            # each stakeholder's OWN value at that shared index. The
+            # simulate-only addition vs. the solve readout
+            # (`collective_readout`) is the argmax index itself, needed
+            # to look up which JOINT action both stakeholders actually
+            # took (`_lookup_values_from_indices` in `simulate.py`).
+            action_axes = tuple(range(F_arr.ndim))
+            stakeholder_Q = {
+                name: Q_arr[..., index] for index, name in enumerate(self.stakeholders)
+            }
+            argmax_flat, values, _dissolution = collective_argmax_and_readout(
+                stakeholder_Q=stakeholder_Q,
+                feasibility=F_arr,
+                weights=_evaluate_pareto_weights(
+                    pareto_weights=self.pareto_weights,
+                    states_actions_params=states_actions_params,
+                ),
+                action_axes=action_axes,
+            )
+            V_stacked = jnp.stack([values[name] for name in self.stakeholders], axis=-1)
+            return argmax_flat, V_stacked
+        return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)
 
 
 def draw_taste_shock_noise(

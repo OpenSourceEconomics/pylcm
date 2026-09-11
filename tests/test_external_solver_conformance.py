@@ -15,6 +15,8 @@ import pytest
 
 import lcm.model as model_module
 import lcm.solver_api as solver_api_module
+from _lcm.simulation import replay_inputs as replay_inputs_module
+from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution import fingerprint as fingerprint_module
 from _lcm.solution import period_replay as period_replay_module
 from _lcm.solution.fingerprint import fingerprint_solution_support
@@ -68,11 +70,11 @@ from lcm.solvers import (
     Solver,
     SolverBuildContext,
     StateAxesLeading,
-    TargetValueAccess,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
     ValueInputChannel,
+    ValueRead,
 )
 from lcm.typing import (
     ContinuousAction,
@@ -911,7 +913,7 @@ def test_reference_solver_scopes_planned_cores_to_requested_retention() -> None:
     programs = cast("Any", kernel).core_programs()
     values_program = programs["values"]
     replay_program = programs["replay"]
-    axis = values_program.requirements.streamable_axes[0]
+    axis = values_program.requirements.axes[0]
 
     scratch_program = programs["scratch"]
     assert tuple(programs) == ("values", "replay", "scratch")
@@ -1079,8 +1081,7 @@ def test_custom_route_changes_the_grid_search_tie_decision() -> None:
     )
     route = model._regimes["active"].simulation.external_replay_route
     assert isinstance(route, ReferenceReplayRoute)
-    assert route.audit.validation_artifact_keys == [(POLICY_KEY,)] * _N_PERIODS
-    assert route.audit.reader_artifact_keys == route.audit.validation_artifact_keys
+    _assert_replay_validation_stages(route=route)
 
 
 @pytest.mark.parametrize("kind", ["nan", "positive_inf", "negative_inf"])
@@ -1248,12 +1249,52 @@ def test_persisted_solution_loads_lazily_and_replays_in_a_fresh_model(
 
     route = fresh_model._regimes["active"].simulation.external_replay_route
     assert isinstance(route, ReferenceReplayRoute)
-    assert route.audit.validated_snapshots == route.audit.reader_snapshots
-    assert len(route.audit.validated_snapshots) == _N_PERIODS
+    _assert_replay_validation_stages(route=route)
     assert {context.period for context in route.audit.requirement_contexts} == set(
         range(_N_PERIODS)
     )
-    assert route.audit.validation_artifact_keys == [(POLICY_KEY,)] * _N_PERIODS
+
+
+def _assert_replay_validation_stages(*, route: ReferenceReplayRoute) -> None:
+    """Preflight every cell, then validate each exact placed reader input again."""
+    audit = route.audit
+    assert len(audit.validated_snapshots) == 2 * _N_PERIODS
+    assert audit.validated_snapshots[_N_PERIODS:] == audit.reader_snapshots
+    assert audit.validation_artifact_keys == [(POLICY_KEY,)] * (2 * _N_PERIODS)
+    assert audit.reader_artifact_keys == [(POLICY_KEY,)] * _N_PERIODS
+    for original, placed, consumed in zip(
+        audit.validated_contents[:_N_PERIODS],
+        audit.validated_contents[_N_PERIODS:],
+        audit.reader_contents,
+        strict=True,
+    ):
+        assert original.metadata_identity == placed.metadata_identity
+        assert placed.metadata_identity == consumed.metadata_identity
+        assert original.authority_identities == placed.authority_identities
+        assert placed.authority_identities == consumed.authority_identities
+        assert original.payload_type is placed.payload_type is consumed.payload_type
+        assert original.values.dtype == placed.values.dtype == consumed.values.dtype
+        np.testing.assert_array_equal(original.values, placed.values)
+        np.testing.assert_array_equal(placed.values, consumed.values)
+    for original, placed, consumed in zip(
+        audit.validation_contexts[:_N_PERIODS],
+        audit.validation_contexts[_N_PERIODS:],
+        audit.reader_contexts,
+        strict=True,
+    ):
+        assert placed is consumed
+        assert original.period == placed.period
+        assert original.regime_name == placed.regime_name
+        assert original.state_names == placed.state_names
+        assert original.action_names == placed.action_names
+        for old_nodes, new_nodes in (
+            (original.state_nodes, placed.state_nodes),
+            (original.action_nodes, placed.action_nodes),
+        ):
+            assert tuple(old_nodes) == tuple(new_nodes)
+            for name, value in old_nodes.items():
+                assert value.dtype == new_nodes[name].dtype
+                np.testing.assert_array_equal(value, new_nodes[name])
 
 
 def test_simulation_materializes_each_value_and_replay_artifact_once() -> None:
@@ -1785,15 +1826,7 @@ def test_external_authority_and_route_context_use_each_periods_state_nodes() -> 
         log_level="off",
     )
 
-    assert len(route.audit.validation_contexts) == len(route.audit.reader_contexts)
-    assert all(
-        validated is reader
-        for validated, reader in zip(
-            route.audit.validation_contexts,
-            route.audit.reader_contexts,
-            strict=True,
-        )
-    )
+    _assert_replay_validation_stages(route=route)
     for context in route.audit.validation_contexts:
         expected = np.linspace(1.0 + context.period, 3.0 + context.period, 3)
         np.testing.assert_array_equal(context.state_nodes["wealth"], expected)
@@ -1895,6 +1928,76 @@ def test_mathematically_invalid_custom_artifact_is_rejected_by_the_route() -> No
             solution=malformed,
             log_level="off",
         )
+
+
+def test_invalid_later_replay_artifact_fails_before_any_period_execution(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later cell's validator still runs before entering the forward loop."""
+    model = _model(solver=ReferenceSolver())
+    solution = _solve(model=model)
+    ref = ArtifactRef(period=_N_PERIODS - 1, regime="active", key=POLICY_KEY)
+    policy = cast("Policy", solution.replay_artifacts[ref])
+    malformed = dataclasses.replace(
+        solution,
+        replay_artifacts=ArtifactStore(
+            dict(solution.replay_artifacts)
+            | {ref: Policy(values=jnp.zeros_like(policy.values))}
+        ),
+    )
+    monkeypatch.setattr(model_module, "simulate", _refuse_unvalidated_simulation)
+    with pytest.raises(InvalidSimulationInputError, match="middle-action tie"):
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions=_initial_conditions(),
+            solution=malformed,
+            log_level="off",
+        )
+    route = model._regimes["active"].simulation.external_replay_route
+    assert isinstance(route, ReferenceReplayRoute)
+    assert route.audit.reader_snapshots == []
+    assert [context.period for context in route.audit.validation_contexts] == list(
+        range(_N_PERIODS)
+    )
+
+
+def _refuse_unvalidated_simulation(**kwargs: object) -> None:
+    """Witness the first forward entry, including before any reader is built."""
+    raise AssertionError(f"Forward execution preceded complete preflight: {kwargs}")
+
+
+def test_invalid_placed_replay_payload_is_rejected_before_reader_construction(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seeded bad transport cannot use the original cell's successful preflight."""
+    model = _model(solver=ReferenceSolver())
+    solution = _solve(model=model)
+    prepared = model._resolve_solution_result(
+        solution=solution, flat_params=model._process_params(_PARAMS)
+    )[3][0]["active"]
+    owner = PeriodSimulationReads(
+        period=0,
+        devices=(jax.devices()[0],),
+        reads_by_unit={"active": prepared.reads()},
+        release_enabled=True,
+    )
+    monkeypatch.setattr(
+        replay_inputs_module, "place_replay_payload", _wrong_placed_replay_policy
+    )
+    with pytest.raises(InvalidSimulationInputError, match="middle-action tie"):
+        prepared.build(owner=owner, devices=(jax.devices()[0],))
+    route = prepared.route
+    assert isinstance(route, ReferenceReplayRoute)
+    assert route.audit.reader_snapshots == []
+    owner.commit(unit="active", outputs=())
+    owner.finish()
+
+
+def _wrong_placed_replay_policy(*, payload: object, **kwargs: object) -> Policy:
+    """Keep the payload schema while seeding a different candidate selection."""
+    assert kwargs
+    assert isinstance(payload, Policy)
+    return Policy(values=jnp.zeros_like(payload.values))
 
 
 def test_mutable_plugin_payload_container_is_rejected_by_authority() -> None:
@@ -2368,8 +2471,8 @@ def test_a_core_reading_next_period_target_values_declares_each_access() -> None
     program = cast(
         "Any", model._regimes["active"].solution.period_kernels[0]
     ).core_programs()["values"]
-    assert program.requirements.target_value_accesses == (
-        TargetValueAccess(
+    assert program.requirements.value_reads == (
+        ValueRead(
             target=ValueArtifactAddress(
                 kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="active"
             ),
@@ -2384,7 +2487,7 @@ def test_a_core_reading_next_period_target_values_declares_each_access() -> None
     )
 
 
-def test_declared_target_value_accesses_feed_the_core_the_stored_next_values() -> None:
+def test_declared_value_reads_feed_the_core_the_stored_next_values() -> None:
     """The core reads each target's stored value: `V_t = wealth + max V_{t+1}`."""
     solution = _model(solver=TargetValueSolver()).solve(params=_PARAMS, log_level="off")
     wealth = np.asarray(_WEALTH_GRID.to_jax())

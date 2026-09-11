@@ -113,7 +113,6 @@ class _GridTraits:
     """
 
     cls: type
-    batch_size: int
     pass_points_at_runtime: bool
     n_points: int
     shape: tuple[int, ...] | None
@@ -139,7 +138,6 @@ def _grid_traits(*, grid: ContinuousGrid, nodes: Float1D | None = None) -> _Grid
             raise _GridTraitsError(msg)
         return _GridTraits(
             cls=type(grid),
-            batch_size=int(grid.batch_size),
             pass_points_at_runtime=True,
             n_points=int(declared),
             shape=None,
@@ -165,7 +163,6 @@ def _grid_traits(*, grid: ContinuousGrid, nodes: Float1D | None = None) -> _Grid
         raise _GridTraitsError(msg)
     return _GridTraits(
         cls=type(grid),
-        batch_size=int(grid.batch_size),
         pass_points_at_runtime=False,
         n_points=arr.shape[0],
         shape=arr.shape,
@@ -184,7 +181,6 @@ def _mode(traits: _GridTraits) -> str:
 _TRAIT_DESCRIPTIONS: Final = (
     ("cls", "grid class", lambda t: t.cls.__name__),
     ("pass_points_at_runtime", "points supplied", _mode),
-    ("batch_size", "batch_size", lambda t: t.batch_size),
     ("n_points", "n_points", lambda t: t.n_points),
     ("shape", "resolved node shape", lambda t: t.shape),
     ("dtype", "resolved node dtype", lambda t: t.dtype),

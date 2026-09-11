@@ -19,7 +19,6 @@ import jax.numpy as jnp
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
-from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
@@ -44,7 +43,6 @@ from _lcm.typing import (
     RegimeName,
     RegimeTransitionFunction,
     StateName,
-    StateOrActionName,
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import productmap
@@ -64,7 +62,6 @@ def _build_compute_intermediates_per_period(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
-    grids: MappingProxyType[StateOrActionName, Grid],
     enable_jit: bool,
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
@@ -99,8 +96,6 @@ def _build_compute_intermediates_per_period(
         regime_to_v_interpolation_info: Mapping of regime names to
             V-interpolation info.
         state_action_space: State-action space used for productmap sizing.
-        grids: Immutable mapping of state/action names to grid specs; used
-            for per-state batch sizes.
         enable_jit: Whether to JIT-compile the fused closure.
         koopmans_aggregator: The regime's Bellman aggregator, with params
             renamed to qnames.
@@ -114,11 +109,7 @@ def _build_compute_intermediates_per_period(
         Immutable mapping of period index to fused closure.
 
     """
-    state_batch_sizes = {
-        name: grid.batch_size
-        for name, grid in grids.items()
-        if name in state_action_space.state_names
-    }
+    state_batch_sizes = dict.fromkeys(state_action_space.state_names, 0)
 
     # `continuation_info` mirrors `_build_Q_and_F_per_period.continuation_info` so a
     # NaN diagnostic recomputes intermediates on the *same* period-specific target

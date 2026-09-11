@@ -220,6 +220,7 @@ def _solve_consent(*, enable_jit: bool = False):
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_gated_edges_collective_solve",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -453,6 +454,7 @@ def _solve_dissolution(*, enable_jit: bool = False):
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_gated_edges_collective_solve",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,

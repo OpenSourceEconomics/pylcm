@@ -249,25 +249,15 @@ def build_dead_regime() -> Regime:
 def build_paper_solver(
     *,
     outer_search: AdaptiveOuterMesh | None = None,
-    cell_block_size: int = 0,
-    branch_batch_size: int = 0,
-    interval_batch_size: int = 0,
 ) -> NNBEGM:
     """Construct the paper-mode NNBEGM solver.
 
-    The fixed-window requests retain their ordinary defaults because this model has
-    no distinct paper-specific scheduling profile. The ride geometry admits stride
-    256 for every `cell_block_size` and `interval_batch_size` request. `LaborSupply`
-    has only three branches, so every `branch_batch_size` request admits the same
-    four-row stride. The arguments remain exposed to make that accepted-request
-    contract explicit, not as memory or runtime controls for this model.
+    Set compiled widths on the model's `ExecutionConfig`. The inner NBEGM programs
+    declare the applicable stochastic-node, interval, branch, and ride-cell axes.
     """
     return NNBEGM(
         inner=NBEGM(
             savings_grid=IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
-            cell_block_size=cell_block_size,
-            branch_batch_size=branch_batch_size,
-            interval_batch_size=interval_batch_size,
         ),
         outer_search=outer_search
         if outer_search is not None

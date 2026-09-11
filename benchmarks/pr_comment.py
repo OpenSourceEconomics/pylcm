@@ -37,12 +37,30 @@ _MARKER = "<!-- benchmark-check -->"
 _RESULTS_DIR = Path(".asv/results")
 
 _CLASS_DISPLAY = {
-    "AcaBaseline": "aca-baseline",
-    "AcaBaselineGpuPeakMem": "aca-baseline",
-    "AcaBaselineDebugLog": "aca-baseline-debug",
-    "AcaBaselineDebugLogGpuPeakMem": "aca-baseline-debug",
+    "AcaBaseline": (
+        "ACA reduced benchmark "
+        "(tiny continuous grids, 2 preference types, 1,000 subjects)"
+    ),
+    "AcaBaselineGpuPeakMem": (
+        "ACA reduced benchmark "
+        "(tiny continuous grids, 2 preference types, 1,000 subjects)"
+    ),
+    "AcaBaselineDebugLog": (
+        "ACA reduced benchmark, debug logging "
+        "(tiny continuous grids, 2 preference types, 1,000 subjects)"
+    ),
+    "AcaBaselineDebugLogGpuPeakMem": (
+        "ACA reduced benchmark, debug logging "
+        "(tiny continuous grids, 2 preference types, 1,000 subjects)"
+    ),
     "MahlerYum": "Mahler-Yum",
     "MahlerYumGpuPeakMem": "Mahler-Yum",
+    "MahlerYumBudgetedGpu": (
+        "Mahler-Yum GPU fp64 configured series (capacity-half-a64-c4096-v1)"
+    ),
+    "MahlerYumBudgetedGpuPeakMem": (
+        "Mahler-Yum GPU fp64 configured series, memory (capacity-half-a64-c4096-v1)"
+    ),
     "PrecautionarySavingsSolve": "Precautionary Savings - Solve",
     "PrecautionarySavingsSolveGpuPeakMem": "Precautionary Savings - Solve",
     "PrecautionarySavingsSimulate": "Precautionary Savings - Simulate",
@@ -101,8 +119,27 @@ _METHOD_ALIASES = {
 _METHOD_DISPLAY = {
     "time_execution": "execution time",
     "track_gpu_peak_mem": "peak GPU mem",
-    "track_compilation_time": "compilation time",
+    "track_compilation_time": "first call (including compilation)",
     "peakmem_execution": "peak CPU mem",
+}
+
+_CLASS_METHOD_DISPLAY = {
+    ("AcaBaseline", "time_execution"): ("warm solve + simulate (reuses compiled code)"),
+    ("AcaBaseline", "track_compilation_time"): (
+        "cold solve + simulate (first run, includes compilation)"
+    ),
+    ("AcaBaselineDebugLog", "time_execution"): (
+        "warm solve + simulate (reuses compiled code)"
+    ),
+    ("AcaBaselineDebugLog", "track_compilation_time"): (
+        "cold solve + simulate (first run, includes compilation)"
+    ),
+    ("MahlerYumBudgetedGpu", "time_execution"): (
+        "warm solve + simulate (reuses compiled code)"
+    ),
+    ("MahlerYumBudgetedGpu", "track_compilation_time"): (
+        "cold solve + simulate (first run, includes compilation)"
+    ),
 }
 
 _METHOD_SORT = {
@@ -320,7 +357,9 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
 
         for i, row in enumerate(groups[(display_name, params)]):
             bench_col = label if i == 0 else ""
-            stat_col = _METHOD_DISPLAY.get(row.method_name, row.method_name)
+            stat_col = _method_display_name(
+                class_name=row.class_name, method_name=row.method_name
+            )
             if row.ratio is not None:
                 ratio_col = f"{row.ratio:.2f}"
                 alert = "\u274c" if row.ratio > _ALERT_RATIO else ""
@@ -343,14 +382,16 @@ def _format_raw_results(*, result_file: Path, head_sha: str) -> str:
     if not entries:
         return "No benchmark results found."
 
-    groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    groups: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
     for class_name, method_name, params, value in entries:
         display = _CLASS_DISPLAY.get(class_name, class_name)
         effective_params = _CLASS_FIXED_PARAMS.get(class_name, params)
-        groups.setdefault((display, effective_params), []).append((method_name, value))
+        groups.setdefault((display, effective_params), []).append(
+            (class_name, method_name, value)
+        )
 
     for group in groups.values():
-        group.sort(key=lambda x: _METHOD_SORT.get(x[0], len(_METHOD_SORT)))
+        group.sort(key=lambda x: _METHOD_SORT.get(x[1], len(_METHOD_SORT)))
 
     sorted_keys = sorted(groups, key=_group_sort_key)
 
@@ -362,12 +403,23 @@ def _format_raw_results(*, result_file: Path, head_sha: str) -> str:
     for display_name, params in sorted_keys:
         label = f"{display_name} ({params})" if params else display_name
 
-        for i, (method_name, value) in enumerate(groups[(display_name, params)]):
+        for i, (class_name, method_name, value) in enumerate(
+            groups[(display_name, params)]
+        ):
             bench_col = label if i == 0 else ""
-            stat_col = _METHOD_DISPLAY.get(method_name, method_name)
+            stat_col = _method_display_name(
+                class_name=class_name, method_name=method_name
+            )
             lines.append(f"| {bench_col} | {stat_col} | {value} |")
 
     return "\n".join(lines)
+
+
+def _method_display_name(*, class_name: str, method_name: str) -> str:
+    """Return the class-specific method label when its workload is verified."""
+    return _CLASS_METHOD_DISPLAY.get(
+        (class_name, method_name), _METHOD_DISPLAY.get(method_name, method_name)
+    )
 
 
 def _group_sort_key(group: tuple[str, str]) -> tuple[Any, ...]:
@@ -465,7 +517,11 @@ def _expand_params(params: list[list[str]]) -> list[str]:
 
 def _format_value(*, bench_name: str, value: float) -> str:
     """Format a benchmark value with appropriate units."""
-    if "peakmem" in bench_name or "gpu_peak_mem" in bench_name:
+    if (
+        "peakmem" in bench_name
+        or "gpu_peak_mem" in bench_name
+        or "track_peak_gpu_mem" in bench_name
+    ):
         if value >= 1e9:
             return f"{value / 1e9:.2f} GB"
         return f"{value / 1e6:.0f} MB"

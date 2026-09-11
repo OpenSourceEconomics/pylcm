@@ -1,0 +1,40 @@
+---
+name: bibliography
+concurrency:
+  group: ${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # A DOI can be withdrawn or corrected long after the PR that added it merged.
+    - cron: 0 6 1 * *
+jobs:
+  verify-citations:
+    name: Verify citations against CrossRef
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          # `.ai-instructions` carries the verification script.
+          submodules: true
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Verify bibliography
+        env:
+          # CrossRef's polite pool: identified callers get better rate limits.
+          MAILTO: ${{ vars.CROSSREF_MAILTO }}
+        run: |-
+          set -euo pipefail
+          mapfile -t BIB < <(git ls-files '*.bib')
+          if [ ${#BIB[@]} -eq 0 ]; then
+            echo "No .bib files tracked; nothing to verify."
+            exit 0
+          fi
+          python .ai-instructions/hooks/verify_bibliography.py \
+            --online --mailto "${MAILTO}" "${BIB[@]}"

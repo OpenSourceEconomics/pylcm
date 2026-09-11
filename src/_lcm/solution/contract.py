@@ -5,9 +5,9 @@ dispatches polymorphically on the solver instance. Model finalization calls
 `solver.validate_model(context)`; the processed build calls
 `solver.validate_build(context)` and then
 `solver.build_period_kernels(context)`, with no switch on solver type. Add a
-solver by subclassing `Solver` and implementing `build_period_kernels`; override
-either validation hook for the stage whose information it needs (both default
-to no-ops).
+solver by subclassing `Solver` and implementing `capabilities` and
+`build_period_kernels`; override either validation hook for the stage whose
+information it needs (both default to no-ops).
 
 Each entry of `SolutionKernels.period_kernels` is a `PeriodKernel`: a single
 non-jitted period adapter that wraps the solver's compiled programs, calls them
@@ -51,7 +51,12 @@ from _lcm.continuation import (
     EGMContinuationLayout,
 )
 from _lcm.egm.branch_aggregation import OuterBranchAggregator
-from _lcm.engine import ParamCheck, StateActionSpace, Variables
+from _lcm.engine import (
+    ParamCheck,
+    StateActionSpace,
+    Variables,
+    place_template_on_regime_devices,
+)
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
@@ -74,6 +79,7 @@ from _lcm.typing import (
     StateOrActionName,
     TransitionFunctionsMapping,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
@@ -85,6 +91,7 @@ from lcm.solver_api import (
     ArtifactChannel,
     ArtifactKey,
     ArtifactStore,
+    ContinuationCapabilities,
     DeclaredReplay,
     ExecutableReplayRoute,
     KernelOutput,
@@ -218,6 +225,21 @@ class SolverBuildContext:
     user_regimes: UserRegimesMapping
     """Mapping of regime names to user-provided `Regime` instances."""
 
+    continuation_specs: MappingProxyType[RegimeName, ContinuationSpec] = (
+        MappingProxyType({})
+    )
+    """Immutable mapping of regime name to the continuation that regime publishes.
+
+    A solver that reads a target's carry declares the leaves it reads, and which
+    leaves exist is a fact about the target's published template rather than
+    about the reader. A regime absent from the mapping publishes no
+    continuation.
+
+    Empty while `build_period_kernels` runs, because no regime has published a
+    template yet; filled for the `declare_continuation_reads` call that follows
+    once every regime is built.
+    """
+
     solve_functions: MappingProxyType[FunctionName, UserFunction]
     """Normalized, unprocessed solve-phase declarations for this regime."""
 
@@ -237,9 +259,30 @@ class SolverBuildContext:
     """Immutable mapping of the regime's variable names to grid objects.
 
     Age-invariant: for an `AgeSpecializedGrid` state this holds the representative
-    age's grid. Read it for a grid's *shape traits* — kind, `n_points`, dtype,
-    `batch_size` — which are invariant across ages by contract. For a grid's *node
+    age's grid. Read it for a grid's *shape traits* — kind, `n_points`, dtype —
+    which are invariant across ages by contract. For a grid's *node
     values* in a particular period, read `period_to_state_nodes`.
+    """
+
+    sharded_state_names: frozenset[StateName] = frozenset()
+    """State axes assigned to devices by the model's execution configuration."""
+
+    axis_widths: MappingProxyType[str, int] = MappingProxyType({})
+    """Immutable mapping of execution axis name to the width it is fixed at.
+
+    A solver whose outer loop runs on the host rather than inside a compiled
+    program reads its axis's width here: the planner cannot bind a static
+    keyword into a dispatch the solver itself schedules, so the width reaches
+    the driver at build time instead. A name the mapping omits leaves the
+    driver's own default in place.
+    """
+
+    submesh_device_ids: tuple[int, ...] = ()
+    """Ascending device ids this regime's nodes run on; empty means every device.
+
+    A solver that places an array of its own — a continuation template whose
+    leading axes carry a distributed state — builds its mesh over exactly
+    these devices, so its arrays land where the regime's value does.
     """
 
     period_to_state_nodes: (
@@ -412,6 +455,25 @@ class SolverBuildContext:
     its lowering arguments. Empty for every other regime, whose kernel
     signatures are unchanged.
     """
+
+    def place_on_regime_devices[Template](self, *, template: Template) -> Template:
+        """Return a continuation template placed like this regime's stored values.
+
+        Array leaves whose leading shape matches the stored-value state axes
+        are partitioned along the regime's sharded states. Folded states are
+        omitted from that shape; trailing axes stay unsharded. Other array
+        leaves replicate across the same devices. An unsharded regime places
+        every array on its assigned single device. Non-array leaves and the
+        pytree structure are preserved.
+        """
+        return place_template_on_regime_devices(
+            template=template,
+            grids=self.grids,
+            sharded_state_names=self.sharded_state_names,
+            states=self.state_action_space.states,
+            fold_state_names=self.fold_state_names,
+            submesh_device_ids=self.submesh_device_ids,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -603,6 +665,20 @@ class SolutionKernels:
     period_kernels: Mapping[int, PeriodKernel]
     """Immutable mapping of period to the regime's uniform period adapter."""
 
+    period_group_keys: Mapping[int, Hashable] = MappingProxyType({})
+    """Immutable mapping of period to the key this solver grouped it under.
+
+    A solver that builds one numerical core per group of periods publishes the
+    key each period's group was selected by, so a consumer keying a compiled
+    program can say which periods the solver itself treated alike. The key must
+    be durable — built from declared signatures and names rather than from
+    object addresses — because a compilation key that folds it in is compared
+    across model constructions.
+
+    Empty for a solver whose periods are grouped by the engine alone; a period
+    missing from the mapping carries no solver grouping.
+    """
+
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this solver's kernels publish."""
 
@@ -641,6 +717,9 @@ class SolutionKernels:
         """Snapshot mappings and reject contradictory artifact identities."""
         object.__setattr__(
             self, "period_kernels", MappingProxyType(dict(self.period_kernels))
+        )
+        object.__setattr__(
+            self, "period_group_keys", MappingProxyType(dict(self.period_group_keys))
         )
         authorities = dict(self.artifact_authorities)
         if any(
@@ -749,9 +828,42 @@ class Solver(ABC):
     dataclasses carrying the solver's configuration.
     """
 
+    @property
+    @abstractmethod
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configuration; concrete programs authorize model axes."""
+
     @abstractmethod
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build the regime's per-period solve adapters."""
+
+    def declare_continuation_reads(
+        self,
+        *,
+        kernels: SolutionKernels,
+        context: SolverBuildContext,  # noqa: ARG002
+    ) -> SolutionKernels:
+        """Return `kernels` with the continuation leaves they read declared.
+
+        Called once per regime whose `required_continuation_keys` is non-empty,
+        after every regime in the model is built, so `context.continuation_specs`
+        names the payload each target publishes — which a solver cannot know
+        while its own kernels are being built. The default declares nothing.
+
+        The contract is narrow on purpose. A solver may only attach
+        `value_reads` to the core programs its kernels already publish: the same
+        programs under the same names, with the same argument builders and the
+        same compiled functions, and nothing numerical rebuilt. Building kernels
+        a second time here would re-run the model author's build-time consumers.
+        The result must depend only on the arguments, so two builds of one model
+        declare the same reads.
+
+        Only `period_kernels` of the returned container is honoured. Every other
+        field — `period_group_keys`, `continuation_spec`, `artifact_authorities`,
+        `replay_route`, `param_checks` — must come back as it was handed over,
+        and a container that moves one is refused at build.
+        """
+        return kernels
 
     @property
     def identity(self) -> SolverIdentity:
@@ -864,6 +976,18 @@ class Solver(ABC):
         refused before any solve, without forking on the solver type.
         """
         return frozenset()
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """What this solver asks its targets' continuation readers to answer.
+
+        An endogenous-grid solver inverts the Euler equation against a target's
+        marginal, so a target whose reader publishes only a value cannot serve
+        it. Model building compares this against every reachable target's
+        published payload, so the mismatch is named before anything compiles.
+        Grid search reads only the value array and asks for nothing.
+        """
+        return ContinuationCapabilities()
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:

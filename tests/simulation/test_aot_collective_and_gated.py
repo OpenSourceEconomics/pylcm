@@ -25,6 +25,7 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.simulation.gated_routing import population_call
+from _lcm.simulation.runtime import SimulationRuntime
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -155,11 +156,14 @@ def _fail_if_aot_programs_missing(*, model: Model, n_subjects: int) -> None:
         )
         raise AssertionError(msg)
     interpreted = [
-        f"{regime_name}/argmax_and_max_Q_over_a[{period}]"
+        f"{regime_name}/simulate_decision[{period}]"
         for regime_name, regime in cached.items()
         for period in regime.active_periods
-        if not isinstance(
-            regime.simulation.argmax_and_max_Q_over_a[period], jax.stages.Compiled
+        if not (
+            isinstance(regime.simulation.programs.executor, SimulationRuntime)
+            and regime.simulation.programs.executor.is_prepared(
+                program=regime.simulation.programs.decision[period], period=period
+            )
         )
     ]
     if interpreted:

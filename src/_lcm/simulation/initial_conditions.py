@@ -5,8 +5,10 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 """
 
+import contextlib
 import dataclasses
 import functools
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import NoReturn, cast
@@ -16,15 +18,37 @@ import numpy as np
 import pandas as pd
 from dags import get_ancestors
 from jax import numpy as jnp
+from numpy.typing import NDArray
 
 from _lcm.dtypes import (
+    CanonicalArrayWriter,
     canonical_float_dtype,
     safe_to_float_dtype,
     safe_to_int_dtype,
 )
-from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_ids
+from _lcm.execution.execution_plan import ResolvedExecution
+from _lcm.execution.workspace_planning import plan_workspace
 from _lcm.grids import DiscreteGrid
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.Q_and_F import _get_feasibility
+from _lcm.simulation.action_grids import PreflightActionGrids
+from _lcm.simulation.assembly import slice_array
+from _lcm.simulation.host_operations import ProfiledSimulationOperations
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+    union_buffer_footprints,
+)
+from _lcm.transition_checks import (
+    _SerialValidationRequired,
+    _validate_transition_sequence,
+    _ValidationSummary,
+    validate_transitions,
+)
 from _lcm.typing import (
     ActionName,
     FlatParams,
@@ -39,8 +63,13 @@ from _lcm.typing import (
 from _lcm.utils.containers import invert_regime_ids
 from _lcm.utils.error_messages import format_messages
 from _lcm.utils.functools import get_union_of_args
+from _lcm.utils.logging import raise_or_warn, validation_enabled
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidInitialConditionsError, PyLCMError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    InvalidInitialConditionsError,
+    PyLCMError,
+)
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserInitialConditions
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
@@ -52,11 +81,315 @@ MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 # any `Regime.states`. `age` is required for every subject regardless of regime.
 PSEUDO_STATE_NAMES: frozenset[str] = frozenset({"age"})
 
+# Only module-level numerical operation identities and abstract signatures are
+# cached here. Each validation call owns its input bindings and admission.
+_PREFLIGHT_OPERATIONS = ProfiledSimulationOperations()
+
+type _DiscreteInitialSpec = tuple[str, tuple[int, ...], tuple[int, ...]]
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _InitialCohorts:
+    """Lossless call-local host metadata needed before composing feasibility."""
+
+    indices: Mapping[RegimeName, tuple[int, ...]]
+    periods: tuple[int, ...]
+
+
+def validate_simulation_inputs(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    logger: logging.Logger,
+    execution: ResolvedExecution | None = None,
+    retained_footprint: DeviceBufferFootprint | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> None:
+    """Validate a complete call with two host summaries and ordered diagnostics.
+
+    The first read supplies exact cohort metadata and discrete validity before
+    any constraint is composed. The second reads reduced feasibility and
+    transition flags. Invalid data or user-law errors select the original
+    serial diagnostic path; admission and backend resource failures propagate.
+    """
+    if not validation_enabled(logger):
+        return
+    memory = _preflight_memory(
+        execution=execution,
+        retained_footprint=retained_footprint,
+        initial_conditions=initial_conditions,
+        flat_params=flat_params,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+    )
+    with contextlib.closing(
+        PreflightActionGrids(memory=memory, build=_build_flat_action_grid)
+    ) as action_grid_resolver:
+        summary = _ValidationSummary(
+            memory=memory, process_grid_resolver=process_grid_resolver
+        )
+        try:
+            try:
+                cohorts = _read_initial_cohorts(
+                    initial_conditions=initial_conditions,
+                    regimes=regimes,
+                    regime_names_to_ids=regime_names_to_ids,
+                    ages=ages,
+                    memory=memory,
+                )
+                if memory is not None:
+                    memory.close_unit()
+                _collect_feasibility_errors(
+                    initial_states={
+                        name: value
+                        for name, value in initial_conditions.items()
+                        if name not in {"regime_id", "own_stakeholder"}
+                    },
+                    regime_id_arr=initial_conditions["regime_id"],
+                    regime_names_to_ids=regime_names_to_ids,
+                    regimes=regimes,
+                    flat_params=flat_params,
+                    ages=ages,
+                    cohorts=cohorts,
+                    summary=summary,
+                    process_grid_resolver=process_grid_resolver,
+                    action_grid_resolver=action_grid_resolver,
+                    memory=memory,
+                )
+                validate_transitions(
+                    regimes=regimes,
+                    flat_params=flat_params,
+                    ages=ages,
+                    logger=logger,
+                    summary=summary,
+                    process_grid_resolver=process_grid_resolver,
+                )
+                accepted = summary.valid()
+            except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
+                raise
+            # Re-evaluate user-law failures in legacy order; resource failures above
+            # must never enter this diagnostic retry.
+            except Exception:  # noqa: BLE001
+                accepted = False
+        finally:
+            summary.close()
+        if accepted:
+            return
+        try:
+            validate_initial_conditions(
+                initial_conditions=initial_conditions,
+                regimes=regimes,
+                regime_names_to_ids=regime_names_to_ids,
+                flat_params=flat_params,
+                ages=ages,
+                process_grid_resolver=process_grid_resolver,
+                action_grid_resolver=action_grid_resolver,
+                memory=memory,
+            )
+        except InvalidInitialConditionsError as error:
+            raise_or_warn(logger=logger, error=error)
+        _validate_transition_sequence(
+            regimes=regimes,
+            flat_params=flat_params,
+            ages=ages,
+            logger=logger,
+            summary=None,
+            process_grid_resolver=process_grid_resolver,
+            simulation_memory=memory,
+        )
+
+
+def _preflight_memory(
+    *,
+    execution: ResolvedExecution | None,
+    retained_footprint: DeviceBufferFootprint | None,
+    initial_conditions: InitialConditions,
+    flat_params: FlatParams,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    ages: AgeGrid,
+) -> SimulationMemory | None:
+    """Admit new summary buffers against explicit entry and model-owned roots."""
+    if execution is None or execution.device_memory_bytes is None:
+        return None
+    if retained_footprint is None:
+        raise ExecutionPlanningError("Budgeted preflight requires entry residency.")
+    devices = placed_devices_for_ids(
+        submesh_device_ids=(), visible_device_ids=execution.device_ids
+    )
+    fixed = tuple(
+        (
+            regime.resolved_fixed_params,
+            regime.solution.resolved_fixed_params,
+            regime.solution._base_state_action_space.states,  # noqa: SLF001
+            regime.solution._base_state_action_space.actions,  # noqa: SLF001
+        )
+        for regime in regimes.values()
+    )
+    memory = SimulationMemory(
+        budget_bytes=execution.device_memory_bytes,
+        devices=devices,
+        subject_devices=devices[:1],
+        operations=_PREFLIGHT_OPERATIONS,
+        inputs=union_buffer_footprints(
+            footprints=(
+                retained_footprint,
+                measure_buffer_footprint(
+                    tree=(
+                        initial_conditions,
+                        flat_params,
+                        regime_names_to_ids,
+                        ages.values,  # noqa: PD011
+                        fixed,
+                    )
+                ),
+            )
+        ),
+    )
+    memory.check_resident()
+    return memory
+
+
+def _discrete_initial_specs(
+    *, regimes: MappingProxyType[RegimeName, Regime], names: tuple[RegimeName, ...]
+) -> tuple[_DiscreteInitialSpec, ...]:
+    """Describe the legacy code unions without converting scalar regime IDs."""
+    info: dict[str, tuple[set[int], set[int]]] = {}
+    for regime_name, regime in regimes.items():
+        for state_name in regime.simulation.discrete_state_names:
+            grid = regime.simulation.grids[state_name]
+            if isinstance(grid, DiscreteGrid):
+                codes, owners = info.setdefault(state_name, (set(), set()))
+                codes.update(grid.codes)
+                owners.add(names.index(regime_name))
+    return tuple(
+        (name, tuple(sorted(codes)), tuple(sorted(owners)))
+        for name, (codes, owners) in info.items()
+    )
+
+
+@functools.partial(jax.jit, static_argnames=("discrete_specs",))
+def _pack_initial_summary(
+    *,
+    regime_ids: Int1D,
+    age_values: Float1D,
+    canonical_ids: tuple[jax.Array, ...],
+    discrete_values: tuple[jax.Array, ...],
+    discrete_specs: tuple[_DiscreteInitialSpec, ...],
+) -> Int1D:
+    """Pack exact regime/age words and cohort-restricted discrete failure flags."""
+    flags = []
+    for values, (_, codes, owners) in zip(discrete_values, discrete_specs, strict=True):
+        relevant = jnp.isin(regime_ids, jnp.stack([canonical_ids[i] for i in owners]))
+        invalid = ~jnp.isin(values, jnp.array(codes, dtype=jnp.int32))
+        flags.append(jnp.any(relevant & invalid))
+    return jnp.concatenate(
+        (
+            jnp.stack(canonical_ids).astype(jnp.int32),
+            regime_ids,
+            jax.lax.bitcast_convert_type(age_values, jnp.int32).reshape(-1),
+            jnp.stack(flags).astype(jnp.int32)
+            if flags
+            else jnp.empty(0, dtype=jnp.int32),
+        )
+    )
+
+
+def _read_initial_cohorts(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    ages: AgeGrid,
+    memory: SimulationMemory | None,
+) -> _InitialCohorts:
+    """Read one lossless metadata vector before any feasibility composition."""
+    regime_ids = initial_conditions.get("regime_id")
+    age_values = initial_conditions.get("age")
+    if (
+        not isinstance(regime_ids, jax.Array)
+        or regime_ids.dtype != jnp.int32
+        or not isinstance(age_values, jax.Array)
+        or age_values.dtype != canonical_float_dtype()
+        or regime_ids.ndim != 1
+        or not regime_ids.size
+        or any(
+            not isinstance(value, jax.Array)
+            or value.shape != regime_ids.shape
+            or value.dtype not in (jnp.dtype(jnp.int32), canonical_float_dtype())
+            for value in initial_conditions.values()
+        )
+    ):
+        raise _SerialValidationRequired
+    names = tuple(regime_names_to_ids)
+    specs = tuple(
+        spec
+        for spec in _discrete_initial_specs(regimes=regimes, names=names)
+        if spec[0] in initial_conditions
+    )
+    packed = run_simulation_operation(
+        memory=memory,
+        function=_pack_initial_summary,
+        arguments={
+            "regime_ids": regime_ids,
+            "age_values": age_values,
+            "canonical_ids": tuple(regime_names_to_ids.values()),
+            "discrete_values": tuple(initial_conditions[name] for name, _, _ in specs),
+        },
+        static_arguments={"discrete_specs": specs},
+    )
+    # Copy metadata to host-owned storage before dropping the device summary.
+    host = np.asarray(packed).copy()
+    count = regime_ids.size
+    ids = host[: len(names)]
+    subjects = host[len(names) : len(names) + count]
+    age_start = len(names) + count
+    age_stop = (
+        age_start + count * age_values.dtype.itemsize // np.dtype(np.int32).itemsize
+    )
+    host_ages = host[age_start:age_stop].view(age_values.dtype)
+    if not np.isin(subjects, ids).all():
+        raise _SerialValidationRequired
+    indices = {
+        name: tuple(np.flatnonzero(subjects == code).tolist())
+        for name, code in zip(names, ids, strict=True)
+    }
+    required = set(PSEUDO_STATE_NAMES)
+    known = set(PSEUDO_STATE_NAMES)
+    for name, regime in regimes.items():
+        known.update(regime.simulation.state_names)
+        if indices[name]:
+            required.update(regime.simulation.state_names)
+    provided = set(initial_conditions) - {"regime_id", "own_stakeholder"}
+    if required - provided or provided - known:
+        raise _SerialValidationRequired
+    valid_ages = np.array(
+        [float(age) for age in ages.exact_values], dtype=age_values.dtype
+    )
+    if not np.isin(host_ages, valid_ages).all():
+        raise _SerialValidationRequired
+    periods = tuple(ages.age_to_period(age.item()) for age in host_ages)
+    if (
+        any(
+            periods[index] not in regimes[name].active_periods
+            for name, members in indices.items()
+            for index in members
+        )
+        or host[age_stop:].any()
+    ):
+        raise _SerialValidationRequired
+    return _InitialCohorts(indices=MappingProxyType(indices), periods=periods)
+
 
 def canonicalize_initial_conditions(
     *,
     initial_conditions: UserInitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
+    array_writer: CanonicalArrayWriter | None = None,
 ) -> InitialConditions:
     """Cast every initial-conditions array to its canonical pylcm dtype.
 
@@ -91,13 +424,21 @@ def canonicalize_initial_conditions(
     canonical: dict[str, FloatND | IntND] = {}
     for name, value in initial_conditions.items():
         if name == "regime_id" or name in discrete_state_names:
-            canonical[name] = safe_to_int_dtype(value=value, name=name)
+            canonical[name] = safe_to_int_dtype(
+                value=value, name=name, array_writer=array_writer
+            )
         elif name == "age" or name in known_state_names:
-            canonical[name] = safe_to_float_dtype(value=value, name=name)
+            canonical[name] = safe_to_float_dtype(
+                value=value, name=name, array_writer=array_writer
+            )
         elif np.asarray(value).dtype.kind in "iu":
-            canonical[name] = safe_to_int_dtype(value=value, name=name)
+            canonical[name] = safe_to_int_dtype(
+                value=value, name=name, array_writer=array_writer
+            )
         else:
-            canonical[name] = safe_to_float_dtype(value=value, name=name)
+            canonical[name] = safe_to_float_dtype(
+                value=value, name=name, array_writer=array_writer
+            )
     return MappingProxyType(canonical)
 
 
@@ -105,6 +446,8 @@ def build_initial_states(
     *,
     initial_states: Mapping[StateName, Float1D | Int1D],
     regimes: MappingProxyType[RegimeName, Regime],
+    device_ids: tuple[int, ...] = (),
+    memory: SimulationMemory | None = None,
 ) -> StatesPerRegime:
     """Build the regime-keyed state carrier from user-provided initial states.
 
@@ -117,17 +460,25 @@ def build_initial_states(
         initial_states: Mapping of state names to arrays.
         regimes: Immutable mapping of regime names to internal regime
             instances.
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
         Nested immutable mapping `{regime_name: {state_name: array}}`.
 
     """
+    if memory is not None:
+        return _build_admitted_initial_states(
+            initial_states=initial_states, regimes=regimes, memory=memory
+        )
     n_subjects = len(next(iter(initial_states.values())))
     states_per_regime: dict[
         RegimeName, MappingProxyType[StateName, Float1D | Int1D]
     ] = {}
 
-    sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
+    sharding = subject_array_sharding(
+        regimes=regimes, n_subjects=n_subjects, device_ids=device_ids
+    )
     for regime_name, regime in regimes.items():
         regime_states: dict[StateName, Float1D | Int1D] = {}
         for state_name in regime.simulation.state_names:
@@ -157,13 +508,89 @@ def build_initial_states(
                 regime_states[state_name] = jnp.full(
                     n_subjects, jnp.nan, dtype=canonical_float_dtype()
                 )
-            if sharding is not None:
-                regime_states[state_name] = jax.device_put(
-                    regime_states[state_name], device=sharding
-                )
+            regime_states[state_name] = jax.device_put(
+                regime_states[state_name], device=sharding
+            )
         states_per_regime[regime_name] = MappingProxyType(regime_states)
 
     return MappingProxyType(states_per_regime)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CarrierWriter:
+    """Preserve boundary range checks before an admitted canonical carrier cast."""
+
+    memory: SimulationMemory
+
+    def __call__(
+        self, *, value: np.ndarray | jax.Array, dtype: np.dtype, name: str
+    ) -> jax.Array:
+        """Canonicalize on the host, then admit its selected-layout device upload."""
+        del name
+        return self.memory.run(
+            function=_cast_carrier,
+            arguments={"value": np.asarray(value, dtype=dtype)},
+            subject_arg_names=("value",),
+            static_arguments={"dtype": dtype.str},
+            subject_outputs=True,
+        )
+
+
+def _build_admitted_initial_states(
+    *,
+    initial_states: Mapping[StateName, Float1D | Int1D],
+    regimes: MappingProxyType[RegimeName, Regime],
+    memory: SimulationMemory,
+) -> StatesPerRegime:
+    """Build only after known owners fit; each fill/cast has its actual profile."""
+    memory.hold(tree=initial_states)
+    memory.check_resident()
+    template = next(iter(initial_states.values()))
+    writer = _CarrierWriter(memory=memory)
+    states_per_regime = {}
+    for regime_name, regime in regimes.items():
+        columns = {}
+        for name in regime.simulation.state_names:
+            discrete = isinstance(regime.simulation.grids[name], DiscreteGrid)
+            dtype = np.dtype(jnp.int32 if discrete else canonical_float_dtype())
+            if name not in initial_states:
+                column = memory.run(
+                    function=_fill_carrier,
+                    arguments={"template": template},
+                    subject_arg_names=("template",),
+                    static_arguments={
+                        "dtype": dtype.str,
+                        "fill_value": MISSING_CAT_CODE if discrete else float("nan"),
+                    },
+                    subject_outputs=True,
+                )
+            elif discrete:
+                column = memory.run(
+                    function=_cast_carrier,
+                    arguments={"value": initial_states[name]},
+                    subject_arg_names=("value",),
+                    static_arguments={"dtype": dtype.str},
+                    subject_outputs=True,
+                )
+            else:
+                column = safe_to_float_dtype(
+                    value=initial_states[name],
+                    name=f"initial_states.{name}",
+                    array_writer=writer,
+                )
+            columns[name] = column
+        states_per_regime[regime_name] = MappingProxyType(columns)
+    return MappingProxyType(states_per_regime)
+
+
+def _cast_carrier(*, value: jax.Array, dtype: str) -> jax.Array:
+    """Preserve the canonical column cast inside its admitted executable."""
+    return value.astype(np.dtype(dtype))
+
+
+def _fill_carrier(*, template: jax.Array, dtype: str, fill_value: float) -> jax.Array:
+    """Allocate one missing column at the exact subject extent and canonical dtype."""
+    return jnp.full(template.shape[0], fill_value, dtype=np.dtype(dtype))
 
 
 def pad_initial_conditions_to_multiple(
@@ -217,6 +644,7 @@ def trim_pad_from_raw_results(
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     original_n_subjects: int,
+    memory: SimulationMemory | None = None,
 ) -> MappingProxyType[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]]:
     """Slice every per-subject array in `raw_results` back to `original_n_subjects`.
 
@@ -261,46 +689,62 @@ def trim_pad_from_raw_results(
                 # field is a per-subject array with subjects on the leading axis.
                 if isinstance(value, Mapping):
                     sliced[name] = MappingProxyType(
-                        {k: v[:original_n_subjects] for k, v in value.items()}
+                        {
+                            k: slice_array(
+                                array=v,
+                                start=0,
+                                stop=original_n_subjects,
+                                memory=memory,
+                            )
+                            for k, v in value.items()
+                        }
                     )
                 else:
-                    sliced[name] = value[:original_n_subjects]
+                    sliced[name] = slice_array(
+                        array=value, start=0, stop=original_n_subjects, memory=memory
+                    )
             new_periods[period] = dataclasses.replace(data, **sliced)
         trimmed[regime_name] = MappingProxyType(new_periods)
     return MappingProxyType(trimmed)
 
 
 def subject_array_sharding(
-    *, regimes: MappingProxyType[RegimeName, Regime], n_subjects: int
-) -> jax.NamedSharding | None:
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    n_subjects: int,
+    device_ids: tuple[int, ...] = (),
+) -> jax.sharding.Sharding:
     """Return the model-wide device sharding for per-subject simulation arrays.
 
     Subjects propagate across regime transitions inside the simulate loop, so
     every regime's per-subject arrays must carry the same device sharding —
     otherwise an AOT-compiled program lowered with one regime's sharding rejects
     the inputs it receives from another. When any grid in any regime is
-    distributed, the `n_subjects` subjects are scattered across all available
-    devices along a single mesh axis. When no grid is distributed the arrays
-    stay on the default device.
+    distributed, the `n_subjects` subjects are scattered across every device the
+    model uses along a single mesh axis. When none is, they are committed to the
+    first of them, so a model that names a subset of the devices JAX reports
+    never simulates on one it excluded.
 
     Args:
         regimes: Immutable mapping of regime names to internal regime instances.
         n_subjects: Number of simulated subjects (per simulate dispatch — the
             chunk size when subject-batching).
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
-        The `NamedSharding` over the device mesh, or `None` when no grid in any
-        regime is distributed.
+        The `NamedSharding` over the device mesh when a grid is distributed, and
+        a single-device sharding on the model's first device otherwise.
 
     """
+    devices = placed_devices_for_ids(
+        submesh_device_ids=(), visible_device_ids=device_ids
+    )
     distributes_any = any(
-        grid.distributed
-        for regime in regimes.values()
-        for grid in regime.solution.grids.values()
+        regime.solution.sharded_state_names for regime in regimes.values()
     )
     if not distributes_any:
-        return None
-    devices = jax.devices()
+        return jax.sharding.SingleDeviceSharding(devices[0])
     if n_subjects % len(devices) != 0:
         # Defensive: `Model.simulate` rounds the chunk size up to a device
         # multiple and pads the population to a chunk multiple, so every
@@ -324,6 +768,9 @@ def validate_initial_conditions(
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     ages: AgeGrid,
+    process_grid_resolver: ProcessGridResolver | None = None,
+    action_grid_resolver: PreflightActionGrids | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
@@ -412,6 +859,9 @@ def validate_initial_conditions(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
+        process_grid_resolver=process_grid_resolver,
+        action_grid_resolver=action_grid_resolver,
+        memory=memory,
     )
     if feasibility_errors:
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
@@ -617,6 +1067,11 @@ def _collect_feasibility_errors(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
+    cohorts: _InitialCohorts | None = None,
+    summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
+    action_grid_resolver: PreflightActionGrids | None = None,
+    memory: SimulationMemory | None = None,
 ) -> list[str]:
     """Collect errors about action feasibility for each subject.
 
@@ -635,9 +1090,13 @@ def _collect_feasibility_errors(
     """
     errors: list[str] = []
     for regime_name, regime in regimes.items():
-        regime_id = regime_names_to_ids[regime_name]
-        idx_arr = jnp.where(regime_id_arr == regime_id)[0].astype(jnp.int32)
-        subject_indices = idx_arr.tolist() if idx_arr.size > 0 else []
+        if cohorts is None:
+            regime_id = regime_names_to_ids[regime_name]
+            subject_indices = np.flatnonzero(
+                np.asarray(regime_id_arr) == int(regime_id)
+            ).tolist()
+        else:
+            subject_indices = list(cohorts.indices[regime_name])
         if not subject_indices:
             continue
 
@@ -653,6 +1112,11 @@ def _collect_feasibility_errors(
             subject_indices=subject_indices,
             regime_params=regime_params,
             ages=ages,
+            cohorts=cohorts,
+            summary=summary,
+            process_grid_resolver=process_grid_resolver,
+            action_grid_resolver=action_grid_resolver,
+            memory=memory,
         )
         if msg is not None:
             errors.append(msg)
@@ -717,9 +1181,8 @@ def _validate_discrete_state_values(
             )
 
 
-# Target peak memory budget for the vmapped feasibility computation.
-# Assumes float32 intermediates (JAX default); doubles under x64 mode, but this is
-# a heuristic — being off by 2x just means larger batches, not correctness issues.
+# Group unbudgeted subject work heuristically. Budgeted calls profile the complete
+# executable, including every batch, slice and concatenation, before dispatch.
 _TARGET_BATCH_BYTES = 256 * 1024 * 1024
 _BYTES_PER_ACTION_ELEMENT = 4
 
@@ -731,6 +1194,7 @@ def _batched_feasibility_check(
     action_kwargs: Mapping[str, FloatND | IntND],
     filtered_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, FloatND | IntND],
+    memory: SimulationMemory | None = None,
 ) -> BoolND:
     """Check feasibility for all subjects, batching to avoid OOM.
 
@@ -751,6 +1215,19 @@ def _batched_feasibility_check(
         feasible.
 
     """
+    if memory is not None:
+        return _run_profiled_feasibility(
+            memory=memory,
+            function=functools.partial(
+                _batched_feasibility_check, feasibility_func=feasibility_func
+            ),
+            arguments={
+                "subject_states": subject_states,
+                "action_kwargs": action_kwargs,
+                "filtered_params": filtered_params,
+                "flat_actions": flat_actions,
+            },
+        )
     if action_kwargs:
         vmapped_check = jax.vmap(
             functools.partial(
@@ -787,6 +1264,76 @@ def _batched_feasibility_check(
     return jnp.concatenate(results)
 
 
+def _run_profiled_feasibility(
+    *,
+    memory: SimulationMemory,
+    function: Callable[..., BoolND | bool],
+    arguments: Mapping[str, object],
+) -> BoolND:
+    """Admit one call-owned user DAG with explicit dynamic input owners.
+
+    User functions can carry model-specific closures, so their executables stay
+    local to this call. All runtime parameters, action arrays and subject arrays
+    are dynamic operands. Pure metadata operations use the shared profile owner.
+    """
+    placed = place_simulation_arguments(
+        arguments=arguments,
+        # Validation cohorts may have any size, including fewer rows than devices.
+        # Replicate them like the preflight gather, whose output is unpadded.
+        subject_arg_names=(),
+        value_reads=(),
+        devices=memory.subject_devices,
+        budget_bytes=memory.budget_bytes,
+        live_footprint=memory.snapshot(),
+        budget_devices=memory.devices,
+    )
+    argument_buffers = measure_buffer_footprint(tree=placed)
+    live = memory.snapshot(additional=(arguments, placed))
+    external = resident_bytes_by_device(
+        live=live, arguments=argument_buffers, devices=memory.subject_devices
+    )
+    compiler = _FeasibilityCompiler(
+        function=function,
+        arguments=jax.tree.map(
+            lambda value: jax.ShapeDtypeStruct(
+                value.shape,
+                value.dtype,
+                sharding=value.sharding,
+                weak_type=getattr(value, "weak_type", False),
+            ),
+            dict(placed),
+        ),
+    )
+    plan = plan_workspace(
+        axes=(),
+        compile_candidate=compiler,
+        budget_bytes=memory.budget_bytes,
+        resident_bytes=max(external.values()),
+    )
+    result = plan.compiled(**placed)
+    jax.block_until_ready(result)
+    memory.hold(tree=result)
+    return result
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _FeasibilityCompiler:
+    """Own a user DAG and abstract operands only for its current admission."""
+
+    function: Callable[..., BoolND | bool]
+    """Current numerical DAG; concrete call parameters remain explicit operands."""
+    arguments: Mapping[str, object]
+    """Placed shape descriptors, preserving dtype, weak type and device layout."""
+
+    def __call__(self, widths: Mapping[str, int]) -> jax.stages.Compiled:
+        """Lower the full feasibility producer without allocating its output."""
+        if widths:
+            raise ExecutionPlanningError("Feasibility declares no workspace axes.")
+        return (
+            jax.jit(self.function, keep_unused=True).lower(**self.arguments).compile()
+        )
+
+
 def _age_specialized_feasibility_message(
     *,
     regime: Regime,
@@ -794,6 +1341,7 @@ def _age_specialized_feasibility_message(
     initial_states: Mapping[StateName, FloatND | IntND],
     subject_indices: list[int],
     ages: AgeGrid,
+    cohorts: _InitialCohorts | None = None,
 ) -> str | None:
     """Return an error message if a subject's feasibility check would silently
     read a policy-specialized function resolved at the wrong age, else `None`.
@@ -822,8 +1370,15 @@ def _age_specialized_feasibility_message(
 
     representative_period = regime.active_periods[0]
     idx_arr = np.asarray(subject_indices)
-    subject_ages = np.asarray(initial_states["age"])[idx_arr]
-    subject_periods = np.array([ages.age_to_period(age.item()) for age in subject_ages])
+    if cohorts is None:
+        subject_ages = np.asarray(initial_states["age"])[idx_arr]
+        subject_periods = np.array(
+            [ages.age_to_period(age.item()) for age in subject_ages]
+        )
+    else:
+        subject_periods = np.array(
+            [cohorts.periods[index] for index in subject_indices]
+        )
     off_representative = subject_periods != representative_period
     if not np.any(off_representative):
         return None
@@ -841,7 +1396,7 @@ def _age_specialized_feasibility_message(
     )
 
 
-def _check_regime_feasibility(  # noqa: C901
+def _check_regime_feasibility(  # noqa: C901, PLR0912
     *,
     regime: Regime,
     regime_name: RegimeName,
@@ -849,6 +1404,11 @@ def _check_regime_feasibility(  # noqa: C901
     subject_indices: list[int],
     regime_params: Mapping[str, object],
     ages: AgeGrid,
+    cohorts: _InitialCohorts | None = None,
+    summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
+    action_grid_resolver: PreflightActionGrids | None = None,
+    memory: SimulationMemory | None = None,
 ) -> str | None:
     """Check whether all subjects in a regime have at least one feasible action.
 
@@ -870,8 +1430,11 @@ def _check_regime_feasibility(  # noqa: C901
         initial_states=initial_states,
         subject_indices=subject_indices,
         ages=ages,
+        cohorts=cohorts,
     )
     if age_specialized_message is not None:
+        if summary is not None:
+            raise _SerialValidationRequired
         return age_specialized_message
 
     feasibility_func = _get_feasibility(
@@ -888,16 +1451,29 @@ def _check_regime_feasibility(  # noqa: C901
     # substituted. The base grid's `to_jax()` raises for runtime-supplied
     # `IrregSpacedGrid`s declared with `pass_points_at_runtime=True`, so the
     # validator must read points from `state_action_space(regime_params=...)`.
-    state_action_space = regime.solution.state_action_space(
-        regime_params=cast("FlatRegimeParams", MappingProxyType(dict(regime_params))),
+    flat_regime_params = cast("FlatRegimeParams", MappingProxyType(dict(regime_params)))
+    state_action_space = (
+        regime.solution.state_action_space(
+            regime_params=flat_regime_params,
+            process_grid_resolver=process_grid_resolver,
+        )
+        if summary is None
+        else summary.state_action_space(regime=regime, params=flat_regime_params)
     )
     action_grids: dict[ActionName, FloatND | IntND] = {
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
     }
-    flat_actions = _build_flat_action_grid(
-        action_names=action_names,
-        grids=MappingProxyType(action_grids),
+    flat_actions = (
+        _build_flat_action_grid(
+            action_names=action_names, grids=MappingProxyType(action_grids)
+        )
+        if action_grid_resolver is None
+        else action_grid_resolver.resolve(
+            action_names=tuple(action_names),
+            grids=MappingProxyType(action_grids),
+            retained_arrays=(state_action_space.states, state_action_space.actions),
+        )
     )
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
@@ -909,19 +1485,49 @@ def _check_regime_feasibility(  # noqa: C901
     needs_period = "period" in accepted
 
     # Build per-subject state arrays
-    idx_arr = jnp.array(subject_indices, dtype=jnp.int32)
-    subject_states: dict[StateName, FloatND | IntND] = {}
-    for sn in state_names:
-        if sn in accepted:
-            subject_states[sn] = initial_states[sn][idx_arr]
-
-    if needs_age:
-        subject_states["age"] = initial_states["age"][idx_arr]
-    if needs_period:
-        subject_states["period"] = jnp.array(
-            [ages.age_to_period(a.item()) for a in initial_states["age"][idx_arr]],
-            dtype=jnp.int32,
+    if (cohorts is not None and summary is not None) or memory is not None:
+        selected_names = [name for name in state_names if name in accepted]
+        if needs_age:
+            selected_names.append("age")
+        subject_states = run_simulation_operation(
+            memory=memory,
+            function=_gather_feasibility_inputs,
+            arguments={
+                "states": {name: initial_states[name] for name in selected_names},
+                "indices": np.array(subject_indices, dtype=np.int32),
+                "periods": np.array(
+                    (
+                        cohorts.periods
+                        if cohorts is not None
+                        else tuple(
+                            ages.age_to_period(age.item())
+                            for age in np.asarray(initial_states["age"])
+                        )
+                    )
+                    if needs_period
+                    else (),
+                    dtype=np.int32,
+                ),
+            },
+            static_arguments={"needs_period": needs_period},
         )
+        idx_arr = (
+            None if summary is not None else np.array(subject_indices, dtype=np.int32)
+        )
+    else:
+        idx_arr = jnp.array(subject_indices, dtype=jnp.int32)
+        subject_states: dict[StateName, FloatND | IntND] = {}
+        for sn in state_names:
+            if sn in accepted:
+                subject_states[sn] = initial_states[sn][idx_arr]
+
+        if needs_age:
+            subject_states["age"] = initial_states["age"][idx_arr]
+        if needs_period:
+            subject_states["period"] = jnp.array(
+                [ages.age_to_period(a.item()) for a in initial_states["age"][idx_arr]],
+                dtype=jnp.int32,
+            )
 
     # Split actions and params — actions are vmapped over, params are not
     action_kwargs: dict[str, FloatND | IntND] = {
@@ -936,6 +1542,7 @@ def _check_regime_feasibility(  # noqa: C901
                 action_kwargs=action_kwargs,
                 filtered_params=filtered_params,
                 flat_actions=flat_actions,
+                memory=memory,
             )
         except TypeError as exc:
             _raise_feasibility_type_error(
@@ -944,32 +1551,42 @@ def _check_regime_feasibility(  # noqa: C901
                 regime=regime,
                 subject_states=subject_states,
             )
-        infeasible_mask = np.asarray(~any_feasible)
+        if summary is not None:
+            summary.append(
+                function=_subject_feasibility_flag,
+                arguments={"feasible": any_feasible},
+            )
+            return None
+        infeasible_mask = np.logical_not(np.asarray(any_feasible))
         infeasible_indices = np.asarray(idx_arr)[infeasible_mask].tolist()
     else:
         # No per-subject varying states: feasibility is identical for all subjects.
-        if action_kwargs:
-            result = jax.vmap(
-                functools.partial(
-                    _is_combo_feasible_for_all_subjects,
-                    feasibility_func=feasibility_func,
-                    params=filtered_params,
-                )
-            )(action_kwargs)
-        else:
-            result = feasibility_func(**filtered_params)  # ty: ignore[invalid-argument-type]
-        infeasible_indices = [] if jnp.any(result) else subject_indices
+        result = _evaluate_constant_feasibility(
+            feasibility_func=feasibility_func,
+            action_kwargs=action_kwargs,
+            params=filtered_params,
+            memory=memory,
+        )
+        if summary is not None:
+            summary.append(
+                function=_constant_feasibility_flag,
+                arguments={"feasible": result},
+            )
+            return None
+        infeasible_indices = [] if np.any(np.asarray(result)) else subject_indices
 
     if not infeasible_indices:
         return None
 
+    # The summary route returned before diagnostics, leaving the serial index array.
     per_constraint_admits_any = _per_constraint_feasibility(
         regime=regime,
         subject_states=subject_states,
         regime_params=regime_params,
         flat_actions=flat_actions,
-        idx_arr=idx_arr,
+        idx_arr=cast("Int1D | NDArray[np.int32]", idx_arr),
         infeasible_indices=infeasible_indices,
+        memory=memory,
     )
 
     return _format_infeasibility_message(
@@ -982,23 +1599,75 @@ def _check_regime_feasibility(  # noqa: C901
     )
 
 
+@functools.partial(jax.jit, static_argnames=("needs_period",))
+def _gather_feasibility_inputs(
+    *,
+    states: Mapping[str, jax.Array],
+    indices: Int1D | NDArray[np.int32],
+    periods: Int1D | NDArray[np.int32],
+    needs_period: bool,
+) -> dict[str, jax.Array]:
+    """Gather the host-selected cohort without dynamic-size device reads."""
+    selected = {name: values[indices] for name, values in states.items()}
+    if needs_period:
+        selected["period"] = jnp.asarray(periods)[indices]
+    return selected
+
+
+@jax.jit
+def _subject_feasibility_flag(*, feasible: BoolND) -> jax.Array:
+    """Flag a subject lacking every action, retaining no subject-sized mask."""
+    return ~jnp.all(feasible)
+
+
+@jax.jit
+def _constant_feasibility_flag(*, feasible: BoolND | bool) -> jax.Array:
+    """Flag absence of every action when feasibility is cohort-constant."""
+    return ~jnp.any(feasible)
+
+
 def _admits_any_action(
     *,
     feasibility_func: Callable[..., BoolND],
     action_kwargs: Mapping[str, FloatND | IntND],
     params: Mapping[str, object],
+    memory: SimulationMemory | None = None,
 ) -> bool:
     """Return True iff the feasibility function admits ≥ 1 action under params."""
+    result = _evaluate_constant_feasibility(
+        feasibility_func=feasibility_func,
+        action_kwargs=action_kwargs,
+        params=params,
+        memory=memory,
+    )
+    return bool(np.any(np.asarray(result))) if action_kwargs else bool(result)
+
+
+def _evaluate_constant_feasibility(
+    *,
+    feasibility_func: Callable[..., BoolND],
+    action_kwargs: Mapping[str, FloatND | IntND],
+    params: Mapping[str, object],
+    memory: SimulationMemory | None = None,
+) -> BoolND | bool:
+    """Evaluate a cohort-constant predicate with its full per-action output profile."""
+    if memory is not None:
+        return _run_profiled_feasibility(
+            memory=memory,
+            function=functools.partial(
+                _evaluate_constant_feasibility, feasibility_func=feasibility_func
+            ),
+            arguments={"action_kwargs": action_kwargs, "params": params},
+        )
     if action_kwargs:
-        per_combo = jax.vmap(
+        return jax.vmap(
             functools.partial(
                 _is_combo_feasible_for_all_subjects,
                 feasibility_func=feasibility_func,
                 params=params,
             )
         )(action_kwargs)
-        return bool(jnp.any(per_combo))
-    return bool(feasibility_func(**params))
+    return feasibility_func(**params)
 
 
 # keyword-only-exempt: library-callback=jax.vmap
@@ -1061,8 +1730,9 @@ def _per_constraint_feasibility(
     subject_states: Mapping[str, FloatND | IntND],
     regime_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, FloatND | IntND],
-    idx_arr: Int1D,
+    idx_arr: Int1D | NDArray[np.int32],
     infeasible_indices: Sequence[int],
+    memory: SimulationMemory | None = None,
 ) -> dict[str, np.ndarray]:
     """Per-constraint feasibility for the infeasible subjects.
 
@@ -1085,9 +1755,16 @@ def _per_constraint_feasibility(
     infeasible_positions = np.flatnonzero(
         np.isin(np.asarray(idx_arr), np.asarray(infeasible_indices))
     )
-    infeasible_states = {
-        name: arr[infeasible_positions] for name, arr in subject_states.items()
-    }
+    infeasible_states = run_simulation_operation(
+        memory=memory,
+        function=_gather_feasibility_inputs,
+        arguments={
+            "states": subject_states,
+            "indices": infeasible_positions.astype(np.int32),
+            "periods": np.empty(0, dtype=np.int32),
+        },
+        static_arguments={"needs_period": False},
+    )
 
     out: dict[str, np.ndarray] = {}
     for name, constraint_func in constraints.items():
@@ -1106,6 +1783,7 @@ def _per_constraint_feasibility(
                 feasibility_func=single_feasibility,
                 action_kwargs=single_actions,
                 params=single_params,
+                memory=memory,
             )
             out[name] = np.full(n, admits_any, dtype=bool)
             continue
@@ -1115,6 +1793,7 @@ def _per_constraint_feasibility(
             action_kwargs=single_actions,
             filtered_params=single_params,
             flat_actions=flat_actions,
+            memory=memory,
         )
         out[name] = np.asarray(any_feasible)
     return out
@@ -1193,7 +1872,9 @@ def _format_infeasibility_message(
     # Build DataFrame of infeasible subjects' states
     state_df = pd.DataFrame(
         {
-            name: [float(initial_states[name][i]) for i in infeasible_indices]
+            name: np.asarray(initial_states[name])[list(infeasible_indices)].astype(
+                float
+            )
             for name in state_names
             if name in initial_states
         },
@@ -1233,13 +1914,13 @@ def _format_infeasibility_message(
 
 def _build_flat_action_grid(
     *,
-    action_names: list[ActionName],
+    action_names: Sequence[ActionName],
     grids: MappingProxyType[str, FloatND | IntND],
 ) -> dict[str, FloatND | IntND]:
     """Build a flat array of all action combinations from action grids.
 
     Args:
-        action_names: List of action variable names.
+        action_names: Ordered sequence of action variable names.
         grids: Immutable mapping of variable names to grid arrays.
 
     Returns:

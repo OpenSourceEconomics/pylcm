@@ -1,8 +1,12 @@
 import dataclasses
+import logging
 import subprocess
 import sys
+from collections.abc import Mapping
+from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import numpy as np
@@ -10,6 +14,7 @@ import pandas as pd
 import pytest
 from jax import numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
+from numpy.typing import ArrayLike
 
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -17,29 +22,46 @@ from _lcm.execution.core_program import (
     core_program_graph,
     materialize_core_program,
 )
+from _lcm.execution.liveness import PlannedInputLiveness
+from _lcm.execution.scheduler import (
+    BufferRegistry,
+    PeriodTransferCache,
+    release_closed_artifacts,
+    shard_identities,
+    shares_a_buffer,
+)
 from _lcm.execution.value_transfer import (
+    MaterializedTransferObserver,
+    ResolvedValueTransfer,
+    ValueArtifactAddress,
     ValueArtifactKind,
+    ValueConsumerAddress,
     ValueInputChannel,
     ValueTransferKind,
+    apply_value_transfer_plan,
 )
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
-from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.solution import backward_induction
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
 )
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
-from lcm import CollectiveUtility, LinearAggregator, LinearExpectation, fixed_transition
+from lcm import (
+    CollectiveUtility,
+    ExecutionConfig,
+    fixed_transition,
+)
 from lcm.ages import AgeGrid
-from lcm.exceptions import PyLCMError, RegimeInitializationError
+from lcm.exceptions import ExecutionPlanningError, PyLCMError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.solver_api import DISSOLUTION_FLAG
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarFloat, ScalarInt
+from tests.conftest import assert_agrees_to_ulp
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized (a serial run importing
@@ -94,6 +116,10 @@ def _make_correct_distributed_model(
     distributed: bool = True,
     distribute_type2: bool | None = None,
     retirement_reads_type2: bool = True,
+    move_type2: bool = False,
+    cell_width: int | None = None,
+    subject_width: int | None = None,
+    exact_layout: bool = False,
 ) -> Model:
     @categorical(ordered=False)
     class RegimeId:
@@ -118,21 +144,25 @@ def _make_correct_distributed_model(
 
     working_life = UserRegime(
         functions={
-            "utility": lambda wealth, consumption, type1, type2: (
+            "utility": _calculate_exact_layout_utility
+            if exact_layout
+            else lambda wealth, consumption, type1, type2: (
                 (jnp.log(consumption) + wealth * 0.001) * type1 * type2
             ),
         },
         states={
-            "wealth": LinSpacedGrid(
-                start=1,
-                stop=100,
-                n_points=10,
-            ),
+            "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
+            if exact_layout
+            else LinSpacedGrid(start=1, stop=100, n_points=10)
         },
         state_transitions={
             "wealth": lambda wealth, consumption: wealth - consumption,
         },
-        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        actions={
+            "consumption": LinSpacedGrid(start=1, stop=9, n_points=9)
+            if exact_layout
+            else LinSpacedGrid(start=1, stop=50, n_points=10)
+        },
         transition=lambda age: jnp.where(
             age >= 4, RegimeId.retirement, RegimeId.working_life
         ),
@@ -155,7 +185,9 @@ def _make_correct_distributed_model(
         transition=None,
         functions={"utility": retirement_utility},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
+            if exact_layout
+            else LinSpacedGrid(start=1, stop=100, n_points=10)
         },
         active=lambda age: age >= 5,
     )
@@ -165,20 +197,131 @@ def _make_correct_distributed_model(
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(category_class=Type, distributed=distributed),
-            "type2": DiscreteGrid(
-                category_class=Type,
-                distributed=(
-                    distributed if distribute_type2 is None else distribute_type2
-                ),
-            ),
+            "type1": DiscreteGrid(category_class=Type),
+            "type2": DiscreteGrid(category_class=Type),
         },
         state_transitions={
             "type1": fixed_transition("type1"),
-            "type2": fixed_transition("type2"),
+            "type2": (lambda type2: 1 - type2)
+            if move_type2
+            else fixed_transition("type2"),
         },
         n_subjects=n_subjects,
+        execution_config=ExecutionConfig(
+            axis_widths={
+                **({"cell": cell_width} if cell_width is not None else {}),
+                **({"subject": subject_width} if subject_width is not None else {}),
+            },
+            sharded_states=(
+                *(("type1",) if distributed else ()),
+                *(
+                    ("type2",)
+                    if (distributed if distribute_type2 is None else distribute_type2)
+                    else ()
+                ),
+            ),
+        ),
     )
+
+
+def _calculate_exact_layout_utility(
+    *, wealth: ScalarFloat, consumption: ScalarFloat, type1: ScalarInt, type2: ScalarInt
+) -> ScalarFloat:
+    """Keep layout witnesses independent of floating-point contraction choices."""
+    return (wealth + consumption) * type1 * type2
+
+
+def _get_exact_layout_values(
+    *, retirement_reads_type2: bool
+) -> dict[int, dict[str, np.ndarray]]:
+    """Enumerate the affine Bellman solution with rational arithmetic.
+
+    For each fixed type pair, V(w) = slope * w + intercept. Consumption affects
+    the intercept only, so enumerating the nine actions solves each period at
+    every wealth. The grid spacing eight, integer actions, and discount one-half
+    keep both this reference and the interpolated implementation representable.
+
+    Stored values have denominator dividing 64 and magnitude below 1296. The
+    extrapolation weights have denominator dividing 8 and absolute sum at most
+    13/4. Including discounting and integer utility, all arithmetic lies on the
+    1/1024 lattice with magnitude at most 729 + (13/8)*1296 = 2835. Numerators
+    stay below 2**22, so separate or fused multiply-add evaluation is exact.
+
+    Even expanding both coordinate weights gives an absolute coefficient sum
+    at most 1 + 2*(72/8 + 9/8 + 1) + 2*7 = 149/4. Next-period inputs have
+    denominator dividing 32, so expanded partial sums lie on the 1/512 lattice
+    and have magnitude at most 729 + (149/8)*1296 = 24867. Their numerators
+    stay below 2**24, within float32's significand under reassociation as well.
+    """
+    values: dict[int, dict[str, np.ndarray]] = {
+        period: {"working_life": np.empty((4, 4, 9))} for period in range(5)
+    }
+    terminal_shape = (4, 4, 9) if retirement_reads_type2 else (4, 9)
+    values[5] = {"retirement": np.empty(terminal_shape)}
+    for type1 in range(4):
+        for type2 in range(4):
+            slope = Fraction(type1 * (type2 if retirement_reads_type2 else 1), 2)
+            intercept = Fraction(0)
+            terminal = [float(slope * wealth) for wealth in range(8, 73, 8)]
+            index = (type1, type2) if retirement_reads_type2 else type1
+            values[5]["retirement"][index] = terminal
+            for period in reversed(range(5)):
+                intercept = intercept / 2 + max(
+                    (type1 * type2 - slope / 2) * consumption
+                    for consumption in range(1, 10)
+                )
+                slope = type1 * type2 + slope / 2
+                values[period]["working_life"][type1, type2] = [
+                    float(slope * wealth + intercept) for wealth in range(8, 73, 8)
+                ]
+    return values
+
+
+def _assert_exact_layout_values(
+    *, values: Mapping[int, Mapping[str, ArrayLike]], retirement_reads_type2: bool
+) -> None:
+    """Check every state and period against the independent rational solution."""
+    expected = _get_exact_layout_values(retirement_reads_type2=retirement_reads_type2)
+    assert values.keys() == expected.keys()
+    for period, by_regime in values.items():
+        assert by_regime.keys() == expected[period].keys()
+        for regime, value in by_regime.items():
+            np.testing.assert_array_equal(value, expected[period][regime])
+
+
+def _assert_exact_layout_grids(*, model: Model) -> None:
+    """Check the realized inputs on which the rational reference depends."""
+    for regime in model._regimes.values():
+        np.testing.assert_array_equal(
+            regime.solution.grids["wealth"].to_jax(), np.arange(8, 73, 8)
+        )
+    np.testing.assert_array_equal(
+        model._regimes["working_life"].solution.grids["consumption"].to_jax(),
+        np.arange(1, 10),
+    )
+
+
+@pytest.mark.parametrize("retirement_reads_type2", [True, False])
+@pytest.mark.parametrize("mutation", ["type1", "type2", "value"])
+def test_exact_layout_reference_rejects_misaligned_or_changed_values(
+    *, retirement_reads_type2: bool, mutation: str
+) -> None:
+    """Every type axis and an adjacent represented value remain observable."""
+    values = _get_exact_layout_values(retirement_reads_type2=retirement_reads_type2)
+    _assert_exact_layout_values(
+        values=values, retirement_reads_type2=retirement_reads_type2
+    )
+    working = values[0]["working_life"]
+    if mutation == "value":
+        working[1, 1, 0] = np.nextafter(working[1, 1, 0], np.inf)
+    else:
+        values[0]["working_life"] = np.roll(
+            working, 1, axis=0 if mutation == "type1" else 1
+        )
+    with pytest.raises(AssertionError):
+        _assert_exact_layout_values(
+            values=values, retirement_reads_type2=retirement_reads_type2
+        )
 
 
 def _make_one_axis_collective_model(*, distributed: bool) -> Model:
@@ -241,7 +384,10 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
-        states={"type1": DiscreteGrid(category_class=Type, distributed=distributed)},
+        states={"type1": DiscreteGrid(category_class=Type)},
+        execution_config=ExecutionConfig(
+            sharded_states=("type1",) if distributed else ()
+        ),
         state_transitions={"type1": fixed_transition("type1")},
     )
 
@@ -251,8 +397,9 @@ def correct_distributed_model():
     return _make_correct_distributed_model()
 
 
-@pytest.fixture
-def wrong_distributed_model():
+def _make_wrong_distributed_model() -> Model:
+    """A model whose two distributed grids need nine devices, not four."""
+
     @categorical(ordered=False)
     class RegimeId:
         working_life: ScalarInt
@@ -303,9 +450,10 @@ def wrong_distributed_model():
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(category_class=Type, distributed=True),
-            "type2": DiscreteGrid(category_class=Type, distributed=True),
+            "type1": DiscreteGrid(category_class=Type),
+            "type2": DiscreteGrid(category_class=Type),
         },
+        execution_config=ExecutionConfig(sharded_states=("type1", "type2")),
         state_transitions={
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
@@ -354,7 +502,9 @@ def test_distributed_solve_matches_single_device_per_type():
             )
 
 
-def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -> str:
+def _compiled_solve_kernel_hlo(
+    *, model: Model, regime_name: str, period: int, cell_width: int | None = None
+) -> str:
     """Lower and compile a regime's period kernel exactly as backward induction does.
 
     Reproduces the AOT lowering args (sharded states, sharded continuation-V
@@ -391,6 +541,12 @@ def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -
         )
         resolved = backward_induction._resolve_program_for_execution(
             program=materialized,
+            tile_widths={
+                axis.name: (
+                    cell_width if axis.name == "cell" and cell_width else axis.extent
+                )
+                for axis in materialized.requirements.axes
+            },
             source_value_template=next_regime_to_V_arr[regime_name],
             source=(regime_name, period, core_key),
         )
@@ -411,7 +567,8 @@ def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -
 
 
 @_skip_pytest_parallel
-def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
+@pytest.mark.parametrize("cell_width", [1, 3])
+def test_distributed_solve_kernel_does_not_all_gather_continuation_v(*, cell_width):
     """The backward-induction kernel reads only its device-local continuation V.
 
     `type1`/`type2` never transition, so a regime's continuation depends only on
@@ -420,8 +577,69 @@ def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
     `all-gather` collective assembling the full continuation V on every device.
     """
     model = _make_correct_distributed_model(distributed=True)
-    hlo = _compiled_solve_kernel_hlo(model=model, regime_name="working_life", period=0)
+    hlo = _compiled_solve_kernel_hlo(
+        model=model, regime_name="working_life", period=0, cell_width=cell_width
+    )
     assert "all-gather" not in hlo
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("regime_name", ["working_life", "retirement"])
+def test_sharded_coordinates_are_outside_the_cell_product(*, regime_name):
+    """Both terminal and mixed fixed/moving state axes keep native placement."""
+    model = _make_correct_distributed_model(move_type2=True, cell_width=3)
+    kernel = next(iter(model._regimes[regime_name].solution.period_kernels.values()))
+    program = core_program_graph(kernel=kernel)["main"]
+    assert tuple(
+        (axis.state_names, axis.extent) for axis in program.requirements.tiled_axes
+    ) == ((("wealth",), 10),)
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("cell_width", [1, 3, None])
+def test_terminal_cell_tiling_does_not_gather_coordinates_or_outputs(
+    *, cell_width, monkeypatch
+):
+    model = _make_correct_distributed_model(
+        distribute_type2=False, cell_width=cell_width
+    )
+    observed = []
+    original_attach = backward_induction._attach_resolved_output_layout
+
+    def capture_terminal(**kwargs):
+        core = original_attach(**kwargs)
+        if "action_product" not in core.tile_widths:
+            hlo = cast("jax.stages.Compiled", core.compiled).as_text()
+            if hlo is None:
+                raise AssertionError("Compiled terminal program has no HLO.")
+            observed.append(hlo.lower())
+        return core
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_terminal
+    )
+    model.solve(log_level="off", params={"discount_factor": 0.95})
+    assert (bool(observed), all("all-gather" not in hlo for hlo in observed)) == (
+        True,
+        True,
+    )
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize("cell_width", [1, 3])
+def test_mixed_outer_state_axes_preserve_values(*, cell_width):
+    """A moving sharded axis and a co-mapped fixed axis retain their state order."""
+    candidate = _make_correct_distributed_model(
+        move_type2=True, cell_width=cell_width
+    ).solve(log_level="off", params={"discount_factor": 0.95})
+    reference = _make_correct_distributed_model(
+        distributed=False, move_type2=True, cell_width=cell_width
+    ).solve(log_level="off", params={"discount_factor": 0.95})
+    assert_agrees_to_ulp(
+        got=np.asarray(candidate.values[0]["working_life"]),
+        expected=np.asarray(reference.values[0]["working_life"]),
+        n_ulp=4,
+    )
 
 
 @_skip_pytest_parallel
@@ -465,7 +683,7 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
 @_skip_pytest_parallel
 def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypatch):
     """Real AOT GridSearch outputs are born sharded without repair or collectives."""
-    model = _make_correct_distributed_model(distribute_type2=False)
+    model = _make_correct_distributed_model(distribute_type2=False, exact_layout=True)
     working_kernels = model._regimes["working_life"].solution.period_kernels
     assert working_kernels
     assert all(
@@ -477,11 +695,12 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
         core_program_graph(kernel=kernel)["main"].disposition_reason is None
         for kernel in working_kernels.values()
     )
-    single = (
-        _make_correct_distributed_model(distributed=False, distribute_type2=False)
-        .solve(log_level="off", params={"discount_factor": 0.95})
-        .values
+    single_model = _make_correct_distributed_model(
+        distributed=False, distribute_type2=False, exact_layout=True
     )
+    _assert_exact_layout_grids(model=model)
+    _assert_exact_layout_grids(model=single_model)
+    single = single_model.solve(log_level="off", params={"discount_factor": 0.5}).values
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
 
@@ -495,7 +714,7 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
         backward_induction, "_attach_resolved_output_layout", capture_planned_core
     )
 
-    distributed = model.solve(log_level="off", params={"discount_factor": 0.95}).values
+    distributed = model.solve(log_level="off", params={"discount_factor": 0.5}).values
 
     assert captured
     assert len({id(core.compiled) for core in captured}) < len(captured)
@@ -536,6 +755,9 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
             assert value.sharding.spec == PartitionSpec("type1", None, None)
             np.testing.assert_array_equal(value, single[period][regime_name])
 
+    _assert_exact_layout_values(values=single, retirement_reads_type2=True)
+    _assert_exact_layout_values(values=distributed, retirement_reads_type2=True)
+
 
 @_skip_pytest_parallel
 def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypatch):
@@ -543,6 +765,7 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
     model = _make_correct_distributed_model(
         distribute_type2=False,
         retirement_reads_type2=False,
+        exact_layout=True,
     )
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
@@ -556,7 +779,7 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
     monkeypatch.setattr(
         backward_induction, "_attach_resolved_output_layout", capture_planned_core
     )
-    params = {"discount_factor": 0.95}
+    params = {"discount_factor": 0.5}
     distributed = model.solve(log_level="off", params=params).values
 
     assert model._regimes["working_life"].solution.state_names == (
@@ -588,18 +811,21 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
     assert transfer.stored_sharding == target_sharding
     assert transfer.source_sharding == target_sharding
 
-    single = (
-        _make_correct_distributed_model(
-            distributed=False,
-            distribute_type2=False,
-            retirement_reads_type2=False,
-        )
-        .solve(log_level="off", params=params)
-        .values
+    single_model = _make_correct_distributed_model(
+        distributed=False,
+        distribute_type2=False,
+        retirement_reads_type2=False,
+        exact_layout=True,
     )
+    _assert_exact_layout_grids(model=model)
+    _assert_exact_layout_grids(model=single_model)
+    single = single_model.solve(log_level="off", params=params).values
     for period, regime_to_value in distributed.items():
         for regime_name, value in regime_to_value.items():
             np.testing.assert_array_equal(value, single[period][regime_name])
+
+    _assert_exact_layout_values(values=single, retirement_reads_type2=False)
+    _assert_exact_layout_values(values=distributed, retirement_reads_type2=False)
 
     hlo = core.compiled.as_text().lower()
     for collective in (
@@ -612,26 +838,142 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
         assert collective not in hlo
 
 
+def _make_two_source_distributed_model() -> Model:
+    """Two working regimes of one period reading one `retirement` value.
+
+    `working_life` and `working_life_b` are active over the same ages and both
+    transition into `retirement` at the same age, so at the last working period
+    two source cores read the one stored `retirement` value. The distributed
+    `type1` state puts both sources and the target on the same four-device mesh.
+    """
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working_life: ScalarInt
+        working_life_b: ScalarInt
+        retirement: ScalarInt
+
+    @categorical(ordered=True)
+    class Type:
+        lowest: ScalarInt
+        low: ScalarInt
+        high: ScalarInt
+        highest: ScalarInt
+
+    def working_utility(*, wealth, consumption, type1):
+        return (jnp.log(consumption) + wealth * 0.001) * type1
+
+    def next_wealth(*, wealth, consumption):
+        return wealth - consumption
+
+    def to_retirement(age):
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
+
+    def to_retirement_b(age):
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life_b)
+
+    def retirement_utility(*, wealth, type1):
+        return (wealth * 0.5) * type1
+
+    working = UserRegime(
+        functions={"utility": working_utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        state_transitions={"wealth": next_wealth},
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transition=to_retirement,
+        active=lambda age: age < 5,
+    )
+    return Model(
+        regimes={
+            "working_life": working,
+            "working_life_b": working.replace(transition=to_retirement_b),
+            "retirement": UserRegime(
+                transition=None,
+                functions={"utility": retirement_utility},
+                states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+                active=lambda age: age >= 5,
+            ),
+        },
+        ages=AgeGrid(start=0, stop=5, step="Y"),
+        regime_id_class=RegimeId,
+        states={"type1": DiscreteGrid(category_class=Type)},
+        execution_config=ExecutionConfig(sharded_states=("type1",)),
+        state_transitions={"type1": fixed_transition("type1")},
+    )
+
+
 @_skip_pytest_parallel
-def test_value_transfer_rejects_named_target_to_single_device_source():
-    """The planner fails closed if model-construction invariants are bypassed."""
+def test_two_sources_reading_one_target_share_one_planned_transfer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One target value read by two source regimes of a period is marked shared."""
+    model = _make_two_source_distributed_model()
+    captured = []
+    original_attach = backward_induction._attach_resolved_output_layout
+
+    def capture_planned_core(**kwargs):
+        core = original_attach(**kwargs)
+        if hasattr(core, "layout"):
+            captured.append(core)
+        return core
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_planned_core
+    )
+    model.solve(log_level="off", params={"discount_factor": 0.95})
+    shared = [
+        transfer
+        for core in captured
+        for transfer in core.input_transfer_plan
+        if transfer.reused_by_several_consumers
+    ]
+
+    assert len({transfer.source.source_regime for transfer in shared}) == 2
+
+
+@_skip_pytest_parallel
+def test_one_source_reading_a_target_leaves_its_transfer_unshared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A value each period reads from one source core alone is not marked shared."""
+    model = _make_correct_distributed_model(distribute_type2=False)
+    captured = []
+    original_attach = backward_induction._attach_resolved_output_layout
+
+    def capture_planned_core(**kwargs):
+        core = original_attach(**kwargs)
+        if hasattr(core, "layout"):
+            captured.append(core)
+        return core
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_planned_core
+    )
+    model.solve(log_level="off", params={"discount_factor": 0.95})
+    transfers = [transfer for core in captured for transfer in core.input_transfer_plan]
+
+    assert transfers, "no transfer was planned; the test is inert"
+    assert not any(transfer.reused_by_several_consumers for transfer in transfers)
+
+
+@_skip_pytest_parallel
+def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
+    """A sharded value read by a single-device core is copied onto that device."""
     # Distributed states are model-level declarations, and construction rejects a
-    # nonterminal source that prunes one. A valid model therefore cannot produce this
-    # transfer direction; the private resolver still refuses it explicitly.
+    # nonterminal source that prunes one, so no model reaches this direction. The
+    # catalogue still names it, rather than leaving the pair unclassified.
     target_sharding = NamedSharding(
         jax.make_mesh((4,), ("type1",)),
         PartitionSpec("type1"),
     )
     source_sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
 
-    with pytest.raises(
-        ValueError,
-        match="NamedSharding -> SingleDeviceSharding",
-    ):
-        backward_induction._resolve_value_transfer_layout(
-            stored_sharding=target_sharding,
-            source_execution_sharding=source_sharding,
-        )
+    resolved = backward_induction._resolve_value_transfer_layout(
+        stored_sharding=target_sharding,
+        source_execution_sharding=source_sharding,
+    )
+
+    assert resolved == (ValueTransferKind.COPY_TO_SOURCE_LAYOUT, source_sharding)
 
 
 @_skip_pytest_parallel
@@ -646,12 +988,11 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
     assert working_kernels
     assert all(
         core_program_graph(kernel=kernel)["main"].disposition
-        is CoreExecutionDisposition.DENSE
+        is CoreExecutionDisposition.PLANNED
         for kernel in working_kernels.values()
     )
     assert all(
-        core_program_graph(kernel=kernel)["main"].disposition_reason
-        == "deliberately_dense:collective_resource_regression"
+        core_program_graph(kernel=kernel)["main"].disposition_reason is None
         for kernel in working_kernels.values()
     )
     single_model = _make_one_axis_collective_model(distributed=False)
@@ -829,14 +1170,15 @@ def test_aot_compiled_simulation_running_on_multiple_cpus():
 
 
 @_skip_pytest_parallel
-def test_solution_error_if_grid_product_exceeds_devices(wrong_distributed_model):
-    """Solve raises when the product of distributed grid sizes exceeds devices."""
+def test_model_error_if_grid_product_exceeds_devices():
+    """Building the model raises when its distributed grids outnumber the devices.
 
-    with pytest.raises(PyLCMError, match="must equal the number"):
-        wrong_distributed_model.solve(
-            log_level="debug",
-            params={"discount_factor": 0.95},
-        )
+    The planner assigns every regime its devices while the model is built, so a
+    product of extents no device set can carry is named there rather than at
+    the first solve.
+    """
+    with pytest.raises(PyLCMError, match="must not exceed the number"):
+        _make_wrong_distributed_model()
 
 
 @_skip_pytest_parallel
@@ -893,12 +1235,13 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    chunked = correct_distributed_model.simulate(
+    chunked = _make_correct_distributed_model(
+        subject_width=subject_batch_size
+    ).simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
         seed=12345,
-        subject_batch_size=subject_batch_size,
     )
     pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
 
@@ -927,12 +1270,11 @@ def test_distributed_aot_simulation_pads_subjects_to_a_chunk_multiple():
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    chunked = model.simulate(
+    chunked = _make_correct_distributed_model(n_subjects=12, subject_width=8).simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
         seed=12345,
-        subject_batch_size=8,
     )
     assert chunked.n_subjects == 12
     pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
@@ -982,9 +1324,12 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(category_class=Type, distributed=distributed),
-            "type2": DiscreteGrid(category_class=Type, distributed=distributed),
+            "type1": DiscreteGrid(category_class=Type),
+            "type2": DiscreteGrid(category_class=Type),
         },
+        execution_config=ExecutionConfig(
+            sharded_states=("type1", "type2") if distributed else ()
+        ),
         state_transitions={
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
@@ -1065,38 +1410,39 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
             np.testing.assert_array_equal(value, single[period][regime_name])
 
 
-def test_distributed_action_grid_raises_at_regime_init():
-    """Action grids cannot be distributed; regime finalization rejects one.
-
-    Distribution is a property of state axes (which form the V-array shape).
-    Marking an action grid as distributed has no consistent meaning under the
-    current sharding model, so it is rejected when the model finalizes its
-    regimes. (Continuous action grids never reach this check — they
-    are rejected at grid init by `_fail_if_continuous_grid_distributed`.)
-    """
+def test_execution_config_cannot_shard_an_action():
+    """The model rejects an action name as a requested state device axis."""
 
     @categorical(ordered=False)
     class Choice:
         a: ScalarInt
         b: ScalarInt
 
+    @categorical(ordered=False)
+    class RegimeId:
+        alive: ScalarInt
+        dead: ScalarInt
+
     regime = UserRegime(
-        functions={"utility": jnp.log},
+        functions={"utility": lambda wealth, choice: wealth + choice},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         state_transitions={
             "wealth": lambda wealth, choice: wealth - choice,
         },
         actions={
-            "choice": DiscreteGrid(category_class=Choice, distributed=True),
+            "choice": DiscreteGrid(category_class=Choice),
         },
-        transition=lambda age: age,
+        transition=lambda: RegimeId.dead,
     )
-    with pytest.raises(RegimeInitializationError, match="distributed=True"):
-        finalize_regimes(
-            user_regimes={"regime": regime},
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+    with pytest.raises(ExecutionPlanningError, match="choice"):
+        Model(
+            regimes={
+                "alive": regime,
+                "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+            },
+            ages=AgeGrid(start=0, stop=1, step="Y"),
+            regime_id_class=RegimeId,
+            execution_config=ExecutionConfig(sharded_states=("choice",)),
         )
 
 
@@ -1135,3 +1481,321 @@ def test_v_array_has_inf_keeps_reduction_sharded_on_distributed_input():
     assert bool(result) is True
     assert result.sharding.num_devices == 4
     assert result.sharding.is_fully_replicated
+
+
+def _make_two_source_partially_distributed_model() -> Model:
+    """Two distributed working regimes reading one single-device `retirement` value.
+
+    `retirement` reads `wealth` only, so the model-level distributed `type1` is
+    pruned from it and its value lives on one device; both sources read that
+    value as a replicated input on their four-device mesh, one copy per period.
+    """
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working_life: ScalarInt
+        working_life_b: ScalarInt
+        retirement: ScalarInt
+
+    @categorical(ordered=True)
+    class Type:
+        lowest: ScalarInt
+        low: ScalarInt
+        high: ScalarInt
+        highest: ScalarInt
+
+    def working_utility(*, wealth, consumption, type1):
+        return (jnp.log(consumption) + wealth * 0.001) * type1
+
+    def next_wealth(*, wealth, consumption):
+        return wealth - consumption
+
+    def to_retirement(age):
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
+
+    def to_retirement_b(age):
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life_b)
+
+    def retirement_utility(*, wealth):
+        return wealth * 0.5
+
+    working = UserRegime(
+        functions={"utility": working_utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        state_transitions={"wealth": next_wealth},
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transition=to_retirement,
+        active=lambda age: age < 5,
+    )
+    return Model(
+        regimes={
+            "working_life": working,
+            "working_life_b": working.replace(transition=to_retirement_b),
+            "retirement": UserRegime(
+                transition=None,
+                functions={"utility": retirement_utility},
+                states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+                active=lambda age: age >= 5,
+            ),
+        },
+        ages=AgeGrid(start=0, stop=5, step="Y"),
+        regime_id_class=RegimeId,
+        states={"type1": DiscreteGrid(category_class=Type)},
+        execution_config=ExecutionConfig(sharded_states=("type1",)),
+        state_transitions={"type1": fixed_transition("type1")},
+    )
+
+
+@pytest.fixture(scope="module")
+def shared_transfer_executions() -> list[tuple[int, object]]:
+    """Solve the partially distributed model once, recording each shared-transfer copy.
+
+    Module-scoped so the two tests reading this fixture's result do not each
+    pay for a separate solve of the same model.
+    """
+    from _lcm.execution import value_transfer  # noqa: PLC0415
+
+    executed: list[tuple[int, object]] = []
+    real = value_transfer.apply_value_transfer
+
+    def count(
+        *,
+        value: object,
+        transfer: value_transfer.ResolvedValueTransfer,
+        on_materialized: MaterializedTransferObserver | None = None,
+    ) -> jax.Array:
+        if transfer.reused_by_several_consumers:
+            executed.append((transfer.source.source_period, transfer.target))
+        return real(value=value, transfer=transfer, on_materialized=on_materialized)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(value_transfer, "apply_value_transfer", count)
+        _make_two_source_partially_distributed_model().solve(
+            log_level="off", params={"discount_factor": 0.95}
+        )
+    return executed
+
+
+@_skip_pytest_parallel
+def test_a_shared_transfer_is_copied_for_at_least_one_dispatch(
+    shared_transfer_executions: list[tuple[int, object]],
+) -> None:
+    """The `retirement` value two sources share is copied at least once."""
+    assert shared_transfer_executions
+
+
+@_skip_pytest_parallel
+def test_a_transfer_two_sources_share_is_copied_once_per_period(
+    shared_transfer_executions: list[tuple[int, object]],
+) -> None:
+    """The shared copy of `retirement`'s value is made once, not once per source."""
+    assert len(shared_transfer_executions) == len(set(shared_transfer_executions))
+
+
+def _disjoint_device_shared_transfer() -> tuple[
+    BufferRegistry, PeriodTransferCache, tuple[object, object], jax.Array
+]:
+    """Drive a two-consumer shared transfer whose copy shares no source buffer.
+
+    Drives the exact `PeriodTransferCache` / `BufferRegistry` /
+    `apply_value_transfer_plan` machinery a solve dispatches through, by hand,
+    with a stored value placed on this file's fourth real CPU device and a
+    required layout replicated over the other three — disjoint device sets, so
+    the copy shares no buffer with its source. A solve reaches the same shape
+    whenever a reader's mesh leaves out the device its target was placed on;
+    this states the machinery's contract without one.
+    """
+    devices = jax.devices()
+    stored = jax.device_put(jnp.arange(4.0), devices[3])
+    required_sharding = NamedSharding(
+        jax.make_mesh((3,), ("d",), devices=devices[:3]), PartitionSpec()
+    )
+    transfer = ResolvedValueTransfer(
+        target=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="target"
+        ),
+        source=ValueConsumerAddress(
+            source_period=0,
+            source_regime="source",
+            core_key="main",
+            channel=ValueInputChannel.NEXT_REGIME_VALUE,
+            path=("target",),
+        ),
+        kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
+        stored_sharding=stored.sharding,
+        source_sharding=required_sharding,
+        expected_shape=stored.shape,
+        expected_dtype=stored.dtype,
+        reused_by_several_consumers=True,
+    )
+    key = (transfer.target, transfer.source_sharding)
+    registry = BufferRegistry()
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 2})
+    )
+    arguments = MappingProxyType(
+        {"next_regime_to_V_arr": MappingProxyType({"target": stored})}
+    )
+    apply_value_transfer_plan(arguments=arguments, plan=(transfer,), cache=cache)
+    copy = cache.get(transfer=transfer)
+    if copy is None:
+        msg = "The shared transfer plan produced no cached copy."
+        raise RuntimeError(msg)
+    return registry, cache, key, copy
+
+
+@_skip_pytest_parallel
+def test_a_disjoint_device_shared_copy_is_registered_with_the_buffer_registry() -> None:
+    """A genuinely new shared copy is tracked, unlike the same-mesh case."""
+    registry, _cache, _key, copy = _disjoint_device_shared_transfer()
+
+    assert registry.artifacts_sharing(array=copy)
+
+
+@_skip_pytest_parallel
+def test_a_disjoint_device_shared_copy_survives_its_first_consumers_commit() -> None:
+    """The copy stays alive while a second declared consumer has not yet committed."""
+    _registry, cache, key, copy = _disjoint_device_shared_transfer()
+
+    cache.commit_consumer(key=key)
+
+    assert not copy.is_deleted()
+
+
+@_skip_pytest_parallel
+def test_a_disjoint_device_shared_copy_is_deleted_after_its_last_consumers_commit() -> (
+    None
+):
+    """The copy is released once every declared consumer has committed."""
+    _registry, cache, key, copy = _disjoint_device_shared_transfer()
+    cache.commit_consumer(key=key)
+
+    cache.commit_consumer(key=key)
+
+    assert copy.is_deleted()
+
+
+def _single_device_value_and_wider_replicated_copy() -> tuple[jax.Array, jax.Array]:
+    """Return a one-device value and a replicated copy that reuses its buffer.
+
+    `device_put` onto a wider replicated sharding keeps the source's own device
+    buffer for the shard it already owns and allocates the rest, so the two
+    arrays share one buffer while their whole-array identities differ.
+    """
+    stored = jax.device_put(jnp.arange(8.0), jax.devices()[0])
+    wider = jax.device_put(
+        stored, NamedSharding(jax.make_mesh((4,), ("device",)), PartitionSpec())
+    )
+    return stored, wider
+
+
+@_skip_pytest_parallel
+def test_a_wider_replicated_copy_shares_a_buffer_with_its_source() -> None:
+    """A replicated copy still occupies the device buffer its source occupies."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+
+    assert shares_a_buffer(first=wider, second=stored)
+
+
+@_skip_pytest_parallel
+def test_a_wider_replicated_copy_of_a_declared_array_is_not_produced() -> None:
+    """Declaring an array also covers a wider copy that reused one of its shards."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    registry = BufferRegistry()
+    registry.declare_not_produced(tree=stored)
+
+    assert registry.is_not_produced(array=wider)
+
+
+@_skip_pytest_parallel
+def test_a_wider_replicated_output_of_a_declared_input_is_not_produced() -> None:
+    """An output reusing one shard of an input is not a buffer a dispatch produced."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    registry = BufferRegistry()
+    registry.declare_passed_through(inputs=stored, outputs=wider)
+
+    assert registry.is_not_produced(array=wider)
+
+
+@_skip_pytest_parallel
+def test_two_keys_on_one_shared_shard_are_partners() -> None:
+    """A key on any shard of a buffer is a partner of every key on that shard."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    registry = BufferRegistry()
+    registry.register(array=stored, artifact="stored")
+    registry.register(array=wider, artifact="wider")
+
+    assert registry.artifacts_sharing(array=stored) == frozenset({"stored", "wider"})
+
+
+class _FreedShardRegistry(BufferRegistry):
+    """A registry that records the shards of every buffer a release frees.
+
+    `release_closed_artifacts` forgets a buffer immediately before deleting it,
+    so the recorded shards are exactly the ones the release hands back to the
+    runtime, in the order it frees them.
+    """
+
+    def __init__(self) -> None:
+        """Start with an empty release record."""
+        super().__init__()
+        self.freed: list[tuple[int, int]] = []
+
+    def forget(self, *, array: jax.Array) -> None:
+        """Record the shards this buffer occupies, then drop its keys."""
+        self.freed.extend(sorted(shard_identities(array=array)))
+        super().forget(array=array)
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(
+    "order",
+    [("stored", "wider"), ("wider", "stored")],
+    ids=["narrow first", "wide first"],
+)
+def test_a_release_frees_every_shard_of_two_sharing_keys_exactly_once(
+    order: tuple[str, str],
+) -> None:
+    """The freed shards are the union of the eligible buffers', each freed once."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    expected = sorted(shard_identities(array=stored) | shard_identities(array=wider))
+    registry = _FreedShardRegistry()
+    registry.register(array=stored, artifact="stored")
+    registry.register(array=wider, artifact="wider")
+    ledger = PlannedInputLiveness(dispatch_accesses={"d": ("stored", "wider")})
+    ledger.commit_successful_dispatch(dispatch="d")
+
+    release_closed_artifacts(
+        ledger=ledger,
+        registry=registry,
+        artifacts=order,
+        arrays_by_artifact=MappingProxyType({"stored": stored, "wider": wider}),
+        pending_outputs=(),
+        closing_dispatch="d",
+        logger=logging.getLogger("lcm.tests.distributed"),
+    )
+
+    assert registry.freed == expected
+
+
+@_skip_pytest_parallel
+def test_a_shard_two_eligible_keys_share_is_released_once() -> None:
+    """Two keys on one shard name one release, not one release each."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    registry = BufferRegistry()
+    registry.register(array=stored, artifact="stored")
+    registry.register(array=wider, artifact="wider")
+    ledger = PlannedInputLiveness(dispatch_accesses={"d": ("stored", "wider")})
+    ledger.commit_successful_dispatch(dispatch="d")
+
+    records = release_closed_artifacts(
+        ledger=ledger,
+        registry=registry,
+        artifacts=("stored", "wider"),
+        arrays_by_artifact=MappingProxyType({"stored": stored, "wider": wider}),
+        pending_outputs=(),
+        closing_dispatch="d",
+        logger=logging.getLogger("lcm.tests.distributed"),
+    )
+
+    assert tuple(record.artifact for record in records) == ("stored", "wider")

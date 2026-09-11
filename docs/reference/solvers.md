@@ -28,14 +28,34 @@ remaining prerequisites.
 
 ## Capability table
 
-| Solver       | Required declaration                                           | Problem shape                                                                      | Hard prerequisites and supported constraints                                                                                                                                                                                                                                                          | Main tradeoff                                                                                    |
-| ------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `GridSearch` | `Regime` or a specialized regime                               | General discrete-continuous action product                                         | Ordinary callable constraints; no EGM structure required; supports EV1 taste shocks and transition-local joint lotteries                                                                                                                                                                                                                                              | Broadest representation; work covers the full action product; eligible singleton/collective hard-max and singleton EV1 JIT solve-value routes evaluate bounded action blocks |
-| `EGM`        | `ConsumptionSavingsRegime` with one `LiquidMargin`             | Smooth, concave one-state/one-action cash-on-hand problem                          | Exactly one continuous state and action; no discrete/process states or actions; resources equal the liquid state; post-decision state equals state minus action; utility does not read the liquid state; default Koopmans aggregator; only a provable post-decision lower bound as a solve constraint | Narrowest contract and no upper envelope                                                         |
-| `DCEGM`      | `ConsumptionSavingsRegime` with one `LiquidMargin`             | One liquid Euler margin with a genuine resources node and optional discrete choice | Valid liquid resources and post-decision roles; declared lower bound; solver-supported discrete/passive dimensions and continuation layout; supports EV1 taste shocks                                                                                                                                                            | Adds constrained candidates and an upper envelope; simulation may re-optimize on the action grid |
-| `NBEGM`      | `ConsumptionSavingsRegime` with one `LiquidMargin`             | Supported declared kinks, jumps, hard boundaries, or smooth discrete branches      | Supported case-piece or piecewise-affine declaration; solver-proven constraint routes; no EV1 taste shocks                                                                                                                                                                                            | Preserves declared topology; structural probes and candidate geometry add cost                   |
-| `NEGM`       | `NestedConsumptionSavingsRegime` with liquid and outer margins | A `DCEGM` inner solve conditional on a finite outer grid                           | Full inner `DCEGM` contract plus outer state, action, post-decision, no-adjustment, and cost roles; no EV1 taste shocks                                                                                                                                                                                                    | Exact relative to the outer candidate set; candidate retention can dominate memory               |
-| `NNBEGM`     | `NestedConsumptionSavingsRegime` with liquid and outer margins | An `NBEGM` inner solve inside a finite or adaptive outer search                    | Full inner `NBEGM` contract plus a compatible outer search and branch aggregator; no EV1 taste shocks                                                                                                                                                                                                                      | Most expressive EGM route and the highest structural/computational burden                        |
+<!-- capability tables: rendered, do not edit by hand -->
+
+| Solver       | Required declaration                                         | Problem shape                                                                | Hard prerequisites and supported constraints                                                                                                                                                                                                 | Main tradeoff                                                                                                                  |
+| ------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `GridSearch` | Regime or a specialized regime                               | General discrete-continuous action product                                   | Ordinary callable constraints; EV1 taste shocks; transition-local joint lotteries                                                                                                                                                            | Broad representation; eligible singleton hard-max routes stream actions, while EV1 and collective reductions use dense actions |
+| `EGM`        | ConsumptionSavingsRegime with one LiquidMargin               | Smooth concave one-state/one-action cash-on-hand problem                     | One continuous state and action; no discrete/process axes; identity resources; additive continuation; provable post-decision lower bound                                                                                                     | Narrow structural contract with no upper envelope                                                                              |
+| `DCEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | One liquid Euler margin and optional discrete choice                         | Valid resources and post-decision roles; lower bound; supported passive states and continuation layout; EV1 taste shocks                                                                                                                     | Constrained candidates and upper envelope; simulation may re-optimize on the action grid                                       |
+| `NBEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | Supported declared kinks, jumps, hard boundaries or smooth discrete branches | Supported case-piece or piecewise-affine declaration; proven constraint routes; nonlinear CE only on eligible ride-along routes; no EV1 taste shocks; marginal donation only on an unsharded self-carry main program with eligible ownership | Preserves declared topology; structural probes and candidate geometry add cost                                                 |
+| `NEGM`       | NestedConsumptionSavingsRegime with liquid and outer margins | DCEGM inner solve conditional on a finite outer grid                         | Inner DCEGM contract plus outer state/action, post-decision, no-adjustment and cost roles; no EV1 taste shocks                                                                                                                               | Exact relative to the outer candidate set; retained candidates can dominate memory                                             |
+| `NNBEGM`     | NestedConsumptionSavingsRegime with liquid and outer margins | NBEGM inner solve inside a finite or adaptive outer search                   | Inner NBEGM contract plus compatible outer search and branch aggregation; no EV1 taste shocks                                                                                                                                                | Declared budget topology inside each outer candidate adds structural and computational cost                                    |
+
+## Execution axes
+
+| Solver       | Reduced axes                            | Tiled axes                                              | Host axes         | Host-repeated programs             | Donation candidates | EV1 taste shocks | Nonlinear CE |
+| ------------ | --------------------------------------- | ------------------------------------------------------- | ----------------- | ---------------------------------- | ------------------- | ---------------- | ------------ |
+| `GridSearch` | `action_product`                        | `cell`                                                  | —                 | —                                  | —                   | Yes              | Yes          |
+| `EGM`        | —                                       | —                                                       | —                 | —                                  | —                   | No               | No           |
+| `DCEGM`      | `stochastic_node`                       | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | Yes              | No           |
+| `NBEGM`      | `stochastic_node`, `interval`, `branch` | `cell`                                                  | —                 | —                                  | `main`              | No               | Yes          |
+| `NEGM`       | `stochastic_node`, `outer_candidate`    | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | No               | No           |
+| `NNBEGM`     | `stochastic_node`, `interval`, `branch` | `cell`                                                  | `outer_candidate` | `adjuster:main`, `adjuster:replay` | —                   | No               | Yes          |
+
+<!-- end capability tables -->
+
+Potential axes depend on the selected solver configuration. Model construction accepts
+only axes declared by its actual programs; these tables do not waive structural
+validation. Host-repeated programs may contain planned compiled cores. Regime submesh
+placement and simulation subject tiling are separate execution policies.
 
 ## Nonlinear certainty equivalents
 
@@ -68,6 +88,28 @@ GridSearch()
 Covers the complete represented state-action product and applies constraints directly.
 It is the broadest route and the default solver on `Regime`. Eligible JIT solve-value
 routes evaluate bounded C-order action blocks while preserving the complete support.
+
+An eligible streamed core declares the reduced axis `action_product`, the flattened
+Cartesian product of the regime's actions. `ExecutionConfig(axis_widths=
+{"action_product": n})` fixes the width every such core is compiled at; a width above
+the product's extent selects the whole product. With no fixed width and no
+device-memory budget, pylcm streams every eligible core at its bootstrap width: the
+largest power of two below the action product, capped at 64. With an
+[`ExecutionConfig`](runtime_and_results.md#compiler-workspace-budgets) budget, the
+planner instead walks a deterministic width frontier widest-first and dispatches the
+first candidate whose compiler reservation plus accounted residency fits. Supplying both makes the fixed width
+the only candidate, which must fit the budget. A route whose action reduction is
+deliberately dense, unsupported, or trivial declares no `action_product` axis.
+
+The separate `cell` axis tiles the flattened Cartesian product of inner states.
+`ExecutionConfig(axis_widths={"cell": n})` bounds the number of state cells evaluated
+together, including any folded quadrature nodes. Each output leaf recovers its state
+axes before folding; collective values also retain their trailing stakeholder axis.
+Sharded states stay outside this loop; fixed states also retain their co-mapping with
+continuation values, preserving device-local reads. Empty and singleton state products
+declare no `cell` axis. A core
+with this axis is planned even when its action reduction remains deliberately dense.
+
 This matrix uses exactly three disposition labels:
 
 (gridsearch-jit-route-matrix)=
@@ -111,10 +153,13 @@ supported layout on the source core's mesh. The resolved plan is applied identic
 lowering and runtime arguments, and unsupported layout conversions or mismatched array
 metadata are errors. Each declaration's `(source_regime, source_period, core_key)` must
 also match the actual compiled core before its channel and argument-tree path are
-resolved. Remaining-consumer counts are committed only after successful dispatch. A
-zero count records eligibility for future memory
-planning; it does not release, donate, or offload an array. Dense programs without
-declared value reads and other unplanned consumers remain pinned.
+resolved. Remaining-consumer counts are committed only after successful dispatch.
+The scheduler releases an eligible temporary after its final consumer, while retained
+outputs, aliases, and undeclared host reads keep their owners live. Donation additionally
+requires a declared program candidate, sole eligible ownership, and a compiler-accepted
+alias; a zero consumer count alone does not authorize it. The current built-in donation
+route is the unsharded NBEGM self-carry main program described above. Dense programs
+without declared value reads and other unplanned consumers remain pinned.
 
 With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within
 each discrete-action combination and then applies the discrete log-sum. Simulation uses
@@ -143,23 +188,47 @@ solver = DCEGM(
     envelope=LTMEnvelope(),
     refined_grid_factor=2.0,
     n_constrained_points=20,
-    stochastic_node_batch_size=0,
 )
 ```
 
-`DCEGM` does not require a nontrivial discrete choice: it is also the supported route
+`DCEGM` supports a genuine resources node and optional discrete choice.
+It does not require a nontrivial discrete choice: it is also the supported route
 for a smooth liquid problem whose genuine resources node, passive states, or stochastic
 processes make plain `EGM` ineligible.
 
 The supported typed envelope configurations are `ExactEnvelope`, `FUESEnvelope`,
 `RFCEnvelope`, `LTMEnvelope`, and `MSSEnvelope`. String selectors are not part of the
-public API. See [Upper envelopes](envelopes.md) for their distinct contracts.
+public API. Exact-envelope node cells are tiled through the model's
+`ExecutionConfig(axis_widths={"envelope_cell": width})`; the axis is exported as
+`ENVELOPE_CELL_AXIS`. FUES uses a fixed scan unroll factor of one, recorded in the
+compiled program identity. See [Upper envelopes](envelopes.md) for their distinct
+contracts.
 
 `refined_grid_factor` provides NaN-padded storage headroom for ownership changes in each
 envelope row. A row that needs more slots is reported as overflow and NaN-poisoned; this
 field does not change the density of the policy read-out grid. `n_constrained_points`
-controls the borrowing-corner segment, and `stochastic_node_batch_size` the
-stochastic-node workspace.
+controls the borrowing-corner segment.
+
+DC-EGM owns no block-size field. Each loop it could stream is an execution axis its
+value and replay programs declare, and the width is fixed with
+`ExecutionConfig(axis_widths=...)`:
+
+- `stochastic_node` folds the child stochastic-node expectation. It is a weighted sum,
+  so two widths reorder floating-point adds and the values they publish agree to the
+  working format's rounding rather than bit for bit.
+- `cell` tiles the per-combo solve over the regime's output state cells — its discrete
+  and passive states. Discrete actions stay outside it: the action aggregation needs
+  every action's value at once.
+- `savings_point` tiles the per-savings-node continuation, the dominant working buffer.
+- `euler_point` tiles the per-node solve of the asset-row kernel, which runs when a
+  savings-stage function reads the current Euler state.
+- `envelope_cell` tiles adjacent-candidate resource cells inside the exact envelope;
+  other envelope backends declare no such loop.
+
+The last four concatenate their tiles rather than folding them, so every width names
+the same result. A loop of a single cell has nothing to tile and carries no
+declaration, so its name is refused for such a model. Grids declare economic support;
+execution widths belong in `ExecutionConfig.axis_widths`.
 
 :::{important} Solved and simulated continuous actions
 A solve can expose an off-grid
@@ -178,15 +247,17 @@ probabilities. The intrinsic budget is still applied as a simulation feasibility
 ### `NEGM`
 
 ```python
-NEGM(inner=..., outer_grid=..., outer_batch_size=0)
+NEGM(inner=..., outer_grid=...)
 ```
 
 Runs the bound `DCEGM` inner solve for every finite outer-grid node and includes the
-keeper. `outer_batch_size` limits how many candidate values are evaluated at once. It
-can reduce temporary evaluation memory, but it does not in general cap the size of the
-candidate bank retained for later envelope or ordered-fold operations. Peak memory can
-therefore continue to grow with the full candidate set. Measure both temporary and
-retained arrays for the exact model and solver profile.
+keeper. The sweep declares those nodes as the `outer_candidate` execution axis, so how
+many candidate values are evaluated at once is a planner width
+(`ExecutionConfig(axis_widths={"outer_candidate": k})`) rather than a solver field. A
+narrow width reduces temporary evaluation memory, but it does not in general cap the
+size of the candidate bank retained for later envelope or ordered-fold operations. Peak
+memory can therefore continue to grow with the full candidate set. Measure both
+temporary and retained arrays for the exact model and solver profile.
 
 `NEGM` rejects EV1 taste shocks. Its outer durable-margin maximum currently wraps the
 inner DCEGM solve, but a taste-shocked discrete choice must be the outermost aggregation:
@@ -200,12 +271,7 @@ or remove the taste shocks when the NEGM structure is required.
 NBEGM(
     savings_grid=...,
     jump_read="one_sided",
-    stochastic_node_batch_size=0,
-    envelope_segment_block_size=0,
     envelope_arithmetic="certified",
-    interval_batch_size=0,
-    cell_block_size=0,
-    branch_batch_size=0,
     probe_failure="reject",
 )
 ```
@@ -230,11 +296,13 @@ certified result. Select `envelope_arithmetic="ordinary"` only when working-form
 ownership is acceptable under model-specific crossing checks. The same requirement
 applies when this NBEGM is the inner solver of `NNBEGM`.
 
-The memory controls do not all mean “compiled batch width”:
+Compiled widths belong to the model's `ExecutionConfig`, with constants imported from
+`lcm.solvers`. Only axes a program actually uses are declared:
 
-- `stochastic_node_batch_size` and `envelope_segment_block_size` stream their named
-  intermediate axes;
-- `interval_batch_size` streams the continuation read and the candidate-envelope fold
+- `stochastic_node` (`STOCHASTIC_NODE_AXIS`) folds the child stochastic-node expectation
+  where the child mesh is also present in the program's state grids. Absent, singleton,
+  and cross-grid meshes keep a complete expectation and declare no such axis.
+- `interval` (`INTERVAL_AXIS`) streams the continuation read and the candidate-envelope fold
   together. A positive width reads only that many interval rows, folds their candidates
   into one standing winner per query, then requests the next block. The standing winner
   retains its global stored-link index, so given the candidate records every partition
@@ -249,17 +317,33 @@ The memory controls do not all mean “compiled batch width”:
   place this is visible on a regular grid is a node where a savings-node point candidate
   coincides with an interior candidate: the two are the same point, and which of them
   is named the owner can differ between widths while the published level does not.
-  `interval_batch_size=0` keeps the one-shot continuation matrix and envelope reduction;
-- `cell_block_size` and `branch_batch_size` are compiled `lax.map` batch widths for the
-  ride-cell and discrete-branch axes. The continuation read behind the branch axis runs
+  This axis exists only when continuation reads the liquid state across multiple
+  declared intervals. Omitting a width lets the planner choose the streamed width.
+- `cell` (`CELL_AXIS`) tiles independent ride cells inside each co-mapped carry slice;
+  it excludes the distributed states the carry is co-mapped over.
+- `branch` (`BRANCH_AXIS`) batches discrete branches before their maximum, retaining
+  the conditional banks needed for replay. The continuation read behind the branch axis runs
   once per class of branches that agree on every discrete action reaching the
   continuation (the regime transition, a law of motion, stochastic-state transition
   weights, a child's resources, the discount factor, or a schedule variable), so a
   budget-only action costs one read per cell however many branches it declares;
-- lower positive values bound the named streamed or mapped width. For the map-width
-  controls, `0` or a value covering the axis selects one vectorized pass.
+- Singleton meshes and routes without the corresponding computation omit its axis.
 
-These fields bound only their named mapped work, not surrounding arrays or total memory.
+For a model that declares continuation intervals, the execution setting is:
+
+```python
+from lcm import ExecutionConfig
+from lcm.solvers import INTERVAL_AXIS
+
+execution_config = ExecutionConfig(axis_widths={INTERVAL_AXIS: 2})
+```
+
+Widths must be positive; values above an axis's extent clamp to that extent. The
+canonical interval stream has no separate segment-width loop, and certified envelope
+queries own their internal partition, so NBEGM exposes no envelope-segment axis.
+These widths bound their named work, not surrounding arrays, retained branch banks,
+compilation memory, or total device memory. The interval reduction remains a declaration
+of the existing stable-identity fold (`INTERVAL_ENVELOPE_REDUCTION`).
 
 (api-nnbegm)=
 ### `NNBEGM`
@@ -274,13 +358,28 @@ use a bridged carry compatible with the outer fold. See
 
 The nested period kernel publishes no traced body of its own: its core-program graph
 republishes the inner NB-EGM programs as `keeper:main`, `keeper:replay`,
-`adjuster:main`, and `adjuster:replay`, each with the inner program's output roles,
-scope, and planned disposition. The keeper programs are built from the period's own
-inputs; the adjuster programs bind the outer post-decision at the first outer node, the
-same shape every per-node call rebinds. A values-only solve dispatches the inner `main`
-programs and the nested collapse publishes the value and the carry alone; a
-replay-retaining solve dispatches the inner `replay` programs and assembles the nested
-policy from their banks.
+`adjuster:main`, and `adjuster:replay`, each with the inner program's output roles and
+scope. Both roles retain the inner planned disposition, including under
+`AdaptiveOuterMesh`: the host decides which outer nodes to request, and each request
+dispatches a compiled inner program with its planner axes and continuation transfers.
+Both roles declare the leaves they read,
+so the nested dispatch node has no undeclared reader. The keeper programs are built from
+the period's own inputs; the adjuster programs bind the outer post-decision at the first
+outer node, the same shape every per-node call rebinds. A values-only solve dispatches
+the inner `main` programs and the nested collapse publishes the value and the carry
+alone; a replay-retaining solve dispatches the inner `replay` programs and assembles the
+nested policy from their banks.
+
+Both outer-search routes declare `outer_candidate` as a host-dispatch axis. Set its
+width when building the model with
+`execution_config=ExecutionConfig(axis_widths={"outer_candidate": k})`. The host loop
+dispatches at most `k` pending nodes per step, preserving their order; without a fixed
+width it dispatches all pending nodes in one step. A finite values-only solve
+releases each completed chunk's per-node
+value temporaries before dispatching the next chunk. It still retains every
+continuation carry, and a replay-retaining solve also keeps all node results.
+The adaptive search retains its exact-node bank. The width therefore limits
+dispatch chunks, not the memory occupied by these complete banks.
 
 How the keeper and adjuster branches combine is an economic declaration, not a solver
 setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savings.md).

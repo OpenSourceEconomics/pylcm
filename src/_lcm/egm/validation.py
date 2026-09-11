@@ -11,7 +11,7 @@ offending piece. The rules, in the order they are checked:
   with a transition whose DAG ancestors include neither the continuous
   action, the resources function, nor the post-decision function (the
   current Euler state is allowed — see the savings-node-stage rule below),
-  and a grid that is not distributed (`batch_size` is honored)
+  and a grid that is not distributed
 - the post-decision function and the resources function exist in
   `Regime.functions` (`inverse_marginal_utility` is optional — when omitted,
   the iEGM path derives a numerical inverse from `utility`)
@@ -39,8 +39,8 @@ offending piece. The rules, in the order they are checked:
   candidate families, while a jump in the other savings-stage functions
   breaks the smoothness-at-node-resolution assumption the per-node solve
   relies on)
-- grid hygiene: the Euler grid is not distributed (`batch_size` is honored),
-  and the savings grid covers the Euler grid's upper region
+- grid hygiene: kernel grids provide their points at construction, and the
+  savings grid covers the Euler grid's upper region
 - every non-terminal target retained in the canonical solution graph also
   uses DC-EGM with the same Euler state (brute-force regimes may target DC-EGM
   regimes)
@@ -65,7 +65,7 @@ from dags import concatenate_functions, get_ancestors
 from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.egm.preferences import BoundUtilityOfAction
-from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
+from _lcm.grids import ContinuousGrid, Grid, IrregSpacedGrid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -624,9 +624,8 @@ def _fail_if_passive_state_invalid(
       allowed ancestor: the kernel then solves per exogenous asset node,
       where the state's value is known (the read must be continuous at node
       resolution — checked by the savings-stage continuity spot check),
-    - a grid that is not distributed; `batch_size` is honored (it splays the
-      passive state's combo axis via productmap to shed memory), while a
-      continuous axis cannot be sharded.
+    - a grid that is not distributed, since a continuous axis cannot be
+      sharded.
     """
     passive_names = [
         name
@@ -681,17 +680,6 @@ def _fail_if_passive_state_invalid(
                     "kernel then solves per exogenous asset node.)"
                 )
                 raise ModelInitializationError(msg)
-        grid = cast("ContinuousGrid", user_regime.states[state_name])
-        # `batch_size` on a passive state splays its combo axis (via productmap)
-        # to shed memory; `distributed` stays rejected (a continuous axis
-        # cannot be sharded).
-        if grid.distributed:
-            msg = (
-                f"The grid of the passive continuous state '{state_name}' in "
-                f"regime '{regime_name}' must not be distributed in a DCEGM "
-                f"regime (got distributed={grid.distributed})."
-            )
-            raise ModelInitializationError(msg)
 
 
 def _fail_if_euler_transition_stochastic(
@@ -917,13 +905,7 @@ def _fail_if_grid_hygiene_violated(
     user_regime: UserRegime,
     solver: _BoundDCEGM,
 ) -> None:
-    """Reject runtime-supplied points and distributed grids; savings grid covers
-    the Euler grid.
-
-    `batch_size` is honored on the Euler, savings, and discrete-state grids (it
-    only splays combo/node axes to shed memory); it is rejected on discrete
-    actions, whose logsum aggregation needs every action value at once.
-    """
+    """Require concrete kernel grids and savings coverage of the Euler grid."""
     # Rule 1 has already established that the Euler state's grid is a
     # (non-process) continuous grid.
     euler_grid = cast("ContinuousGrid", user_regime.states[solver.continuous_state])
@@ -942,55 +924,6 @@ def _fail_if_grid_hygiene_violated(
         fail_if_grid_withholds_its_points(
             grid=grid, role=role, regime_name=regime_name, solver_name="DCEGM"
         )
-    # `batch_size` on a discrete state splays its combo axis: the per-combo
-    # solve runs in `productmap` blocks (per-axis `lax.map`) reassembled into
-    # the whole combo product before the carry is built, so carry rows still
-    # carry whole discrete axes. `distributed` stays rejected — the kernel
-    # selects child carry rows by integer indexing along whole discrete axes,
-    # which a sharded (per-device slice) axis would break.
-    for name, grid in user_regime.states.items():
-        if isinstance(grid, DiscreteGrid) and grid.distributed:
-            msg = (
-                f"The grid of the discrete state '{name}' in regime "
-                f"'{regime_name}' must not be distributed in a DCEGM regime "
-                f"(got distributed={grid.distributed})."
-            )
-            raise ModelInitializationError(msg)
-    # Discrete actions cannot be batched or distributed: the discrete-action
-    # aggregation (logsum over the action axes) needs every action value at
-    # once, so its axis is never split.
-    for name, grid in user_regime.actions.items():
-        if isinstance(grid, DiscreteGrid) and (
-            grid.batch_size != 0 or grid.distributed
-        ):
-            msg = (
-                f"The grid of the discrete action '{name}' in regime "
-                f"'{regime_name}' must not be batched or distributed in a "
-                f"DCEGM regime (got batch_size={grid.batch_size}, "
-                f"distributed={grid.distributed})."
-            )
-            raise ModelInitializationError(msg)
-    # `batch_size` on the Euler grid is honored: it splays the per-asset-node
-    # solve into blocks (`lax.map`) to shed peak working-set memory, leaving the
-    # value function unchanged. `distributed` remains disallowed — a continuous
-    # axis cannot be sharded (rejected at grid construction).
-    if euler_grid.distributed:
-        msg = (
-            f"The grid of the Euler state '{solver.continuous_state}' in "
-            f"regime '{regime_name}' must not be distributed in a DCEGM regime "
-            f"(got distributed={euler_grid.distributed})."
-        )
-        raise ModelInitializationError(msg)
-    # `batch_size` on the savings grid is honored: it splays the per-savings-node
-    # continuation computation into blocks (`lax.map`) to shed the dominant
-    # egm_step working buffer, leaving the value function unchanged. `distributed`
-    # remains disallowed — a continuous axis cannot be sharded.
-    if solver.savings_grid.distributed:
-        msg = (
-            f"The DCEGM savings grid of regime '{regime_name}' must not be "
-            f"distributed (got distributed={solver.savings_grid.distributed})."
-        )
-        raise ModelInitializationError(msg)
     savings_max = float(jnp.max(solver.savings_grid.to_jax()))
     euler_max = float(jnp.max(euler_grid.to_jax()))
     if savings_max < euler_max:

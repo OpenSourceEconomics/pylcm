@@ -229,6 +229,7 @@ def _solve_fixture():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_gated_edge_simulate_operand_recompute",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
@@ -434,6 +435,7 @@ def _solve_curved_fixture(*, gate_threshold: float):
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_gated_edge_simulate_operand_recompute",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,

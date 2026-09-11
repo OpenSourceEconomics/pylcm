@@ -17,8 +17,204 @@ Optional arguments:
 - `log_path` and `log_keep_n_latest` control diagnostic snapshots;
 - `retention` selects which post-solve artifacts remain available.
 
+Hardware-local controls are declared on the model instead, through
+[`Model(execution_config=...)`](#execution-configuration), so both phases run under one
+resolved configuration.
+
 There are no flag-selected tuple returns. Pass the complete result to
 `model.simulate(solution=...)`; omitting `solution` asks simulation to solve first.
+
+(execution-configuration)=
+
+### Execution configuration
+
+`ExecutionConfig` is a `Model(...)` argument, so the devices, budget, and widths a model
+runs under are fixed when it is built and both `solve()` and `simulate()` read the same
+resolved values. None of them enters the model's durable fingerprint:
+
+```python
+from lcm import ExecutionConfig, Model
+
+model = Model(
+    regimes=regimes,
+    ages=ages,
+    regime_id_class=RegimeId,
+    execution_config=ExecutionConfig(
+        device_memory_bytes=40 * 2**30,
+        sharded_states=("type",),
+        axis_widths={"action_product": 8},
+        devices=(0, 1),
+    ),
+)
+```
+
+Its fields:
+
+- `device_memory_bytes` declares a per-device ceiling for compiler peak plus accounted
+  live residency. `None` (the default) omits memory-budget admission.
+- `sharded_states` names model-level discrete states whose grid axes are spread over the
+  devices their regimes are placed on. A continuous grid cannot be sharded merely
+  because its extent divides the number of devices.
+- `axis_widths` fixes the compiled width of one named planner axis, leaving the rest to
+  the planner; see [Fix a planner axis width](../user_guide/tuning.md). Every key must
+  be an axis some core program declares.
+- `devices` names the device ids the model may use, ascending; `None` (the default)
+  means every device JAX reports. Every id must be one JAX reports.
+- `donate_buffers` is an exact Boolean, defaulting to `True`. `False` disables compiled
+  solve input donation without changing the model fingerprint or economic inputs.
+
+NB-EGM can nominate one marginal leaf on an unsharded, self-carry `main` program.
+Donation requires exclusive solve ownership and a final, unretained read. A physical
+alias or unowned input selects an ordinary executable compiled at the same widths. With
+a memory budget, both variants must fit using their own compiler reservation and live
+residency. This conservative fallback does not use donation to admit a width that only
+the donating executable fits. Eager execution never donates. A selected `replay` program
+does not donate; standalone NB-EGM can select `main` even under the default retention
+when its policy is not applicable. Retained continuation leaves remain ineligible. This
+feature promises no particular workflow speedup or backend buffer reuse.
+
+The ceiling applies to the selected compute devices. During GPU simulation, completed
+subject chunks can be transferred to CPU storage for final assembly. That host RAM is
+outside the GPU ceiling; it must be sized separately for the retained chunks and final
+result. GPU source buffers remain live until their transfer completes. During CPU
+simulation, retained chunks, concatenation and trimming occupy the budgeted CPU device
+and remain part of its accounted payload. CPU0 and GPU0 are distinct devices.
+
+An unknown state, an unknown axis name, or an invisible device id raises
+`ExecutionPlanningError` at model build, naming the offender and the legal set.
+`model.execution_devices` reports the device ids the model resolved.
+
+(compiler-workspace-budgets)=
+
+### Compiler workspace budgets
+
+Without a budget (the default), every streamed axis is lowered at its bootstrap width —
+the largest power of two below the axis extent, capped at 64 — or at the width
+`ExecutionConfig(axis_widths={...})` fixes for that axis name, and compiler memory
+reports are not consulted. The whole axis is lowered only when a budget shows it fits or
+a fixed width asks for it. With a budget, the planner enumerates a deterministic width
+frontier for each streamed axis (one, the powers of two below the extent, and the full
+extent; a fixed width is the only candidate) and walks it widest-first — descending
+width product, ties broken toward the lexicographically largest width tuple in axis
+declaration order. A position whose resident bytes alone already reach the budget is
+refused before any candidate compiles, since no width could serve it. Otherwise each
+candidate is lowered and compiled, its complete compiler memory report is read, and the
+first candidate whose reservation plus resident bytes fits is dispatched. Solve
+residency includes retained values and continuation inputs, fixed model arrays,
+concurrent outputs and planned copies on their actual devices. Compiler-kept input
+metadata identifies which overlapping buffer spans are already represented in compiler
+allocation accounting. Eliminated inputs stay charged as external residency.
+Conservative reservations may count some storage twice.
+
+When simulation solves automatically, its original and normalized inputs remain in the
+solve's fixed inventory. Shared input and model buffers count once by physical storage;
+separate dtype-conversion and padding buffers remain charged alongside their originals.
+This accounts for their coexistence during solve planning, without admitting earlier
+template or conversion allocations retroactively.
+
+This is an accounting convention using the backend's compiler report; it is not a
+measurement of the allocator's whole-call high-water mark. Compilation memory, non-pool
+allocations and remaining unprofiled orchestration allocations are outside a complete
+bound. Use a budget appropriate to the selected devices and measure the actual run when
+assessing capacity.
+
+A narrower candidate is compiled only after every wider one exceeded the budget. That
+selects the same candidate an exhaustive search would, at the cost of one extra lowering
+per rejected width: a core whose full extent fits compiles exactly one candidate, and a
+core that fits at no width compiles its whole frontier before the error. Compilation is
+scheduled in waves across regime-period cells — every cell's widest candidate first,
+then the next candidate of only those cells still over budget — so parallel compilation
+and the deduplication of identical lowerings are unchanged. A dense program has exactly
+one candidate.
+
+Candidate measurement uses compilation, and admission fails closed:
+
+- no candidate is executed to measure it; compiler-reported requirements are the
+  planning signal, because the runtime high-water mark of a run that dies is a truncated
+  underestimate;
+- a budget that no candidate meets raises `ExecutionPlanningError` before backward
+  induction starts, naming the regime, period, core, resident bytes, and budget — the
+  smallest reservation and its raw peak too, once a width has actually been compiled;
+- a budget requires JIT compilation. Supplied solutions are supported; forward programs
+  and profiled host operations recheck their reservations against the current retained
+  solution, inputs and growing outputs before dispatch;
+- a forward program without a profiled compiled implementation, including a host-driven
+  route, is refused under a budget;
+- the selected widths are execution choices: they enter neither the model nor the
+  parameter fingerprint, and a period capture records them so `replay_period` lowers the
+  same executable without planning again. The capture serializes neither sharding nor
+  device placement, so a replayed period is lowered against the restored arrays' default
+  placement rather than the submesh the solve dispatched the period on.
+
+For each complete device record, compiler admission reserves the larger of the raw
+reported peak and `argument + output - alias + temporary` bytes. The latter counts
+represented argument/output storage and preallocated temporary allocations. Alias bytes
+remove argument/output overlap once. Counters must be present, nonnegative integers;
+aliases must fit both categories. Each device is accounted for before taking the
+maximum. The raw peak stays separately identifiable in profiles and refusal messages.
+
+The selected-device ceiling adds external retained residency to that reservation.
+Generated code, omitted constants and runtime workspace, thread stacks, executable
+caches, and allocator overhead remain outside the represented allocation contract. This
+computed reservation is not a measured peak or a complete runtime upper bound.
+
+Reports with nonzero host allocation counters are refused because the compiler's peak
+cannot reliably be split across default and host memory spaces. Generated-code metadata
+alone does not trigger this refusal. Existing GPU-to-CPU chunk offload continues to
+profile CPU assembly separately and excludes that CPU storage from the GPU ceiling. CPU
+execution charges its selected CPU storage. The reported CPU witness and scope are
+recorded in
+[compiler allocation admission](../development/compiler_allocation_admission.md). Width
+determines the choice among candidates that satisfy the accounting contract.
+
+(solve-execution-lifetime)=
+
+### Buffer release, donation and placement
+
+Backward induction keeps a ledger of every array a core reads across a regime-period
+boundary. After a regime's kernels have run, the engine:
+
+- releases every input whose last reader has run and which the result does not keep — a
+  gated-edge continuation, a continuation leaf — by deleting its device buffer once
+  every output of the period so far is ready; a buffer two keys name (a continuation
+  leaf that is also the published value) is kept while either key is still read;
+- never releases a regime's value: `SolutionResult.values` keeps every one on device.
+
+An argument a core program names in `donation_candidates` is donated when every artifact
+it carries:
+
+- is not the solve-lifetime template, the one input whose declared period lies beyond
+  the model's last period;
+- has this dispatch as its sole remaining consumer;
+- is not retained by the result;
+- is not pinned by an undeclared reader;
+- shares its buffer with no other key;
+- reaches the core on its stored layout rather than as a transferred copy.
+
+The executable is compiled with that argument donated, and the input is unreadable
+afterwards.
+
+Under `log_level="debug"` every release and donation is logged with the artifact key and
+the dispatch that closed it.
+
+On several devices every regime is placed before anything is compiled:
+
+- a regime with a state named in `ExecutionConfig.sharded_states` runs on a mesh of as
+  many devices as the largest divisor of that state's extent that fits — a three-valued
+  type on four devices runs on three;
+- a regime without one runs on one device, taking a device the meshes leave idle in the
+  periods it is active, or else the device with the smallest planned footprint;
+- regimes of one period that read nothing of each other within the period and sit on
+  disjoint devices are dispatched together.
+
+Two placements of one model publish values that name the same real number: each
+partition is vectorized at its own width, so the two runs agree to within a few units in
+the last place rather than bit for bit. Simulation retains solution arrays on their
+stored devices and acquires each period's declared value inputs on the devices required
+by its forward programs. Matching layouts pass through; other supported layouts use
+explicit copies, with source and destination storage admitted when a budget is supplied.
+A solution produced on a proper submesh can therefore be supplied to simulation. The
+original solution remains owned while the forward period tracks its acquired copies.
 
 (api-solution-result)=
 
@@ -232,8 +428,14 @@ recoverable from values, but fails closed before forward simulation when a requi
 replay artifact is absent or invalid. Use the default
 `ResultRetention.VALUES_AND_REPLAY` when the model may require such artifacts.
 
-`subject_batch_size` streams subjects without changing results. `seed` controls random
-draws. A collective model may require an addressed dissolution replay artifact and
+`ExecutionConfig(axis_widths={"subject": width})` controls the model's subject chunks
+and fixes their inner compiled width. The outer chunk is aligned to the selected subject
+devices; this alignment does not increase the fixed inner width. With a memory budget
+and no explicit width, complete chunk profiles select the widest fitting candidate.
+Retained full-population inputs and result assembly remain part of the bound even when
+chunks shrink. `Model(n_subjects=...)` is a prewarm hint; it does not choose the chunk
+extent. `seed` controls random draws independently of those chunk boundaries. A
+collective model may require an addressed dissolution replay artifact and
 `own_stakeholder`; see [Collective regimes](collective_regimes.md).
 
 Initial conditions are a mapping of state names plus `regime_id` to equal-length arrays,

@@ -3,15 +3,27 @@
 Shared leaf: the backward-induction hot path sizes its continuation-input
 templates from it, the failure-path diagnostics rebuild the rolling V mapping
 from it, and the simulate-side AOT compile reuses the same templates.
+
+Backward induction stores values on each regime's assigned devices. Simulation
+reads period-owned replicas on the actual subject devices. This module computes
+only their shapes and destination layouts; it never relocates a stored solution.
 """
 
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
 
-from _lcm.engine import Regime, _build_regime_sharding
+from _lcm.engine import (
+    Regime,
+    _build_regime_sharding,
+    _RegimeSharding,
+    placed_devices_for_ids,
+)
+from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import FlatParams, RegimeName, StateName
 from lcm.typing import FloatND
 
@@ -23,8 +35,8 @@ class _RegimeVTopology:
     shape: tuple[int, ...]
     """V-array shape, with one entry per state."""
 
-    sharding: jax.NamedSharding | None
-    """Device sharding for the V-array, or `None` when no state is distributed."""
+    sharding: jax.sharding.Sharding
+    """Device sharding the V-array is committed to."""
 
 
 def expected_V_rank(*, regime: Regime) -> int:
@@ -50,31 +62,70 @@ def expected_V_rank(*, regime: Regime) -> int:
     return n_state_axes + (1 if regime.stakeholders is not None else 0)
 
 
+def placed_V_sharding(
+    *,
+    sharding_plan: _RegimeSharding | None,
+    state_order: tuple[StateName, ...],
+    devices: tuple[jax.Device, ...],
+) -> jax.sharding.Sharding:
+    """Return the sharding a regime's value template is committed to.
+
+    A regime with a distributed state takes its mesh's spec; one without takes
+    the first of the devices it is placed on. Every value is committed, so a
+    model that names a subset of the devices JAX reports never publishes on
+    one it excluded — the process default device is a device like any other,
+    and a model that does not own it must not land there.
+
+    Args:
+        sharding_plan: The regime's mesh plan, or `None` when no state grid of
+            it is distributed.
+        state_order: The V-array's state axes, in order.
+        devices: Tuple of the devices the regime's nodes run on.
+
+    Returns:
+        The sharding to commit the template to.
+
+    """
+    if sharding_plan is not None:
+        return sharding_plan.V_arr_sharding(state_order)
+    return jax.sharding.SingleDeviceSharding(devices[0])
+
+
 def _get_regime_V_shapes_and_shardings(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    phase: Literal["solve", "simulate"] = "solve",
+    device_ids: tuple[int, ...] = (),
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> dict[RegimeName, _RegimeVTopology]:
     """Compute V-array shapes and shardings for every regime.
 
     The V-array has one dimension per state variable, sized by that state's
-    grid. When at least one state grid in a regime is distributed, the
-    V-array is sharded across devices along those axes; otherwise the
-    sharding is `None`.
+    grid. Solve templates use each regime's assigned placement. Simulation
+    templates replicate the value across the devices evaluating subjects;
+    deriving their shape never requires a state grid to divide the larger
+    simulation mesh.
 
     Args:
         regimes: Immutable mapping of regime names to internal regimes.
         flat_params: Regime parameters (needed for runtime grid shapes).
+        phase: Which placement to build against — `"solve"` reads each
+            regime's assigned devices; `"simulate"` uses a replicated read
+            layout over the model's subject devices. With no sharded state,
+            subjects run on the model's first device.
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
         Dict of regime names to `_RegimeVTopology` (shape and sharding).
 
     """
-    n_devices = len(jax.devices())
     topology: dict[RegimeName, _RegimeVTopology] = {}
     for regime_name, regime in regimes.items():
         state_action_space = regime.solution.state_action_space(
             regime_params=flat_params[regime_name],
+            process_grid_resolver=process_grid_resolver,
         )
         # Folded IID-process states are integrated out of the stored value by
         # quadrature at solve time (`get_max_Q_over_a`'s fold reduction), so
@@ -102,21 +153,35 @@ def _get_regime_V_shapes_and_shardings(
             f"regime {regime_name!r}: V topology built rank {len(shape)}, "
             f"while the rank rule states {expected_V_rank(regime=regime)}"
         )
-        sharding_plan = _build_regime_sharding(
-            grids=regime.solution.grids, n_devices=n_devices
+        devices = placed_devices_for_ids(
+            submesh_device_ids=regime.solution.submesh_device_ids,
+            visible_device_ids=device_ids,
         )
-        sharding = (
-            sharding_plan.V_arr_sharding(state_order)
-            if sharding_plan is not None
-            else None
+        sharding = placed_V_sharding(
+            sharding_plan=_build_regime_sharding(
+                grids=regime.solution.grids,
+                sharded_state_names=regime.solution.sharded_state_names,
+                devices=devices,
+            ),
+            state_order=state_order,
+            devices=devices,
         )
-        topology[regime_name] = _RegimeVTopology(shape=shape, sharding=sharding)
+        if phase == "simulate":
+            simulation_devices = placed_devices_for_ids(
+                submesh_device_ids=(), visible_device_ids=device_ids
+            )
+            if not any(item.solution.sharded_state_names for item in regimes.values()):
+                simulation_devices = simulation_devices[:1]
+            sharding = simulation_value_sharding(
+                stored_sharding=sharding, devices=simulation_devices
+            )
+        topology[regime_name] = _RegimeVTopology(
+            shape=shape,
+            sharding=sharding,
+        )
     return topology
 
 
 def _build_zero_V_arr(*, topology: _RegimeVTopology) -> FloatND:
-    """Build the zero V-array template for a regime, sharded where requested."""
-    zeros = jnp.zeros(topology.shape)
-    if topology.sharding is None:
-        return zeros
-    return jax.device_put(zeros, topology.sharding)
+    """Build the zero V-array template for a regime, on the devices it is placed on."""
+    return jax.device_put(jnp.zeros(topology.shape), topology.sharding)

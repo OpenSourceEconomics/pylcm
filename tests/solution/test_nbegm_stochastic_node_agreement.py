@@ -6,13 +6,15 @@ Two properties are pinned:
 
 - the weighted node expectation matches a dense brute-force solve that averages the
   action-aggregated next-period V over the same income nodes, and
-- splaying that expectation into `lax.scan` blocks (`stochastic_node_batch_size > 0`)
-  leaves the solved value function unchanged — it is a memory knob, not a result knob.
+- changing `ExecutionConfig.axis_widths[STOCHASTIC_NODE_AXIS]` partitions the
+  expectation into `lax.scan` blocks while preserving the solved value function.
 """
 
 import numpy as np
 import pytest
 
+from lcm import ExecutionConfig
+from lcm.solvers import STOCHASTIC_NODE_AXIS
 from tests.conftest import X64_ENABLED
 from tests.test_models import nbegm_stochastic_node_toy as toy
 
@@ -34,9 +36,14 @@ _INVARIANCE_RTOL = 1e-9 if X64_ENABLED else 1e-4
 _INVARIANCE_ATOL = 1e-9 if X64_ENABLED else 1e-4
 
 
-def _solve(*, variant: str, stochastic_node_batch_size: int = 0):
+def _solve(*, variant: str, stochastic_node_width: int = 0):
     model = toy.build_model(
-        variant=variant, stochastic_node_batch_size=stochastic_node_batch_size
+        variant=variant,
+        execution_config=ExecutionConfig(
+            axis_widths={STOCHASTIC_NODE_AXIS: stochastic_node_width}
+            if stochastic_node_width
+            else {}
+        ),
     )
     return model.solve(params=toy.build_params(), log_level="debug").values
 
@@ -67,22 +74,20 @@ def test_nbegm_stochastic_node_matches_dense_brute_force():
         )
 
 
-@pytest.mark.parametrize("stochastic_node_batch_size", [1, 2, 3, toy.N_INCOME_NODES])
-def test_nbegm_stochastic_node_batch_size_leaves_value_function_unchanged(
-    stochastic_node_batch_size,
+@pytest.mark.parametrize("stochastic_node_width", [1, 2, 3, toy.N_INCOME_NODES])
+def test_nbegm_stochastic_node_width_leaves_value_function_unchanged(
+    stochastic_node_width,
 ):
     """Splaying the income-node expectation into blocks does not change the solved V.
 
-    `stochastic_node_batch_size` only changes how the per-node continuation reads are
-    scheduled and reduced, so the value function at every period matches the unsplayed
-    `stochastic_node_batch_size=0` solve to tight numerical tolerance — including a
+    `stochastic_node_width` only changes how the per-node continuation reads are
+    scheduled and reduced, so the value function at every period matches the
+    full-width solve to tight numerical tolerance — including a
     block size (3) that does not divide the 5-node income mesh, and the boundary size
     equal to the mesh length.
     """
-    reference = _solve(variant="nbegm", stochastic_node_batch_size=0)
-    splayed = _solve(
-        variant="nbegm", stochastic_node_batch_size=stochastic_node_batch_size
-    )
+    reference = _solve(variant="nbegm", stochastic_node_width=toy.N_INCOME_NODES)
+    splayed = _solve(variant="nbegm", stochastic_node_width=stochastic_node_width)
     assert set(reference) == set(splayed)
     for period in sorted(reference):
         assert set(reference[period]) == set(splayed[period])

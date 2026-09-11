@@ -74,6 +74,7 @@ class UpperEnvelopeBackend(Protocol):
         value: Float1D,
         marginal_utility: Float1D,
         savings: Float1D,
+        cell_width: int = 1,
     ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
         """Return refined (grid, policy, value) rows and the kept-point count.
 
@@ -107,7 +108,6 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
             n_refined=n_refined,
             jump_thresh=solver.envelope.jump_thresh,
             n_points_to_scan=solver.envelope.n_points_to_scan,
-            scan_unroll=solver.envelope.scan_unroll,
         )
 
     if isinstance(solver.envelope, ExactEnvelope):
@@ -173,7 +173,6 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
             n_refined=n_refined,
             jump_thresh=solver.envelope.jump_thresh,
             n_points_to_scan=solver.envelope.n_points_to_scan,
-            scan_unroll=solver.envelope.scan_unroll,
         )
 
     if isinstance(solver.envelope, RFCEnvelope):
@@ -210,10 +209,10 @@ def _fues_backend(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     n_refined: int,
     jump_thresh: float,
     n_points_to_scan: int | None,
-    scan_unroll: int,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Run the FUES scan with the solver's thresholds.
 
@@ -221,7 +220,7 @@ def _fues_backend(
     supgradient is not consumed; the exogenous source savings resolve the
     savings-monotonicity test exactly.
     """
-    del marginal_utility
+    del cell_width, marginal_utility
     return refine_envelope_fues(
         endog_grid=endog_grid,
         policy=policy,
@@ -230,7 +229,6 @@ def _fues_backend(
         jump_thresh=jump_thresh,
         n_points_to_scan=n_points_to_scan,
         savings=savings,
-        scan_unroll=scan_unroll,
     )
 
 
@@ -241,6 +239,7 @@ def _exact_backend(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     envelope: ExactEnvelope,
     n_refined: int,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
@@ -257,7 +256,7 @@ def _exact_backend(
         value=value,
         n_refined=n_refined,
         max_runs=envelope.max_runs,
-        cell_batch_size=envelope.cell_batch_size,
+        cell_width=cell_width,
     )
 
 
@@ -268,6 +267,7 @@ def _rfc_backend(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     n_refined: int,
     search_radius: int,
     jump_thresh: float,
@@ -277,7 +277,7 @@ def _rfc_backend(
     The exogenous source savings are a FUES-only refinement; RFC judges
     monotonicity from its own geometry.
     """
-    del savings
+    del cell_width, savings
     return refine_envelope_rfc(
         endog_grid=endog_grid,
         policy=policy,
@@ -296,6 +296,7 @@ def _ltm_backend(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     n_refined: int,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Run the brute local-upper-bound scan.
@@ -303,7 +304,7 @@ def _ltm_backend(
     LTM recovers segment slopes from the candidate chain, so neither the
     candidate supgradient nor the exogenous source savings are consumed.
     """
-    del marginal_utility, savings
+    del cell_width, marginal_utility, savings
     return refine_envelope_ltm(
         endog_grid=endog_grid,
         policy=policy,
@@ -319,6 +320,7 @@ def _mss_backend(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     n_refined: int,
     arithmetic: ComparisonArithmetic,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
@@ -327,7 +329,7 @@ def _mss_backend(
     MSS recovers segment slopes from the candidate chain, so neither the
     candidate supgradient nor the exogenous source savings are consumed.
     """
-    del marginal_utility, savings
+    del cell_width, marginal_utility, savings
     return refine_envelope_mss(
         endog_grid=endog_grid,
         policy=policy,
@@ -344,11 +346,11 @@ def _fues_bracket_finder(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     x_query: ScalarFloat,
     n_refined: int,
     jump_thresh: float,
     n_points_to_scan: int | None,
-    scan_unroll: int,
 ) -> QueryBracket:
     """Build FUES's full refined row and slice the query bracket.
 
@@ -358,7 +360,7 @@ def _fues_bracket_finder(
     full `n_refined` row (`refine_to_bracket` builds it via `refine_envelope`)
     and slices the bracketing pair — there is no O(1) streamed carry.
     """
-    del marginal_utility
+    del cell_width, marginal_utility
     return refine_to_bracket(
         endog_grid=endog_grid,
         policy=policy,
@@ -368,7 +370,6 @@ def _fues_bracket_finder(
         jump_thresh=jump_thresh,
         n_points_to_scan=n_points_to_scan,
         savings=savings,
-        scan_unroll=scan_unroll,
     )
 
 
@@ -379,6 +380,7 @@ def _rfc_bracket_finder(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     x_query: ScalarFloat,
     n_refined: int,
     search_radius: int,
@@ -392,7 +394,7 @@ def _rfc_bracket_finder(
     published value cannot diverge from full-envelope-then-interpolate. The
     exogenous source savings are a FUES-only refinement.
     """
-    del savings
+    del cell_width, savings
     refined_grid, refined_policy, refined_value, n_kept = refine_envelope_rfc(
         endog_grid=endog_grid,
         policy=policy,
@@ -418,6 +420,7 @@ def _ltm_bracket_finder(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     x_query: ScalarFloat,
     n_refined: int,
 ) -> QueryBracket:
@@ -431,7 +434,7 @@ def _ltm_bracket_finder(
     full `n_pad` row and slices; no backend streams an O(1) carry. The exogenous
     source savings are a FUES-only refinement.
     """
-    del marginal_utility, savings
+    del cell_width, marginal_utility, savings
     refined_grid, refined_policy, refined_value, n_kept = refine_envelope_ltm(
         endog_grid=endog_grid,
         policy=policy,
@@ -454,6 +457,7 @@ def _mss_bracket_finder(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     x_query: ScalarFloat,
     n_refined: int,
     arithmetic: ComparisonArithmetic,
@@ -468,7 +472,7 @@ def _mss_bracket_finder(
     full `n_pad` row and slices; no backend streams an O(1) carry. The exogenous
     source savings are a FUES-only refinement.
     """
-    del marginal_utility, savings
+    del cell_width, marginal_utility, savings
     refined_grid, refined_policy, refined_value, n_kept = refine_envelope_mss(
         endog_grid=endog_grid,
         policy=policy,
@@ -492,6 +496,7 @@ def _exact_bracket_finder(
     value: Float1D,
     marginal_utility: Float1D,
     savings: Float1D,
+    cell_width: int = 1,
     x_query: ScalarFloat,
     envelope: ExactEnvelope,
     n_refined: int,
@@ -508,7 +513,7 @@ def _exact_bracket_finder(
         value=value,
         n_refined=n_refined,
         max_runs=envelope.max_runs,
-        cell_batch_size=envelope.cell_batch_size,
+        cell_width=cell_width,
     )
     return _bracket_from_refined_row(
         refined_grid=refined_grid,

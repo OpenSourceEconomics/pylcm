@@ -28,9 +28,9 @@ import jax.numpy as jnp
 import numpy as np
 from beartype.roar import BeartypeCallHintViolation
 from h5py import h5o  # ty: ignore[unresolved-import]
-from numpy.typing import NDArray
 
 from _lcm import version as _version
+from _lcm.dtypes import CanonicalArrayWriter
 from _lcm.solution.result_snapshot import (
     snapshot_artifact_authorities,
     snapshot_artifact_store,
@@ -39,6 +39,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_value_store,
 )
 from _lcm.solution.solver_diagnostics import diagnostics_template_snapshot
+from lcm._solver_api.authority import _ArrayCopier
 from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.solver_api import (
     SOLUTION_FORMAT_VERSION,
@@ -235,6 +236,9 @@ class _EntryCache:
 
     value: object = _UNLOADED
     lock: threading.Lock = field(default_factory=threading.Lock)
+    """Brief cache peek/publication lock; never spans admission or allocation."""
+    materialization_lock: threading.Lock = field(default_factory=threading.Lock)
+    """Serialize first materialization while leaving cache observation available."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -252,7 +256,7 @@ class _PreparedPayload:
     identity: MappingProxyType[str, object]
     payload_kind: str
     leaf_paths: tuple[tuple[str, ...], ...]
-    leaves: tuple[NDArray[np.generic], ...]
+    leaves: tuple[np.ndarray, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -326,8 +330,21 @@ class _LazyHdf5Entry(_LazyEntry):
         *,
         template: object | None,
         template_snapshot: _CanonicalArtifactTemplate | None,
+        array_writer: CanonicalArrayWriter | None = None,
+        array_copier: _ArrayCopier | None = None,
     ) -> object:
-        """Cache private numerical state and return a fresh detached graph."""
+        """Cache private numerical state and return a fresh detached graph.
+
+        Admission may snapshot every native cache. Hold only the separate load
+        lock across callbacks, never a cache peek/publication lock, so concurrent
+        entries cannot invert observation locks. Dependencies remain call-local.
+        """
+        if (
+            array_writer is not None or array_copier is not None
+        ) and self.payload_kind != "array":
+            raise TypeError(
+                "Admitted native materialization only supports value arrays."
+            )
         if template is not None and template_snapshot is not None:
             raise TypeError("Supply a template or a template snapshot, not both.")
         requested_snapshot = template_snapshot
@@ -343,8 +360,9 @@ class _LazyHdf5Entry(_LazyEntry):
                 ),
             )
 
-        with self._cache.lock:
-            cached = self._cache.value
+        with self._cache.materialization_lock:
+            with self._cache.lock:
+                cached = self._cache.value
             if cached is _UNLOADED:
                 if self.payload_kind != "array" and requested_snapshot is None:
                     raise IncompatibleSolutionError(
@@ -377,6 +395,7 @@ class _LazyHdf5Entry(_LazyEntry):
                     _to_jax_without_narrowing(
                         array=array,
                         label=f"{self.label} leaf {index}",
+                        array_writer=array_writer,
                     )
                     for index, array in enumerate(arrays)
                 )
@@ -384,7 +403,8 @@ class _LazyHdf5Entry(_LazyEntry):
                     leaves=private_leaves,
                     template_snapshot=requested_snapshot,
                 )
-                self._cache.value = cached
+                with self._cache.lock:
+                    self._cache.value = cached
 
         if type(cached) is not _LoadedEntryPayload:
             raise TypeError("Lazy payload cache contains unsupported state.")
@@ -394,6 +414,7 @@ class _LazyHdf5Entry(_LazyEntry):
             return _copy_artifact_array_leaf(
                 leaf=cached.leaves[0],
                 label=self.label,
+                array_copier=array_copier,
             )
 
         reconstruction_snapshot = (
@@ -425,7 +446,7 @@ class _LazyHdf5Entry(_LazyEntry):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
-        arrays: tuple[object, ...] | list[NDArray[np.generic]],
+        arrays: tuple[object, ...] | list[np.ndarray],
     ) -> None:
         """Validate one requested plan against persisted or privately cached leaves."""
         persisted_paths = tuple(
@@ -1171,7 +1192,7 @@ def _prepare_persisted_artifacts(  # noqa: C901, PLR0912
                 identity=entry.identity,
                 leaves=entry.leaves,
             )
-            copies: list[NDArray[np.generic]] = []
+            copies: list[np.ndarray] = []
             for array in arrays:
                 copy = np.array(array, copy=True, order="C", subok=False)
                 copy.flags.writeable = False
@@ -1300,7 +1321,7 @@ def _prepare_payload(
     with_paths, tree = jax.tree_util.tree_flatten_with_path(payload)
     if not with_paths:
         raise TypeError(f"Persisted {identity!r} contains no numerical leaves.")
-    arrays: list[NDArray[np.generic]] = []
+    arrays: list[np.ndarray] = []
     leaf_paths: list[tuple[str, ...]] = []
     for path, leaf in with_paths:
         leaf_paths.append(_normalize_jax_tree_path(path))
@@ -1339,7 +1360,7 @@ def _prepare_canonical_artifact_payload(
     if canonical.payload_kind not in {"array", "pytree"}:
         raise TypeError("Canonical artifact has an invalid payload kind.")
 
-    arrays: list[NDArray[np.generic]] = []
+    arrays: list[np.ndarray] = []
     for leaf in canonical.leaves:
         array = np.array(np.asarray(leaf), copy=True, order="C", subok=False)
         if not (
@@ -1721,9 +1742,9 @@ def _read_and_verify_leaves(
     address: str,
     identity: MappingProxyType[str, object],
     leaves: tuple[MappingProxyType[str, object], ...],
-) -> tuple[NDArray[np.generic], ...]:
+) -> tuple[np.ndarray, ...]:
     """Read and verify all leaves of one independently addressed payload."""
-    arrays: list[NDArray[np.generic]] = []
+    arrays: list[np.ndarray] = []
     try:
         archive_context = h5py.File(path, "r")
     except OSError as error:
@@ -1912,10 +1933,26 @@ def _hdf5_object_address(value: h5py.Group | h5py.Dataset) -> int:
     return int(h5o.get_info(value.id).addr)
 
 
-def _to_jax_without_narrowing(*, array: NDArray[np.generic], label: str) -> jax.Array:
+def _to_jax_without_narrowing(
+    *, array: np.ndarray, label: str, array_writer: CanonicalArrayWriter | None = None
+) -> jax.Array:
     """Convert one restored leaf while refusing JAX's implicit x64 narrowing."""
+    if array_writer is not None:
+        target_dtype = np.dtype(jax.dtypes.canonicalize_dtype(array.dtype))
+        if target_dtype != array.dtype:
+            raise IncompatibleSolutionError(
+                f"Persisted {label} has dtype {array.dtype!s}, but the active JAX "
+                f"configuration would materialize it as {target_dtype!s}. Enable the "
+                "matching JAX dtype configuration instead of narrowing the solution."
+            )
     try:
-        result = jnp.asarray(array)
+        result = (
+            jnp.asarray(array)
+            if array_writer is None
+            else array_writer(
+                value=array, dtype=array.dtype, name=f"native_value:{label}"
+            )
+        )
     except (TypeError, ValueError) as error:
         raise IncompatibleSolutionError(
             f"Persisted {label} has dtype {array.dtype!s}, which the active JAX "
@@ -1927,10 +1964,12 @@ def _to_jax_without_narrowing(*, array: NDArray[np.generic], label: str) -> jax.
             f"configuration would materialize it as {result.dtype!s}. Enable the "
             "matching JAX dtype configuration instead of narrowing the solution."
         )
+    if array_writer is not None:
+        result.block_until_ready()
     return result
 
 
-def _array_checksum(*, identity: dict[str, object], array: NDArray[np.generic]) -> str:
+def _array_checksum(*, identity: dict[str, object], array: np.ndarray) -> str:
     """Hash one array together with its logical address and representation."""
     digest = hashlib.sha256()
     framed_identity = json.dumps(
@@ -1948,7 +1987,7 @@ def _array_checksum(*, identity: dict[str, object], array: NDArray[np.generic]) 
 
 
 def _array_checksum_from_leaf_metadata(
-    *, leaf: MappingProxyType[str, object], array: NDArray[np.generic]
+    *, leaf: MappingProxyType[str, object], array: np.ndarray
 ) -> str:
     """Recompute a leaf checksum from the identity stored in its manifest entry."""
     identity = dict(cast("MappingProxyType[str, object]", leaf["identity"]))

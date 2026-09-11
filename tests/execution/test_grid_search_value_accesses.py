@@ -18,7 +18,7 @@ from _lcm.solution.grid_search import (
     _edge_reference_regimes_for_targets,
     _GridSearchArgumentBuilder,
     _GridSearchPeriodKernel,
-    _target_value_accesses,
+    _value_reads,
 )
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
 
@@ -32,7 +32,7 @@ def _kernel(
 ) -> _GridSearchPeriodKernel:
     """Build a period-3 adapter whose access declarations need no JAX execution."""
     requirements = CoreExecutionRequirements(
-        target_value_accesses=_target_value_accesses(
+        value_reads=_value_reads(
             regime_name="source",
             period=3,
             target_regimes=target_regimes,
@@ -55,7 +55,7 @@ def _kernel(
 
 def _accesses(kernel: _GridSearchPeriodKernel):
     """Read exact value inputs through the sole native declaration."""
-    return kernel.core_programs()["main"].requirements.target_value_accesses
+    return kernel.core_programs()["main"].requirements.value_reads
 
 
 def test_declares_exact_ordinary_next_value_access() -> None:
@@ -124,7 +124,7 @@ def test_final_period_processed_kernel_declares_no_next_value_accesses() -> None
     program = kernel.core_programs()["main"]
     builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
     assert builder.edge_reference_regimes == ()
-    assert program.requirements.target_value_accesses == ()
+    assert program.requirements.value_reads == ()
 
 
 def test_edge_references_are_filtered_to_this_periods_reachable_targets() -> None:

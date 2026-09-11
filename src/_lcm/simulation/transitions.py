@@ -8,14 +8,19 @@ transition functions from user-defined regimes; this module executes them.
 
 from functools import partial
 from types import MappingProxyType
+from typing import cast
 
 import jax
+import numpy as np
 from dags.tree import qname_from_tree_path
 from jax import numpy as jnp
 from jax import vmap
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.program_arguments import transition_arguments
 from _lcm.simulation.random import generate_simulation_keys
+from _lcm.simulation.runtime import execute_simulation_program
 from _lcm.state_action_space import _validate_all_states_present
 from _lcm.typing import (
     ActionName,
@@ -78,6 +83,7 @@ def calculate_next_states(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
+    memory: SimulationMemory | None = None,
 ) -> StatesPerRegime:
     """Calculate next period states for subjects in a regime.
 
@@ -121,9 +127,8 @@ def calculate_next_states(
         n_initial_states=n_subjects,
         subject_slice=subject_slice,
         original_n_subjects=original_n_subjects,
+        memory=memory,
     )
-
-    next_state_vmapped = regime.simulation.next_state[period]
 
     # Carried states are true values that the decision's state-action space
     # deliberately excludes. Feed them to the realized transition so it reads
@@ -134,14 +139,27 @@ def calculate_next_states(
         for name in regime.simulation.carried_grids
     }
 
-    states_with_next_prefix = next_state_vmapped(
-        **state_action_space.states,
-        **simulate_only_states,
-        **optimal_actions,
-        **stochastic_variables_keys,
-        period=jnp.int32(period),
-        age=age,
-        **regime_params,
+    states_with_next_prefix = (
+        cast(
+            "dict[RegimeName, dict[str, FloatND | IntND]]",
+            execute_simulation_program(
+                programs=regime.simulation.programs,
+                family="transition",
+                period=period,
+                n_subjects=len(subjects_in_regime),
+                arguments=transition_arguments(
+                    states=state_action_space.states,
+                    carried=simulate_only_states,
+                    actions=optimal_actions,
+                    keys=stochastic_variables_keys,
+                    period=jnp.int32(period) if memory is None else np.int32(period),
+                    age=age,
+                    params=regime_params,
+                ),
+            ),
+        )
+        if period in regime.simulation.programs.transition
+        else {}
     )
 
     # Transition functions are DAG-named `next_<state>` to distinguish them from
@@ -163,10 +181,19 @@ def calculate_next_states(
         }
     )
 
-    return _advance_states_for_subjects(
-        states_per_regime=states_per_regime,
-        next_states_per_regime=next_states_per_regime,
-        subject_indices=subjects_in_regime,
+    return run_simulation_operation(
+        memory=memory,
+        function=_advance_states_for_subjects,
+        arguments={
+            "states_per_regime": states_per_regime,
+            "next_states_per_regime": next_states_per_regime,
+            "subject_indices": subjects_in_regime,
+        },
+        subject_arg_names=(
+            "states_per_regime",
+            "next_states_per_regime",
+            "subject_indices",
+        ),
     )
 
 
@@ -187,6 +214,7 @@ def calculate_next_regime_membership(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
+    memory: SimulationMemory | None = None,
 ) -> Int1D:
     """Calculate next period regime membership for subjects in a regime.
 
@@ -230,15 +258,23 @@ def calculate_next_regime_membership(
         name: states_per_regime[regime.name][name]
         for name in regime.simulation.carried_grids
     }
-    regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
-        regime.simulation.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
-            **state_action_space.states,
-            **simulate_only_states,
-            **optimal_actions,
-            period=jnp.int32(period),
-            age=age,
-            **regime_params,
-        )
+    regime_transition_probs = cast(
+        "MappingProxyType[RegimeName, FloatND]",
+        execute_simulation_program(
+            programs=regime.simulation.programs,
+            family="route",
+            period=period,
+            n_subjects=len(subjects_in_regime),
+            arguments=transition_arguments(
+                states=state_action_space.states,
+                carried=simulate_only_states,
+                actions=optimal_actions,
+                keys={},
+                period=jnp.int32(period) if memory is None else np.int32(period),
+                age=age,
+                params=regime_params,
+            ),
+        ),
     )
     # A per-target regime transition's probs dict covers only its declared
     # targets — anything else is structurally unreachable (zero probability).
@@ -276,15 +312,30 @@ def calculate_next_regime_membership(
         n_initial_states=n_subjects,
         subject_slice=subject_slice,
         original_n_subjects=original_n_subjects,
+        memory=memory,
     )
 
     next_regime_ids = draw_key_from_dict(
         d=active_regime_probs,
         regime_names_to_ids=regime_names_to_ids,
         keys=regime_transition_key["key_regime_transition"],
+        memory=memory,
     )
 
-    return jnp.where(subjects_in_regime, next_regime_ids, new_subject_regime_ids)
+    return run_simulation_operation(
+        memory=memory,
+        function=_update_regime_ids,
+        arguments={
+            "subjects_in_regime": subjects_in_regime,
+            "next_regime_ids": next_regime_ids,
+            "new_subject_regime_ids": new_subject_regime_ids,
+        },
+        subject_arg_names=(
+            "subjects_in_regime",
+            "next_regime_ids",
+            "new_subject_regime_ids",
+        ),
+    )
 
 
 def draw_key_from_dict(
@@ -292,6 +343,7 @@ def draw_key_from_dict(
     d: MappingProxyType[RegimeName, Float1D],
     regime_names_to_ids: RegimeNamesToIds,
     keys: PRNGKeyND,
+    memory: SimulationMemory | None = None,
 ) -> Int1D:
     """Draw a random key from a dictionary of arrays.
 
@@ -310,16 +362,48 @@ def draw_key_from_dict(
     # Sorted by regime id, not `d`'s insertion order: the draw for a fixed key
     # must not depend on which order an upstream caller happened to list
     # candidates in (e.g. a reachability graph's alphabetical convention).
-    regime_names = sorted(d, key=regime_names_to_ids.__getitem__)
-    regime_ids = jnp.asarray(
-        [regime_names_to_ids[regime_name] for regime_name in regime_names],
-        dtype=jnp.int32,
+    regime_names = sorted(d, key=lambda name: int(regime_names_to_ids[name]))
+    regime_id_scalars = tuple(
+        regime_names_to_ids[regime_name] for regime_name in regime_names
     )
+    prob_rows = tuple(d[name] for name in regime_names)
+    return run_simulation_operation(
+        memory=memory,
+        function=_draw_random_regime_ids_from_scalars,
+        arguments={
+            "keys": keys,
+            "prob_rows": prob_rows,
+            "regime_id_scalars": regime_id_scalars,
+        },
+        subject_arg_names=(
+            ("keys", "prob_rows") if prob_rows[0].ndim > 0 else ("keys",)
+        ),
+    )
+
+
+@jax.jit
+def _draw_random_regime_ids_from_scalars(
+    *,
+    keys: PRNGKeyND,
+    prob_rows: tuple[FloatND, ...],
+    regime_id_scalars: tuple[ScalarInt, ...],
+) -> Int1D:
+    """Stage the sorted original ID scalars inside the measured exact draw body."""
     return _draw_random_regime_ids(
         keys=keys,
-        prob_rows=tuple(d[name] for name in regime_names),
-        regime_ids=regime_ids,
+        prob_rows=prob_rows,
+        regime_ids=jnp.asarray(regime_id_scalars, dtype=jnp.int32),
     )
+
+
+def _update_regime_ids(
+    *,
+    subjects_in_regime: Bool1D,
+    next_regime_ids: Int1D,
+    new_subject_regime_ids: Int1D,
+) -> Int1D:
+    """Replace assignments only for subjects currently in this source regime."""
+    return jnp.where(subjects_in_regime, next_regime_ids, new_subject_regime_ids)
 
 
 @jax.jit

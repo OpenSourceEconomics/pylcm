@@ -93,6 +93,46 @@ def validate_V(
 
     n_nan = int(jnp.sum(jnp.isnan(V_arr)))
     total = int(V_arr.size)
+    exc = value_function_nan_error(
+        n_nan=n_nan,
+        total=total,
+        age=age,
+        regime_name=regime_name,
+        partial_solution=partial_solution,
+        entered_process_names=entered_process_names,
+    )
+
+    if compute_intermediates is not None and state_action_space is not None:
+        try:
+            _enrich_with_diagnostics(
+                exc=exc,
+                compute_intermediates=compute_intermediates,
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                flat_params=flat_params,
+                regime_name=regime_name or "",
+                age=float(age),
+                period=period,
+            )
+        except Exception:
+            logging.getLogger("lcm").warning(
+                "Diagnostic enrichment failed; raising original NaN error",
+                exc_info=True,
+            )
+
+    raise exc
+
+
+def value_function_nan_error(
+    *,
+    n_nan: int,
+    total: int,
+    age: float | ScalarInt | ScalarFloat,
+    regime_name: RegimeName | None = None,
+    partial_solution: object = None,
+    entered_process_names: tuple[str, ...] = (),
+) -> InvalidValueFunctionError:
+    """Build the host report after an admitted NaN count is available."""
     regime_part = f" in regime '{regime_name}'" if regime_name else ""
     all_nan = n_nan == total
     fraction_hint = "all" if all_nan else f"{n_nan} of {total}"
@@ -116,26 +156,7 @@ def validate_V(
         "https://pylcm.readthedocs.io/en/latest/user_guide/debugging/"
     )
     exc.partial_solution = partial_solution
-
-    if compute_intermediates is not None and state_action_space is not None:
-        try:
-            _enrich_with_diagnostics(
-                exc=exc,
-                compute_intermediates=compute_intermediates,
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                flat_params=flat_params,
-                regime_name=regime_name or "",
-                age=float(age),
-                period=period,
-            )
-        except Exception:
-            logging.getLogger("lcm").warning(
-                "Diagnostic enrichment failed; raising original NaN error",
-                exc_info=True,
-            )
-
-    raise exc
+    return exc
 
 
 def _enrich_with_diagnostics(

@@ -15,7 +15,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -71,6 +71,11 @@ class GridSearchEV1ActionReduction:
             HARD_MAX_REDUCTION.semantic_key,
             LOGSUMEXP_REDUCTION.semantic_key,
         )
+
+    @property
+    def exactness(self) -> Literal["tolerance_equivalent"]:
+        """Return `"tolerance_equivalent"`: the branch mass is a floating-point sum."""
+        return "tolerance_equivalent"
 
 
 def build_streaming_max_Q_over_a(

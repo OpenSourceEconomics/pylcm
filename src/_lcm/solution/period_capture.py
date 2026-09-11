@@ -23,9 +23,11 @@ sharded run's unless the replay is confirmed to place them the same way.
 """
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from _lcm.execution.output_layout import PlannedCore
 from _lcm.persistence.io import _save_pkl
 from _lcm.typing import RegimeName
 
@@ -62,11 +64,14 @@ def capture_kernel_inputs(
     regime_name: RegimeName,
     period: int,
     kernel_kwargs: dict[str, Any],
+    compiled_cores: Mapping[str, PlannedCore],
 ) -> None:
     """Write this regime-period's kernel inputs if it is the selected target.
 
     The compiled cores are deliberately absent: they are rebuilt at replay from
-    the captured regime, which is what keeps the capture portable.
+    the captured regime, which is what keeps the capture portable. Their selected
+    tile widths are portable static choices, however, and are captured exactly so
+    replay never runs the workspace planner again.
     """
     if capture_target != (regime_name, period):
         return
@@ -75,5 +80,13 @@ def capture_kernel_inputs(
     directory.mkdir(parents=True, exist_ok=True)
     _save_pkl(
         path=directory / _PAYLOAD_NAME,
-        obj={"regime": regime, "period": period, "kernel_kwargs": kernel_kwargs},
+        obj={
+            "regime": regime,
+            "period": period,
+            "kernel_kwargs": kernel_kwargs,
+            "core_tile_widths": {
+                core_name: dict(core.tile_widths)
+                for core_name, core in compiled_cores.items()
+            },
+        },
     )

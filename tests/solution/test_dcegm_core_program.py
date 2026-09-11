@@ -1,7 +1,7 @@
-"""A DC-EGM period publishes output-specialized dense core programs.
+"""A DC-EGM period publishes output-specialized planned core programs.
 
-The DC-EGM kernel owns its stochastic-node and grid batching, so both variants
-are deliberately dense and read continuation from child carries alone. `main`
+Both variants declare their real tiling axes and read continuation from child
+carries alone. `main`
 publishes only value and carry; `replay` additionally publishes the off-grid
 policy when its exact retention key is selected. The NEGM composite consumes the
 values variant through the public output rather than through a legacy result.
@@ -30,6 +30,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.regime_building import processing as regime_processing
 from _lcm.solution import period_replay
+from _lcm.solution.dcegm import _DCEGMArgumentBuilder
 from _lcm.solution.period_replay import replay_period
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -39,7 +40,7 @@ from lcm.solver_api import (
     OmissionReason,
     ResultRetention,
 )
-from lcm.solvers import MSSEnvelope
+from lcm.solvers import ENVELOPE_CELL_AXIS, SAVINGS_POINT_AXIS, MSSEnvelope
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.solution.test_egm_passive import _get_model as _passive_model
@@ -53,7 +54,6 @@ _N_PERIODS = 4
 _REGIME = "working_life"
 _PERIOD = 1
 _LOGGER = logging.getLogger(__name__)
-_DENSE_REASON = "deliberately_dense:dcegm_solver_owned_node_and_grid_batching"
 
 
 def _full_kernel() -> tuple[Any, dict[str, Any]]:
@@ -94,7 +94,7 @@ def _run(*, kernel: Any, context: Mapping[str, Any], name: str = "main") -> tupl
     return tuple(jax.jit(materialized.function)(**materialized.arguments))
 
 
-def test_the_graph_publishes_dense_values_and_replay_variants():
+def test_the_graph_publishes_planned_values_and_replay_variants():
     kernel, _ = _full_kernel()
     graph = core_program_graph(kernel=kernel)
 
@@ -107,11 +107,26 @@ def test_the_graph_publishes_dense_values_and_replay_variants():
         SIMULATION_POLICY: EGMSimPolicy
     }
     assert graph["replay"].replaces_program == "main"
+    targets = cast(
+        "_DCEGMArgumentBuilder", graph["main"].argument_builder
+    ).stateful_targets
     for program in graph.values():
-        assert program.disposition is CoreExecutionDisposition.DENSE
-        assert program.disposition_reason == _DENSE_REASON
-        assert program.requirements.streamable_axes == ()
-        assert program.requirements.target_value_accesses == ()
+        assert program.disposition is CoreExecutionDisposition.PLANNED
+        assert program.disposition_reason is None
+        assert program.requirements.axis_names == (
+            SAVINGS_POINT_AXIS,
+            ENVELOPE_CELL_AXIS,
+        )
+        assert {read.source.path for read in program.requirements.value_reads} == {
+            (target, leaf)
+            for target in targets
+            for leaf in (
+                "endog_grid",
+                "value",
+                "marginal_utility",
+                "taste_shock_scale",
+            )
+        }
 
 
 def test_model_authority_rejects_a_policy_type_conflicting_with_the_route(

@@ -16,14 +16,14 @@ keeper and adjuster branches combine.
 ### `FiniteOuterGrid`
 
 ```python
-FiniteOuterGrid(grid=..., batch_size=0)
+FiniteOuterGrid(grid=...)
 ```
 
 Solves one exact inner problem per outer post-decision target in `grid` and selects a
 grid-snapped target. Simulation recovers the declared outer action by exactly inverting
 the post-decision map, so that action may lie between action-grid nodes. The result is
-exact relative to the finite target set. Positive `batch_size` streams targets before
-folding them into the running maximum.
+exact relative to the finite target set. How many targets are solved per dispatch is an
+execution choice under the `outer_candidate` axis, not a field of the candidate set.
 
 (api-adaptive-outer-mesh)=
 
@@ -45,7 +45,6 @@ interpolation at proposed points, and refines bracket-local optima.
 Important fields:
 
 - `max_nodes` and `max_refinement_rounds` are hard resource limits;
-- `batch_size` streams mesh nodes;
 - `value_atol` and `value_rtol` govern exact-versus-interpolated validation;
 - `golden_iterations` controls local refinement, which is golden section inside a
   bracket taken from the exact candidate mesh;

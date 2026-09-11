@@ -1,5 +1,5 @@
 import dataclasses
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterator, Mapping
 from math import prod as math_prod
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
@@ -11,14 +11,16 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.continuation import ContinuationPayload, ContinuationSpec
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
+from _lcm.execution.execution_plan import visible_devices
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
+from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
-    ArgmaxQOverAFunction,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
     FlatRegimeParams,
@@ -35,7 +37,7 @@ from _lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from _lcm.utils.containers import first_non_none
-from lcm.exceptions import PyLCMError
+from lcm.exceptions import ExecutionPlanningError, PyLCMError
 from lcm.solver_api import (
     ArtifactAuthority,
     ArtifactKey,
@@ -386,6 +388,40 @@ class SolutionPhase:
     continuation carry.
     """
 
+    period_signatures: MappingProxyType[int, Hashable]
+    """Immutable mapping of period to the hashable signature the engine grouped it by.
+
+    Two groupings are covered: the decision grouping and the gated-edge fold
+    grouping. Two periods with equal signatures were built from the same grouped
+    engine inputs, so their kernels' programs can share a compiled executable
+    once the solver's own period grouping — a separate component of a program's
+    identity — also agrees.
+    """
+
+    solver_period_group_keys: MappingProxyType[int, Hashable] = MappingProxyType({})
+    """Immutable mapping of period to the key its solver grouped it under.
+
+    The solver's own per-period grouping, published beside the engine's. A
+    period the solver did not group has no entry. Together with
+    `period_signatures` this is what a compiled program's identity is keyed on:
+    the engine's groupings say which periods the engine built alike, this one
+    says which periods the solver built alike, and neither implies the other.
+    """
+
+    submesh_device_ids: tuple[int, ...] = ()
+    """Device ids this regime's nodes run on; empty means every device it may use.
+
+    Assigned by the planner at model build, ascending, and a component of every
+    lowering key this regime's cores carry.
+    """
+
+    sharded_state_names: frozenset[StateName] = frozenset()
+    """This regime's states whose grid axis is spread over its devices.
+
+    The engine-side answer to which axes carry a device axis, whether the model
+    named the state in `ExecutionConfig.sharded_states` or on the grid itself.
+    """
+
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this regime's kernels publish."""
 
@@ -510,7 +546,64 @@ class SolutionPhase:
             }
         )
 
-    def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
+    def placed_devices(self) -> tuple[jax.Device, ...]:
+        """Return the device objects this regime's nodes run on."""
+        return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
+
+    def resolve_process_grids(
+        self,
+        *,
+        regime_params: FlatRegimeParams,
+        process_grid_resolver: ProcessGridResolver,
+    ) -> Mapping[StateName, FloatND]:
+        """Resolve only process producers covered by the explicit admission owner."""
+        required: jax.sharding.Sharding | None = None
+        all_params = {**self.resolved_fixed_params, **regime_params}
+        resolved: dict[StateName, FloatND] = {}
+        for name, spec in self.grids.items():
+            if (
+                name not in self._base_state_action_space.states
+                or not isinstance(spec, _ContinuousStochasticProcess)
+                or not spec.params_to_pass_at_runtime
+                or not process_grid_resolver.supports(spec)
+                or any(
+                    f"{name}__{param}" not in all_params
+                    for param in spec.params_to_pass_at_runtime
+                )
+            ):
+                continue
+            if required is None:
+                devices = self.placed_devices()
+                plan = _build_regime_sharding(
+                    grids=self.grids,
+                    sharded_state_names=self.sharded_state_names,
+                    devices=devices,
+                )
+                required = (
+                    jax.sharding.SingleDeviceSharding(devices[0])
+                    if plan is None
+                    else jax.sharding.NamedSharding(
+                        plan.mesh, jax.sharding.PartitionSpec()
+                    )
+                )
+            resolved[name] = process_grid_resolver(
+                spec=spec,
+                required=required,
+                parameters={
+                    param: cast(
+                        "ScalarFloat | ScalarInt", all_params[f"{name}__{param}"]
+                    )
+                    for param in spec.params_to_pass_at_runtime
+                },
+            )
+        return MappingProxyType(resolved)
+
+    def state_action_space(
+        self,
+        *,
+        regime_params: FlatRegimeParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
+    ) -> StateActionSpace:
         """Return the state-action space with runtime grids filled in.
 
         For IrregSpacedGrid (state or continuous action) with runtime-supplied
@@ -527,7 +620,16 @@ class SolutionPhase:
 
         """
         all_params = {**self.resolved_fixed_params, **regime_params}
-        state_replacements: dict[str, ContinuousState | DiscreteState] = {}
+        state_replacements: dict[str, ContinuousState | DiscreteState] = (
+            {}
+            if process_grid_resolver is None
+            else dict(
+                self.resolve_process_grids(
+                    regime_params=regime_params,
+                    process_grid_resolver=process_grid_resolver,
+                )
+            )
+        )
         action_replacements: dict[str, ContinuousAction] = {}
         for name, spec in self.grids.items():
             in_states = name in self._base_state_action_space.states
@@ -556,6 +658,7 @@ class SolutionPhase:
                 in_states
                 and isinstance(spec, _ContinuousStochasticProcess)
                 and spec.params_to_pass_at_runtime
+                and name not in state_replacements
             ):
                 all_present = all(
                     f"{name}__{p}" in all_params for p in spec.params_to_pass_at_runtime
@@ -582,7 +685,10 @@ class SolutionPhase:
             else dict(self._base_state_action_space.continuous_actions)
         )
         distributed_states = _distribute_states_to_devices(
-            states=MappingProxyType(new_states), grids=self.grids
+            states=MappingProxyType(new_states),
+            grids=self.grids,
+            sharded_state_names=self.sharded_state_names,
+            devices=self.placed_devices(),
         )
         return self._base_state_action_space.replace(
             states=distributed_states,
@@ -905,8 +1011,14 @@ class SimulationPhase:
     compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
     """Regime transition probability function for simulate, or `None`."""
 
-    argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
-    """Immutable mapping of period to argmax-and-max-Q functions."""
+    programs: SimulationPrograms
+    """The decision, transition, and route programs this regime declares.
+
+    Each names the axes the execution planner owns — the per-subject tile every
+    family runs in, and the action product a decision streams where its solve
+    counterpart streams — so the width a body is compiled at is an engine
+    choice rather than a regime-builder one.
+    """
 
     edge_reference_regimes_by_period: MappingProxyType[int, tuple[RegimeName, ...]] = (
         MappingProxyType({})
@@ -931,7 +1043,7 @@ class SimulationPhase:
     Evaluates the canonical `Q` and its feasibility at one action value per
     subject, rather than maximizing over the action grid. It shares the model
     DAG, transitions, constraints, aggregators, params, and next-period value
-    arrays with `argmax_and_max_Q_over_a`, so a value it reports for an off-grid
+    arrays with `programs.decision`, so a value it reports for an off-grid
     candidate action is directly comparable with the grid winner's value.
     """
 
@@ -942,7 +1054,7 @@ class SimulationPhase:
     """Function names that were `AgeSpecializedFunction` in the user regime.
 
     The published `functions` hold these resolved at the regime's representative
-    age only — the per-period programs (`argmax_and_max_Q_over_a`, `next_state`)
+    age only — the per-period decision and transition programs
     carry the true per-age closures. Consumers computing period-specific outputs
     from `functions` (e.g. `additional_targets`) must reject targets that depend
     on these names."""
@@ -1217,16 +1329,73 @@ class _RegimeSharding:
         return jax.NamedSharding(mesh=self.mesh, spec=spec)
 
 
+def placed_devices_for_ids(
+    *, submesh_device_ids: tuple[int, ...], visible_device_ids: tuple[int, ...] = ()
+) -> tuple[jax.Device, ...]:
+    """Return the device objects of `submesh_device_ids`.
+
+    An empty tuple of ids names no placement, which is every device the model
+    uses — the layout a solve without a per-regime placement runs on.
+
+    Args:
+        submesh_device_ids: Ascending device ids, or empty for every device the
+            model uses.
+        visible_device_ids: The model's own device ids, ascending. Empty names
+            every device JAX reports, which is what a caller holding no
+            resolved configuration runs on.
+
+    Returns:
+        Tuple of the device objects, in the order the ids name them.
+
+    Raises:
+        ExecutionPlanningError: An id names no visible device.
+
+    """
+    devices = visible_devices()
+    by_id = {device.id: device for device in devices}
+    wanted = submesh_device_ids or visible_device_ids
+    if not wanted:
+        return devices
+    _fail_if_a_device_id_is_not_visible(
+        submesh_device_ids=wanted, visible_ids=tuple(by_id)
+    )
+    return tuple(by_id[device_id] for device_id in wanted)
+
+
+def _fail_if_a_device_id_is_not_visible(
+    *, submesh_device_ids: tuple[int, ...], visible_ids: tuple[int, ...]
+) -> None:
+    """Raise when a placed device id names no device this process can see.
+
+    Args:
+        submesh_device_ids: The device ids a regime was placed on.
+        visible_ids: The ids of the devices this process sees.
+
+    Raises:
+        ExecutionPlanningError: An id names no visible device.
+
+    """
+    absent = tuple(
+        device_id for device_id in submesh_device_ids if device_id not in visible_ids
+    )
+    if absent:
+        raise ExecutionPlanningError(
+            f"Placed device ids {absent} name no visible device. This process "
+            f"sees device ids {visible_ids}; a placement resolved against a "
+            "different device count cannot be dispatched here."
+        )
+
+
 def _build_regime_sharding(
     *,
     grids: MappingProxyType[StateOrActionName, Grid],
-    n_devices: int,
+    sharded_state_names: frozenset[StateName],
+    devices: tuple[jax.Device, ...],
 ) -> _RegimeSharding | None:
     """Build a `_RegimeSharding` covering this regime's distributed grids.
 
-    Returns `None` when no grid is distributed. Action grids are rejected at
-    user-facing `Regime` construction (see `regime_building.validation`); the
-    helper assumes any grid with `distributed=True` is a state grid.
+    Returns `None` when no state is sharded. Model validation restricts the
+    explicit names to discrete states; grids provide only their extents.
 
     Sharding policy depends on the number of distributed grids:
     - exactly one: build a 1-axis mesh with shape `(n_devices,)`, axis name
@@ -1239,15 +1408,20 @@ def _build_regime_sharding(
 
     Args:
         grids: Immutable mapping of state and action names to their grids.
-        n_devices: Number of available devices.
+        sharded_state_names: Explicit state names assigned a device axis.
+        devices: Tuple of the devices the placement assigned to this regime;
+            the mesh spans exactly them.
 
     Returns:
         The regime's sharding plan, or `None` if no grid is distributed.
 
     """
-    distributed_grids = {name: grid for name, grid in grids.items() if grid.distributed}
+    distributed_grids = {
+        name: grid for name, grid in grids.items() if name in sharded_state_names
+    }
     if not distributed_grids:
         return None
+    n_devices = len(devices)
 
     state_names = tuple(distributed_grids.keys())
     grid_sizes = tuple(grid.to_jax().shape[0] for grid in distributed_grids.values())
@@ -1264,7 +1438,7 @@ def _build_regime_sharding(
             (n_devices,),
             state_names,
             axis_types=(jax.sharding.AxisType.Auto,),
-            devices=jax.devices(),
+            devices=devices,
         )
     else:
         product = math_prod(grid_sizes)
@@ -1279,33 +1453,118 @@ def _build_regime_sharding(
             grid_sizes,
             state_names,
             axis_types=tuple(jax.sharding.AxisType.Auto for _ in distributed_grids),
-            devices=jax.devices(),
+            devices=devices,
         )
 
     return _RegimeSharding(mesh=mesh, distributed_state_names=state_names)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _TemplateLeafPlacement:
+    """Place state-shaped leaves by state axes and replicate other array leaves."""
+
+    state_shape: tuple[int, ...]
+    """Leading extents in the regime's stored-value state order."""
+
+    state_sharding: jax.sharding.Sharding
+    """Partitioning for a leaf whose leading axes match the state shape."""
+
+    replicated_sharding: jax.sharding.Sharding
+    """Placement for scalars and leaves with another leading shape."""
+
+    def __call__[Leaf](self, leaf: Leaf) -> Leaf:
+        """Preserve non-array leaves and place each array on the assigned devices."""
+        if not isinstance(leaf, Array):
+            return leaf
+        sharding = (
+            self.state_sharding
+            if leaf.shape[: len(self.state_shape)] == self.state_shape
+            else self.replicated_sharding
+        )
+        return cast("Leaf", jax.device_put(leaf, sharding))
+
+
+def place_template_on_regime_devices[Template](
+    *,
+    template: Template,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    sharded_state_names: frozenset[StateName],
+    states: Mapping[StateName, FloatND | IntND],
+    fold_state_names: tuple[StateName, ...],
+    submesh_device_ids: tuple[int, ...],
+) -> Template:
+    """Place a continuation pytree using the regime's stored-value layout."""
+    devices = placed_devices_for_ids(submesh_device_ids=submesh_device_ids)
+    plan = _build_regime_sharding(
+        grids=grids, sharded_state_names=sharded_state_names, devices=devices
+    )
+    state_order = tuple(name for name in states if name not in fold_state_names)
+    replicated = (
+        jax.sharding.SingleDeviceSharding(devices[0])
+        if plan is None
+        else jax.NamedSharding(plan.mesh, jax.P())
+    )
+    return jax.tree.map(
+        _TemplateLeafPlacement(
+            state_shape=tuple(states[name].size for name in state_order),
+            state_sharding=(
+                replicated if plan is None else plan.V_arr_sharding(state_order)
+            ),
+            replicated_sharding=replicated,
+        ),
+        template,
+    )
+
+
+def _fail_if_template_is_misplaced(
+    *, regime_name: RegimeName, template: object, expected_device_ids: tuple[int, ...]
+) -> None:
+    """Require every continuation array leaf to use the regime's assigned devices."""
+    expected = tuple(
+        sorted(
+            device.id
+            for device in placed_devices_for_ids(submesh_device_ids=expected_device_ids)
+        )
+    )
+    for leaf in jax.tree.leaves(template):
+        if not isinstance(leaf, Array):
+            continue
+        found = tuple(sorted(device.id for device in leaf.sharding.device_set))
+        if found != expected:
+            raise ExecutionPlanningError(
+                f"Regime {regime_name!r} published a continuation template leaf on "
+                f"devices {found!r}; its placement is {expected!r}. Place it with "
+                "SolverBuildContext.place_on_regime_devices."
+            )
 
 
 def _distribute_states_to_devices(
     *,
     states: MappingProxyType[StateName, FloatND | IntND],
     grids: MappingProxyType[StateOrActionName, Grid],
+    sharded_state_names: frozenset[StateName],
+    devices: tuple[jax.Device, ...],
 ) -> MappingProxyType[StateName, FloatND | IntND]:
     """Place each distributed state's array on its device mesh.
 
-    States whose grid carries `distributed=True` are placed via
+    States explicitly assigned a device axis are placed via
     `jax.device_put` onto the per-regime mesh; other states pass through
     unchanged. The input mapping is treated as immutable.
 
     Args:
         states: Immutable mapping of state names to their 1-D arrays.
         grids: Immutable mapping of state and action names to their grids.
+        sharded_state_names: Explicit state names assigned a device axis.
+        devices: Tuple of the devices the placement assigned to this regime.
 
     Returns:
         Immutable mapping with distributed states placed on the mesh and
         every other state untouched.
 
     """
-    sharding_plan = _build_regime_sharding(grids=grids, n_devices=len(jax.devices()))
+    sharding_plan = _build_regime_sharding(
+        grids=grids, sharded_state_names=sharded_state_names, devices=devices
+    )
     if sharding_plan is None:
         return states
     placed = dict(states)

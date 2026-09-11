@@ -27,6 +27,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
+from lcm.solver_api import SolverExecutionCapabilities
 from lcm.solvers import (
     DCEGM,
     EGM,
@@ -74,6 +75,16 @@ def next_regime(_age: float) -> ScalarInt:
 class _CustomOneMargin(OneMarginSolver):
     """A one-margin solver written outside the shipped family."""
 
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
     continuous_state: str = ""
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
@@ -86,6 +97,16 @@ class _CustomOneMargin(OneMarginSolver):
 @dataclass(frozen=True, kw_only=True)
 class _CustomTwoMargin(TwoMarginSolver):
     """A two-margin solver written outside the shipped family."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     margins: tuple[object, object] | None = None
 

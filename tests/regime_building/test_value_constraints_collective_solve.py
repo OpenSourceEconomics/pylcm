@@ -299,6 +299,7 @@ def _solve_ir_model(
         enable_jit=False,
     )
     _bi_result = solve(
+        model_fingerprint="test_value_constraints_collective_solve",
         flat_params=MappingProxyType(flat_params),
         ages=ages,
         regimes=regimes,
@@ -522,6 +523,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         enable_jit=False,
     )
     _bi_result = solve(
+        model_fingerprint="test_value_constraints_collective_solve",
         flat_params=MappingProxyType(
             {
                 "single_f": MappingProxyType(
@@ -636,6 +638,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         enable_jit=False,
     )
     _bi_result = solve(
+        model_fingerprint="test_value_constraints_collective_solve",
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType(

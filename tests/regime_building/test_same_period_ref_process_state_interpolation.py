@@ -71,6 +71,7 @@ from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
 @categorical(ordered=True)
@@ -172,6 +173,7 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_same_period_ref_process_state_interpolation",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
@@ -317,6 +319,7 @@ def _build_and_solve():
     )
     flat_params = _flat_params()
     _bi_result = solve(
+        model_fingerprint="test_same_period_ref_process_state_interpolation",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
@@ -392,7 +395,7 @@ def test_same_period_ref_process_interpolation_reproduced_at_simulate():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,

@@ -44,24 +44,74 @@ curvature, boundaries, or regions visited frequently in simulation.
 locations. They do not declare a budget kink or cliff to NBEGM; use the structured
 [budget declarations](../methods/nonconvex_budgets.md) for that.
 
-## Stream work with explicit batch widths
+## Fix a planner axis width
 
-Some controls reduce live intermediates. Grid `batch_size`,
-`stochastic_node_batch_size`, `envelope_segment_block_size`, `subject_batch_size`, and
-any solver field whose Reference contract explicitly says it streams an evaluation axis
-can lower temporary workspace. The exact effect still depends on retained banks and
-downstream folds; for example, `NEGM.outer_batch_size` can lower temporary evaluation
-memory without capping the retained candidate bank.
+A solver declares its execution axes by name. `ExecutionConfig(axis_widths=...)` fixes
+the width used by each applicable compiled program or host-dispatch loop:
 
-NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
-batch widths for the corresponding `lax.map` axes. A positive value smaller than the
-axis bounds how many entries are evaluated together; `0`, or a value covering the axis,
-uses one vectorized pass. Lower values can reduce live intermediates inside that mapped
-core at the cost of more sequential execution. They do not cap surrounding arrays,
-retained candidate banks, compilation memory, or total device memory.
+```python
+from lcm import ExecutionConfig, Model
 
-Choose the largest batch that meets the measured memory target, then verify values and
-runtime against the whole-axis setting on the model and backend you will use.
+model = Model(
+    regimes=regimes,
+    ages=ages,
+    regime_id_class=RegimeId,
+    execution_config=ExecutionConfig(axis_widths={"action_product": 8}),
+)
+```
+
+A width smaller than the axis bounds how many entries are processed together; a width at
+or above the extent selects the whole axis in one chunk. Compiled axes vectorize that
+chunk; a host-dispatch axis bounds pending node calls. Lower values can reduce live
+intermediates at the cost of more sequential execution. They do not cap surrounding
+arrays, retained candidate banks, compilation memory, or total device memory.
+
+Which axis names exist depends on which solver a regime uses; each solver's section in
+[Solvers and capabilities](../reference/solvers.md) names the axes it declares.
+
+| axis              | declared by                                                                                          |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| `action_product`  | the flattened Cartesian action product of a streamed `GridSearch` core                               |
+| `stochastic_node` | child stochastic nodes folded by `DCEGM`, ride-along `NBEGM`, and their nested solvers               |
+| `cell`            | independent state cells tiled by `GridSearch`, `DCEGM`, ride-along `NBEGM`, and their nested solvers |
+| `interval`        | liquid intervals folded by ride-along `NBEGM`, including eligible `NNBEGM` inner programs            |
+| `branch`          | discrete-action subproblems mapped by ride-along `NBEGM`, including eligible `NNBEGM` inner programs |
+| `savings_point`   | exogenous savings nodes tiled by `DCEGM`, including `NEGM` inner programs                            |
+| `euler_point`     | Euler nodes tiled by `DCEGM`, including `NEGM` inner programs                                        |
+| `envelope_cell`   | independent envelope cells tiled by `DCEGM`, including `NEGM` inner programs                         |
+| `outer_candidate` | the exogenous outer post-decision nodes of a nested outer search                                     |
+
+These are solver capability names; a particular program declares only its applicable
+axes. Plain `EGM` declares no execution-width axis. Nested solvers inherit the relevant
+inner axes; their outer search determines how `outer_candidate` is used. See the
+generated capability table in [Solvers and capabilities](../reference/solvers.md).
+
+Choose the largest width that meets the measured memory target, then verify values and
+runtime against the whole-axis setting on the model and backend you will use. Leaving an
+axis out of the mapping lets the planner choose, which is what a device-memory budget
+asks it to do.
+
+## Choose execution widths independently of grids
+
+Grids specify economic support and interpolation. Set execution widths on the model with
+`ExecutionConfig(axis_widths=...)`. The effect depends on retained arrays and downstream
+folds; for example, `outer_candidate` can lower a nested solver's temporary evaluation
+memory without capping its retained candidate bank.
+
+For `GridSearch`, `cell` tiles the flattened product of the states evaluated inside each
+sharded slice. Sharded states stay outside this product. `action_product` separately
+streams eligible hard-max action reductions; EV1 and collective models keep their
+canonical dense action reductions while tiling state cells. `DCEGM` uses the applicable
+axes listed above.
+
+NBEGM also owns no compiled-width fields. Use its applicable axes in the table above:
+`interval` streams the continuation read together with the stable-identity candidate
+fold, `branch` maps the discrete subproblems before their maximum, and `cell` tiles
+independent ride cells inside each co-mapped carry slice. A route declares only the
+nontrivial meshes it consumes. The interval stream has no separate segment-width loop.
+Smaller widths can reduce live intermediates at the cost of sequential execution; they
+do not cap surrounding arrays, retained candidate banks, compilation memory, or total
+device memory.
 
 Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 [Upper envelopes](../reference/envelopes.md), and
@@ -69,10 +119,16 @@ Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 
 ## Distribute independent discrete state work
 
-`distributed=True` shards a supported discrete grid over visible devices. Continuous
-grids reject distribution because their interpolation needs the full coordinate axis. A
-grid cannot be both batched and distributed; if a shard remains too large, batch a
-different axis.
+Declare a discrete state at model level, then name it in
+`ExecutionConfig(sharded_states=("preference",))` to shard its axis. Select devices with
+`ExecutionConfig(devices=(0, 1, 2, 3), ...)`; omitting `devices` uses all devices
+visible to JAX. Continuous states cannot be sharded because interpolation reads their
+full coordinate axis. Solver-specific restrictions also apply; see
+[Solvers and capabilities](../reference/solvers.md).
+
+If a shard remains too large, reduce an applicable execution width. For example,
+`ExecutionConfig(sharded_states=("preference",), axis_widths={"cell": 32})` keeps the
+preference axis sharded and tiles the remaining GridSearch state product.
 
 Before solving, verify the resources actually visible to JAX:
 
@@ -86,11 +142,41 @@ A larger GPU can run larger chunks and may benefit from more concurrent independ
 work. It does not automatically shorten a workload made of small sequential kernels.
 Measure occupancy and memory rather than extrapolating from device memory alone.
 
+With an explicit memory budget, solve execution waits for earlier compiled work that
+uses any of the next core's execution or transfer devices. Work on disjoint device sets
+can remain asynchronous. A shared source array can therefore serialize cores assigned to
+different regime submeshes. The wait covers returned auxiliary arrays and declared
+copies as well as values; it does not bound memory used by compiler autotuning.
+
 ## Batch forward simulation
 
-`model.simulate(subject_batch_size=k, ...)` bounds the subject workspace and offloads
-completed chunks to host. Random keys are assigned by global subject index, so changing
-the batch size does not change simulated draws.
+Set `ExecutionConfig(axis_widths={"subject": k})` on the model to process subjects in
+chunks. The inner compiled subject width remains fixed at `k`; the outer chunk is
+clamped to the population and rounded up to a multiple of the subject-device count. For
+example, width three uses outer chunks of four on four devices while retaining an inner
+width of three. Completed chunks are offloaded to host. Random keys retain their
+original population and global subject indices, so changing the width does not change
+simulated draws.
+
+With a device-memory budget and no fixed subject width, simulation selects the widest
+outer candidate whose complete retained storage and compiled stages fit. It tries the
+available inner widths before shrinking a chunk. The bound includes the retained
+solution, full-population inputs and RNG workspace, pending period owners, published
+results, padding, and final assembly. It is conservative about future aliases; it does
+not estimate an allocator optimum. On CPU, retaining all chunks and assembling the final
+result can impose a floor that narrower chunks cannot remove. CPU assembly after GPU
+offload uses host RAM outside the GPU ceiling.
+
+Finite NNBEGM replay includes candidate preparation, diagnostics and canonical ranking
+in this bound. The prepared bank has one row per subject in the outer chunk and keeps
+the full published candidate extent. A smaller inner width does not remove that bank's
+storage requirement. Addressed policy copies and their transfer overlap are counted
+alongside retained originals.
+
+Parameterized grids and user entry laws can still allocate eagerly while shared inputs
+are completed. Their resulting arrays are counted, but this entry work is not
+pre-admitted by the chunk profiles. Budgeted host replay routes remain refused until
+their complete stages and owners have profiles.
 
 The same fixed `seed` also gives the same EV1 taste-shock choices in lazy and
 ahead-of-time simulation. Subject chunking and `Model(n_subjects=...)` change

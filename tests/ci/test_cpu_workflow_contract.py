@@ -5,9 +5,28 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
+import pytest
 import yaml
 
+from tests.ci.cpu_suite_invocations import (
+    FOUR_DEVICE_TEST_FILES,
+    carries_policy_activation_flags,
+    cpu_suite_invocation_argvs,
+    four_device_pinning_test_files,
+)
+
 _REPO_ROOT = Path(__file__).parents[2]
+
+# The fp64 and fp32 legs each run every four-CPU-device file in one invocation
+# of their own; every property below is checked once per (leg, file) pair.
+_FOUR_DEVICE_INVOCATION_CASES = tuple(
+    (job, step_name, four_device_file)
+    for job, step_name in (
+        ("tests", "Run pytest and collect coverage"),
+        ("tests-fp32", "Run pytest at fp32"),
+    )
+    for four_device_file in FOUR_DEVICE_TEST_FILES
+)
 
 
 def test_windows_cpu_suite_has_no_missing_kernel_skip_policy():
@@ -27,4 +46,209 @@ def test_windows_cpu_suite_has_no_missing_kernel_skip_policy():
 
     assert not obsolete_options.intersection(
         argument.partition("=")[0] for argument in arguments
+    )
+
+
+def test_every_four_device_test_file_is_registered():
+    """Every test file pinning several CPU devices is in `FOUR_DEVICE_TEST_FILES`.
+
+    Registration is what gives a file its own-process invocation in both
+    precision legs; the tests below check those invocations, but only for files
+    the registry names. A file that pins the topology and is left out of the
+    registry runs inside the shared `tests` invocation instead, where the
+    backend is already initialised, so its pin raises and every test in it
+    skips without failing anything.
+    """
+    assert set(four_device_pinning_test_files(tests_root=_REPO_ROOT / "tests")) == set(
+        FOUR_DEVICE_TEST_FILES
+    )
+
+
+def test_only_the_last_fp64_invocation_writes_the_coverage_report():
+    """The fp64 leg writes its coverage report from its last pytest invocation.
+
+    The leg is one `&&` chain accumulating coverage with `--cov-append`, so the
+    XML is complete only once every invocation of the chain has run. Written
+    from any earlier link it would omit whatever the links after it cover —
+    which is what appending another own-process file to the end of the chain
+    would silently do.
+    """
+    argvs = _pytest_invocation_argvs(
+        job="tests", step_name="Run pytest and collect coverage"
+    )
+    writing = [index for index, argv in enumerate(argvs) if "--cov-report=xml" in argv]
+
+    assert writing == [len(argvs) - 1], (
+        f"{len(argvs)} invocations, coverage XML written by {writing} instead of "
+        f"by the last one alone"
+    )
+
+
+def test_every_earlier_fp64_invocation_suppresses_its_coverage_report():
+    """Every fp64 invocation but the last suppresses its own coverage report.
+
+    An invocation without `--cov-report=` writes the default report, so the
+    file the last link publishes is no longer the one the leg accumulated.
+    """
+    argvs = _pytest_invocation_argvs(
+        job="tests", step_name="Run pytest and collect coverage"
+    )
+    reporting = [
+        index for index, argv in enumerate(argvs[:-1]) if "--cov-report=" not in argv
+    ]
+
+    assert not reporting, (
+        f"fp64 invocations {reporting} do not suppress their coverage report"
+    )
+
+
+def _step_run_block(*, job: str, step_name: str) -> str:
+    """Return the `run:` script of one named step in one workflow job."""
+    workflow = yaml.safe_load(
+        (_REPO_ROOT / ".github/workflows/cpu.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"][job]["steps"]
+    step = next(entry for entry in steps if entry.get("name") == step_name)
+    return step["run"]
+
+
+def _pytest_invocation_argvs(*, job: str, step_name: str) -> list[list[str]]:
+    """Return the argv of every CPU-suite pytest invocation in one step."""
+    return cpu_suite_invocation_argvs(_step_run_block(job=job, step_name=step_name))
+
+
+def _invocations_naming(
+    *, job: str, step_name: str, four_device_file: str
+) -> list[list[str]]:
+    """Return every pytest invocation argv in one step that names `four_device_file`."""
+    return [
+        argv
+        for argv in _pytest_invocation_argvs(job=job, step_name=step_name)
+        if four_device_file in argv
+    ]
+
+
+def _sole_invocation(*, job: str, step_name: str, four_device_file: str) -> list[str]:
+    """Return the one invocation argv naming `four_device_file` in one step.
+
+    `test_four_device_file_appears_in_exactly_one_invocation` is the test that
+    names and asserts this singleton precondition; every other property test
+    below reuses this helper to reach the one invocation it inspects.
+    """
+    matches = _invocations_naming(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    return matches[0]
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_appears_in_exactly_one_invocation(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """Each four-CPU-device test file is named by exactly one pytest invocation.
+
+    Such a file pins a four-CPU-device topology at import, a pin that depends on
+    running alone in its process; naming the file from zero or from more than
+    one invocation means it either never runs or no longer runs alone.
+    """
+    matches = _invocations_naming(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    assert len(matches) == 1, (
+        f"{job}/{step_name!r}: expected exactly one pytest invocation naming "
+        f"{four_device_file}, found {len(matches)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_runs_without_other_test_paths(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """A four-CPU-device test file's invocation names no other test path.
+
+    Sharing the invocation with `tests` or another `tests/...` target would
+    fold the file back into a multi-file process, defeating the import-time
+    device-count pin that assumes it runs alone.
+    """
+    argv = _sole_invocation(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    other_targets = [
+        argument
+        for argument in argv
+        if (argument == "tests" or argument.startswith("tests/"))
+        and argument != four_device_file
+    ]
+    assert not other_targets, (
+        f"{job}/{step_name!r}: {four_device_file} shares its invocation with "
+        f"{other_targets}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_invocation_passes_the_worker_count_flag(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """A four-CPU-device test file's invocation states its worker count explicitly.
+
+    An implicit worker count would leave the invocation's process-isolation
+    guarantee undeclared; the sibling test then checks the count itself.
+    """
+    argv = _sole_invocation(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    assert "-n" in argv, (
+        f"{job}/{step_name!r}: {four_device_file}'s invocation is missing -n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_runs_at_worker_count_zero(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """A four-CPU-device test file's invocation runs at `-n 0`, its own process.
+
+    Any other worker count would distribute the file's tests across xdist
+    workers that fork before the file's own import-time device-count pin runs,
+    so the pin would apply to at most one worker and the rest would skip.
+    """
+    argv = _sole_invocation(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    worker_count = argv[argv.index("-n") + 1]
+    assert worker_count == "0", (
+        f"{job}/{step_name!r}: {four_device_file} runs at -n {worker_count!r} "
+        "instead of its own process (-n 0)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_invocation_omits_policy_activation_flags(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """A four-CPU-device test file's invocation never activates the CI policy launcher.
+
+    `--ci-policy` or `--full-suite` drives `pytest_policy.configure()`, which
+    resolves an explicit `--hardware-profile` by querying `jax.default_backend()`
+    during `pytest_configure` — before pytest imports any test module. That
+    query initialises the JAX backend ahead of this file's own import-time
+    four-CPU-device pin, so the pin sees an already-initialised backend, never
+    applies, and every test in the file silently skips.
+    """
+    argv = _sole_invocation(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    assert not carries_policy_activation_flags(argv), (
+        f"{job}/{step_name!r}: {four_device_file}'s invocation carries a CI "
+        "policy activation flag, which silently skips every test in the file"
     )

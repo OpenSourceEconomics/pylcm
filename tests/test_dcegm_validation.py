@@ -14,6 +14,7 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -23,10 +24,14 @@ from lcm import (
     fixed_transition,
 )
 from lcm.certainty_equivalent import PowerMean
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import FUESEnvelope, GridSearch
+from lcm.solvers import EULER_POINT_AXIS, SAVINGS_POINT_AXIS, FUESEnvelope, GridSearch
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -50,12 +55,17 @@ from tests.test_models.deterministic.dcegm_variants import LIQUID_MARGIN
 N_PERIODS = 3
 
 
-def _build_model(regime: UserRegime) -> Model:
+def _build_model(
+    *,
+    regime: UserRegime,
+    config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     return Model(
         regimes={"retirement": regime, "dead": dead},
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        execution_config=config,
     )
 
 
@@ -140,7 +150,8 @@ def _build_with_model_level_sharded_pruned() -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     return Model(
         regimes={"retirement": VALID, "dead": dead},
-        states={"kind": DiscreteGrid(category_class=_ShardedKind, distributed=True)},
+        states={"kind": DiscreteGrid(category_class=_ShardedKind)},
+        execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
     )
@@ -158,7 +169,8 @@ def _build_with_model_level_sharded_used() -> Model:
     )
     return Model(
         regimes={"retirement": retirement, "dead": dead},
-        states={"kind": DiscreteGrid(category_class=_ShardedKind, distributed=True)},
+        states={"kind": DiscreteGrid(category_class=_ShardedKind)},
+        execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
     )
@@ -172,12 +184,15 @@ def _build_with_regime_level_sharded_terminal() -> Model:
             "retirement": VALID,
             "dead": dead.replace(
                 states={
-                    "kind": DiscreteGrid(category_class=_ShardedKind, distributed=True)
-                }
+                    **dict(dead.states),
+                    "kind": DiscreteGrid(category_class=_ShardedKind),
+                },
+                functions={"utility": lambda wealth, kind: wealth + 0.0 * kind},
             ),
         },
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        execution_config=ExecutionConfig(sharded_states=("kind",)),
     )
 
 
@@ -185,10 +200,10 @@ def _build_with_regime_level_sharded_terminal() -> Model:
     ("build", "match"),
     [
         (_build_with_model_level_sharded_pruned, "pruned from non-terminal"),
-        (_build_with_model_level_sharded_used, "must not be distributed in a DCEGM"),
+        (_build_with_model_level_sharded_used, "DCEGM.*cannot shard discrete"),
         (
             _build_with_regime_level_sharded_terminal,
-            "sharding is declared at the model level",
+            "must name model-level states",
         ),
     ],
 )
@@ -205,7 +220,7 @@ def test_sharded_state_cannot_feed_a_dcegm_carry(*, build, match):
     carry guard is needed. Relaxing any one rule must keep the carry case
     rejected (or add carry co-mapping).
     """
-    with pytest.raises(ModelInitializationError, match=match):
+    with pytest.raises((ModelInitializationError, ExecutionPlanningError), match=match):
         build()
 
 
@@ -331,11 +346,6 @@ CASES = {
         ),
         "stochastic",
     ),
-    # `batch_size` on the Euler / discrete / passive grids is no longer a
-    # contract violation — it is the supported memory knob that splays the
-    # solve (Euler grid → `lax.map` over asset nodes; combo grids → per-axis
-    # `productmap`). Construction is covered below; numerical correctness in
-    # `tests/solution/test_egm_batch_size_euler.py` and `_combos.py`.
     "runtime_savings_grid": (
         lambda: VALID.replace(
             solver=dataclasses.replace(
@@ -364,7 +374,7 @@ def test_dcegm_regime_rejects_nonlinear_certainty_equivalent():
     equivalent is only compatible with `GridSearch`.
     """
     with pytest.raises(RegimeInitializationError, match="does not support a nonlinear"):
-        _build_model(VALID.replace(certainty_equivalent=PowerMean()))
+        _build_model(regime=VALID.replace(certainty_equivalent=PowerMean()))
 
 
 def test_semantic_contract_precedes_exact_kernel_capability(monkeypatch):
@@ -377,7 +387,7 @@ def test_semantic_contract_precedes_exact_kernel_capability(monkeypatch):
     )
 
     with pytest.raises(RegimeInitializationError, match="resources"):
-        _build_model(malformed)
+        _build_model(regime=malformed)
 
 
 def test_portable_contract_model_constructs_without_an_exact_kernel(monkeypatch):
@@ -386,7 +396,7 @@ def test_portable_contract_model_constructs_without_an_exact_kernel(monkeypatch)
 
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
 
-    model = _build_model(VALID)
+    model = _build_model(regime=VALID)
 
     assert model.n_periods == N_PERIODS
 
@@ -401,7 +411,7 @@ def test_dcegm_contract_violation_raises(case_name):
         else ModelInitializationError
     )
     with pytest.raises(error_type, match=match):
-        _build_model(build())
+        _build_model(regime=build())
 
 
 def test_passive_continuous_state_constructs():
@@ -416,7 +426,7 @@ def test_passive_continuous_state_constructs():
             "aime": _next_aime_decaying,
         },
     )
-    model = _build_model(regime)
+    model = _build_model(regime=regime)
     assert model.n_periods == N_PERIODS
 
 
@@ -434,7 +444,7 @@ def test_dcegm_phased_aggregator_with_default_solve_variant_constructs():
             solve=LinearAggregator(), simulate=_custom_aggregator
         )
     )
-    model = _build_model(regime)
+    model = _build_model(regime=regime)
     assert model.n_periods == N_PERIODS
 
 
@@ -446,21 +456,43 @@ def test_dcegm_phased_aggregator_with_custom_solve_variant_raises():
         )
     )
     with pytest.raises(ModelInitializationError, match="solve-phase Koopmans"):
-        _build_model(regime)
+        _build_model(regime=regime)
 
 
-def test_batched_euler_state_grid_constructs():
-    """`batch_size` on the Euler grid is a valid memory knob, not a violation.
+def test_batched_euler_state_grid_is_refused():
+    """The retired grid keyword is refused before a solver is constructed."""
+    with pytest.raises(TypeError, match="batch_size"):
+        LinSpacedGrid(start=1, stop=400, n_points=100, batch_size=50)  # ty: ignore[unknown-argument]
 
-    It splays the per-asset-node solve into `lax.map` blocks; the solver still
-    builds. Numerical invariance across block sizes is covered in
-    `tests/solution/test_egm_batch_size_euler.py`.
+
+def test_the_node_loop_is_sized_by_the_execution_plan_instead():
+    """A width `batch_size` used to carry is fixed through the execution plan.
+
+    The same regime, with no `batch_size` on any grid, builds while naming a
+    width for the exogenous node loop its value program declares. What such a
+    width does to the published values is
+    `tests/solution/test_egm_savings_point_axis.py`.
     """
-    regime = VALID.replace(
-        states={"wealth": LinSpacedGrid(start=1, stop=400, n_points=100, batch_size=50)}
+    model = _build_model(
+        regime=VALID,
+        config=ExecutionConfig(axis_widths={SAVINGS_POINT_AXIS: 8}),
     )
-    model = _build_model(regime)
-    assert model.n_periods == N_PERIODS
+
+    assert dict(model._execution.axis_widths) == {SAVINGS_POINT_AXIS: 8}
+
+
+def test_an_axis_this_regimes_programs_do_not_declare_is_refused():
+    """This regime loops over one Euler node, so it declares no such axis.
+
+    The legal axis names are what the model's own core programs declare, so a
+    width for a loop this kernel does not run is refused rather than carried
+    into a plan that would ignore it.
+    """
+    with pytest.raises(ExecutionPlanningError, match="axis_widths names 'euler_point'"):
+        _build_model(
+            regime=VALID,
+            config=ExecutionConfig(axis_widths={EULER_POINT_AXIS: 8}),
+        )
 
 
 def _impute_pension(age: int) -> ContinuousState:
@@ -492,7 +524,7 @@ def test_carried_state_with_decision_free_imputation_constructs():
             "pension": _next_pension,
         },
     )
-    model = _build_model(regime)
+    model = _build_model(regime=regime)
     assert model.n_periods == N_PERIODS
 
 
@@ -529,7 +561,7 @@ def test_euler_law_with_cliff_in_euler_state_raises():
         functions={**dict(VALID.functions), "cliff_supplement": _cliff_supplement},
     )
     with pytest.raises(ModelInitializationError, match=r"discontinuous.*bunches"):
-        _build_model(regime)
+        _build_model(regime=regime)
 
 
 def test_euler_law_with_kinked_phase_out_constructs():
@@ -538,7 +570,7 @@ def test_euler_law_with_kinked_phase_out_constructs():
         state_transitions={"wealth": _next_wealth_with_kink},
         functions={**dict(VALID.functions), "kinked_supplement": _kinked_supplement},
     )
-    model = _build_model(regime)
+    model = _build_model(regime=regime)
     assert model.n_periods == N_PERIODS
 
 
@@ -602,8 +634,8 @@ def test_coarse_transition_reaching_brute_regime_raises():
 
 def test_solver_configuration_does_not_change_reachability() -> None:
     """Grid search and DC-EGM expose equal lifecycle graphs and graph hashes."""
-    dcegm_model = _build_model(VALID)
-    grid_search_model = _build_model(VALID.replace(solver=GridSearch()))
+    dcegm_model = _build_model(regime=VALID)
+    grid_search_model = _build_model(regime=VALID.replace(solver=GridSearch()))
 
     assert dcegm_model.reachability == grid_search_model.reachability
     assert hash(dcegm_model.reachability) == hash(grid_search_model.reachability)
@@ -702,7 +734,7 @@ def test_brute_force_inverse_marginal_utility_keeps_its_params():
         },
         active=lambda age: age < 60,
     )
-    model = _build_model(regime)
+    model = _build_model(regime=regime)
 
     template = model.get_params_template()
 
@@ -719,7 +751,7 @@ def test_brute_force_solver_explicit_equals_default():
         solver=GridSearch(),
         active=lambda age: age < 60,
     )
-    explicit_model = _build_model(explicit)
+    explicit_model = _build_model(regime=explicit)
 
     got_default = default_model.solve(params=params, log_level="debug").values
     got_explicit = explicit_model.solve(params=params, log_level="debug").values

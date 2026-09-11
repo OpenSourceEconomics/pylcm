@@ -18,6 +18,7 @@ from typing import cast
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from dags.exceptions import InvalidFunctionArgumentsError
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.grids import ContinuousGrid
@@ -268,3 +269,26 @@ def test_keeper_outer_function_identity_holds_the_durable_stock() -> None:
     assert set(inspect.signature(injected).parameters) == {"car"}
     result = injected(car=jnp.asarray(42.0))
     np.testing.assert_allclose(np.asarray(result), 42.0, rtol=1e-10)
+
+
+def test_keeper_outer_function_names_itself_in_an_invalid_argument_error() -> None:
+    """A bad keyword handed to the injected outer post-decision names that function.
+
+    The signature the keeper map is published under enforces its argument list, and
+    the resulting `InvalidFunctionArgumentsError` identifies the offending callable by
+    name so a modeller can find it.
+    """
+
+    def resources(next_car: ContinuousState) -> FloatND:
+        return next_car
+
+    functions = cast("EconFunctionsMapping", MappingProxyType({"resources": resources}))
+    injected = _with_no_adjustment_outer_function(
+        functions=functions,
+        durable_state="car",
+        outer_post_decision="new_car",
+        no_adjustment_func=None,
+    )["new_car"]
+
+    with pytest.raises(InvalidFunctionArgumentsError, match="keep_outer_post_decision"):
+        injected(boat=jnp.asarray(42.0))

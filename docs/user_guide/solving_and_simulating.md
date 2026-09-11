@@ -312,8 +312,50 @@ for the full rules.
 - `seed=None`: Random seed for stochastic simulations (int). Collective dissolution
   gates consume their addressed replay artifacts from `solution`; the automatic-solve
   path retains and threads them itself.
+- `taste_shock_seed=None`: Optional independent seed for common taste shocks across
+  counterfactual models. Omit it to keep the ordinary `seed` behavior.
 - `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
+
+### Common taste shocks across counterfactuals
+
+Pass the same `taste_shock_seed` to compare policies using the same standardized EV1
+shocks, while choosing the ordinary `seed` independently:
+
+```python
+baseline = baseline_model.simulate(
+    params=baseline_params,
+    initial_conditions=initial_conditions,
+    seed=100,
+    taste_shock_seed=200,
+    log_level="debug",
+)
+counterfactual = counterfactual_model.simulate(
+    params=counterfactual_params,
+    initial_conditions=initial_conditions,
+    seed=101,
+    taste_shock_seed=200,
+    log_level="debug",
+)
+```
+
+A draw corresponds to an exact age, a subject's row position in the initial conditions,
+and an ordered discrete-action domain. Regime names, policy parameters, horizon
+endpoints, subject chunks and padding do not identify the draw. Keep people in
+corresponding input rows; DataFrame index labels do not provide subject identity.
+Changing the policy can change choices and state paths even with common shocks.
+
+The discrete domain includes the ordered action names and each action's ordered category
+labels and codes. Renaming, reordering or resizing it changes the stream; individual
+categories are not matched across incompatible domains. Continuous-action grids do not
+enter the address. Changing a taste-shock scale multiplies the same standardized draw,
+so equal scaled shocks additionally require equal scales.
+
+The independent stream uses Threefry and requires matching numerical precision, backend
+and JAX random configuration for exact comparisons. It does not alter the ordinary
+key-chain advancement directly. `taste_shock_seed=None` uses the existing ordinary
+stream, and the optional seed changes neither solutions nor their compatibility
+fingerprints.
 
 ### Heterogeneous initial ages
 

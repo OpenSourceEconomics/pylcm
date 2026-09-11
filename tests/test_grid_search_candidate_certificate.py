@@ -75,13 +75,15 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building import max_Q_over_a as max_Q_over_a_module
-from _lcm.simulation import compile as simulation_compile_module
-from _lcm.simulation import simulate as simulation_module
+from _lcm.simulation import programs as simulation_programs_module
+from _lcm.simulation import runtime as simulation_runtime_module
+from _lcm.simulation import taste_stream as taste_stream_module
 from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -382,15 +384,13 @@ def test_the_action_product_map_is_unbatched():
 
 
 @pytest.mark.parametrize(
-    ("builder", "reducer"),
+    ("kernel", "reducer"),
     [
-        ("get_max_Q_over_a", "max"),
-        ("get_argmax_and_max_Q_over_a", "argmax_and_max"),
+        ("_HardMaxQOverA.__call__", "max"),
+        ("_HardMaxArgmaxQOverA.__call__", "argmax_and_max"),
     ],
 )
-def test_the_singleton_reduction_covers_every_action_axis(
-    *, builder: str, reducer: str
-):
+def test_the_singleton_reduction_covers_every_action_axis(*, kernel: str, reducer: str):
     """The singleton value is a full reduction: masked, and over no named axis.
 
     A reduction with no `axis=` covers the whole action product. An `axis=` here
@@ -400,7 +400,7 @@ def test_the_singleton_reduction_covers_every_action_axis(
     and each owes the obligation separately.
     """
     tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    node = _definition(tree=tree, qualname=builder)
+    node = _definition(tree=tree, qualname=kernel)
     reductions = [
         call
         for call in _calls_named(node=node, name=reducer)
@@ -410,9 +410,11 @@ def test_the_singleton_reduction_covers_every_action_axis(
     assert [_keyword(call=call, name="axis") for call in reductions] == [None]
 
 
-@pytest.mark.parametrize("builder", ["get_max_Q_over_a", "get_argmax_and_max_Q_over_a"])
+@pytest.mark.parametrize(
+    "kernel", ["_HardMaxQOverA.__call__", "_HardMaxArgmaxQOverA.__call__"]
+)
 def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
-    builder: str,
+    kernel: str,
 ):
     """Both collective reductions scalarize over `tuple(range(F_arr.ndim))`.
 
@@ -421,7 +423,7 @@ def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
     hand the household an argmax taken over part of its choice set.
     """
     tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    node = _definition(tree=tree, qualname=builder)
+    node = _definition(tree=tree, qualname=kernel)
     assigned = [
         ast.unparse(child.value)
         for child in ast.walk(node)
@@ -442,21 +444,24 @@ def test_the_taste_shock_reduction_covers_every_action_axis():
     what is left.
     """
     tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    builder = _definition(tree=tree, qualname="get_max_Q_over_a")
+    kernel = _definition(tree=tree, qualname="_SmoothedMaxQOverA.__call__")
     assigned = {
         target.id: ast.unparse(child.value)
-        for child in ast.walk(builder)
+        for child in ast.walk(kernel)
         if isinstance(child, ast.Assign)
         for target in child.targets
         if isinstance(target, ast.Name) and target.id == "continuous_axes"
     }
-    smoothing = _calls_named(node=builder, name="logsum_and_softmax")[0]
+    smoothing = _calls_named(node=kernel, name="logsum_and_softmax")[0]
     axes = _keyword(call=smoothing, name="axes")
 
     assert (
         assigned["continuous_axes"],
         ast.unparse(axes) if axes is not None else None,
-    ) == ("tuple(range(n_discrete_action_axes, Q_arr.ndim))", "tuple(range(Qc.ndim))")
+    ) == (
+        "tuple(range(self.n_discrete_action_axes, Q_arr.ndim))",
+        "tuple(range(Qc.ndim))",
+    )
 
 
 def test_no_obligation_rests_on_an_undeclared_source():
@@ -514,6 +519,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/params/regime_template.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/params/processing.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/dtypes.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/entry_allocations.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/namespace.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/pandas_utils.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/model_processing.py"), ast.Module)
@@ -524,10 +530,79 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert tuple(sorted(result["certified_corridor_sources"])) == CERTIFIED_SOURCES
 
 
+def test_uniform_process_sources_have_literal_inventory_obligations() -> None:
+    """Include the producer, resolver and every support interpretation consumer."""
+    assert isinstance(_parse("src/_lcm/processes/grid_resolution.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/process_grids.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/fingerprint.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/model_authority.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/preconditions.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/diagnostics.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/transition_checks.py"), ast.Module)
+
+
+def test_action_grid_admission_has_a_literal_inventory_obligation() -> None:
+    """Include the call-owned Cartesian preflight producer and its cleanup."""
+    assert isinstance(_parse("src/_lcm/simulation/action_grids.py"), ast.Module)
+
+
+def test_finite_policy_diagnostic_is_a_literal_certificate_obligation():
+    """Include the profiled live-versus-represented candidate diagnostic."""
+    assert isinstance(_parse("src/_lcm/simulation/policy_diagnostics.py"), ast.Module)
+
+
+def test_eager_dependencies_are_literal_certificate_obligations():
+    """Include the live eager placement and physical-layout dependencies."""
+    assert isinstance(_parse("src/_lcm/execution/eager_core.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/runtime_sharding.py"), ast.Module)
+
+
+def test_copy_and_chunk_dependencies_are_literal_certificate_obligations():
+    """Inventory each new live dependency in the reviewed copy/profile corridor."""
+    assert isinstance(
+        _parse("src/_lcm/execution/abstract_program_inputs.py"), ast.Module
+    )
+    assert isinstance(_parse("src/_lcm/simulation/assembly.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_admission.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_offload.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_operations.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_planning.py"), ast.Module)
+    assert isinstance(
+        _parse("src/_lcm/simulation/chunk_profile_inventory.py"), ast.Module
+    )
+    assert isinstance(_parse("src/_lcm/simulation/chunk_profiles.py"), ast.Module)
+    assert isinstance(
+        _parse("src/_lcm/simulation/diagnostic_operations.py"), ast.Module
+    )
+    assert isinstance(
+        _parse("src/_lcm/simulation/forward_program_profiles.py"), ast.Module
+    )
+    assert isinstance(
+        _parse("src/_lcm/simulation/population_operations.py"), ast.Module
+    )
+    assert isinstance(_parse("src/_lcm/simulation/program_arguments.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/solution_copies.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/result_snapshot.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/validate_V.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/utils/logging.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/_solver_api/authority.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/_solver_api/entries.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/_solver_api/stores.py"), ast.Module)
+
+
+def test_native_value_dependencies_are_literal_certificate_obligations():
+    """The exact single-array native reader participates in budgeted value replay."""
+    assert isinstance(_parse("src/_lcm/solution/native_values.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/persistence/solution.py"), ast.Module)
+
+
 def test_streamed_reducer_sources_are_literal_certificate_obligations():
     """The generated inventory owns every live streamed transport helper."""
     assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/execution/value_transfer.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/footprint.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/compiler_inputs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/internal_outputs.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/action_streaming.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/action_reduction.py"), ast.Module)
     assert isinstance(
@@ -537,6 +612,33 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations():
         _parse("src/_lcm/solution/logsumexp_action_reduction.py"), ast.Module
     )
     assert isinstance(_parse("src/_lcm/solution/period_replay.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/programs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/program_types.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/policy_programs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/egm/published_policy.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/runtime.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/operand_placement.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/unit_executor.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/host_operations.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/memory.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/membership.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/taste_stream.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/period_inputs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/replay_inputs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/value_reads.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/value_placement.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/chunk_inputs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/entry_inputs.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/residency.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/gated_routing.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/v_topology.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/retained_buffers.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/scheduler.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/liveness.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/continuation_reads.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/continuation_arguments.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/nbegm.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/workspace_planning.py"), ast.Module)
 
 
 def test_direct_flow_certificate_names_every_supported_route():
@@ -553,6 +655,7 @@ def test_direct_flow_certificate_names_every_supported_route():
         "taste_shock_solve",
         "taste_shock_streamed_solve",
         "taste_shock_simulate",
+        "finite_policy_simulate",
     }
 
 
@@ -587,6 +690,8 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "solve:dormant_certified_reducer",
         "simulate:return_bypasses_certified_reducer",
         "shared_max:productmap_module_shadow",
+        "shared_tiled_productmap:reverse_cell_coordinates",
+        "shared_tiled_productmap:ignore_planned_width",
         "caller_solve:action_names_slice",
         "caller_solve:wrong_discrete_axis_count",
         "caller_solve:taste_flag_disabled",
@@ -745,6 +850,8 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "terminal_wrapper:native_graph_filtered",
         "terminal_wrapper:duplicate_legacy_authority",
         "streaming_resolver:bypass_static_width_binding",
+        "streaming_resolver:candidate_validation_bypassed",
+        "streaming_resolver:later_candidates_dropped",
         "streaming_resolver:arguments_filtered",
         "streaming_resolver:specialization_drops_axes",
         "streaming_resolver:output_roles_dropped",
@@ -807,6 +914,11 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "value_transfer:edge_identity_check_bypassed",
         "value_transfer:copy_destination_ignored",
         "value_transfer:duplicate_consumer_admitted",
+        "footprint:resident_walk_runs_forward",
+        "internal_outputs:resolved_templates_dropped",
+        "internal_outputs:width_invariance_refusal_bypassed",
+        "internal_outputs:consumed_producer_names_drops_last_reference",
+        "internal_outputs:template_argument_collision_check_bypassed",
     }
     required.update(
         f"{route}:candidate_index_{index}"
@@ -827,10 +939,18 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 355
+    original_names = {
+        name for name in names if not name.startswith("simulation_adapter:")
+    }
+    assert len(original_names) == 388
+    assert (
+        hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
+        == "f3d63d3030cb5d0a347f938aaba1c03faa52b23dd81690d982dcf7685d3a9a2d"
+    )
+    assert len(names) == 406
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "f5627cb8d4e6928c03c1707ef5ca396f5c16fd17d182c3668531f11f12802c91"
+        == "8a05b3e83750ca635e61bd66bc0667278710dc750e0ccb58f85fc8e1c63f8454"
     )
 
 
@@ -1018,6 +1138,7 @@ def _build_model(
     terminal_utility: Callable[..., FloatND] | CollectiveUtility,
     taste_shocks: bool = False,
     n_subjects: int | None = None,
+    subject_width: int | None = None,
 ) -> Model:
     """Build the one-decision model the sweeps solve.
 
@@ -1027,6 +1148,7 @@ def _build_model(
         terminal_utility: The terminal regime's utility declaration.
         taste_shocks: Whether the acting singleton declares EV1 taste shocks.
         n_subjects: Subject count to precompile, or ``None`` for the lazy path.
+        subject_width: Optional explicit forward subject width.
 
     Returns:
         The built model.
@@ -1057,6 +1179,9 @@ def _build_model(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
         n_subjects=n_subjects,
+        execution_config=ExecutionConfig(
+            axis_widths={} if subject_width is None else {"subject": subject_width}
+        ),
     )
 
 
@@ -1096,7 +1221,9 @@ def _dedup_terminal_utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _build_dedup_collision_model(*, n_subjects: int | None = 2) -> Model:
+def _build_dedup_collision_model(
+    *, n_subjects: int | None = 2, subject_width: int | None = None
+) -> Model:
     """Build same-shaped regimes whose AOT argmax partials must remain distinct."""
     wealth_grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
@@ -1124,6 +1251,9 @@ def _build_dedup_collision_model(*, n_subjects: int | None = 2) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=DedupRegimeId,
         n_subjects=n_subjects,
+        execution_config=ExecutionConfig(
+            axis_widths={} if subject_width is None else {"subject": subject_width}
+        ),
     )
 
 
@@ -1825,14 +1955,14 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
     model = _build_dedup_collision_model()
     params = _dedup_params(model)
     values = model.solve(params=params, log_level="debug")
-    original = simulation_compile_module._func_dedup_key
+    original = simulation_runtime_module._func_dedup_key
 
     def collapsed_key(*, func: Callable[..., Any]):
         if isinstance(func, functools.partial):
             return original(func=func)
         return 0
 
-    monkeypatch.setattr(simulation_compile_module, "_func_dedup_key", collapsed_key)
+    monkeypatch.setattr(simulation_runtime_module, "_func_dedup_key", collapsed_key)
     result = model.simulate(
         params=params,
         initial_conditions={
@@ -1863,7 +1993,9 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned(
     compiled_n_subjects: int | None,
 ):
     """Padding and trimming preserve each subject's selected candidate."""
-    model = _build_dedup_collision_model(n_subjects=compiled_n_subjects)
+    model = _build_dedup_collision_model(
+        n_subjects=compiled_n_subjects, subject_width=2
+    )
     result = model.simulate(
         params=_dedup_params(model),
         initial_conditions={
@@ -1872,7 +2004,6 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned(
             "regime_id": jnp.full(3, DedupRegimeId.left, dtype=jnp.int32),
         },
         log_level="debug",
-        subject_batch_size=2,
     )
 
     raw = result.raw_results["left"][0]
@@ -2056,9 +2187,7 @@ _RNG_RANKS = (2.0, 1.0, 0.0, 2.0, 1.0, 0.0)
 _RNG_MASK = tuple(True for _ in _CANDIDATES)
 
 
-def _simulate_seeded_taste_routing(
-    *, model: Model, subject_batch_size: int
-) -> tuple[list[int], list[int]]:
+def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int]]:
     """Publish raw and DataFrame choices for one fixed subject-key stream."""
     result = model.simulate(
         params=_params_for_mask(model=model, mask=_RNG_MASK, ranks=_RNG_RANKS),
@@ -2069,7 +2198,6 @@ def _simulate_seeded_taste_routing(
         },
         log_level="debug",
         seed=409,
-        subject_batch_size=subject_batch_size,
     )
     raw = result.raw_results["acting"][0].actions["work"].tolist()
     frame = result.to_dataframe(additional_targets=["utility"], use_labels=False)
@@ -2084,16 +2212,18 @@ def test_seeded_taste_keys_preserve_subject_identity_across_batching(
     compiled_n_subjects: int | None,
 ):
     """A fixed subject keeps its taste draw under chunking and AOT dispatch."""
-    model = _build_model(
-        utility=_ranked_utility,
-        constraints={"candidate_mask": _candidate_mask},
-        terminal_utility=lambda: jnp.array(0.0),
-        taste_shocks=True,
-        n_subjects=compiled_n_subjects,
-    )
-    unbatched = _simulate_seeded_taste_routing(model=model, subject_batch_size=0)
-    chunked = _simulate_seeded_taste_routing(
-        model=model, subject_batch_size=_RNG_SUBJECT_BATCH_SIZE
+    unbatched, chunked = (
+        _simulate_seeded_taste_routing(
+            model=_build_model(
+                utility=_ranked_utility,
+                constraints={"candidate_mask": _candidate_mask},
+                terminal_utility=lambda: jnp.array(0.0),
+                taste_shocks=True,
+                n_subjects=compiled_n_subjects,
+                subject_width=width,
+            )
+        )
+        for width in (None, _RNG_SUBJECT_BATCH_SIZE)
     )
 
     assert unbatched == chunked
@@ -2110,11 +2240,10 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
         constraints={"candidate_mask": _candidate_mask},
         terminal_utility=lambda: jnp.array(0.0),
         taste_shocks=True,
+        subject_width=_RNG_SUBJECT_BATCH_SIZE,
     )
-    baseline = _simulate_seeded_taste_routing(
-        model=model, subject_batch_size=_RNG_SUBJECT_BATCH_SIZE
-    )
-    original = simulation_module.generate_simulation_keys
+    baseline = _simulate_seeded_taste_routing(model=model)
+    original = taste_stream_module.generate_simulation_keys
 
     def reassigned_keys(**kwargs: Any) -> tuple[Any, dict[str, Any]]:
         next_key, keys = original(**kwargs)
@@ -2122,10 +2251,10 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
             name: jnp.roll(values, 1, axis=0) for name, values in keys.items()
         }
 
-    monkeypatch.setattr(simulation_module, "generate_simulation_keys", reassigned_keys)
-    shifted = _simulate_seeded_taste_routing(
-        model=model, subject_batch_size=_RNG_SUBJECT_BATCH_SIZE
+    monkeypatch.setattr(
+        taste_stream_module, "generate_simulation_keys", reassigned_keys
     )
+    shifted = _simulate_seeded_taste_routing(model=model)
 
     assert shifted[0] == shifted[1]
     assert shifted[0] != baseline[0]
@@ -2260,27 +2389,37 @@ def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_m
             aaae(observed["value_m"], expected, decimal=DECIMAL_PRECISION)
 
 
-def _argmax_masking_the_last_action_cell() -> Callable[..., Any]:
-    """Return an `argmax_and_max` that hides the last cell of the action product.
+def _q_and_f_masking_the_last_action_cell(
+    *, Q_and_F: Callable[..., tuple[FloatND, BoolND]], **kwargs: Any
+) -> tuple[FloatND, BoolND]:
+    """Hide exactly the final coordinate pair from the simulation hard-max fold."""
+    value, feasible = Q_and_F(**kwargs)
+    is_last = (kwargs["work"] == _WORK_VALUES[-1]) & (
+        kwargs["consumption"] == _CONSUMPTION_VALUES[-1]
+    )
+    return value, feasible & ~is_last
 
-    Patching the simulate-side reducer alone is what makes the control specific: the
-    solve reduction is a different callable and keeps the full candidate set, so a
-    green solve sweep beside a red simulate sweep is exactly the divergence a
-    solve-only certificate cannot see.
 
-    Returns:
-        A drop-in replacement for `argmax_and_max`.
+def _simulation_fold_masking_the_last_action_cell(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[str, ...],
+    block_width: int,
+) -> Callable[..., Any]:
+    """Build the simulation fold with one candidate hidden; leave solve unchanged.
+
+    The simulation module owns the patched builder binding. The solve module keeps
+    its original builder, and terminal folds without actions pass through untouched.
     """
-    real = max_Q_over_a_module.argmax_and_max
-
-    def patched(*, a: Any, where: Any = None, **kwargs: Any) -> Any:
-        # `argmax_and_max` also reduces rank-0 masks elsewhere in the engine; those
-        # carry no action axis to hide a cell along, so they pass through untouched.
-        if where is not None and where.ndim >= 1:
-            where = where.at[..., -1].set(False)  # noqa: PD008
-        return real(a=a, where=where, **kwargs)
-
-    return patched
+    return action_streaming_module.build_streaming_max_Q_over_a(
+        Q_and_F=(
+            functools.partial(_q_and_f_masking_the_last_action_cell, Q_and_F=Q_and_F)
+            if action_names
+            else Q_and_F
+        ),
+        action_names=action_names,
+        block_width=block_width,
+    )
 
 
 def test_masking_one_simulate_candidate_changes_the_published_action():
@@ -2292,9 +2431,9 @@ def test_masking_one_simulate_candidate_changes_the_published_action():
     """
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            max_Q_over_a_module,
-            "argmax_and_max",
-            _argmax_masking_the_last_action_cell(),
+            simulation_programs_module,
+            "build_streaming_max_Q_over_a",
+            _simulation_fold_masking_the_last_action_cell,
         )
         model = _build_model(
             utility=_labelled_utility,
@@ -2319,9 +2458,9 @@ def test_masking_one_simulate_candidate_leaves_the_others_alone():
     """
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            max_Q_over_a_module,
-            "argmax_and_max",
-            _argmax_masking_the_last_action_cell(),
+            simulation_programs_module,
+            "build_streaming_max_Q_over_a",
+            _simulation_fold_masking_the_last_action_cell,
         )
         model = _build_model(
             utility=_labelled_utility,
@@ -2414,3 +2553,8 @@ def test_dropping_one_candidate_leaves_every_other_candidate_alone():
         _WEALTH_VALUES + _CONSUMPTION_VALUES[0] + 10.0 * _WORK_VALUES[0],
         decimal=DECIMAL_PRECISION,
     )
+
+
+def test_solve_completion_owner_is_a_literal_certificate_dependency():
+    """Authenticate the live owner in the solve transport certificate inventory."""
+    assert isinstance(_parse("src/_lcm/execution/pending_work.py"), ast.Module)

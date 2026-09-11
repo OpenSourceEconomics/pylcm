@@ -34,6 +34,10 @@ Never run the test suite directly in this session — dispatch it to a subagent 
 `Agent` tool: `subagent_type: "fork"` for a quick check, a fresh agent for a longer
 one). This keeps a battery's console output out of this session's context.
 
+Local test batteries, including full suites, share one aggregate `cap` memory budget and
+must remain serialized. Full suites in independent Marvin Slurm allocations may run
+concurrently when each job has explicit CPU and memory limits.
+
 Give the subagent the exact invocation:
 
 ```
@@ -373,9 +377,11 @@ reachable target that keeps the state) transitively reads it, per phase slice, p
 only when dead in both phases. Regime-level declarations are never pruned.
 `model.pruned_variables` records the result per regime.
 
-`distributed=True` is legal only on model-level states; a sharded state pruned from a
-non-terminal regime is an error (unshard or make the regime use it). `batch_size` stays
-per-declaration.
+Declare device axes with `Model(execution_config=ExecutionConfig(sharded_states=...))`,
+using model-level discrete states. A sharded state pruned from a non-terminal regime is
+an error (unshard or make the regime use it). Grids define outcome spaces only;
+planner-owned widths live in `ExecutionConfig(axis_widths=...)` and name axes the
+model's actual core programs declare.
 
 **Model Requirements:**
 

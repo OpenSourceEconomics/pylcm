@@ -62,19 +62,21 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
     )
 
 
-def test_the_graph_publishes_one_dense_main_program():
+def test_the_graph_publishes_one_planned_main_program():
     kernel, _ = _kernel()
     graph = core_program_graph(kernel=kernel)
 
     assert tuple(graph) == ("main",)
     program = graph["main"]
-    assert program.disposition is CoreExecutionDisposition.DENSE
-    assert program.disposition_reason == (
-        "deliberately_dense:egm_one_row_no_product_axis"
-    )
+    assert program.disposition is CoreExecutionDisposition.PLANNED
+    assert program.disposition_reason is None
     assert program.scope is ProgramScope.ANY
-    assert program.requirements.streamable_axes == ()
-    assert program.requirements.target_value_accesses == ()
+    assert program.requirements.axes == ()
+    assert {read.source.argument for read in program.requirements.value_reads} == {
+        "next_liquid_grid",
+        "next_value",
+        "next_marginal",
+    }
 
 
 def test_main_publishes_the_value_and_a_one_row_carry():
@@ -169,7 +171,7 @@ def test_with_fixed_params_rebinds_the_program_and_its_builder():
     assert kernel.with_fixed_params(fixed_flat_params=MappingProxyType({})) is kernel
 
 
-def test_a_replay_lowers_the_dense_program_the_solve_ran(*, monkeypatch, tmp_path):
+def test_a_replay_lowers_the_program_the_solve_ran(*, monkeypatch, tmp_path):
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", f"{_REGIME}@{_PERIOD}")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     solution = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
@@ -186,7 +188,7 @@ def test_a_replay_lowers_the_dense_program_the_solve_ran(*, monkeypatch, tmp_pat
     monkeypatch.setattr(period_replay, "core_program_graph", record_graph)
     replay = replay_period(directory=tmp_path / f"{_REGIME}@{_PERIOD}")
 
-    assert dispositions == [CoreExecutionDisposition.DENSE]
+    assert dispositions == [CoreExecutionDisposition.PLANNED]
     assert_agrees_to_ulp(
         got=np.asarray(replay.output.value),
         expected=np.asarray(solution.values[_PERIOD][_REGIME]),
@@ -216,9 +218,8 @@ def test_the_kernel_runs_under_jit_from_its_declared_program():
         np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
 
 
-def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
-    """The one-row kernel NB-EGM builds for a single liquid axis publishes the same
-    graph, with a breakpoints row for the feasibility boundaries its carry carries."""
+def _single_liquid_nbegm_graph() -> Mapping[str, Any]:
+    """The graph NB-EGM builds for a regime whose only ride axis is liquid."""
     from tests.test_nbegm_constraint_validation import (  # noqa: PLC0415
         _build_smooth_model,
         _smooth_params,
@@ -229,12 +230,30 @@ def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
     kernel, _ = ride_along_kernel(
         model=model, params=_smooth_params(asset_limit=None), regime_name="alive"
     )
-    graph = core_program_graph(kernel=kernel)
+    return core_program_graph(kernel=kernel)
+
+
+def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
+    """The one-row kernel NB-EGM builds for a single liquid axis publishes the same
+    graph, with a breakpoints row for the feasibility boundaries its carry carries."""
+    graph = _single_liquid_nbegm_graph()
 
     assert tuple(graph) == ("main",)
-    assert graph["main"].disposition_reason == (
-        "deliberately_dense:egm_one_row_no_product_axis"
-    )
+    assert graph["main"].disposition_reason is None
     _, carry_roles = cast("tuple[Any, Any]", graph["main"].output_roles)
     assert carry_roles.breakpoints == StateAxesLeading(state_names=())
     assert carry_roles.policy is None
+
+
+def test_a_single_liquid_nbegm_kernel_declares_the_rows_its_arguments_carry():
+    """The dense NB-EGM route pairs carry row to argument exactly as plain EGM does."""
+    program = _single_liquid_nbegm_graph()["main"]
+
+    assert {
+        (read.target.leaf_path, read.source.argument)
+        for read in program.requirements.value_reads
+    } == {
+        (("endog_grid",), "next_liquid_grid"),
+        (("value",), "next_value"),
+        (("marginal_utility",), "next_marginal"),
+    }

@@ -103,7 +103,7 @@ def _get_child_state_name(*, user_regime: UserRegime) -> StateName:
     dcegm = _as_dcegm(user_regime)
     if dcegm is not None:
         return dcegm.continuous_state
-    grids = get_grids(user_regime)
+    grids = get_grids(user_regime=user_regime)
     # A carried state (imputed in solve, seeded in simulate) has no solve grid, so
     # it never appears in `grids` and is not the Euler axis; skip it. The Euler axis
     # is a genuine grid-backed continuous state.
@@ -133,8 +133,8 @@ def _get_child_discrete_actions(
     space's discrete actions), so per-row bindings line up with the carry's
     action axes. Terminal targets have no actions (guarded).
     """
-    variables = from_regime(user_regime)
-    grids = get_grids(user_regime)
+    variables = from_regime(user_regime=user_regime)
+    grids = get_grids(user_regime=user_regime)
     names = tuple(variables.discrete_action_names)
     return names, tuple(grids[name].to_jax() for name in names)
 

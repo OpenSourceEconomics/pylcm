@@ -1,4 +1,5 @@
 import ast
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -180,13 +181,6 @@ def test_engine_has_no_period_target_inference_helper() -> None:
 
 def test_solver_runtime_does_not_import_regime_declaration_topology() -> None:
     """Solver runtime modules depend on the graph, not user declarations."""
-    package_root = Path(__file__).parents[2] / "src" / "_lcm"
-    runtime_paths = [
-        *sorted((package_root / "solution").rglob("*.py")),
-        package_root / "simulation" / "compile.py",
-        package_root / "simulation" / "simulate.py",
-        package_root / "simulation" / "transitions.py",
-    ]
     forbidden_modules = {
         "lcm.regime",
         "_lcm.regime_building.canonicalize",
@@ -194,7 +188,7 @@ def test_solver_runtime_does_not_import_regime_declaration_topology() -> None:
     }
     imports = [
         (path, node.lineno, node.module)
-        for path in runtime_paths
+        for path in _solver_runtime_paths()
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.ImportFrom) and node.module in forbidden_modules
     ]
@@ -207,6 +201,7 @@ def _solver_runtime_paths() -> list[Path]:
     return [
         *sorted((package_root / "solution").rglob("*.py")),
         package_root / "simulation" / "compile.py",
+        package_root / "simulation" / "runtime.py",
         package_root / "simulation" / "simulate.py",
         package_root / "simulation" / "transitions.py",
     ]
@@ -232,8 +227,147 @@ def test_solver_runtime_does_not_call_activity_predicates() -> None:
     assert calls == []
 
 
+def _is_simulation_program_bundle(node: ast.expr | None) -> bool:
+    """Recognize the canonical engine phase's published program bundle."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "programs"
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "simulation"
+    )
+
+
+def _visible_name_bindings(tree: ast.AST) -> Counter[str]:
+    """Count assignments, declarations and name captures conservatively."""
+    bindings: Counter[str] = Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store | ast.Del):
+            bindings[node.id] += 1
+        elif isinstance(node, ast.arg):
+            bindings[node.arg] += 1
+        elif isinstance(node, ast.alias):
+            bindings[node.asname or node.name.split(".")[0]] += 1
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            bindings[node.name] += 1
+        elif isinstance(node, ast.ExceptHandler | ast.MatchAs | ast.MatchStar):
+            if node.name is not None:
+                bindings[node.name] += 1
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            bindings[node.rest] += 1
+        elif isinstance(node, ast.Global | ast.Nonlocal):
+            bindings.update(node.names)
+    return bindings
+
+
+def _program_bundle_names(tree: ast.AST) -> set[str]:
+    """Allow a receiver only when each visible binding identifies a program bundle.
+
+    Unknown or reassigned names stay forbidden. This deliberately conservative
+    source guard does not infer arbitrary aliases or interprocedural types.
+    """
+    bindings = _visible_name_bindings(tree)
+    bundle_bindings: Counter[str] = Counter()
+    imported_types = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "_lcm.simulation.program_types"
+        ):
+            imported_types.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "SimulationPrograms"
+            )
+    imported_types = {name for name in imported_types if bindings[name] == 1}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign | ast.AnnAssign):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if _is_simulation_program_bundle(node.value):
+                bundle_bindings.update(
+                    target.id for target in targets if isinstance(target, ast.Name)
+                )
+        elif (
+            isinstance(node, ast.arg)
+            and isinstance(node.annotation, ast.Name)
+            and node.annotation.id in imported_types
+        ):
+            bundle_bindings[node.arg] += 1
+    return {name for name, count in bundle_bindings.items() if count == bindings[name]}
+
+
+def _raw_transition_reads(source: str) -> list[ast.Attribute]:
+    """Reject raw declaration reads while admitting proved program-family reads."""
+    tree = ast.parse(source)
+    program_names = _program_bundle_names(tree)
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and node.attr in {"transition", "state_transitions"}
+        and not (
+            node.attr == "transition"
+            and (
+                _is_simulation_program_bundle(node.value)
+                or (isinstance(node.value, ast.Name) and node.value.id in program_names)
+            )
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_reads"),
+    [
+        ("regime.transition", ["regime.transition"]),
+        ("regime.state_transitions", ["regime.state_transitions"]),
+        ("programs.transition", ["programs.transition"]),
+        ("programs = regime\nprograms.transition", ["programs.transition"]),
+        ("regime.simulation.programs.transition", []),
+        ("programs = regime.simulation.programs\nprograms.transition", []),
+        (
+            (
+                "programs = regime.simulation.programs\n"
+                "programs = regime\nprograms.transition"
+            ),
+            ["programs.transition"],
+        ),
+        (
+            "programs = regime.simulation.programs\nprograms.state_transitions",
+            ["programs.state_transitions"],
+        ),
+        (
+            (
+                "from _lcm.simulation.program_types import "
+                "SimulationPrograms as Bundle\n"
+                "def dispatch(programs: Bundle):\n    return programs.transition"
+            ),
+            [],
+        ),
+        (
+            "def dispatch(programs: Regime):\n    return programs.transition",
+            ["programs.transition"],
+        ),
+        (
+            (
+                "from _lcm.simulation.program_types import "
+                "SimulationPrograms as Bundle\n"
+                "Bundle = Regime\n"
+                "def dispatch(programs: Bundle):\n    return programs.transition"
+            ),
+            ["programs.transition"],
+        ),
+    ],
+)
+def test_raw_transition_guard_distinguishes_program_bundles(
+    *, source: str, expected_reads: list[str]
+) -> None:
+    """Only canonical program receivers pass; declaration and shadowed names fail."""
+    assert [
+        ast.unparse(node) for node in _raw_transition_reads(source)
+    ] == expected_reads
+
+
 def test_solver_runtime_does_not_inspect_regime_transition_mapping_keys() -> None:
-    """Solver runtime modules never read `.transition` / `.state_transitions`.
+    """Solver runtime modules never read raw transition declaration mappings.
 
     Which regime pairs are reachable is a graph property; a solver module
     inspecting the raw declared transition or state-transition mapping to
@@ -242,9 +376,7 @@ def test_solver_runtime_does_not_inspect_regime_transition_mapping_keys() -> Non
     accesses = [
         (path, node.lineno)
         for path in _solver_runtime_paths()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.Attribute)
-        and node.attr in {"transition", "state_transitions"}
+        for node in _raw_transition_reads(path.read_text(encoding="utf-8"))
     ]
 
     assert accesses == []

@@ -1,4 +1,5 @@
 import inspect
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -14,6 +15,8 @@ from _lcm.utils.containers import find_duplicates
 from _lcm.utils.functools import allow_args, allow_only_kwargs, publish_signature
 from lcm.exceptions import FunctionDispatchError
 from lcm.typing import BoolND, FloatND, IntND
+
+_MAX_FLAT_CELL_INDEX = 2**31 - 1
 
 FunctionWithArrayReturn = TypeVar(
     "FunctionWithArrayReturn",
@@ -254,6 +257,248 @@ def productmap(
     return cast(
         "FunctionWithArrayReturn", allow_only_kwargs(func=mapped, enforce=False)
     )
+
+
+def tiled_productmap(
+    *,
+    func: FunctionWithArrayReturn,
+    variables: tuple[str, ...],
+    width_keyword: str,
+    untiled_variables: tuple[str, ...] = (),
+) -> FunctionWithArrayReturn:
+    """Map a bounded window of the C-order Cartesian product of named inputs.
+
+    The static width keyword is consumed by the mapper. Each output leaf recovers
+    the original product axes followed by its own trailing axes. Coordinate grids
+    remain separate arrays. A window holding multiple prefix cells maps the final
+    coordinate separately; other windows decode every coordinate from a flat index.
+    Untiled variables use ordinary outer vmaps. Their axes are restored to their
+    original positions before the result leaves this boundary.
+    """
+    if duplicates := find_duplicates(variables):
+        msg = f"Same argument provided more than once in variables: {duplicates}"
+        raise ValueError(msg)
+    signature = inspect.signature(func)
+    if width_keyword in signature.parameters:
+        msg = f"Tile width keyword {width_keyword!r} collides with a function argument."
+        raise FunctionDispatchError(msg)
+    missing = set(variables).difference(signature.parameters)
+    if missing:
+        msg = f"Product variables are absent from the function: {sorted(missing)!r}."
+        raise FunctionDispatchError(msg)
+    if find_duplicates(untiled_variables) or set(untiled_variables).difference(
+        variables
+    ):
+        msg = "Untiled variables must be a distinct subset of the product variables."
+        raise FunctionDispatchError(msg)
+    parameters = [
+        parameter.replace(kind=inspect.Parameter.KEYWORD_ONLY)
+        for parameter in signature.parameters.values()
+    ]
+    parameters.append(
+        inspect.Parameter(width_keyword, inspect.Parameter.KEYWORD_ONLY, default=1)
+    )
+    cell_variables = tuple(name for name in variables if name not in untiled_variables)
+    cell_mapper = _TiledProductMap(
+        func=func, variables=cell_variables, width_keyword=width_keyword
+    )
+    mapped_signature = signature.replace(parameters=parameters)
+    publish_signature(target=cell_mapper, signature=mapped_signature)
+    mapped = cast("FunctionWithArrayReturn", cell_mapper)
+    if untiled_variables:
+        mapped = productmap(
+            func=mapped,
+            variables=untiled_variables,
+            batch_sizes=dict.fromkeys(untiled_variables, 0),
+        )
+        mapped_order = (*untiled_variables, *cell_variables)
+        if mapped_order != variables:
+            restored = _RestoreProductAxisOrder(
+                func=mapped,
+                axes=tuple(mapped_order.index(name) for name in variables),
+            )
+            publish_signature(target=restored, signature=mapped_signature)
+            mapped = cast("FunctionWithArrayReturn", restored)
+    return mapped
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _RestoreProductAxisOrder:
+    """Restore the declared state order after mapping untiled axes outside cells."""
+
+    func: Callable[..., Any]
+    """Mapped scalar computation producing outer axes followed by cell axes."""
+    axes: tuple[int, ...]
+    """Permutation from mapped state axes to the original declared order."""
+
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        return jax.tree.map(
+            partial(_transpose_product_axes, axes=self.axes), self.func(**kwargs)
+        )
+
+
+# keyword-only-exempt: library-callback=jax.tree.map
+def _transpose_product_axes(value: jax.Array, *, axes: tuple[int, ...]) -> jax.Array:
+    """Move state axes without changing a leaf's trailing roles or dtype."""
+    return jnp.transpose(value, (*axes, *range(len(axes), value.ndim)))
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _TiledProductMap:
+    """Evaluate separate coordinate grids through a bounded Cartesian window."""
+
+    func: Callable[..., Any]
+    """Unchanged scalar function evaluated at each product coordinate."""
+    variables: tuple[str, ...]
+    """Product coordinates in canonical C order, outermost first."""
+    width_keyword: str
+    """Static keyword consumed by this mapping boundary."""
+
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        width = kwargs.pop(self.width_keyword, 1)
+        if type(width) is not int or width < 1:
+            msg = f"Tile width must be a positive static integer, got {width!r}."
+            raise ValueError(msg)
+        if not self.variables:
+            return self.func(**kwargs)
+        coordinates = tuple(jnp.atleast_1d(kwargs[name]) for name in self.variables)
+        shape = tuple(coordinate.shape[0] for coordinate in coordinates)
+        n_cells = math.prod(shape)
+        if n_cells < 1 or n_cells > _MAX_FLAT_CELL_INDEX:
+            msg = (
+                f"State-cell product exceeds the positive int32 index range: {n_cells}."
+            )
+            raise ValueError(msg)
+        arguments = MappingProxyType(
+            {
+                name: value
+                for name, value in kwargs.items()
+                if name not in self.variables
+            }
+        )
+        if len(self.variables) > 1 and width // min(width, shape[-1]) > 1:
+            return _map_grouped_product(
+                func=self.func,
+                variables=self.variables,
+                coordinates=coordinates,
+                shape=shape,
+                arguments=arguments,
+                width=width,
+            )
+        evaluate = _EvaluateTiledCell(
+            func=self.func,
+            variables=self.variables,
+            coordinates=coordinates,
+            strides=tuple(math.prod(shape[index + 1 :]) for index in range(len(shape))),
+            arguments=arguments,
+        )
+        mapped = map_over_leading_axis(
+            func=evaluate, xs=jnp.arange(n_cells, dtype=jnp.int32), batch_size=width
+        )
+        return jax.tree.map(partial(_restore_product_axes, shape=shape), mapped)
+
+
+def _map_grouped_product(
+    *,
+    func: Callable[..., Any],
+    variables: tuple[str, ...],
+    coordinates: tuple[jax.Array, ...],
+    shape: tuple[int, ...],
+    arguments: MappingProxyType[str, Any],
+    width: int,
+) -> Any:  # noqa: ANN401
+    """Map a flat prefix and final coordinate with at most two cell batch axes.
+
+    The rectangle's two widths multiply to at most the requested width. Separate
+    final-coordinate work can be reused across the prefix, while the decoded
+    prefix keeps its scalar computations on one batch axis. The scalar cell and
+    every trailing output role retain their original meanings.
+    """
+    inner_width = min(width, shape[-1])
+    outer_width = max(1, width // inner_width)
+    evaluate = _EvaluateTiledCell(
+        func=_MapOverFinalCoordinate(
+            func=func,
+            variable=variables[-1],
+            coordinate=coordinates[-1],
+            width=inner_width,
+        ),
+        variables=variables[:-1],
+        coordinates=coordinates[:-1],
+        strides=tuple(
+            math.prod(shape[index + 1 : -1]) for index in range(len(shape) - 1)
+        ),
+        arguments=arguments,
+    )
+    mapped = map_over_leading_axis(
+        func=evaluate,
+        xs=jnp.arange(math.prod(shape[:-1]), dtype=jnp.int32),
+        batch_size=outer_width,
+    )
+    return jax.tree.map(
+        partial(_restore_product_axes, shape=shape, n_flat_axes=2), mapped
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _MapOverFinalCoordinate:
+    """Evaluate the final coordinate for one decoded prefix cell."""
+
+    func: Callable[..., Any]
+    """Unchanged scalar cell function."""
+    variable: str
+    """Name of the final Cartesian coordinate."""
+    coordinate: jax.Array
+    """Separate final-coordinate grid."""
+    width: int
+    """Active final-coordinate window within the requested cell budget."""
+
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        evaluate = _EvaluateTiledCell(
+            func=self.func,
+            variables=(self.variable,),
+            coordinates=(self.coordinate,),
+            strides=(1,),
+            arguments=MappingProxyType(kwargs),
+        )
+        return map_over_leading_axis(
+            func=evaluate,
+            xs=jnp.arange(self.coordinate.shape[0], dtype=jnp.int32),
+            batch_size=self.width,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _EvaluateTiledCell:
+    """Decode one flat index and evaluate the unchanged scalar cell function."""
+
+    func: Callable[..., Any]
+    """Scalar cell function receiving the decoded coordinate values."""
+    variables: tuple[str, ...]
+    """Coordinate names in the same order as their separate arrays."""
+    coordinates: tuple[jax.Array, ...]
+    """Separate coordinate arrays, without a materialized product mesh."""
+    strides: tuple[int, ...]
+    """C-order integer strides used to decode a flat cell index."""
+    arguments: MappingProxyType[str, Any]
+    """Non-coordinate arguments forwarded unchanged to the cell function."""
+
+    def __call__(self, index: jax.Array) -> Any:  # noqa: ANN401
+        cell = {
+            name: coordinate[(index // stride) % coordinate.shape[0]]
+            for name, coordinate, stride in zip(
+                self.variables, self.coordinates, self.strides, strict=True
+            )
+        }
+        return self.func(**self.arguments, **cell)
+
+
+# keyword-only-exempt: library-callback=jax.tree.map
+def _restore_product_axes(
+    value: jax.Array, *, shape: tuple[int, ...], n_flat_axes: int = 1
+) -> jax.Array:
+    """Restore the Cartesian state axes without changing a leaf's trailing axes."""
+    return value.reshape((*shape, *value.shape[n_flat_axes:]))
 
 
 def _base_productmap_batched(

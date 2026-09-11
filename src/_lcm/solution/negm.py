@@ -6,19 +6,22 @@ carries are lifted into common cash-on-hand (via the declared outer cost) and
 stacked; the parent read collapses the candidate axis by the exact query-side
 maximum. `_NEGMPeriodKernel` publishes a native two-program graph: `keeper` is
 the inner keeper's own program under a new name, and `outer_sweep` is one
-deliberately dense program that maps the inner adjuster over the outer grid,
-takes the exact maximum with the keeper value, and stacks every candidate carry.
-The sweep binds the keeper's outputs at runtime: the graph declares no typed
-internal outputs, so the kernel runs `keeper` first and hands its value and
-carry to `outer_sweep` in place of the placeholders its builder lowers with.
+program that maps the inner adjuster over the outer grid in blocks of the
+planner's `outer_candidate` width, takes the exact maximum with the keeper
+value, and stacks every candidate carry.
+The graph declares the dependency between them: `keeper` publishes its value and
+carry as typed internal outputs, `outer_sweep` names them as internal inputs, so
+the engine lowers the sweep against the keeper's own abstract output and the
+kernel hands the keeper's outputs over under those names.
 """
 
 import functools
 import logging
+import operator
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import cast
+from typing import ClassVar, cast
 
 import jax
 import jax.numpy as jnp
@@ -43,11 +46,16 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    InternalInputRef,
+    InternalOutputSpec,
+    ReducedAxis,
     core_program_graph,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.reductions import HARD_MAX_WITH_CARRY_REDUCTION
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.continuation_target import union_fixed_params
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -63,16 +71,28 @@ from _lcm.solution.contract import (
     bind_roles,
     simulation_route,
 )
-from _lcm.solution.dcegm import DCEGM, _BoundDCEGM, _combination_inputs
+from _lcm.solution.dcegm import (
+    DCEGM,
+    _BoundDCEGM,
+    _combination_inputs,
+    dcegm_kernel_with_declared_reads,
+)
 from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, RegimeInitializationError
-from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, KernelOutput
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
+    ArtifactKey,
+    ContinuationCapabilities,
+    KernelOutput,
+)
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -83,9 +103,10 @@ from lcm.typing import (
     StateOrActionName,
 )
 
-_NEGM_SWEEP_DENSE_REASON = (
-    "deliberately_dense:negm_outer_candidates_retained_not_reduced"
-)
+# Planner name of the outer post-decision candidate axis the sweep folds.
+OUTER_CANDIDATE_AXIS = "outer_candidate"
+
+_OUTER_CANDIDATE_WIDTH_KEYWORD = "_lcm_outer_candidate_width"
 # The keeper's outputs and the sweep's own inputs enter the compiled sweep next
 # to the inner adjuster's arguments, under engine-only names. A public regime,
 # function, state, or action name cannot contain the ``__`` qualified-name
@@ -132,6 +153,30 @@ class NEGM(TwoMarginSolver):
     correct alternative solver.
     """
 
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration=(
+                "NestedConsumptionSavingsRegime with liquid and outer margins"
+            ),
+            problem_shape="DCEGM inner solve conditional on a finite outer grid",
+            prerequisites=(
+                "Inner DCEGM contract plus outer state/action, post-decision, "
+                "no-adjustment and cost roles; no EV1 taste shocks"
+            ),
+            main_tradeoff=(
+                "Exact relative to the outer candidate set; retained candidates can "
+                "dominate memory"
+            ),
+            reduced_axes=(*self.inner.capabilities.reduced_axes, "outer_candidate"),
+            tiled_axes=self.inner.capabilities.tiled_axes,
+            host_axes=(),
+            host_driven_programs=(),
+            supports_ev1_taste_shocks=False,
+            supports_nonlinear_certainty_equivalent=False,
+        )
+
     inner: DCEGM
     """The inner 1-D DC-EGM config.
 
@@ -144,33 +189,8 @@ class NEGM(TwoMarginSolver):
     outer_grid: ContinuousGrid
     r"""Exogenous grid over the outer post-decision margin $s_t^\textit{post-dec}$."""
 
-    outer_batch_size: int = 0
-    """Number of outer-grid nodes solved per block of the compiled outer sweep.
-
-    The sweep maps the inner adjuster over the exogenous outer grid in blocks
-    of this many nodes; a block is the vector width the adjuster is compiled
-    for, so the knob bounds the *solve-side* block transients only. It does not
-    bound the period's peak, whose remaining candidate-scaled contributions
-    blocking cannot remove:
-
-    - the candidate *carries* are all retained — the published stacked
-      continuation holds every outer candidate (`(A+1) * n_pad` grid slots per
-      leading cell), inherent to the exact query-side outer maximum,
-    - while the stack is built, the unstacked candidate carries and the
-      stacked output coexist transiently,
-    - the parent's continuation read prepares a search key of the full stacked
-      shape and evaluates every candidate per query.
-
-    A positive value solves that many nodes per block; `0` (the default)
-    solves every node in one block — fastest, but its solve-side peak grows
-    with the outer-grid size. It is a memory-vs-parallelism knob only: the
-    solved value function and every carry leaf agree across batch sizes to
-    the working format's spacing.
-    """
-
     def __post_init__(self) -> None:
         _fail_if_outer_grid_is_stochastic(self.outer_grid)
-        _fail_if_outer_batch_size_negative(outer_batch_size=self.outer_batch_size)
 
     def _with_margins(
         self,
@@ -201,6 +221,13 @@ class NEGM(TwoMarginSolver):
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """NEGM nests a DC-EGM solve that inverts the Euler equation."""
         return frozenset({EGM_CONTINUATION})
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """The EGM step reads the target's value and its marginal in resources."""
+        return ContinuationCapabilities(
+            value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
 
     @property
     def egm_continuation_layout(self) -> EGMContinuationLayout:
@@ -335,6 +362,28 @@ class NEGM(TwoMarginSolver):
             )
         return tuple(routes)
 
+    def declare_continuation_reads(
+        self, *, kernels: SolutionKernels, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Declare the carry rows the composite reads through its keeper.
+
+        The two published cores read their targets' carries through the inner
+        DC-EGM keeper, so the keeper declares them and the period adapter
+        re-derives `keeper` and the sweep built around it — each under its own
+        core name — from the keeper the declaration produced.
+        """
+        return replace(
+            kernels,
+            period_kernels=MappingProxyType(
+                {
+                    period: _with_declared_keeper_reads(
+                        kernel=kernel, context=context, period=period
+                    )
+                    for period, kernel in kernels.period_kernels.items()
+                }
+            ),
+        )
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
 
@@ -390,6 +439,7 @@ class NEGM(TwoMarginSolver):
         # read. Function-local so the public `lcm.solvers` façade stays a thin
         # re-export that pulls in no engine modules.
         from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+            periodized_tree_signature,
             resolve_periodized_nodes,
         )
 
@@ -419,6 +469,7 @@ class NEGM(TwoMarginSolver):
         # build, which is today's behaviour.
         all_periods = tuple(sorted(adjuster_kernels.period_kernels))
         keeper_kernels_by_period: dict[int, PeriodKernel] = {}
+        keeper_group_keys_by_period: dict[int, Hashable] = {}
         coh_shift_by_period: dict[int, Callable[..., FloatND]] = {}
         keeper_continuation_template: EGMCarry | None = None
         # A regime whose inner builder produced no period kernels still owes the
@@ -476,22 +527,12 @@ class NEGM(TwoMarginSolver):
                 keeper_kernels_by_period[period] = group_keeper_kernels.period_kernels[
                     period
                 ]
+                keeper_group_keys_by_period[period] = (
+                    group_keeper_kernels.period_group_keys.get(period)
+                )
                 coh_shift_by_period[period] = group_coh_shift_func
         assert keeper_continuation_template is not None  # noqa: S101
-        # The durable nodes enter a numerical lift (the credited-cost shift of cash
-        # on hand), so they must be the solved period's own. With an age-specialized
-        # durable grid the representative age's nodes are the wrong ones everywhere
-        # else, so read the period's own when the schedule offers them.
         representative_durable_values = context.grids[durable_state].to_jax()
-
-        def _durable_values_at(period: int) -> Float1D:
-            per_period = context.period_to_state_nodes
-            if per_period is None:
-                return representative_durable_values
-            return per_period.get(period, {}).get(
-                durable_state, representative_durable_values
-            )
-
         carry_row_state_names = discrete_state_names + passive_state_names
         period_kernels = MappingProxyType(
             {
@@ -503,11 +544,14 @@ class NEGM(TwoMarginSolver):
                     outer_grid_values=outer_grid_values,
                     outer_post_decision=bound_self.outer_post_decision,
                     coh_shift_func=coh_shift_by_period[period],
-                    durable_grid_values=_durable_values_at(period),
+                    durable_grid_values=_durable_values_at(
+                        period=period,
+                        period_to_state_nodes=context.period_to_state_nodes,
+                        durable_state=durable_state,
+                        representative_values=representative_durable_values,
+                    ),
                     durable_axis_in_carry=durable_axis_in_carry,
                     carry_row_state_names=carry_row_state_names,
-                    keeper_carry_template=keeper_continuation_template,
-                    outer_batch_size=bound_self.outer_batch_size,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
@@ -521,6 +565,22 @@ class NEGM(TwoMarginSolver):
         assert stacked_template is not None  # noqa: S101
         return SolutionKernels(
             period_kernels=period_kernels,
+            # The outer helper pool splits the keeper build, and the inner
+            # solver may split either branch further, so a period is grouped by
+            # its own declared helper signature together with both inner keys.
+            period_group_keys=MappingProxyType(
+                {
+                    period: (
+                        "negm",
+                        periodized_tree_signature(
+                            tree=context.functions, period=period
+                        ),
+                        adjuster_kernels.period_group_keys.get(period),
+                        keeper_group_keys_by_period.get(period),
+                    )
+                    for period in period_kernels
+                }
+            ),
             continuation_spec=EGMContinuationSpec(
                 template=stacked_template,
                 layout=self.egm_continuation_layout,
@@ -529,6 +589,42 @@ class NEGM(TwoMarginSolver):
             # parameter-dependent preconditions still apply to this regime.
             param_checks=(*adjuster_kernels.param_checks, *keeper_param_checks),
         )
+
+
+def _durable_values_at(
+    *,
+    period: int,
+    period_to_state_nodes: (
+        MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None
+    ),
+    durable_state: StateName,
+    representative_values: Float1D,
+) -> Float1D:
+    """Return the durable state's node values in one period.
+
+    The durable nodes enter a numerical lift (the credited-cost shift of cash on
+    hand), so they must be the solved period's own. With an age-specialized
+    durable grid the representative age's nodes are the wrong ones everywhere
+    else, so read the period's own when the schedule offers them.
+
+    Args:
+        period: The period whose nodes are wanted.
+        period_to_state_nodes: Immutable mapping of period to that period's
+            age-specialized state nodes, or `None` when the regime has no
+            age-specialized state.
+        durable_state: Name of the outer margin's state.
+        representative_values: The representative age's durable nodes, returned
+            whenever the schedule offers none for `period`.
+
+    Returns:
+        The durable state's node values in `period`.
+
+    """
+    if period_to_state_nodes is None:
+        return representative_values
+    return period_to_state_nodes.get(period, MappingProxyType({})).get(
+        durable_state, representative_values
+    )
 
 
 def _periodized_function_groups(
@@ -588,6 +684,20 @@ class _BoundNEGM(NEGM):
     """Gross-resources function of that composition, else `None`."""
 
 
+def _with_declared_keeper_reads(
+    *, kernel: PeriodKernel, context: SolverBuildContext, period: int
+) -> PeriodKernel:
+    """Return one NEGM period's adapter rebuilt around a declaring keeper."""
+    if not isinstance(kernel, _NEGMPeriodKernel):
+        return kernel
+    return replace(
+        kernel,
+        keeper_kernel=dcegm_kernel_with_declared_reads(
+            kernel=kernel.keeper_kernel, context=context, period=period
+        ),
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _NEGMPeriodKernel:
     """The NEGM period kernel — a keeper program and a compiled outer sweep.
@@ -599,19 +709,20 @@ class _NEGMPeriodKernel:
       DC-EGM (`next_illiquid = illiquid`, identity) that keeps the durable
       stock unchanged for free (`credited(s, s) = 0`), run once over the full
       durable grid; and
-    - `outer_sweep` — one deliberately dense program that maps the inner
-      adjuster (the DC-EGM with the outer transition stripped) over the
-      exogenous outer grid with `outer_post_decision` bound to each node,
-      collapses the value by `V = max(V_keeper, max_j W_j)` and stacks the
-      keeper carry with every node carry, lifted into common cash on hand, on
-      the candidate axis.
+    - `outer_sweep` — one program that maps the inner adjuster (the DC-EGM
+      with the outer transition stripped) over the exogenous outer grid with
+      `outer_post_decision` bound to each node, in blocks of the planner's
+      `outer_candidate` width, collapses the value by
+      `V = max(V_keeper, max_j W_j)` and stacks the keeper carry with every
+      node carry, lifted into common cash on hand, on the candidate axis.
 
-    The graph declares no typed internal outputs, so the sweep takes the keeper
-    value and carry as arguments: its builder lowers with placeholders in their
-    shape, and calling the kernel runs `keeper`, replaces exactly those two
-    arguments, and dispatches `outer_sweep`. The published simulation policy is
-    absent: a keeper-only proposal cannot represent the joint durable/liquid
-    decision, so simulation retains its canonical full-grid action pair.
+    `keeper` publishes its value and carry as typed internal outputs and
+    `outer_sweep` names them as internal inputs, so the engine lowers the sweep
+    against the keeper's own abstract output and calling the kernel runs
+    `keeper`, then dispatches `outer_sweep` with the keeper's outputs under
+    those argument names. The published simulation policy is absent: a
+    keeper-only proposal cannot represent the joint durable/liquid decision, so
+    simulation retains its canonical full-grid action pair.
     """
 
     keeper_kernel: PeriodKernel
@@ -654,12 +765,6 @@ class _NEGMPeriodKernel:
     carry_row_state_names: tuple[StateName, ...]
     """The discrete then passive state names leading every carry row."""
 
-    keeper_carry_template: EGMCarry
-    """The keeper's carry template, the shape the sweep is lowered against."""
-
-    outer_batch_size: int
-    """Outer-grid nodes solved per block of the sweep; `0` is one block."""
-
     fixed_sweep_kwargs: Mapping[str, object] = MappingProxyType({})
     """The regime's and its targets' fixed params, bound into the sweep."""
 
@@ -677,15 +782,31 @@ class _NEGMPeriodKernel:
             inner_core=adjuster.function,
             outer_post_decision=self.outer_post_decision,
             durable_axis=self.durable_axis_in_carry,
-            outer_batch_size=self.outer_batch_size,
             **self.fixed_sweep_kwargs,
         )
         row = StateAxesLeading(state_names=self.carry_row_state_names)
+        # Both cores read the carries the inner keeper's program declared: the
+        # sweep's arguments are the adjuster's plus its own, so the rolling
+        # continuation channel those reads address is present in both. Only the
+        # locator's core changes.
+        inherited = keeper.requirements.value_reads
         programs = {
-            "keeper": replace(keeper, name="keeper"),
+            "keeper": replace(
+                keeper,
+                name="keeper",
+                requirements=replace(
+                    keeper.requirements,
+                    value_reads=rekeyed_value_reads(reads=inherited, core_key="keeper"),
+                ),
+                internal_outputs=(
+                    InternalOutputSpec(label="value", path=(0,)),
+                    InternalOutputSpec(label="carry", path=(1,)),
+                ),
+            ),
             "outer_sweep": CoreProgram(
                 name="outer_sweep",
                 function=sweep_function,
+                compiler_options=adjuster.compiler_options,
                 argument_builder=_NEGMSweepArgumentBuilder(
                     adjuster_builder=adjuster.argument_builder,
                     regime_name=self.regime_name,
@@ -693,9 +814,34 @@ class _NEGMPeriodKernel:
                     outer_grid_values=self.outer_grid_values,
                     durable_grid_values=self.durable_grid_values,
                     coh_shift_func=self.coh_shift_func,
-                    keeper_carry_template=self.keeper_carry_template,
                 ),
-                requirements=CoreExecutionRequirements(),
+                requirements=CoreExecutionRequirements(
+                    reduced_axes=(
+                        *adjuster.requirements.reduced_axes,
+                        ReducedAxis(
+                            name=OUTER_CANDIDATE_AXIS,
+                            coordinate_names=(_OUTER_NODES,),
+                            coordinate_extents=(self.outer_grid_values.shape[0],),
+                            canonical_order="c",
+                            reduction=HARD_MAX_WITH_CARRY_REDUCTION,
+                            width_keyword=_OUTER_CANDIDATE_WIDTH_KEYWORD,
+                        ),
+                    ),
+                    tiled_axes=adjuster.requirements.tiled_axes,
+                    internal_inputs=MappingProxyType(
+                        {
+                            _KEEPER_VALUE: InternalInputRef(
+                                producer="keeper", label="value"
+                            ),
+                            _KEEPER_CARRY: InternalInputRef(
+                                producer="keeper", label="carry"
+                            ),
+                        }
+                    ),
+                    value_reads=rekeyed_value_reads(
+                        reads=inherited, core_key="outer_sweep"
+                    ),
+                ),
                 output_roles=(
                     VALUE,
                     egm_carry_role_tree(
@@ -705,8 +851,7 @@ class _NEGMPeriodKernel:
                         policy=None,
                     ),
                 ),
-                disposition=CoreExecutionDisposition.DENSE,
-                disposition_reason=_NEGM_SWEEP_DENSE_REASON,
+                disposition=CoreExecutionDisposition.PLANNED,
                 donation_candidates=(),
             ),
         }
@@ -763,11 +908,13 @@ class _NEGMPeriodKernel:
         ages: AgeGrid,
         logger: logging.Logger,
     ) -> KernelOutput:
-        r"""Run the keeper, then the sweep with the keeper's outputs bound.
+        r"""Run the keeper, then the sweep fed by the keeper's declared outputs.
 
         The keeper runs the passive DC-EGM once, yielding the value of leaving
-        the durable stock unchanged at every durable state. The sweep solves
-        the adjuster at every exogenous outer-grid node $s_{t,j}^\textit{post-dec}$,
+        the durable stock unchanged at every durable state; its value and carry
+        travel to the sweep under the argument names the sweep declares as its
+        internal inputs. The sweep solves the adjuster at every exogenous
+        outer-grid node $s_{t,j}^\textit{post-dec}$,
         collapses the outer axis into the value array by
         `V = max(V_keeper, max_j W_j)`, and retains every candidate carry in
         the published continuation so the parent read can take the exact
@@ -797,16 +944,9 @@ class _NEGMPeriodKernel:
                 )
             )
         )
-        _fail_if_keeper_output_departs_from_its_placeholder(
-            arguments=arguments,
-            keeper_value=keeper_value,
-            keeper_carry=keeper_carry,
-            regime_name=self.regime_name,
-            period=period,
+        V_arr, carry = compiled_cores["outer_sweep"](
+            **arguments, **{_KEEPER_VALUE: keeper_value, _KEEPER_CARRY: keeper_carry}
         )
-        arguments[_KEEPER_VALUE] = keeper_value
-        arguments[_KEEPER_CARRY] = keeper_carry
-        V_arr, carry = compiled_cores["outer_sweep"](**arguments)
         return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
 
 
@@ -816,10 +956,11 @@ class _NEGMSweepArgumentBuilder:
 
     Delegates to the inner adjuster's builder with the outer post-decision
     bound at the first outer node, so the per-node arguments have exactly the
-    shape the sweep traces, and adds the sweep's own inputs: the outer nodes,
-    the credited-cost shifts, and the keeper value and carry as zero-filled
-    placeholders in the keeper outputs' shape. The kernel replaces the
-    placeholders by the keeper's outputs at runtime.
+    shape the sweep traces, and adds the sweep's own inputs: the outer nodes and
+    the credited-cost shifts. The keeper's value and carry are not built here —
+    they are internal inputs: the engine lowers the sweep against the keeper's
+    abstract output, and the kernel hands the keeper's real outputs over at
+    dispatch.
     """
 
     adjuster_builder: CoreArgumentBuilder
@@ -840,13 +981,9 @@ class _NEGMSweepArgumentBuilder:
     coh_shift_func: Callable[..., FloatND]
     """The per-(durable, outer-node) cash-on-hand shift of each adjuster."""
 
-    keeper_carry_template: EGMCarry
-    """The keeper's carry template, the placeholder's shape and dtype."""
-
     def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         flat_params = cast("FlatParams", context.flat_params)
-        state_action_space = cast("StateActionSpace", context.state_action_space)
         arguments = dict(
             self.adjuster_builder(
                 replace(
@@ -860,15 +997,7 @@ class _NEGMSweepArgumentBuilder:
                 )
             )
         )
-        value_shape = tuple(
-            state_action_space.states[name].shape[0]
-            for name in state_action_space.state_names
-        )
         own = {
-            _KEEPER_VALUE: jnp.zeros(
-                value_shape, dtype=self.keeper_carry_template.value.dtype
-            ),
-            _KEEPER_CARRY: jax.tree.map(jnp.zeros_like, self.keeper_carry_template),
             _OUTER_NODES: self.outer_grid_values,
             _COH_SHIFTS: self.coh_shift_func(
                 durable_values=self.durable_grid_values,
@@ -887,16 +1016,18 @@ def _outer_sweep_program(
     inner_core: Callable[..., tuple[FloatND, EGMCarry]],
     outer_post_decision: FunctionName,
     durable_axis: int,
-    outer_batch_size: int,
+    _lcm_outer_candidate_width: int,
     **arguments: object,
 ) -> tuple[FloatND, EGMCarry]:
     """Solve the adjuster at every outer node and stack it with the keeper.
 
     The inner adjuster program runs once per exogenous node with the outer
-    post-decision bound into its arguments, in blocks of `outer_batch_size`
-    nodes (`0`: one block). The value is the exact maximum of the keeper value
+    post-decision bound into its arguments, in blocks of the planner's
+    `outer_candidate` width. The value is the exact maximum of the keeper value
     and every node value; the continuation is the keeper carry followed by
     every node carry lifted into common cash on hand on the candidate axis.
+    Every candidate carry is retained, so the block width reschedules the sweep
+    without changing which operations run on which operands.
 
     The keeper's value and carry, the outer nodes, and the cash-on-hand shifts
     arrive among `arguments` under the engine-only transport keys; everything
@@ -909,24 +1040,52 @@ def _outer_sweep_program(
     coh_shifts = cast("FloatND", adjuster_arguments.pop(_COH_SHIFTS))
     n_nodes = outer_nodes.shape[0]
 
-    def solve_node(node: ScalarFloat) -> tuple[FloatND, EGMCarry]:
-        value, carry = inner_core(**{**adjuster_arguments, outer_post_decision: node})
-        return value, carry
-
     node_values, node_carries = jax.lax.map(
-        solve_node, outer_nodes, batch_size=outer_batch_size or n_nodes
+        _NodeSolver(
+            inner_core=inner_core,
+            outer_post_decision=outer_post_decision,
+            adjuster_arguments=MappingProxyType(adjuster_arguments),
+        ),
+        outer_nodes,
+        batch_size=min(_lcm_outer_candidate_width, n_nodes),
     )
     V_arr = jnp.maximum(keeper_value, jnp.max(node_values, axis=0))
     carry = build_stacked_outer_carry(
         keeper_carry=keeper_carry,
         adjuster_carries=tuple(
-            jax.tree.map(lambda leaf, index=index: leaf[index], node_carries)
+            jax.tree.map(operator.itemgetter(index), node_carries)
             for index in range(n_nodes)
         ),
         coh_shifts=coh_shifts,
         durable_axis=durable_axis,
     )
     return V_arr, carry
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _NodeSolver:
+    """Solve the inner adjuster at one outer node.
+
+    Every input is an explicit field, so the adjuster core stays reachable only
+    through this instance, which the sweep drops when its trace ends. The
+    argument tree holds traced arrays, whose truth value is undefined, so
+    instances compare by identity (`eq=False`).
+    """
+
+    inner_core: Callable[..., tuple[FloatND, EGMCarry]]
+    """The adjuster program, called with the outer post-decision bound in."""
+
+    outer_post_decision: FunctionName
+    """Argument name under which the outer node is bound."""
+
+    adjuster_arguments: Mapping[str, object]
+    """Immutable mapping of the adjuster's own argument tree."""
+
+    def __call__(self, node: ScalarFloat) -> tuple[FloatND, EGMCarry]:
+        """Return the adjuster's value and carry at `node`."""
+        return self.inner_core(
+            **{**self.adjuster_arguments, self.outer_post_decision: node}
+        )
 
 
 def _fail_if_sweep_inputs_collide_with_the_adjusters(
@@ -945,29 +1104,6 @@ def _fail_if_sweep_inputs_collide_with_the_adjusters(
         raise RegimeInitializationError(msg)
 
 
-def _fail_if_keeper_output_departs_from_its_placeholder(
-    *,
-    arguments: Mapping[str, object],
-    keeper_value: FloatND,
-    keeper_carry: EGMCarry,
-    regime_name: RegimeName,
-    period: int,
-) -> None:
-    """Refuse a keeper output whose shape the sweep was not lowered against."""
-
-    def describe(tree: object) -> object:
-        return jax.tree.map(lambda leaf: (leaf.shape, str(leaf.dtype)), tree)
-
-    expected = describe((arguments[_KEEPER_VALUE], arguments[_KEEPER_CARRY]))
-    got = describe((keeper_value, keeper_carry))
-    if expected != got:
-        msg = (
-            f"Regime '{regime_name}' in period {period}: the keeper published "
-            f"{got}, but the outer sweep was lowered against {expected}."
-        )
-        raise RuntimeError(msg)
-
-
 def _stack_carry_template(
     *, template: EGMCarry | None, n_candidates: int
 ) -> EGMCarry | None:
@@ -982,17 +1118,25 @@ def _stack_carry_template(
     """
     if template is None:
         return None
-
-    def stack(arr: FloatND) -> FloatND:
-        return jnp.broadcast_to(
-            arr[..., None, :], (*arr.shape[:-1], n_candidates, arr.shape[-1])
-        )
-
+    leaves = template.leaves()
     return EGMCarry(
-        endog_grid=stack(template.endog_grid),
-        value=stack(template.value),
-        marginal_utility=stack(template.marginal_utility),
-        taste_shock_scale=template.taste_shock_scale,
+        endog_grid=_broadcast_over_candidates(
+            arr=leaves[("endog_grid",)], n_candidates=n_candidates
+        ),
+        value=_broadcast_over_candidates(
+            arr=leaves[("value",)], n_candidates=n_candidates
+        ),
+        marginal_utility=_broadcast_over_candidates(
+            arr=leaves[("marginal_utility",)], n_candidates=n_candidates
+        ),
+        taste_shock_scale=leaves[("taste_shock_scale",)],
+    )
+
+
+def _broadcast_over_candidates(*, arr: FloatND, n_candidates: int) -> FloatND:
+    """Broadcast one carry leaf across the candidate axis before the grid axis."""
+    return jnp.broadcast_to(
+        arr[..., None, :], (*arr.shape[:-1], n_candidates, arr.shape[-1])
     )
 
 
@@ -1032,18 +1176,7 @@ def _build_coh_shift_function(
     matrix of shape `(n_durable, n_outer)`.
     """
     if outer_cost_name is None:
-
-        def zero_shifts(
-            *, durable_values: FloatND, outer_values: FloatND, **params: object
-        ) -> FloatND:
-            del params
-            return jnp.zeros(
-                (durable_values.shape[0], outer_values.shape[0]),
-                dtype=durable_values.dtype,
-            )
-
-        return zero_shifts
-
+        return _zero_coh_shifts
     # The outer post-decision is a leaf: the lift binds it per outer-grid node,
     # so the cost must ask for it directly rather than have it recomputed from
     # the outer action.
@@ -1057,56 +1190,176 @@ def _build_coh_shift_function(
         enforce_signature=False,
         set_annotations=True,
     )
-    cost_arg_names = set(get_annotations(cost_func)) - {"return"}
+    return _CreditedCoHShifts(
+        cost_func=cost_func,
+        cost_arg_names=frozenset(get_annotations(cost_func)) - {"return"},
+        durable_state_name=durable_state_name,
+        outer_post_decision=outer_post_decision,
+        outer_cost_name=outer_cost_name,
+        no_adjustment_func=no_adjustment_func,
+    )
 
-    def keeper_level(durable: FloatND) -> FloatND:
-        # The keeper core realises the outer post-decision at its own
-        # no-adjustment level `keep(durable)` — the level whose credited cost
-        # is zero. With an identity keeper this is `durable` itself.
-        return durable if no_adjustment_func is None else no_adjustment_func(durable)
 
-    def coh_shifts(
-        *, durable_values: FloatND, outer_values: FloatND, **params: object
+def _zero_coh_shifts(
+    *, durable_values: FloatND, outer_values: FloatND, **params: object
+) -> FloatND:
+    """Return the identically zero cash-on-hand shift matrix.
+
+    A regime whose resources never read the outer post-decision credits no cost
+    back, so every (durable, outer-node) cell shifts by zero.
+    """
+    del params
+    return jnp.zeros(
+        (durable_values.shape[0], outer_values.shape[0]),
+        dtype=durable_values.dtype,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _CreditedCoHShifts:
+    """The per-(durable, outer-node) cash-on-hand shift of a declared outer cost.
+
+    Every value the shift reads is an explicit field, so the concatenated cost
+    DAG stays reachable only through this instance, which the model build drops
+    with the period kernel that holds it.
+    """
+
+    cost_func: Callable[..., FloatND]
+    """The concatenated DAG targeting the regime's declared outer-cost node."""
+
+    cost_arg_names: frozenset[str]
+    """Immutable set of the argument names that DAG declares."""
+
+    durable_state_name: StateName
+    """Name of the durable state the cost may read."""
+
+    outer_post_decision: FunctionName
+    """Name of the outer post-decision the cost may read."""
+
+    outer_cost_name: FunctionName
+    """Name of the declared outer-cost node, named in the diagnostic."""
+
+    no_adjustment_func: EconFunction | None
+    """The keeper's no-adjustment map, or `None` for the identity."""
+
+    def __call__(
+        self, *, durable_values: FloatND, outer_values: FloatND, **params: object
     ) -> FloatND:
-        # Defense in depth behind the model-build ancestor check: a cost DAG
-        # demanding any binding other than the durable, the outer
-        # post-decision, and params cannot be evaluated per (durable, outer)
-        # cell.
-        cost_extra_arg_names = (
-            cost_arg_names - {durable_state_name, outer_post_decision} - set(params)
+        """Return the shift matrix of shape `(n_durable, n_outer)`."""
+        _fail_if_the_outer_cost_reads_beyond_one_cell(
+            cost_arg_names=self.cost_arg_names,
+            durable_state_name=self.durable_state_name,
+            outer_post_decision=self.outer_post_decision,
+            outer_cost_name=self.outer_cost_name,
+            param_names=frozenset(params),
         )
-        if cost_extra_arg_names:
-            msg = (
-                f"The declared NEGM outer cost '{outer_cost_name}' reads "
-                f"{sorted(cost_extra_arg_names)}. It may read only the durable "
-                f"state '{durable_state_name}', the outer post-decision "
-                f"'{outer_post_decision}', and params — the credited-cost lift "
-                "is a constant per (durable, outer-node) cell, so no other "
-                "state or action can vary inside it."
-            )
-            raise InvalidParamsError(msg)
+        cell = _CreditedShiftAtCell(
+            cost=_OuterCostAtCell(
+                cost_func=self.cost_func,
+                cost_arg_names=self.cost_arg_names,
+                durable_state_name=self.durable_state_name,
+                outer_post_decision=self.outer_post_decision,
+                params=MappingProxyType(dict(params)),
+            ),
+            no_adjustment_func=self.no_adjustment_func,
+        )
+        over_outer_nodes = jax.vmap(cell, in_axes=(None, 0))
+        return jax.vmap(over_outer_nodes, in_axes=(0, None))(
+            durable_values, outer_values
+        )
 
-        def cost_at(*, durable: FloatND, outer: FloatND) -> FloatND:
-            bindings = {durable_state_name: durable, outer_post_decision: outer}
-            return cost_func(
-                **{
-                    name: value
-                    for name, value in bindings.items()
-                    if name in cost_arg_names
-                },
-                **params,
-            )
 
-        return jax.vmap(
-            lambda durable: jax.vmap(
-                lambda outer: (
-                    cost_at(durable=durable, outer=outer)
-                    - cost_at(durable=durable, outer=keeper_level(durable))
-                )
-            )(outer_values)
-        )(durable_values)
+def _fail_if_the_outer_cost_reads_beyond_one_cell(
+    *,
+    cost_arg_names: frozenset[str],
+    durable_state_name: StateName,
+    outer_post_decision: FunctionName,
+    outer_cost_name: FunctionName,
+    param_names: frozenset[str],
+) -> None:
+    """Reject a cost DAG that needs a binding the per-cell lift cannot supply.
 
-    return coh_shifts
+    Defense in depth behind the model-build ancestor check: a cost DAG demanding
+    any binding other than the durable, the outer post-decision, and params
+    cannot be evaluated per (durable, outer) cell.
+    """
+    cost_extra_arg_names = (
+        cost_arg_names - {durable_state_name, outer_post_decision} - param_names
+    )
+    if cost_extra_arg_names:
+        msg = (
+            f"The declared NEGM outer cost '{outer_cost_name}' reads "
+            f"{sorted(cost_extra_arg_names)}. It may read only the durable "
+            f"state '{durable_state_name}', the outer post-decision "
+            f"'{outer_post_decision}', and params — the credited-cost lift "
+            "is a constant per (durable, outer-node) cell, so no other "
+            "state or action can vary inside it."
+        )
+        raise InvalidParamsError(msg)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OuterCostAtCell:
+    """Evaluate the regime's declared outer cost at one (durable, outer) cell.
+
+    The bound params may hold arrays, whose truth value is undefined, so
+    instances compare by identity (`eq=False`).
+    """
+
+    cost_func: Callable[..., FloatND]
+    """The concatenated DAG targeting the declared outer-cost node."""
+
+    cost_arg_names: frozenset[str]
+    """Immutable set of the argument names that DAG declares."""
+
+    durable_state_name: StateName
+    """Name the cost DAG reads the durable state under."""
+
+    outer_post_decision: FunctionName
+    """Name the cost DAG reads the outer post-decision under."""
+
+    params: Mapping[str, object]
+    """Immutable mapping of the regime's flat params bound into the cost."""
+
+    def __call__(self, *, durable: FloatND, outer: FloatND) -> FloatND:
+        """Return the declared cost at one durable level and one outer node."""
+        bindings = {self.durable_state_name: durable, self.outer_post_decision: outer}
+        return self.cost_func(
+            **{
+                name: value
+                for name, value in bindings.items()
+                if name in self.cost_arg_names
+            },
+            **self.params,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _CreditedShiftAtCell:
+    """The credited-cost shift of cash on hand at one (durable, outer) cell."""
+
+    cost: _OuterCostAtCell
+    """The declared outer cost, evaluated per cell."""
+
+    no_adjustment_func: EconFunction | None
+    """The keeper's no-adjustment map, or `None` for the identity."""
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def __call__(self, durable: FloatND, outer: FloatND) -> FloatND:
+        """Return `cost(durable, outer) - cost(durable, keep(durable))`.
+
+        The keeper core realises the outer post-decision at its own
+        no-adjustment level `keep(durable)` — the level whose credited cost is
+        zero. With an identity keeper this is `durable` itself.
+        """
+        keeper_level = (
+            durable
+            if self.no_adjustment_func is None
+            else self.no_adjustment_func(durable)
+        )
+        return self.cost(durable=durable, outer=outer) - self.cost(
+            durable=durable, outer=keeper_level
+        )
 
 
 def _without_outer_post_decision(
@@ -1167,19 +1420,54 @@ def _with_no_adjustment_outer_function(
         args_spec = {name: annotations[name] for name in arg_names}
         args_spec[durable_state] = "ContinuousState"
 
-    @with_signature(args=args_spec, return_annotation=outer_annotation)
-    def keep_outer_post_decision(**kwargs: FloatND) -> FloatND:
-        if no_adjustment_func is None:
-            return kwargs[durable_state]
-        return no_adjustment_func(**{name: kwargs[name] for name in arg_names})
-
-    keep_outer_post_decision.__name__ = outer_post_decision
+    keep_outer_post_decision = with_signature(
+        _KeeperOuterPostDecision(
+            durable_state=durable_state,
+            arg_names=arg_names,
+            no_adjustment_func=no_adjustment_func,
+        ),
+        args=args_spec,
+        return_annotation=outer_annotation,
+    )
+    keep_outer_post_decision.__name__ = outer_post_decision  # ty: ignore[unresolved-attribute]
     return MappingProxyType(
         {
             **dict(functions),
             outer_post_decision: cast("EconFunction", keep_outer_post_decision),
         }
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _KeeperOuterPostDecision:
+    """Realize the outer post-decision at the keeper's no-adjustment level.
+
+    Every value the map reads is an explicit field, so the regime's
+    no-adjustment candidate stays reachable only through this instance, which
+    the model build drops with the keeper function pool that holds it. The
+    caller wraps it in `dags.with_signature` to advertise the arguments the
+    inner resources DAG binds by name.
+    """
+
+    __name__: ClassVar[str] = "keep_outer_post_decision"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    durable_state: StateName
+    """Name of the durable leaf state the identity keeper returns."""
+
+    arg_names: tuple[str, ...]
+    """Tuple of the argument names the no-adjustment map declares."""
+
+    no_adjustment_func: EconFunction | None
+    """The regime's no-adjustment map, or `None` for the identity."""
+
+    def __call__(self, **kwargs: FloatND) -> FloatND:
+        """Return the keeper's outer post-decision level."""
+        if self.no_adjustment_func is None:
+            return kwargs[self.durable_state]
+        return self.no_adjustment_func(
+            **{name: kwargs[name] for name in self.arg_names}
+        )
 
 
 def _annotation_of_arg(
@@ -1228,20 +1516,6 @@ def _with_outer_post_decision(
             for name, regime_pool in flat_params.items()
         }
     )
-
-
-def _fail_if_outer_batch_size_negative(
-    *, outer_batch_size: int, solver_name: str = "NEGM"
-) -> None:
-    """Reject a negative outer batch size, naming the solver that declared it."""
-    if outer_batch_size < 0:
-        msg = (
-            f"{solver_name}.outer_batch_size must be non-negative, got "
-            f"{outer_batch_size}. Use 0 to solve every outer-grid node in one "
-            "block, or a positive value to sweep the outer grid in blocks of "
-            "that many nodes."
-        )
-        raise RegimeInitializationError(msg)
 
 
 def _fail_if_outer_grid_is_stochastic(outer_grid: ContinuousGrid) -> None:

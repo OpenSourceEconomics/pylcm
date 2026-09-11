@@ -813,7 +813,6 @@ def _validate_completeness(
     )
     error_messages.extend(_state_transition_coverage_errors(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
-    error_messages.extend(_validate_distributed_grids(regime))
     error_messages.extend(_koopmans_aggregator_errors(regime))
     error_messages.extend(_certainty_equivalent_errors(regime))
 
@@ -857,31 +856,6 @@ def _published_value_column_errors(
             "A collective regime publishes a `value_<stakeholder>` column for "
             "each of its stakeholders, so those names are reserved. Rename the "
             f"following declarations: {colliding}."
-        ),
-    ]
-
-
-def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
-    """Reject `distributed=True` on action grids.
-
-    Distribution shards the V-array along state axes; an action grid has no
-    corresponding V-array axis, so marking one as distributed has no
-    consistent meaning. To shard an axis a user cares about, set
-    `distributed=True` on the matching state.
-    """
-    offending_actions = [
-        name
-        for name, grid in regime.actions.items()
-        if grid is not None and grid.distributed
-    ]
-    if not offending_actions:
-        return []
-    return [
-        (
-            "Action grids cannot be marked `distributed=True` — distribution "
-            "shards V-array axes, which come from states. Move `distributed=True` "
-            "to the corresponding state grid. Offending actions: "
-            f"{offending_actions}."
         ),
     ]
 

@@ -59,7 +59,7 @@ def test_draw_shock_uniform(params_at_init):
     """Uniform.draw_shock uses start/stop params."""
     kwargs: dict[str, Any] = {"start": 2.0, "stop": 4.0}
     if params_at_init:
-        grid = UniformIIDProcess(n_points=5, batch_size=0, distributed=False, **kwargs)
+        grid = UniformIIDProcess(n_points=5, **kwargs)
         params = grid.params
     else:
         grid = UniformIIDProcess(n_points=5)
@@ -75,14 +75,10 @@ def test_draw_shock_normal(params_at_init):
     """Normal.draw_shock uses mu/sigma params."""
     kwargs: dict[str, Any] = {"mu": 5.0, "sigma": 0.1}
     if params_at_init:
-        grid = NormalIIDProcess(
-            n_points=5, batch_size=0, distributed=False, gauss_hermite=True, **kwargs
-        )
+        grid = NormalIIDProcess(n_points=5, gauss_hermite=True, **kwargs)
         params = grid.params
     else:
-        grid = NormalIIDProcess(
-            n_points=5, batch_size=0, distributed=False, gauss_hermite=True
-        )
+        grid = NormalIIDProcess(n_points=5, gauss_hermite=True)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid=grid, params=params)
     aaae(draws.mean(), 5.0, decimal=1)
@@ -94,9 +90,7 @@ def test_draw_shock_lognormal(params_at_init):
     """LogNormal.draw_shock produces positive samples with correct log-moments."""
     kwargs: dict[str, Any] = {"mu": 1.0, "sigma": 0.1}
     if params_at_init:
-        grid = LogNormalIIDProcess(
-            n_points=5, batch_size=0, distributed=False, gauss_hermite=True, **kwargs
-        )
+        grid = LogNormalIIDProcess(n_points=5, gauss_hermite=True, **kwargs)
         params = grid.params
     else:
         grid = LogNormalIIDProcess(n_points=5, gauss_hermite=True)
@@ -112,9 +106,7 @@ def test_draw_shock_tauchen(params_at_init):
     """Tauchen.draw_shock uses mu/sigma/rho params."""
     kwargs: dict[str, Any] = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
-        grid = TauchenAR1Process(
-            n_points=5, batch_size=0, distributed=False, gauss_hermite=True, **kwargs
-        )
+        grid = TauchenAR1Process(n_points=5, gauss_hermite=True, **kwargs)
         params = grid.params
     else:
         grid = TauchenAR1Process(n_points=5, gauss_hermite=True)
@@ -129,9 +121,7 @@ def test_draw_shock_rouwenhorst(params_at_init):
     """Rouwenhorst.draw_shock uses mu/sigma/rho params."""
     kwargs: dict[str, Any] = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
-        grid = RouwenhorstAR1Process(
-            n_points=5, batch_size=0, distributed=False, **kwargs
-        )
+        grid = RouwenhorstAR1Process(n_points=5, **kwargs)
         params = grid.params
     else:
         grid = RouwenhorstAR1Process(n_points=5)
@@ -146,9 +136,7 @@ def test_draw_shock_normal_mixture(params_at_init):
     """NormalMixture.draw_shock produces draws with correct mixture moments."""
     kwargs = _NORMAL_MIXTURE_KWARGS
     if params_at_init:
-        grid = NormalMixtureIIDProcess(
-            n_points=5, batch_size=0, distributed=False, **kwargs
-        )
+        grid = NormalMixtureIIDProcess(n_points=5, **kwargs)
         params = grid.params
     else:
         grid = NormalMixtureIIDProcess(n_points=5)
@@ -170,9 +158,7 @@ def test_draw_shock_tauchen_normal_mixture(params_at_init):
     """TauchenNormalMixture.draw_shock produces yields correct conditional moments."""
     kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
     if params_at_init:
-        grid = TauchenNormalMixtureAR1Process(
-            n_points=5, batch_size=0, distributed=False, **kwargs
-        )
+        grid = TauchenNormalMixtureAR1Process(n_points=5, **kwargs)
         params = grid.params
     else:
         grid = TauchenNormalMixtureAR1Process(n_points=5)

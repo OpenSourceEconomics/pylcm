@@ -23,7 +23,24 @@ def solver_period_group_key(
     continuation_targets: tuple[RegimeName, ...],
     solver_path: tuple[str, ...],
 ) -> Hashable:
-    """Return every period-varying input that makes a numerical core distinct."""
+    """Return every period-varying input that makes a numerical core distinct.
+
+    Built from declared signatures, grid signatures, and the constraint plan's
+    structural digest, so the key a period is grouped under is the same key the
+    same model produces when it is built again. That durability is what lets a
+    consumer carry the key into a compiled program's identity.
+
+    Args:
+        context: The solver's build context for the whole regime.
+        period: The period being keyed.
+        continuation_targets: The regimes this period continues into.
+        solver_path: The nest of solvers producing the candidates, outermost
+            first.
+
+    Returns:
+        The hashable grouping key.
+
+    """
     from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
         periodized_node_signature,
         periodized_tree_signature,
@@ -60,7 +77,11 @@ def solver_period_group_key(
         current_grid_signature,
         continuation_grid_signature,
         solver_path,
-        id(context.constraint_plan),
+        (
+            None
+            if context.constraint_plan is None
+            else context.constraint_plan.structural_digest
+        ),
     )
 
 
