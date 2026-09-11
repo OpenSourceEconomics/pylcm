@@ -10033,8 +10033,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            specialization_key=resolved.specialization_key,",
-                new="            specialization_key=None,",
+                old="            resolved.specialization_key,",
+                new="            None,",
                 label="native lowering specialization",
             ),
         },
