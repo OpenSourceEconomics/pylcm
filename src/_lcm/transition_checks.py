@@ -34,7 +34,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
 from types import MappingProxyType
-from typing import Any, no_type_check
+from typing import Any, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -43,10 +43,17 @@ import pandas as pd
 from dags.tree import tree_path_from_qname
 
 from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
+from _lcm.execution.workspace_planning import plan_workspace
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
 from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.residency import (
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+    union_buffer_footprints,
+)
 from _lcm.transition_plans import LotteryLifetime
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
 from _lcm.utils.logging import raise_or_warn, validation_enabled
@@ -270,21 +277,39 @@ def _validate_transition_sequence(
     logger: logging.Logger,
     summary: _ValidationSummary | None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    simulation_memory: SimulationMemory | None = None,
 ) -> None:
     """Preserve family and item ordering for collection and serial diagnostics."""
-    for validator in (
-        validate_regime_transitions_all_periods,
-        validate_state_transitions_all_periods,
-        validate_joint_transitions_all_periods,
-    ):
-        validator(
-            regimes=regimes,
-            flat_params=flat_params,
-            ages=ages,
-            logger=logger,
-            summary=summary,
-            process_grid_resolver=process_grid_resolver,
-        )
+    memory = (
+        summary.memory
+        if summary is not None and summary.memory is not None
+        else simulation_memory
+    )
+    validate_regime_transitions_all_periods(
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        logger=logger,
+        summary=summary,
+        process_grid_resolver=process_grid_resolver,
+    )
+    validate_state_transitions_all_periods(
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        logger=logger,
+        summary=summary,
+        process_grid_resolver=process_grid_resolver,
+        memory=memory,
+    )
+    validate_joint_transitions_all_periods(
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        logger=logger,
+        summary=summary,
+        process_grid_resolver=process_grid_resolver,
+    )
 
 
 def _params_callable_for_state_transition(
@@ -652,6 +677,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Validate every `MarkovTransition` state transition before solve.
 
@@ -729,6 +755,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
                         period=period,
                         logger=logger,
                         summary=summary,
+                        memory=memory,
                     )
                 except InvalidStateTransitionProbabilitiesError as error:
                     if summary is not None:
@@ -1137,6 +1164,7 @@ def _validate_state_transition_single(
     period: int,
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Evaluate one MarkovTransition on its grid args and validate the output."""
     func = transition.func
@@ -1202,28 +1230,145 @@ def _validate_state_transition_single(
             )
             return
 
-    if grid_args:
-        grid_var_names = list(grid_args.keys())
-        grid_arrays = list(grid_args.values())
-        mesh = jnp.meshgrid(*grid_arrays, indexing="ij")
-        flat_arrays = [m.ravel() for m in mesh]
-
-        probs = jax.vmap(
-            _GridPointCall(
-                names=tuple(grid_var_names), scalar_kwargs=scalar_kwargs, func=func
-            )
-        )(*flat_arrays)
-    else:
-        probs = func(**scalar_kwargs)
-
-    _check_state_probs(
+    current_memory = (
+        summary.memory if summary is not None and summary.memory is not None else memory
+    )
+    probs = _evaluate_state_probability_law(
+        func=func,
+        grid_args=MappingProxyType(grid_args),
+        scalar_kwargs=MappingProxyType(scalar_kwargs),
+        memory=current_memory,
+    )
+    _check_and_release_state_probability(
         probs=probs,
         transition=transition,
         regime_name=regime_name,
         age=age,
         summary=summary,
+        memory=current_memory,
     )
     _remember_state_probability(summary=summary, binding=binding, shape=probs.shape)
+
+
+def _check_and_release_state_probability(
+    *,
+    probs: FloatND,
+    transition: _StochasticStateTransition,
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+    summary: _ValidationSummary | None,
+    memory: SimulationMemory | None,
+) -> None:
+    """Own one completed state law until its admitted reduction is retained."""
+    if memory is not None:
+        memory.set_derived(probs)
+    try:
+        _check_state_probs(
+            probs=probs,
+            transition=transition,
+            regime_name=regime_name,
+            age=age,
+            summary=summary,
+            memory=memory,
+        )
+    finally:
+        if memory is not None:
+            memory.set_derived(())
+
+
+def _evaluate_state_probability_law(
+    *,
+    func: Callable[..., FloatND],
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: Mapping[str, object],
+    memory: SimulationMemory | None,
+) -> FloatND:
+    """Admit a complete stochastic-state law before its first device dispatch."""
+    if memory is None:
+        return _state_probability_law(
+            grid_args=grid_args,
+            scalar_kwargs=scalar_kwargs,
+            grid_names=tuple(grid_args),
+            func=func,
+        )
+    arguments = MappingProxyType(
+        {"grid_args": grid_args, "scalar_kwargs": scalar_kwargs}
+    )
+    placed = place_simulation_arguments(
+        arguments=arguments,
+        subject_arg_names=(),
+        value_reads=(),
+        devices=memory.subject_devices,
+        budget_bytes=memory.budget_bytes,
+        live_footprint=memory.snapshot(),
+        budget_devices=memory.devices,
+    )
+    argument_buffers = measure_buffer_footprint(tree=placed)
+    live = union_buffer_footprints(
+        footprints=(memory.snapshot(additional=arguments), argument_buffers)
+    )
+    external = resident_bytes_by_device(
+        live=live, arguments=argument_buffers, devices=memory.subject_devices
+    )
+    compiler = _TransitionLawCompiler(
+        function=partial(
+            _state_probability_law,
+            grid_names=tuple(grid_args),
+            func=func,
+        ),
+        arguments=jax.tree.map(_abstract_transition_operand, dict(placed)),
+    )
+    plan = plan_workspace(
+        axes=(),
+        compile_candidate=compiler,
+        budget_bytes=memory.budget_bytes,
+        resident_bytes=max(external.values()),
+    )
+    return cast("FloatND", plan.compiled(**placed).block_until_ready())
+
+
+def _state_probability_law(
+    *,
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: Mapping[str, object],
+    grid_names: tuple[StateOrActionName, ...],
+    func: Callable[..., FloatND],
+) -> FloatND:
+    """Evaluate one state law and its Cartesian grid inside one compiled producer."""
+    if not grid_names:
+        return func(**scalar_kwargs)
+    mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
+    flat_arrays = tuple(array.ravel() for array in mesh)
+    return jax.vmap(
+        _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
+    )(*flat_arrays)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _TransitionLawCompiler:
+    """Keep one user law call-local while compiling its concrete producer shape."""
+
+    function: Callable[..., FloatND]
+    arguments: Mapping[str, object]
+
+    def __call__(self, widths: Mapping[str, int]) -> jax.stages.Compiled:
+        """Lower the complete producer without allocating its result."""
+        if widths:
+            raise ExecutionPlanningError("Transition validation declares no axes.")
+        lowered = jax.jit(self.function, keep_unused=True).lower(**self.arguments)
+        return lowered.compile()
+
+
+def _abstract_transition_operand(value: object) -> object:
+    """Preserve the placed transition operand's dtype, weak type, and layout."""
+    if isinstance(value, jax.Array):
+        return jax.ShapeDtypeStruct(
+            value.shape,
+            value.dtype,
+            sharding=value.sharding,
+            weak_type=getattr(value, "weak_type", False),
+        )
+    return value
 
 
 def _append_cached_state_probability(
@@ -1327,6 +1472,7 @@ def _check_state_probs(
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
     summary: _ValidationSummary | None = None,
+    memory: SimulationMemory | None = None,
 ) -> None:
     """Assert outcome-axis size, [0, 1] range, and sum-to-1 on a probs array."""
     state_label = _check_state_outcome_axis(
@@ -1343,14 +1489,22 @@ def _check_state_probs(
             arguments={"probabilities": probs},
         )
         return
-    if jnp.any(probs < 0) or jnp.any(probs > 1):
+    if memory is None:
+        flags = _state_probability_flags(probabilities=probs)
+    else:
+        flags = run_simulation_operation(
+            memory=memory,
+            function=_state_probability_flags,
+            arguments={"probabilities": probs},
+        )
+    outside_bounds, invalid_mass = np.asarray(flags).tolist()
+    if outside_bounds:
         raise InvalidStateTransitionProbabilitiesError(
             f"MarkovTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned values outside [0, 1]."
         )
 
-    row_sums = jnp.sum(probs, axis=-1)
-    if not jnp.allclose(row_sums, 1.0, atol=1e-6):
+    if invalid_mass:
         raise InvalidStateTransitionProbabilitiesError(
             f"MarkovTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned rows that do not sum to 1 along the "

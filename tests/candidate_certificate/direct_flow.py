@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "4e0ee701b107d0195215bd2f44fbc5c622bc7419d24414819ad35e55e2ff4b57",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "e5823fe1314f45b5010d79e72e31b584197cf3ba04cb7b67e1ea4d40beb6671e",
     SUPPORT_DIAGNOSTICS_SOURCE: "031dc0d584faec8d055d25b3099d71e4f76c71cbb4670ad8e85cb2a4746bbb09",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -423,7 +423,7 @@ _SOURCE_SEALS = {
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "433d19ea290989d0229f9416007342a645012f58ea75a0f2279975abc52da730",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
-    INITIAL_CONDITIONS_SOURCE: "4927b23307825c5f767a9bbd007a338204d9d4857495735d7f0fe99129bde6d8",
+    INITIAL_CONDITIONS_SOURCE: "3cc9d1e03fdc2c005b5fe6d72caa34b3b35fbaa9171ca9cf71e3ce4d8f187da2",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
@@ -3298,7 +3298,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
     INITIAL_CONDITIONS_SOURCE: (
         "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
         {
-            "validate_simulation_inputs": "78fc1ee7349d3a927e7988c705bc10a9bfd9050b0028af7e63c942ebbf768ed6",
+            "validate_simulation_inputs": "2b042fa4d4a80a19bed4be769cae0789e80b4390b0d773ba805d05a9b52dc1b5",
             "_preflight_memory": "24af3b888fd7f85f2f580b19b08c0ed565ed2bc3da34ed883c4e7982f5bc5caf",
             "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
             "_pack_initial_summary": "504e89911be3016190066e13c8acebdb890328a4a7d40c4f9e8afd6a6f0b748a",
@@ -6250,7 +6250,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
     "src/_lcm/simulation/initial_conditions.py": (
         "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
         {
-            "validate_simulation_inputs": "78fc1ee7349d3a927e7988c705bc10a9bfd9050b0028af7e63c942ebbf768ed6",
+            "validate_simulation_inputs": "2b042fa4d4a80a19bed4be769cae0789e80b4390b0d773ba805d05a9b52dc1b5",
             "validate_initial_conditions": "706a297af1125941763bf594511ee343f31dc8a725d38aa1614048c232a8d9c8",
             "_collect_feasibility_errors": "ccb25705a003d95b1cd10f406df14ef43a809508c0f0028b6e1a13ddf7022b02",
             "_check_regime_feasibility": "9017964aeb5f3fb33515244c7694b34af260dbad32c8ade442e794a32de643b2",
@@ -6311,15 +6311,22 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/transition_checks.py": (
-        "c43c5502dd5cf85469f1c41f4563894a83fa5e87a6c655d176b6cc09927ec8cd",
+        "75af4ce2651a6829051c8132878f3c1c41f8dda2b5cb49242f8bc3fa2bbd0ff4",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
-            "_validate_transition_sequence": "487dabc093136656a479888c2352b7d2c3a46c071040f3c2e2d629b199ac3610",
+            "_validate_transition_sequence": "c3965cbeb5d1bb9ff9e4fca404542ba5e98d0f9315ac44e84a0502f405b207dc",
             "validate_regime_transitions_all_periods": "ea008da0d22338ed98d6832627e23896f121847dfe58fabdfc2160e563ce37d8",
             "_validate_regime_transition_single": "f529effc98cd07e50fa166cabea7cbf0360c1d14ee6915037fcb1ac2794bdfb0",
-            "validate_state_transitions_all_periods": "bf07a3f9a7ea91da03b32386ed066a6a0ae56b105bc2de533093da02f16d6344",
+            "validate_state_transitions_all_periods": "41c223ea8426a823b51d3eac44e3e81d5a86c1c21175030b5000793d82a8fcf1",
             "validate_joint_transitions_all_periods": "5db60430e5e98cb6e80a5001c9674597622550288084826a2212d9d4001b1939",
+            "_validate_state_transition_single": "f921dc60816dc77adc95a9a543bf3b3c60950836604e657cbf79a10aaf8e9253",
+            "_check_and_release_state_probability": "8479b8303c3958300ec8cf224c9f117541745c5fc9a8ac971ed83951043c7f2e",
+            "_evaluate_state_probability_law": "0c6f52ccf638c537c7d601fc8d599494cd008b3b39bbcd8566b3324eca92a965",
+            "_state_probability_law": "d058c6e928b67b7c8a30380cdd92b0eb76811c17e5fbf3fd85e36716221c3f3d",
+            "_TransitionLawCompiler.__call__": "3c521064f3e2aaa76fd435b1fa124631994fd0dc173e3bfd8b391e098c60059a",
+            "_abstract_transition_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
+            "_check_state_probs": "3f2776c94e388e764769f3342ad7191aa5697952b5d6aa3a38e62c49d96abccd",
         },
     ),
     "src/lcm/model.py": (
@@ -6618,7 +6625,7 @@ _ACTION_GRID_CONTRACTS = {
     "src/_lcm/simulation/initial_conditions.py": (
         "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
         {
-            "validate_simulation_inputs": "78fc1ee7349d3a927e7988c705bc10a9bfd9050b0028af7e63c942ebbf768ed6",
+            "validate_simulation_inputs": "2b042fa4d4a80a19bed4be769cae0789e80b4390b0d773ba805d05a9b52dc1b5",
             "validate_initial_conditions": "706a297af1125941763bf594511ee343f31dc8a725d38aa1614048c232a8d9c8",
             "_collect_feasibility_errors": "ccb25705a003d95b1cd10f406df14ef43a809508c0f0028b6e1a13ddf7022b02",
             "_check_regime_feasibility": "9017964aeb5f3fb33515244c7694b34af260dbad32c8ade442e794a32de643b2",

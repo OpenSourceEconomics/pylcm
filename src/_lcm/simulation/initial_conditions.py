@@ -199,6 +199,7 @@ def validate_simulation_inputs(
             logger=logger,
             summary=None,
             process_grid_resolver=process_grid_resolver,
+            simulation_memory=memory,
         )
 
 
