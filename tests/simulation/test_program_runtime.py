@@ -267,8 +267,10 @@ def test_unbudgeted_simulation_uses_the_subject_specific_inner_width(
         n_subjects=n_subjects,
     )
 
-    assert selected == [({"subject": expected_width}, n_subjects)]
-    np.testing.assert_array_equal(output, np.arange(n_subjects) + 1)
+    assert (selected, np.asarray(output).tolist()) == (
+        [({"subject": expected_width}, n_subjects)],
+        (np.arange(n_subjects) + 1).tolist(),
+    )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
