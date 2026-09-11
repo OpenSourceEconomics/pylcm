@@ -12,6 +12,7 @@ from types import MappingProxyType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import dags.exceptions as dags_exceptions
+import dags.tree as dt
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -2033,3 +2034,77 @@ def test_a_shipped_class_used_directly_is_fingerprinted_by_identity() -> None:
     assert digest == fingerprints._semantic_fingerprint(
         _utility_through_a_shipped_class
     )
+
+
+@pytest.mark.parametrize("function", [np.sum, np.asarray, np.issubdtype])
+def test_numpy_public_numerical_functions_have_durable_identity(
+    function: Callable,
+) -> None:
+    """NumPy public numerical implementations bind the installed runtime."""
+    first = fingerprints._semantic_fingerprint(_dependency_closure(function))
+    second = fingerprints._semantic_fingerprint(_dependency_closure(function))
+    assert first == second
+
+
+def test_generated_dag_can_flatten_nested_input_mappings() -> None:
+    """DAG input flattening binds its mapping protocol dependency."""
+
+    def function(tree: Mapping) -> object:
+        return dt.flatten_to_qnames(tree)
+
+    assert function({"a": {"b": 2}}) == {"a__b": 2}
+    assert fingerprints._semantic_fingerprint(
+        function
+    ) == fingerprints._semantic_fingerprint(function)
+
+
+@pytest.mark.parametrize(
+    "schema", [{}, {"income": float}, {"income": {"gross": float, "net": int}}]
+)
+def test_generated_output_schemas_have_stable_structural_identity(schema: dict) -> None:
+    """Empty, singleton and nested output declarations carry deterministic identity."""
+    first = _output_schema_function(schema)
+    second = _output_schema_function(dict(reversed(tuple(schema.items()))))
+    assert fingerprints._semantic_fingerprint(
+        first
+    ) == fingerprints._semantic_fingerprint(second)
+
+
+def test_generated_output_schema_binds_nested_types() -> None:
+    """A changed output type remains visible inside a nested schema."""
+    first = _output_schema_function({"income": {"net": int}})
+    changed = _output_schema_function({"income": {"net": float}})
+    assert fingerprints._semantic_fingerprint(
+        first
+    ) != fingerprints._semantic_fingerprint(changed)
+
+
+def test_cyclic_output_schema_is_rejected() -> None:
+    """A recursive output declaration has no finite schema contract."""
+    schema = {}
+    schema["income"] = schema
+    with pytest.raises(TypeError, match="annotation"):
+        fingerprints._semantic_fingerprint(_output_schema_function(schema))
+
+
+def _output_schema_function(schema: dict) -> Callable:
+    def function(value: float) -> float:
+        return value
+
+    function.__annotations__["return"] = schema
+    return function
+
+
+def test_numpy_abstract_scalar_families_retain_distinct_identities() -> None:
+    """Abstract dtype families retain their type identity without conversion."""
+    assert fingerprints._semantic_fingerprint(_dependency_closure(np.integer)) != (
+        fingerprints._semantic_fingerprint(_dependency_closure(np.floating))
+    )
+
+
+def test_output_schema_rejects_opaque_leaves() -> None:
+    """A generated output schema must contain inspectable type metadata."""
+    with pytest.raises(TypeError, match="annotation"):
+        fingerprints._semantic_fingerprint(
+            _output_schema_function({"income": object()})
+        )
