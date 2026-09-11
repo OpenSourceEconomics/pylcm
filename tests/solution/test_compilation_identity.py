@@ -126,6 +126,90 @@ def _capture_lowering_keys(
     return captured
 
 
+def test_candidate_frontier_describes_dynamic_arguments_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Static width alternatives share one dynamic argument description per core."""
+    frontier_count = 0
+    candidate_count = 0
+    argument_key_count = 0
+    captured: list[tuple[tuple, dict[str, Any]]] = []
+    original_frontier = backward_induction.resolve_core_program_candidates
+    original_argument_key = backward_induction._abstract_arguments_key
+    original_planning = backward_induction._resolve_output_layouts_and_lowering_keys
+
+    def count_frontier(**kwargs: Any) -> tuple:
+        nonlocal frontier_count, candidate_count
+        widths = kwargs["tile_widths"]
+        frontier_count += 1
+        candidate_count += len(widths)
+        return original_frontier(**kwargs)
+
+    def count_argument_key(**kwargs: Any) -> Hashable:
+        nonlocal argument_key_count
+        argument_key_count += 1
+        return original_argument_key(**kwargs)
+
+    class PlanningObservedError(Exception):
+        """Stop before lowering or compiling the resolved candidate frontier."""
+
+    def observe_planning(**kwargs: Any) -> tuple:
+        result = original_planning(**kwargs)
+        captured.append((result, kwargs))
+        raise PlanningObservedError
+
+    monkeypatch.setattr(
+        backward_induction, "resolve_core_program_candidates", count_frontier
+    )
+    monkeypatch.setattr(
+        backward_induction, "_abstract_arguments_key", count_argument_key
+    )
+    monkeypatch.setattr(
+        backward_induction,
+        "_resolve_output_layouts_and_lowering_keys",
+        observe_planning,
+    )
+
+    with pytest.raises(PlanningObservedError):
+        _model(execution_config=ExecutionConfig(device_memory_bytes=2**32)).solve(
+            params=get_params(n_periods=_N_PERIODS),
+            log_level="off",
+        )
+
+    assert candidate_count > frontier_count > 0
+    assert argument_key_count == frontier_count
+
+    monkeypatch.setattr(
+        backward_induction, "_abstract_arguments_key", original_argument_key
+    )
+    result, planning_kwargs = captured[0]
+    layouts, lowering_keys, programs, templates, _, donations, _ = result
+    regimes = planning_kwargs["regimes"]
+    expected = {}
+    for candidate, program in programs.items():
+        regime_name, period, core_name = candidate[0]
+        regime = regimes[regime_name]
+        expected[candidate] = _lowering_key(
+            program_identity=_program_identity(
+                model_fingerprint=planning_kwargs["model_fingerprint"],
+                regime_name=regime_name,
+                core_name=core_name,
+                period_signature=regime.solution.period_signatures[period],
+                solver_group_key=regime.solution.solver_period_group_keys.get(period),
+            ),
+            layout_key=layouts[candidate[0]].compilation_key,
+            arguments={**program.arguments, **templates[candidate]},
+            specialization_key=program.specialization_key,
+            output_roles=program.output_roles,
+            donated_arguments=backward_induction._donated_arguments(
+                donations=donations[candidate]
+            ),
+            placement_key=regime.solution.submesh_device_ids,
+            compiler_options=program.compiler_options,
+        )
+    assert lowering_keys == expected
+
+
 def test_lowering_key_ignores_callable_identity() -> None:
     """One program identity yields one key, whatever object carries the program."""
     first = _lowering_key(

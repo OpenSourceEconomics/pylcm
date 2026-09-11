@@ -4083,26 +4083,38 @@ def _lowering_keys(
     regimes: MappingProxyType[RegimeName, Regime],
     model_fingerprint: str,
 ) -> dict[_CoreCandidate, Hashable]:
-    """Compute every candidate's lowering key, donation set included."""
+    """Compute every candidate's lowering key, donation set included.
+
+    Width candidates of one core share the exact dynamic arguments assembled before
+    their static widths are resolved. Describe that argument tree once per frontier;
+    specialization, donation, placement, layout, and compiler choices remain in each
+    candidate's key.
+    """
     keys: dict[_CoreCandidate, Hashable] = {}
+    argument_keys: dict[_CoreTriple, Hashable] = {}
     for candidate, resolved in resolved_programs.items():
-        regime_name, period, core_key = candidate[0]
+        triple = candidate[0]
+        regime_name, period, core_key = triple
         regime = regimes[regime_name]
-        keys[candidate] = _lowering_key(
-            program_identity=_program_identity(
+        if triple not in argument_keys:
+            argument_keys[triple] = _abstract_arguments_key(
+                arguments={**resolved.arguments, **internal_templates[candidate]}
+            )
+        keys[candidate] = (
+            _program_identity(
                 model_fingerprint=model_fingerprint,
                 regime_name=regime_name,
                 core_name=core_key,
                 period_signature=regime.solution.period_signatures[period],
                 solver_group_key=regime.solution.solver_period_group_keys.get(period),
             ),
-            layout_key=layouts[candidate[0]].compilation_key,
-            arguments={**resolved.arguments, **internal_templates[candidate]},
-            specialization_key=resolved.specialization_key,
-            output_roles=resolved.output_roles,
-            donated_arguments=_donated_arguments(donations=donations[candidate]),
-            placement_key=regime.solution.submesh_device_ids,
-            compiler_options=resolved.compiler_options,
+            argument_keys[triple],
+            resolved.specialization_key,
+            _output_roles_key(output_roles=resolved.output_roles),
+            layouts[triple].compilation_key,
+            _donated_arguments(donations=donations[candidate]),
+            regime.solution.submesh_device_ids,
+            resolved.compiler_options,
         )
     return keys
 
