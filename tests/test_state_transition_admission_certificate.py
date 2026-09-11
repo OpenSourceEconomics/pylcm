@@ -147,6 +147,14 @@ def _state_transition_admission_errors(  # noqa: C901, PLR0912
         "only the admitted program may dispatch": (
             "plan.compiled(**placed).block_until_ready()"
         ),
+        "state law output must use the first selected subject device": (
+            "output_sharding = simulation_value_sharding("
+            "stored_sharding=jax.sharding.SingleDeviceSharding("
+            "memory.subject_devices[0]), devices=(memory.subject_devices[0],))"
+        ),
+        "selected output placement must enter compiler admission": (
+            "output_sharding=output_sharding"
+        ),
     }
     for message, expression in required_producer.items():
         if expression not in producer_source:
@@ -168,8 +176,10 @@ def _state_transition_admission_errors(  # noqa: C901, PLR0912
     if (
         len(compile_call) != 1
         or _keyword(call=compile_call[0], name="keep_unused") != "True"
+        or _keyword(call=compile_call[0], name="out_shardings")
+        != "self.output_sharding"
     ):
-        errors.append("transition compiler must retain explicit placed inputs")
+        errors.append("transition compiler must retain inputs and place every output")
 
     check = _definition(tree=transition_tree, name="_check_state_probs")
     admitted_checks = _calls(node=check, name="run_simulation_operation")
@@ -272,9 +282,21 @@ def test_state_transition_admission_contract_is_complete() -> None:
         ),
         (
             _TRANSITION_CHECKS,
-            "jax.jit(self.function, keep_unused=True)",
-            "jax.jit(self.function, keep_unused=False)",
-            "transition compiler must retain explicit placed inputs",
+            "            keep_unused=True,",
+            "            keep_unused=False,",
+            "transition compiler must retain inputs and place every output",
+        ),
+        (
+            _TRANSITION_CHECKS,
+            "            out_shardings=self.output_sharding,",
+            "            out_shardings=None,",
+            "transition compiler must retain inputs and place every output",
+        ),
+        (
+            _TRANSITION_CHECKS,
+            "        devices=(memory.subject_devices[0],),",
+            "        devices=(jax.devices()[0],),",
+            "state law output must use the first selected subject device",
         ),
         (
             _TRANSITION_CHECKS,
@@ -295,7 +317,7 @@ def test_state_transition_admission_contract_is_complete() -> None:
 def test_state_transition_admission_mutation_is_rejected(
     *, path: str, old: str, new: str, expected: str
 ) -> None:
-    """Each independently named weakening is rejected after byte resealing."""
+    """Each independently named weakening is rejected by the structural verifier."""
     sources = {
         _INITIAL_CONDITIONS: (_ROOT / _INITIAL_CONDITIONS).read_text(),
         _TRANSITION_CHECKS: (_ROOT / _TRANSITION_CHECKS).read_text(),

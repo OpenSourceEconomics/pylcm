@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "e5823fe1314f45b5010d79e72e31b584197cf3ba04cb7b67e1ea4d40beb6671e",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "7b71a4898777f2ceefd42d63587bcc2a30bf31438e8e8e0e9592943b5a8143f6",
     SUPPORT_DIAGNOSTICS_SOURCE: "031dc0d584faec8d055d25b3099d71e4f76c71cbb4670ad8e85cb2a4746bbb09",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -6311,7 +6311,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/transition_checks.py": (
-        "75af4ce2651a6829051c8132878f3c1c41f8dda2b5cb49242f8bc3fa2bbd0ff4",
+        "af1a1802d8b83594d9da4f9fc0a7071726a8bdb0becaccb1051b544628151170",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
@@ -6322,9 +6322,9 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "validate_joint_transitions_all_periods": "5db60430e5e98cb6e80a5001c9674597622550288084826a2212d9d4001b1939",
             "_validate_state_transition_single": "f921dc60816dc77adc95a9a543bf3b3c60950836604e657cbf79a10aaf8e9253",
             "_check_and_release_state_probability": "8479b8303c3958300ec8cf224c9f117541745c5fc9a8ac971ed83951043c7f2e",
-            "_evaluate_state_probability_law": "0c6f52ccf638c537c7d601fc8d599494cd008b3b39bbcd8566b3324eca92a965",
+            "_evaluate_state_probability_law": "22ace1a5635bc79575af8e7bc19017d6fa17dc0b96b26ded67bbfb6119cad85a",
             "_state_probability_law": "d058c6e928b67b7c8a30380cdd92b0eb76811c17e5fbf3fd85e36716221c3f3d",
-            "_TransitionLawCompiler.__call__": "3c521064f3e2aaa76fd435b1fa124631994fd0dc173e3bfd8b391e098c60059a",
+            "_TransitionLawCompiler.__call__": "03fa9e5ad84f0058889242afbb6cec599166b870db09e4ce7d84c4f1856e2da2",
             "_abstract_transition_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
             "_check_state_probs": "3f2776c94e388e764769f3342ad7191aa5697952b5d6aa3a38e62c49d96abccd",
         },

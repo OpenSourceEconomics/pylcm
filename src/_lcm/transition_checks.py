@@ -54,6 +54,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.transition_plans import LotteryLifetime
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
 from _lcm.utils.logging import raise_or_warn, validation_enabled
@@ -1310,6 +1311,10 @@ def _evaluate_state_probability_law(
     external = resident_bytes_by_device(
         live=live, arguments=argument_buffers, devices=memory.subject_devices
     )
+    output_sharding = simulation_value_sharding(
+        stored_sharding=jax.sharding.SingleDeviceSharding(memory.subject_devices[0]),
+        devices=(memory.subject_devices[0],),
+    )
     compiler = _TransitionLawCompiler(
         function=partial(
             _state_probability_law,
@@ -1317,6 +1322,7 @@ def _evaluate_state_probability_law(
             func=func,
         ),
         arguments=jax.tree.map(_abstract_transition_operand, dict(placed)),
+        output_sharding=output_sharding,
     )
     plan = plan_workspace(
         axes=(),
@@ -1349,13 +1355,23 @@ class _TransitionLawCompiler:
     """Keep one user law call-local while compiling its concrete producer shape."""
 
     function: Callable[..., FloatND]
+    """Complete user-law producer with grid construction inside its boundary."""
+
     arguments: Mapping[str, object]
+    """Placed abstract operands retained in the compiler allocation report."""
+
+    output_sharding: jax.sharding.Sharding
+    """Selected-device placement fixed before admission and first dispatch."""
 
     def __call__(self, widths: Mapping[str, int]) -> jax.stages.Compiled:
         """Lower the complete producer without allocating its result."""
         if widths:
             raise ExecutionPlanningError("Transition validation declares no axes.")
-        lowered = jax.jit(self.function, keep_unused=True).lower(**self.arguments)
+        lowered = jax.jit(
+            self.function,
+            keep_unused=True,
+            out_shardings=self.output_sharding,
+        ).lower(**self.arguments)
         return lowered.compile()
 
 

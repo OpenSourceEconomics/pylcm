@@ -1,6 +1,10 @@
 """State-transition validation admits its complete user-law producer."""
 
 import dataclasses
+import os
+import subprocess
+import sys
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -81,12 +85,25 @@ def _invalid_health_probabilities(*, health: ScalarInt) -> FloatND:
     return jnp.stack((probability, probability))
 
 
+def _invalid_operand_free_health_probabilities() -> FloatND:
+    """Expose the no-operand producer placement used by entry validation."""
+    return jnp.asarray([0.25, 0.25], dtype=_FLOAT_DTYPE)
+
+
 def _inputs(
-    *, budget: int | None, valid: bool = True
+    *,
+    budget: int | None,
+    valid: bool = True,
+    operand_free: bool = False,
+    devices: tuple[int, ...] | None = None,
 ) -> tuple[Model, UserParams, UserInitialConditions]:
-    law: Callable[..., FloatND] = (
-        _valid_health_probabilities if valid else _invalid_health_probabilities
-    )
+    law: Callable[..., FloatND]
+    if operand_free:
+        if valid:
+            raise ValueError("The placement witness requires its diagnostic replay.")
+        law = _invalid_operand_free_health_probabilities
+    else:
+        law = _valid_health_probabilities if valid else _invalid_health_probabilities
     grid = DiscreteGrid(category_class=_Health)
     model = Model(
         regimes={
@@ -106,7 +123,7 @@ def _inputs(
         },
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
-        execution_config=ExecutionConfig(device_memory_bytes=budget),
+        execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
     )
     return (
         model,
@@ -119,15 +136,93 @@ def _inputs(
     )
 
 
+_SELECTED_DEVICE_SCRIPT = textwrap.dedent(
+    """
+    import jax
+
+    from _lcm import transition_checks
+    from lcm.exceptions import InvalidStateTransitionProbabilitiesError
+    from tests.simulation.test_state_transition_entry_admission import _inputs
+
+    assert jax.device_count() == 4, jax.devices()
+    selected_id = jax.devices()[2].id
+    model, params, initial = _inputs(
+        budget=2**28,
+        valid=False,
+        operand_free=True,
+        devices=(selected_id,),
+    )
+    solution = model.solve(params=params, log_level="off")
+
+    compiled = []
+    completed_on = []
+    original_compile = transition_checks._TransitionLawCompiler.__call__
+    original_check = transition_checks._check_state_probs
+
+    def compile_and_record(self, widths):
+        executable = original_compile(self, widths)
+        compiled.append(executable)
+        return executable
+
+    def check_and_record(**kwargs):
+        completed_on.append(tuple(device.id for device in kwargs["probs"].devices()))
+        return original_check(**kwargs)
+
+    transition_checks._TransitionLawCompiler.__call__ = compile_and_record
+    transition_checks._check_state_probs = check_and_record
+    try:
+        model.simulate(
+            params=params,
+            initial_conditions=initial,
+            solution=solution,
+            log_level="debug",
+        )
+    except InvalidStateTransitionProbabilitiesError:
+        pass
+    else:
+        raise AssertionError("The invalid law did not enter its serial replay.")
+
+    expected = [(selected_id,), (selected_id,)]
+    assert completed_on == expected, completed_on
+    output_devices = [
+        tuple(sorted(device.id for device in sharding.device_set))
+        for executable in compiled
+        for sharding in jax.tree.leaves(executable.output_shardings)
+    ]
+    assert output_devices == expected, output_devices
+    print("STATE-LAW-PLACEMENT-OK")
+    """
+)
+
+
 @dataclasses.dataclass
 class _CompilerBoundary:
     profiled: list[tuple[jax.stages.Compiled, int]] = dataclasses.field(
         default_factory=list
     )
+    """Compiler profiles paired with the dispatch count at profile time."""
+
     dispatched: list[jax.stages.Compiled] = dataclasses.field(default_factory=list)
+    """Executables that crossed the actual device dispatch boundary."""
 
     def transition_profiles(self) -> list[tuple[jax.stages.Compiled, int]]:
         return [item for item in self.profiled if "sort" in (item[0].as_text() or "")]
+
+    def require_declined_transition(self) -> None:
+        """Require the sole costly producer to remain beyond the dispatch boundary."""
+        profiles = self.transition_profiles()
+        assert len(profiles) == 1
+        declined, offset = profiles[0]
+        assert all(declined is not item for item in self.dispatched[offset:])
+
+    def require_dispatched_transitions(self, *, count: int) -> None:
+        """Require each costly producer to dispatch after its compiler profile."""
+        profiles = self.transition_profiles()
+        assert len(profiles) == count
+        assert all(
+            any(compiled is item for item in self.dispatched[offset:])
+            for compiled, offset in profiles
+        )
 
 
 @pytest.fixture
@@ -183,12 +278,7 @@ def test_state_transition_workspace_refuses_before_user_law_dispatch(
         )
 
     assert completed == []
-    profiles = compiler_boundary.transition_profiles()
-    assert len(profiles) == 1
-    declined, offset = profiles[0]
-    assert all(
-        declined is not executed for executed in compiler_boundary.dispatched[offset:]
-    )
+    compiler_boundary.require_declined_transition()
 
 
 @pytest.mark.requires(device="cpu")
@@ -205,12 +295,31 @@ def test_invalid_state_transition_replay_uses_admitted_producer(
         model.simulate(params=params, initial_conditions=initial, log_level="debug")
 
     assert str(actual.value) == str(expected.value)
-    profiles = compiler_boundary.transition_profiles()
-    assert len(profiles) == 2
-    for compiled, offset in profiles:
-        assert any(
-            compiled is executed for executed in compiler_boundary.dispatched[offset:]
-        )
+    compiler_boundary.require_dispatched_transitions(count=2)
+
+
+@pytest.mark.requires(device="cpu")
+def test_operand_free_state_law_uses_selected_device_during_serial_replay() -> None:
+    """Summary and diagnostic producers publish on the selected nondefault device."""
+    env = {
+        **os.environ,
+        "JAX_PLATFORMS": "cpu",
+        "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
+    }
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _SELECTED_DEVICE_SCRIPT],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        check=False,
+        timeout=600,
+    )
+
+    assert (result.returncode, "STATE-LAW-PLACEMENT-OK" in result.stdout) == (
+        0,
+        True,
+    ), result.stderr[-4000:]
 
 
 def test_admitted_state_transition_preserves_seeded_simulation_and_inputs() -> None:
