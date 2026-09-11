@@ -56,6 +56,8 @@ from _lcm.solution.backward_induction import (
 )
 from lcm.exceptions import ExecutionPlanningError
 
+_DEFAULT_UNBUDGETED_SUBJECT_WIDTH = 4096
+
 
 def _empty_widths() -> Mapping[str, int]:
     """Supply an immutable empty specialization for an unbound compiler result."""
@@ -417,10 +419,29 @@ def _dispatch_widths(
     configured: Mapping[str, int],
     residency: SimulationDispatchContext | None,
 ) -> Mapping[str, int]:
-    """Use the outer plan's common choice without reopening its width frontier."""
+    """Resolve explicit, budgeted, or default inner simulation widths.
+
+    An unbudgeted simulation keeps the complete population in one outer chunk.
+    Its inner subject tile uses a wider simulation-specific default so device
+    programs do enough work per dispatch. Explicit widths and the budgeted outer
+    plan remain authoritative.
+    """
     fixed = dict(configured)
     if residency is None:
-        return fixed
+        if SUBJECT_AXIS not in fixed:
+            subject_axis = next(
+                (
+                    axis
+                    for axis in program.requirements.axes
+                    if axis.name == SUBJECT_AXIS
+                ),
+                None,
+            )
+            if subject_axis is not None:
+                fixed[SUBJECT_AXIS] = min(
+                    _DEFAULT_UNBUDGETED_SUBJECT_WIDTH, subject_axis.extent
+                )
+        return MappingProxyType(fixed)
     for axis in program.requirements.axes:
         if axis.name not in residency.axis_widths:
             continue
