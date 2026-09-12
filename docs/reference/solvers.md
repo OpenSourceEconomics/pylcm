@@ -118,8 +118,8 @@ This matrix uses exactly three disposition labels:
 | Route shape | Disposition | Meaning |
 | --- | --- | --- |
 | Singleton hard max | streamed | Action blocks feed the hard-max reduction. |
-| Collective hard max | streamed | Action blocks feed the collective scalarization, hard max, stakeholder readout, and dissolution-flag reduction. |
-| Singleton EV1 with at least one discrete action | streamed | Each block reduces its continuous-action axes; the discrete expected maximum combines the resulting complete discrete support. |
+| Collective hard max | deliberately dense | Dense action reduction preserves candidate identity, stakeholder readout, and dissolution; the streamed reference currently regresses the measured resource envelope. |
+| Singleton EV1 with at least one discrete action | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
 | Same-period references, edge references, or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
 | Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |
 | Singleton hard max with folded states, including an ordinary co-map | streamed | Actions stream at each fold node; the unchanged quadrature still evaluates and reduces the full fold-node axis. |

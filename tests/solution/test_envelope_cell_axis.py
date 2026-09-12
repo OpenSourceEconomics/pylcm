@@ -1,5 +1,6 @@
 """Envelope work widths belong to the execution plan."""
 
+import dataclasses
 import functools
 from collections.abc import Hashable, Mapping
 from typing import Any
@@ -43,6 +44,7 @@ def _model(
     envelope: EnvelopeConfig,
     asset_rows: bool = False,
     device_memory_bytes: int | None = None,
+    n_periods: int = 3,
 ) -> Model:
     """Small real DC-EGM model exercising either numerical envelope consumer."""
     retirement = dcegm_retirement.replace(
@@ -60,7 +62,7 @@ def _model(
         )
     return Model(
         regimes={"retirement": retirement, "dead": dead},
-        ages=AgeGrid(start=40, stop=60, step="10Y"),
+        ages=AgeGrid(start=60 - 10 * (n_periods - 1), stop=60, step="10Y"),
         regime_id_class=RetirementOnlyRegimeId,
         execution_config=ExecutionConfig(
             axis_widths=widths, device_memory_bytes=device_memory_bytes
@@ -163,26 +165,60 @@ def test_fues_compiler_option_reaches_actual_lowering_keys(
     *, device_memory_bytes: int | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Both solve compilation routes distinguish the fixed FUES compiler option."""
-    original = backward_induction._lowering_key
-    observed: list[bool] = []
+    original = backward_induction._lowering_keys
+    observed: list[tuple[Hashable, Hashable, Hashable, Hashable]] = []
+    compiled_programs: list[backward_induction._CompiledPrograms] = []
+    original_compile = backward_induction._compile_all_functions
 
-    def observe(**kwargs: Any) -> Hashable:
-        key = original(**kwargs)
-        if kwargs.get("compiler_options") == (("scan_unroll", 1),):
-            plain_kwargs: dict[str, Any] = dict(kwargs)
-            plain_kwargs["compiler_options"] = ()
-            plain = original(**plain_kwargs)
-            observed.append(key != plain)
-        return key
+    def observe_compile(**kwargs: Any) -> backward_induction._CompiledPrograms:
+        result = original_compile(**kwargs)
+        compiled_programs.append(result)
+        return result
 
-    monkeypatch.setattr(backward_induction, "_lowering_key", observe)
+    def observe(**kwargs: Any) -> dict:
+        keys = original(**kwargs)
+        programs = kwargs["resolved_programs"]
+        # Change only options on the actual resolved programs; all remaining
+        # identity, argument, placement, layout and donation inputs stay fixed.
+        alternatives = {}
+        for options in ((("scan_unroll", 1),), (("scan_unroll", 2),), ()):
+            alternative_kwargs: dict[str, Any] = dict(kwargs)
+            alternative_kwargs["resolved_programs"] = {
+                candidate: dataclasses.replace(program, compiler_options=options)
+                for candidate, program in programs.items()
+            }
+            alternatives[options] = original(**alternative_kwargs)
+        for candidate, program in programs.items():
+            if program.compiler_options == (("scan_unroll", 1),):
+                observed.append(
+                    (
+                        keys[candidate],
+                        alternatives[(("scan_unroll", 1),)][candidate],
+                        alternatives[(("scan_unroll", 2),)][candidate],
+                        alternatives[()][candidate],
+                    )
+                )
+        return keys
+
+    monkeypatch.setattr(backward_induction, "_lowering_keys", observe)
+    monkeypatch.setattr(backward_induction, "_compile_all_functions", observe_compile)
     model = _model(
         widths={"savings_point": 2},
         envelope=FUESEnvelope(),
         device_memory_bytes=device_memory_bytes,
+        n_periods=4,
     )
-    model.solve(params=get_params(n_periods=3), log_level="off")
-    assert set(observed) == {True}
+    model.solve(params=get_params(n_periods=4), log_level="off")
+    assert len(compiled_programs) == 1
+    cores = compiled_programs[0].executables
+    assert (
+        cores[("retirement", 0)]["main"].compiled
+        is cores[("retirement", 1)]["main"].compiled
+    )
+    assert observed, "The solve must exercise FUES through the bulk-key boundary."
+    for actual, equal_options, changed_options, omitted_options in observed:
+        assert actual == equal_options
+        assert len({actual, equal_options, changed_options, omitted_options}) == 3
 
 
 def _nested_model(
