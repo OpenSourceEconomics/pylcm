@@ -14,17 +14,15 @@ from tests.simulation.test_budget_lifecycle import (
 )
 
 
-@pytest.mark.parametrize("prewarm", [False, True])
 @pytest.mark.parametrize("count", [1, 6])
 def test_budgeted_public_chunks_prepare_without_real_prewarm_templates(
-    *, monkeypatch: pytest.MonkeyPatch, prewarm: bool, count: int
+    *, monkeypatch: pytest.MonkeyPatch, count: int
 ) -> None:
     base = _stateful_target_model()
     model = Model(
         regimes=dict(base.user_regimes),
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,
-        n_subjects=count if prewarm else None,
         execution_config=ExecutionConfig(
             axis_widths={"subject": 2}, device_memory_bytes=2**32
         ),

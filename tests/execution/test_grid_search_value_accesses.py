@@ -116,7 +116,7 @@ def test_declares_exact_next_period_edge_reference_value_access() -> None:
 
 def test_final_period_processed_kernel_declares_no_next_value_accesses() -> None:
     """The final source node neither asks reachability for nor declares a successor."""
-    model = _make_consent_model(n_subjects=None)
+    model = _make_consent_model()
     kernels = model._regimes["single_terminal"].solution.period_kernels
     kernel = kernels[model.ages.n_periods - 1]
 
@@ -129,7 +129,7 @@ def test_final_period_processed_kernel_declares_no_next_value_accesses() -> None
 
 def test_edge_references_are_filtered_to_this_periods_reachable_targets() -> None:
     """An edge outside the reachable-target set contributes no references."""
-    model = _make_consent_model(n_subjects=None)
+    model = _make_consent_model()
     context = object.__new__(SolverBuildContext)
     object.__setattr__(context, "regime_name", "single")
     object.__setattr__(context, "user_regimes", model.user_regimes)

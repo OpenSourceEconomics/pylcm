@@ -735,7 +735,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "simulation_state_action_space:caller_drops_inherited_candidates",
         "simulation_index_consumer:next_candidate",
         "aot_compile:argmax_index_shift",
-        "aot_model:compiled_regime_filter",
+        "runtime_model:compiled_regime_filter",
         "shared_dedup_key:collapse_plain_callables",
         "simulation_publication:shift_padded_actions",
         "simulation_result:shift_raw_actions",
@@ -945,12 +945,12 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert len(original_names) == 388
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "f3d63d3030cb5d0a347f938aaba1c03faa52b23dd81690d982dcf7685d3a9a2d"
+        == "a777f806edb684b976b8da5ba78fe9425439f962a1de60a4508290cff3edb79d"
     )
     assert len(names) == 406
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "8a05b3e83750ca635e61bd66bc0667278710dc750e0ccb58f85fc8e1c63f8454"
+        == "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
     )
 
 
@@ -1137,7 +1137,6 @@ def _build_model(
     constraints: Mapping[str, Callable[..., BoolND]],
     terminal_utility: Callable[..., FloatND] | CollectiveUtility,
     taste_shocks: bool = False,
-    n_subjects: int | None = None,
     subject_width: int | None = None,
 ) -> Model:
     """Build the one-decision model the sweeps solve.
@@ -1147,7 +1146,6 @@ def _build_model(
         constraints: The acting regime's constraints.
         terminal_utility: The terminal regime's utility declaration.
         taste_shocks: Whether the acting singleton declares EV1 taste shocks.
-        n_subjects: Subject count to precompile, or ``None`` for the lazy path.
         subject_width: Optional explicit forward subject width.
 
     Returns:
@@ -1178,7 +1176,6 @@ def _build_model(
         regimes={"acting": acting, "done": done},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
-        n_subjects=n_subjects,
         execution_config=ExecutionConfig(
             axis_widths={} if subject_width is None else {"subject": subject_width}
         ),
@@ -1221,10 +1218,8 @@ def _dedup_terminal_utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _build_dedup_collision_model(
-    *, n_subjects: int | None = 2, subject_width: int | None = None
-) -> Model:
-    """Build same-shaped regimes whose AOT argmax partials must remain distinct."""
+def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
+    """Build same-shaped regimes whose runtime argmax partials must remain distinct."""
     wealth_grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
     def decision_regime(utility: Callable[..., FloatND]) -> Regime:
@@ -1250,7 +1245,6 @@ def _build_dedup_collision_model(
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=DedupRegimeId,
-        n_subjects=n_subjects,
         execution_config=ExecutionConfig(
             axis_widths={} if subject_width is None else {"subject": subject_width}
         ),
@@ -1266,7 +1260,7 @@ def _dedup_params(model: Model) -> dict[str, Any]:
 
 
 def _simulate_dedup_model(*, model: Model, params: dict[str, Any]):
-    """Run both same-shaped decision regimes through the public AOT path."""
+    """Run both same-shaped decision regimes through the public runtime path."""
     result = model.simulate(
         params=params,
         initial_conditions={
@@ -1355,14 +1349,13 @@ def masked_taste_shock_model() -> Model:
 
 
 @pytest.fixture(scope="module")
-def masked_taste_shock_aot_model() -> Model:
-    """Taste-shock singleton routed through public subject-count AOT compilation."""
+def masked_taste_shock_runtime_model() -> Model:
+    """Taste-shock singleton routed through runtime compilation."""
     return _build_model(
         utility=_ranked_utility,
         constraints={"candidate_mask": _candidate_mask},
         terminal_utility=lambda: jnp.array(0.0),
         taste_shocks=True,
-        n_subjects=len(_WEALTH_VALUES),
     )
 
 
@@ -1615,37 +1608,28 @@ def _simulate_materialization_case(
     return _period_zero_action_views(result=result, regime_name="acting")
 
 
-def _ranked_materialization_model(*, n_subjects: int | None) -> Model:
+def _ranked_materialization_model() -> Model:
     """Build the ordinary two-grid model for materialization mutations."""
     return _build_model(
         utility=_ranked_utility,
         constraints={"candidate_mask": _candidate_mask},
         terminal_utility=lambda: jnp.array(0.0),
-        n_subjects=n_subjects,
     )
 
 
-@pytest.mark.parametrize(
-    "compiled_n_subjects", [None, len(_WEALTH_VALUES)], ids=["lazy", "aot"]
-)
 def test_dropping_a_discrete_grid_code_changes_every_public_candidate_view(
     *,
-    compiled_n_subjects: int | None,
     monkeypatch: pytest.MonkeyPatch,
 ):
     """The discrete-grid materializer is behaviorally live before Q_and_F."""
-    baseline = _simulate_materialization_case(
-        model=_ranked_materialization_model(n_subjects=compiled_n_subjects)
-    )
+    baseline = _simulate_materialization_case(model=_ranked_materialization_model())
     original = DiscreteGrid.to_jax
 
     def drop_last_code(grid: DiscreteGrid) -> FloatND:
         return original(grid)[:-1]
 
     monkeypatch.setattr(DiscreteGrid, "to_jax", drop_last_code)
-    shifted = _simulate_materialization_case(
-        model=_ranked_materialization_model(n_subjects=compiled_n_subjects)
-    )
+    shifted = _simulate_materialization_case(model=_ranked_materialization_model())
 
     expected = {
         "work": [1, 1],
@@ -1659,18 +1643,12 @@ def test_dropping_a_discrete_grid_code_changes_every_public_candidate_view(
     assert shifted == (shifted_expected, shifted_expected, shifted_expected)
 
 
-@pytest.mark.parametrize(
-    "compiled_n_subjects", [None, len(_WEALTH_VALUES)], ids=["lazy", "aot"]
-)
 def test_dropping_a_linear_grid_point_changes_every_public_candidate_view(
     *,
-    compiled_n_subjects: int | None,
     monkeypatch: pytest.MonkeyPatch,
 ):
     """The continuous-grid materializer is behaviorally live before Q_and_F."""
-    baseline = _simulate_materialization_case(
-        model=_ranked_materialization_model(n_subjects=compiled_n_subjects)
-    )
+    baseline = _simulate_materialization_case(model=_ranked_materialization_model())
     original = LinSpacedGrid.to_jax
 
     def drop_last_action_point(grid: LinSpacedGrid) -> FloatND:
@@ -1683,9 +1661,7 @@ def test_dropping_a_linear_grid_point_changes_every_public_candidate_view(
         return points[:-1] if is_action_grid else points
 
     monkeypatch.setattr(LinSpacedGrid, "to_jax", drop_last_action_point)
-    shifted = _simulate_materialization_case(
-        model=_ranked_materialization_model(n_subjects=compiled_n_subjects)
-    )
+    shifted = _simulate_materialization_case(model=_ranked_materialization_model())
 
     expected = {
         "work": [1, 1],
@@ -1708,7 +1684,6 @@ def _runtime_action_utility(
 
 def _build_runtime_action_model(
     *,
-    n_subjects: int | None,
     fixed_points: FloatND | None = None,
 ) -> Model:
     """Build a model whose candidate menu arrives through public params."""
@@ -1747,17 +1722,15 @@ def _build_runtime_action_model(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
-        n_subjects=n_subjects,
     )
 
 
 def _simulate_runtime_action_model(
-    *, point_source: str, n_subjects: int | None, target_choice: float
+    *, point_source: str, target_choice: float
 ) -> tuple[dict[str, list[float]], dict[str, list[float]], dict[str, list[float]]]:
     """Run array, Series, or constructor-fixed runtime action points."""
     points = jnp.asarray([1.0, 2.0, 3.0])
     model = _build_runtime_action_model(
-        n_subjects=n_subjects,
         fixed_points=points if point_source == "fixed" else None,
     )
     params = cast("dict[str, Any]", model.get_params_template())
@@ -1782,19 +1755,14 @@ def _simulate_runtime_action_model(
 
 @pytest.mark.parametrize("point_source", ["array", "series", "fixed"])
 @pytest.mark.parametrize("target_choice", [1.0, 2.0, 3.0])
-@pytest.mark.parametrize(
-    "compiled_n_subjects", [None, len(_WEALTH_VALUES)], ids=["lazy", "aot"]
-)
 def test_public_runtime_action_points_reach_every_candidate_view(
     *,
     point_source: str,
     target_choice: float,
-    compiled_n_subjects: int | None,
 ):
     """Array, Series, and fixed public points all complete the candidate menu."""
     observed = _simulate_runtime_action_model(
         point_source=point_source,
-        n_subjects=compiled_n_subjects,
         target_choice=target_choice,
     )
     expected = {"choice": [target_choice, target_choice]}
@@ -1939,7 +1907,7 @@ def _simulate_taste_mask_case(
     return {name: period_0[name].to_numpy().tolist() for name in period_0.columns}
 
 
-def test_aot_dedup_keeps_same_shaped_regime_reducers_distinct():
+def test_runtime_dedup_keeps_same_shaped_regime_reducers_distinct():
     """Different bound Q/F objects cannot share one compiled argmax program."""
     model = _build_dedup_collision_model()
     period_0 = _simulate_dedup_model(model=model, params=_dedup_params(model))
@@ -1951,7 +1919,7 @@ def test_aot_dedup_keeps_same_shaped_regime_reducers_distinct():
 def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The synchronized dedup-key defect is visible on the public AOT path."""
+    """The synchronized dedup-key defect is visible on the public runtime path."""
     model = _build_dedup_collision_model()
     params = _dedup_params(model)
     values = model.solve(params=params, log_level="debug")
@@ -1988,14 +1956,9 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
     assert observed != [(0, 1.0), (1, 3.0)]
 
 
-@pytest.mark.parametrize("compiled_n_subjects", [None, 3], ids=["lazy", "aot"])
-def test_padded_heterogeneous_candidates_remain_subject_aligned(
-    compiled_n_subjects: int | None,
-):
+def test_padded_heterogeneous_candidates_remain_subject_aligned():
     """Padding and trimming preserve each subject's selected candidate."""
-    model = _build_dedup_collision_model(
-        n_subjects=compiled_n_subjects, subject_width=2
-    )
+    model = _build_dedup_collision_model(subject_width=2)
     result = model.simulate(
         params=_dedup_params(model),
         initial_conditions={
@@ -2021,12 +1984,9 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned(
     assert enriched["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
 
 
-@pytest.mark.parametrize("compiled_n_subjects", [None, 3], ids=["lazy", "aot"])
-def test_additional_targets_preserve_unbatched_selected_candidates(
-    compiled_n_subjects: int | None,
-):
+def test_additional_targets_preserve_unbatched_selected_candidates():
     """Computed targets cannot overwrite an already published action column."""
-    model = _build_dedup_collision_model(n_subjects=compiled_n_subjects)
+    model = _build_dedup_collision_model()
     result = model.simulate(
         params=_dedup_params(model),
         initial_conditions={
@@ -2063,7 +2023,7 @@ def _folded_terminal_utility(*, folded_shock: FloatND, work: DiscreteAction) -> 
     return 1.0 + folded_shock + 0.0 * jnp.asarray(work, dtype=float)
 
 
-def _build_zero_weight_fold_model(*, n_subjects: int | None = None) -> Model:
+def _build_zero_weight_fold_model() -> Model:
     """Build a folded process whose quadrature weights are exactly ``[0, 1, 0]``."""
     src = Regime(
         transition={
@@ -2101,7 +2061,6 @@ def _build_zero_weight_fold_model(*, n_subjects: int | None = None) -> Model:
         regimes={"src": src, "folded": folded, "dead": dead},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=FoldRegimeId,
-        n_subjects=n_subjects,
     )
 
 
@@ -2130,14 +2089,9 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
     )
 
 
-@pytest.mark.parametrize("compiled_n_subjects", [None, 1], ids=["lazy", "aot"])
-def test_zero_weight_fold_average_preserves_the_public_candidate(
-    compiled_n_subjects: int | None,
-):
+def test_zero_weight_fold_average_preserves_the_public_candidate():
     """The zero-mass fold nodes contribute nothing to the selected policy."""
-    observed = _simulate_zero_weight_fold(
-        _build_zero_weight_fold_model(n_subjects=compiled_n_subjects)
-    )
+    observed = _simulate_zero_weight_fold(_build_zero_weight_fold_model())
     assert observed == ([1], [1], [1])
 
 
@@ -2158,14 +2112,12 @@ def test_negating_the_fold_average_reverses_the_public_candidate(
     assert shifted == ([0], [0], [0])
 
 
-@pytest.mark.parametrize("compiled_n_subjects", [None, 1], ids=["lazy", "aot"])
 def test_negating_kernel_output_reverses_the_public_candidate(
     *,
-    compiled_n_subjects: int | None,
     monkeypatch: pytest.MonkeyPatch,
 ):
     """The solved-value transport into backward induction is behaviorally live."""
-    model = _build_zero_weight_fold_model(n_subjects=compiled_n_subjects)
+    model = _build_zero_weight_fold_model()
     baseline = _simulate_zero_weight_fold(model)
     original = grid_search_module.KernelOutput
 
@@ -2205,13 +2157,8 @@ def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int
     return raw, period_0["work"].to_numpy().tolist()
 
 
-@pytest.mark.parametrize(
-    "compiled_n_subjects", [None, _RNG_N_SUBJECTS], ids=["lazy", "aot"]
-)
-def test_seeded_taste_keys_preserve_subject_identity_across_batching(
-    compiled_n_subjects: int | None,
-):
-    """A fixed subject keeps its taste draw under chunking and AOT dispatch."""
+def test_seeded_taste_keys_preserve_subject_identity_across_batching():
+    """A fixed subject keeps its taste draw under chunking and runtime dispatch."""
     unbatched, chunked = (
         _simulate_seeded_taste_routing(
             model=_build_model(
@@ -2219,7 +2166,6 @@ def test_seeded_taste_keys_preserve_subject_identity_across_batching(
                 constraints={"candidate_mask": _candidate_mask},
                 terminal_utility=lambda: jnp.array(0.0),
                 taste_shocks=True,
-                n_subjects=compiled_n_subjects,
                 subject_width=width,
             )
         )
@@ -2307,15 +2253,15 @@ def test_taste_shock_simulate_matches_reference_for_every_candidate_and_support(
     assert covered == set(range(len(_CANDIDATES)))
 
 
-def test_taste_shock_aot_simulation_preserves_the_selected_flat_index(
-    masked_taste_shock_aot_model: Model,
+def test_taste_shock_runtime_simulation_preserves_the_selected_flat_index(
+    masked_taste_shock_runtime_model: Model,
 ):
-    """The public ``Model(n_subjects=...)`` route publishes the same candidate."""
+    """Runtime simulation publishes the selected candidate."""
     mask = (False, False, False, False, True, False)
     ranks = (-3.0, -2.0, -1.0, 0.0, 2.0, 1.0)
 
     observed = _simulate_taste_mask_case(
-        model=masked_taste_shock_aot_model, mask=mask, ranks=ranks
+        model=masked_taste_shock_runtime_model, mask=mask, ranks=ranks
     )
 
     assert observed["work"] == [_WORK_VALUES[1]] * len(_WEALTH_VALUES)

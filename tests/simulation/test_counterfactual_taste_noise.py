@@ -63,9 +63,9 @@ class _NoiseRecords:
         return output
 
 
-def _counterfactual_model(*, renamed: bool, aot: bool, count: int) -> Model:
+def _counterfactual_model(*, renamed: bool) -> Model:
     if not renamed:
-        return taste_shocks_toy.get_model(n_subjects=count if aot else None)
+        return taste_shocks_toy.get_model()
     return Model(
         regimes={
             "student": dataclasses.replace(
@@ -75,14 +75,12 @@ def _counterfactual_model(*, renamed: bool, aot: bool, count: int) -> Model:
         },
         ages=AgeGrid(start=39, stop=42, step="Y"),
         regime_id_class=_RenamedRegimeId,
-        n_subjects=count if aot else None,
     )
 
 
-@pytest.mark.parametrize("aot", [False, True], ids=["lazy", "aot"])
 @pytest.mark.parametrize("ambient_prng", ["threefry2x32", "rbg"])
 def test_actual_noise_survives_renamed_regimes_and_a_longer_horizon(
-    *, monkeypatch: pytest.MonkeyPatch, aot: bool, ambient_prng: str
+    *, monkeypatch: pytest.MonkeyPatch, ambient_prng: str
 ) -> None:
     """Shared age-40 choices get identical EV1 draws; a new taste seed changes them."""
     count = 6
@@ -96,7 +94,7 @@ def test_actual_noise_survives_renamed_regimes_and_a_longer_horizon(
     ):
         # Compare against an actual Threefry baseline even in the ambient-RBG case.
         with jax.default_prng_impl(ambient_prng if renamed else "threefry2x32"):
-            model = _counterfactual_model(renamed=renamed, aot=aot, count=count)
+            model = _counterfactual_model(renamed=renamed)
             params = taste_shocks_toy.get_params(scale=0.2)
             if renamed:
                 params["student"] = params.pop("alive")

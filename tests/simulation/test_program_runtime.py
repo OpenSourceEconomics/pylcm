@@ -1,11 +1,9 @@
 """Simulation dispatches the programs declared by each canonical regime."""
 
 import dataclasses
-import logging
 import threading
-import weakref
 from collections.abc import Mapping
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from types import MappingProxyType
 from typing import Any
@@ -15,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import _lcm.simulation.compile as compile_module
 import _lcm.simulation.runtime as runtime_module
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -24,7 +21,6 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.simulation.compile import _drain_compilations
 from _lcm.simulation.program_types import (
     SUBJECT_WIDTH_KEYWORD,
     SimulationBuildContext,
@@ -64,8 +60,7 @@ def _width_collision_terminal_utility(*, wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-@pytest.mark.parametrize("prewarm", [False, True])
-def test_user_subject_width_name_remains_an_economic_action(*, prewarm: bool) -> None:
+def test_user_subject_width_name_remains_an_economic_action() -> None:
     """A legal user action cannot be consumed as an internal static tile width."""
     model = Model(
         regimes={
@@ -87,7 +82,6 @@ def test_user_subject_width_name_remains_an_economic_action(*, prewarm: bool) ->
         states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         execution_config=ExecutionConfig(axis_widths={"subject": 1}),
-        n_subjects=2 if prewarm else None,
     )
     params: UserParams = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     frame = model.simulate(
@@ -104,12 +98,11 @@ def test_user_subject_width_name_remains_an_economic_action(*, prewarm: bool) ->
     )
 
 
-@pytest.mark.parametrize("prewarm", [False, True])
 @pytest.mark.parametrize("family", ["decision", "transition", "route"])
 def test_simulate_dispatches_the_declared_program_body(
-    *, monkeypatch: pytest.MonkeyPatch, prewarm: bool, family: str
+    *, monkeypatch: pytest.MonkeyPatch, family: str
 ) -> None:
-    """Both compilation modes execute each declared family on real subjects."""
+    """Runtime dispatch executes each declared family on real subjects."""
     model, params, initial = WITNESSES["multi_regime"]()
     model = Model(
         regimes=model.user_regimes,
@@ -117,7 +110,6 @@ def test_simulate_dispatches_the_declared_program_body(
         regime_id_class=MultiRegimeId,
         fixed_params=model.fixed_params,
     )
-    model.n_subjects = 7 if prewarm else None
     solution = model.solve(params=params, log_level="off")
     body_ids = {
         id(
@@ -146,17 +138,15 @@ def test_simulate_dispatches_the_declared_program_body(
     assert reached
 
 
-@pytest.mark.parametrize("prewarm", [False, True])
 @pytest.mark.parametrize("width", [1, 3, 7])
 def test_public_widths_reach_the_live_subject_and_action_loops(
-    *, monkeypatch: pytest.MonkeyPatch, prewarm: bool, width: int
+    *, monkeypatch: pytest.MonkeyPatch, width: int
 ) -> None:
     """The public request binds the static widths of the actual decision body."""
     model, params, initial = WITNESSES["multi_regime"](
         execution_config=ExecutionConfig(
             axis_widths={"subject": width, "action_product": width}
         ),
-        n_subjects=7 if prewarm else None,
     )
     solution = model.solve(params=params, log_level="off")
     body_widths = {}
@@ -447,39 +437,6 @@ def test_concurrent_duplicate_program_keys_compile_once(
     assert (compilations, results[0] is results[1]) == ([1], True)
 
 
-@pytest.mark.parametrize("workers", [1, 2])
-def test_public_prewarming_uses_the_bounded_compile_pool(
-    *, monkeypatch: pytest.MonkeyPatch, workers: int
-) -> None:
-    """Core candidates run in worker threads within the requested concurrency."""
-    model, params, initial = WITNESSES["multi_regime"](n_subjects=7)
-    solution = model.solve(params=params, log_level="off")
-    thread_ids = set()
-    original = runtime_module._SimulationCandidateCompiler.__call__
-
-    # keyword-only-exempt: library-callback=pytest.MonkeyPatch.setattr
-    def compile_candidate(
-        self: runtime_module._SimulationCandidateCompiler, widths: Mapping[str, int], /
-    ) -> CompiledSimulationProgram:
-        thread_ids.add(threading.get_ident())
-        return original(self, widths)
-
-    monkeypatch.setattr(
-        runtime_module._SimulationCandidateCompiler, "__call__", compile_candidate
-    )
-    model.simulate(
-        params=params,
-        initial_conditions=initial,
-        solution=solution,
-        log_level="off",
-        max_compilation_workers=workers,
-    )
-    assert (0 < len(thread_ids) <= workers, threading.get_ident() in thread_ids) == (
-        True,
-        False,
-    )
-
-
 def test_a_failed_candidate_can_be_retried(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -512,75 +469,6 @@ def test_a_failed_candidate_can_be_retried(
         program=program, arguments={"state": jnp.arange(7.0)}, period=0, n_subjects=7
     )
     assert (runtime.in_flight, np.asarray(output).tolist()) == ({}, list(range(1, 8)))
-
-
-def test_prewarming_drains_successes_and_errors_before_raising() -> None:
-    """All task references close when any selected candidate fails compilation."""
-    success: Future[None] = Future()
-    failure: Future[None] = Future()
-    success.set_result(None)
-    failure.set_exception(RuntimeError("candidate compilation failed"))
-    futures = {success, failure}
-    with pytest.raises(RuntimeError, match="candidate compilation failed"):
-        _drain_compilations(futures=futures)
-    assert futures == set()
-
-
-class _TrackedArguments(dict[str, object]):
-    """A weak-referenceable owner of a prewarming argument tree."""
-
-
-def test_prewarming_bounds_live_argument_trees(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Slow workers cannot leave a horizon of template trees queued in the producer."""
-    model, params, _ = WITNESSES["multi_regime"](n_subjects=7)
-    owners = []
-    peak = [0]
-    workers_started = threading.Semaphore(0)
-    release_workers = threading.Event()
-    third_owner_created = threading.Event()
-
-    def track_builder(original: Any) -> Any:
-        def build(**kwargs: Any) -> dict[str, object]:
-            arguments = _TrackedArguments(original(**kwargs))
-            owners.append(weakref.ref(arguments))
-            alive = sum(owner() is not None for owner in owners)
-            peak[0] = max(peak[0], alive)
-            if alive > 2:
-                third_owner_created.set()
-            return arguments
-
-        return build
-
-    def slow_worker(*, arguments: Mapping[str, object], **_kwargs: object) -> None:
-        workers_started.release()
-        if not release_workers.wait(timeout=10):
-            raise RuntimeError("controlled compilation worker was never released")
-        tuple(arguments)
-
-    for name in ("_build_argmax_args", "_build_next_state_args", "_build_crtp_args"):
-        monkeypatch.setattr(
-            compile_module, name, track_builder(getattr(compile_module, name))
-        )
-    monkeypatch.setattr(compile_module, "_prepare_and_log", slow_worker)
-    with ThreadPoolExecutor(max_workers=1) as runner:
-        future = runner.submit(
-            model._ensure_simulate_compiled,
-            compile_batch_size=7,
-            flat_params=model._process_params(params),
-            max_compilation_workers=2,
-            log=logging.getLogger("prewarm-lifetime-test"),
-        )
-        try:
-            for _ in range(2):
-                if not workers_started.acquire(timeout=5):
-                    raise RuntimeError("controlled workers did not start")
-            third_owner_created.wait(timeout=0.5)
-        finally:
-            release_workers.set()
-        future.result()
-    assert peak[0] <= 2
 
 
 def test_simulation_budget_refuses_unaccounted_forward_residency() -> None:

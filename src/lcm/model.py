@@ -70,7 +70,7 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
-from _lcm.simulation.compile import bind_simulation_runtime, lower_simulation_programs
+from _lcm.simulation.compile import bind_simulation_runtime
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from _lcm.simulation.initial_conditions import (
@@ -433,28 +433,6 @@ class Model:
     fixed_params: UserParams
     """Parameters fixed at model initialization."""
 
-    n_subjects: int | None = None
-    """Expected simulate population size; enables AOT compile of simulate functions.
-
-    Dispatch by call shape:
-
-    - `None`: purely lazy behaviour, no AOT.
-    - First `simulate(...)` with `actual_n == n_subjects`: prepares simulation
-      programs for the resolved outer chunk shape after solution resolution.
-      Unbudgeted calls use the compile pool; budgeted calls compile the complete
-      chunk profile before admission. Both paths cache executable code.
-    - Subsequent `simulate(...)` with the same population and chunk shape:
-      reuses the cached compiled programs.
-    - `simulate(...)` with a mismatching population size: warns once per size
-      and falls back to the runtime-traced path.
-
-    Param-shape contract: the cache is keyed on the chunk shape. The shapes
-    and dtypes of `flat_params` leaves at the first matching call become
-    part of the AOT signature; subsequent calls must keep them stable. MSM-
-    style estimation (varying values, fixed shapes) is the target use case;
-    construct a fresh `Model` whenever a param array's shape or dtype changes.
-    """
-
     _params_template: ParamsTemplate
     """Template for the model parameters."""
 
@@ -464,23 +442,11 @@ class Model:
     Private: `execution_devices` is the public view of the device selection.
     """
 
-    _simulate_compile_cache: dict[int, MappingProxyType[RegimeName, Regime]]
-    """AOT-compiled regimes keyed by the device-aligned outer chunk shape."""
-
     _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
-    """Program executors shared by lazy dispatch and prewarming for each shape."""
-
-    _warned_n_subjects: set[int]
-    """Mismatching `actual_n_subjects` already warned about (one warning each)."""
+    """Program executors shared by calls with the same outer subject shape."""
 
     _simulate_compile_lock: threading.Lock
-    """Serialises mutations of `_simulate_compile_cache` and
-    `_warned_n_subjects`.
-
-    The check-then-set on each container is held under this lock. The
-    consequent `log.warning` call sits outside the lock so concurrent
-    simulate() calls don't serialise on logging I/O.
-    """
+    """Serialize creation of runtime executors for each subject shape."""
 
     @beartype(conf=MODEL_CONF)
     def __init__(
@@ -502,7 +468,6 @@ class Model:
         actions: Mapping[str, object] = MappingProxyType({}),
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
-        n_subjects: int | None = None,
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     ) -> None:
         """Initialize the Model.
@@ -543,10 +508,6 @@ class Model:
                 per-name: declare it here, or in every regime that has a
                 continuation, never some of each. Terminal regimes never
                 receive it.
-            n_subjects: Expected simulate batch size; if set, the first matching
-                `simulate(...)` call AOT-compiles all simulate functions for
-                batch shape `n_subjects` before backward induction starts.
-                `None` keeps the purely lazy behaviour.
             execution_config: Hardware-local controls every phase of this model
                 runs under — the devices it may use, the states that carry a
                 device axis, the per-device workspace budget, and fixed planner
@@ -558,10 +519,7 @@ class Model:
         self.ages = ages
         self.n_periods = ages.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
-        self.n_subjects = n_subjects
-        self._simulate_compile_cache = {}
         self._simulate_runtime_regimes = {}
-        self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
         # In-memory result provenance. Kept in pickle state so a model and a
         # result round-tripped together remain compatible, but deliberately not
@@ -625,7 +583,6 @@ class Model:
             n_periods=self.n_periods,
             user_regimes=self.user_regimes,
             regime_id_class=regime_id_class,
-            n_subjects=n_subjects,
             broadcast_variables=broadcast_variables,
             ages=self.ages,
             active_periods_by_regime=active_periods_by_regime,
@@ -746,19 +703,14 @@ class Model:
     def __getstate__(self) -> dict[str, object]:
         """Return a copy of `__dict__` with per-process state removed.
 
-        Drops the AOT compile state (`_simulate_compile_lock`, a
-        `threading.Lock`; `_simulate_compile_cache`, compiled XLA programs that
-        can't survive a process boundary; `_warned_n_subjects`, its companion
-        set), the declared-authority cache and its lock, the parameter
-        projection, and the sealed bindings, which name namespaces and closure
-        cells of this process. `__setstate__` rebuilds each of them.
+        Drops runtime executors and their lock, declared-authority state,
+        the parameter projection, and sealed bindings that name this process's
+        namespaces and closure cells. `__setstate__` rebuilds them.
         """
         state = self.__dict__.copy()
         for transient in (
             "_simulate_compile_lock",
-            "_simulate_compile_cache",
             "_simulate_runtime_regimes",
-            "_warned_n_subjects",
             "_declared_authority_cache",
             "_declared_authority_lock",
             "_solution_param_projection",
@@ -778,9 +730,7 @@ class Model:
         self.__dict__.update(state)
         if "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
-        self._simulate_compile_cache = {}
         self._simulate_runtime_regimes = {}
-        self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
         self._declared_authority_cache = OrderedDict()
         self._declared_authority_lock = threading.Lock()
@@ -1078,52 +1028,6 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
             )
         return internal_result
-
-    def _resolve_simulate_regimes(
-        self,
-        *,
-        actual_n_subjects: int,
-        compile_batch_size: int,
-        log: logging.Logger,
-    ) -> MappingProxyType[RegimeName, Regime]:
-        """Return regimes sharing the executor for this call's subject shape.
-
-        Dispatch by `n_subjects` and batch-shape match:
-
-        - `n_subjects is None`: bind the lazy executor for the chunk shape.
-        - `actual_n_subjects != n_subjects`: warn once per mismatching size,
-          use the lazy executor for the actual chunk shape.
-        - `actual_n_subjects == n_subjects`: return the regimes compiled for
-          `compile_batch_size` (the chunk shape; caller must have populated the
-          cache before calling).
-        """
-        if self.n_subjects is None:
-            return self._runtime_regimes_for_shape(
-                compile_batch_size=compile_batch_size
-            )
-        if actual_n_subjects != self.n_subjects:
-            with self._simulate_compile_lock:
-                already_warned = actual_n_subjects in self._warned_n_subjects
-                if not already_warned:
-                    self._warned_n_subjects.add(actual_n_subjects)
-            if not already_warned:
-                log.warning(
-                    "simulate called with n_subjects=%d but model declared "
-                    "n_subjects=%d; falling back to runtime compile.",
-                    actual_n_subjects,
-                    self.n_subjects,
-                )
-            return self._runtime_regimes_for_shape(
-                compile_batch_size=compile_batch_size
-            )
-        if self._execution.device_memory_bytes is not None:
-            # Budgeted prewarming is the abstract complete-chunk profile, prepared
-            # after solution ownership is known. It shares this runtime's code cache.
-            return self._runtime_regimes_for_shape(
-                compile_batch_size=compile_batch_size
-            )
-        with self._simulate_compile_lock:
-            return self._simulate_compile_cache[compile_batch_size]
 
     def _runtime_regimes_for_shape(
         self, *, compile_batch_size: int
@@ -2490,10 +2394,6 @@ class Model:
             ),
             process_grid_resolver=process_grid_resolver,
         )
-        # `actual_n_subjects` is the user's real population (matched against the
-        # declared `n_subjects`); `padded_n_subjects` is the leading axis the
-        # dispatch actually sees. They are equal unless distributed padding ran.
-        actual_n_subjects = original_n_subjects
         padded_n_subjects = len(next(iter(initial_conditions.values())))
         if solution is None:
             solve_params = (
@@ -2551,10 +2451,8 @@ class Model:
         # period owner acquires only the copies consumed by that period's units.
         prepared_chunks = None
         if entry_allocations is not None:
-            simulate_regimes = self._resolve_simulate_regimes(
-                actual_n_subjects=actual_n_subjects,
+            simulate_regimes = self._runtime_regimes_for_shape(
                 compile_batch_size=padded_n_subjects,
-                log=log,
             )
             prepared_chunks = prepare_simulation_chunks(
                 regimes=simulate_regimes,
@@ -2579,19 +2477,12 @@ class Model:
             compile_batch_size = self._resolve_compile_batch_size(
                 subject_batch_size=subject_batch_size,
                 padded_n_subjects=padded_n_subjects,
-                actual_n_subjects=actual_n_subjects,
-                flat_params=flat_params,
-                max_compilation_workers=max_compilation_workers,
-                log=log,
-                process_grid_resolver=process_grid_resolver,
             )
             initial_conditions, _ = pad_initial_conditions_to_multiple(
                 initial_conditions=initial_conditions, multiple=compile_batch_size
             )
-            simulate_regimes = self._resolve_simulate_regimes(
-                actual_n_subjects=actual_n_subjects,
+            simulate_regimes = self._runtime_regimes_for_shape(
                 compile_batch_size=compile_batch_size,
-                log=log,
             )
         result = simulate(
             flat_params=flat_params,
@@ -2620,11 +2511,8 @@ class Model:
         )
         if entry_allocations is not None:
             entry_allocations.close()
-        # AOT-compiled regimes carry `jax.stages.Compiled` callables that
-        # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads
-        # the lazy DAG functions / constraints / transitions on
-        # `regime.simulation`, never the compiled callables — so swap in
-        # the lazy regimes to keep the result cloudpickle-safe.
+        # DataFrame materialization reads canonical DAG functions; call-local
+        # executors retain compiled programs that cannot cross a pickle boundary.
         if simulate_regimes is not self._regimes:
             result._regimes = self._regimes  # noqa: SLF001
         result._solution = solution  # noqa: SLF001
@@ -2645,11 +2533,6 @@ class Model:
         *,
         subject_batch_size: int,
         padded_n_subjects: int,
-        actual_n_subjects: int,
-        flat_params: FlatParams,
-        max_compilation_workers: int | None,
-        log: logging.Logger,
-        process_grid_resolver: ProcessGridResolver | None = None,
     ) -> int:
         """Resolve an unbudgeted ExecutionConfig subject width to an outer chunk.
 
@@ -2663,12 +2546,7 @@ class Model:
           retain their original solve placement, with required reads copied only
           for the current period.
 
-        Also AOT-compiles (and caches) the simulate functions for the resolved
-        shape when `n_subjects` matches the population.
         """
-        aot_active = (
-            self.n_subjects is not None and self.n_subjects == actual_n_subjects
-        )
         if subject_batch_size > 0:
             compile_batch_size = min(subject_batch_size, padded_n_subjects)
             if self._distributes_subjects():
@@ -2679,14 +2557,6 @@ class Model:
                 )
         else:
             compile_batch_size = padded_n_subjects
-        if aot_active:
-            self._ensure_simulate_compiled(
-                compile_batch_size=compile_batch_size,
-                flat_params=flat_params,
-                max_compilation_workers=max_compilation_workers,
-                log=log,
-                process_grid_resolver=process_grid_resolver,
-            )
         return compile_batch_size
 
     def _distributes_subjects(self) -> bool:
@@ -2694,35 +2564,6 @@ class Model:
         return any(
             regime.solution.sharded_state_names for regime in self._regimes.values()
         )
-
-    def _ensure_simulate_compiled(
-        self,
-        *,
-        compile_batch_size: int,
-        flat_params: FlatParams,
-        max_compilation_workers: int | None,
-        log: logging.Logger,
-        process_grid_resolver: ProcessGridResolver | None = None,
-    ) -> None:
-        """Compile and cache the simulate functions for a chunk shape."""
-        with self._simulate_compile_lock:
-            cached = compile_batch_size in self._simulate_compile_cache
-        if cached:
-            return
-        compiled = lower_simulation_programs(
-            regimes=self._runtime_regimes_for_shape(
-                compile_batch_size=compile_batch_size
-            ),
-            flat_params=flat_params,
-            ages=self.ages,
-            n_subjects=compile_batch_size,
-            max_compilation_workers=max_compilation_workers,
-            logger=log,
-            device_ids=self._execution.device_ids,
-            process_grid_resolver=process_grid_resolver,
-        )
-        with self._simulate_compile_lock:
-            self._simulate_compile_cache[compile_batch_size] = compiled
 
     # keyword-only-exempt: primary-argument=params
     def _process_params(

@@ -2,7 +2,6 @@
 
 import dataclasses
 import gc
-import logging
 import weakref
 from collections.abc import Callable, Mapping
 from functools import partial, partialmethod
@@ -14,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import _lcm.simulation.compile as compile_module
 import _lcm.simulation.runtime as runtime_module
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
@@ -25,9 +23,7 @@ from _lcm.execution.workspace_planning import compiler_peak_bytes
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
 from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
-from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm.exceptions import ExecutionPlanningError
-from lcm.execution import ExecutionConfig
 from tests.execution.test_compiler_allocation_reservation import memory_stats
 from tests.simulation.test_program_runtime import _program
 
@@ -319,30 +315,3 @@ def test_budgeted_unprofiled_adapters_refuse_before_dispatch(*, adapter: str) ->
             program=program, arguments={"state": state}, period=0, n_subjects=4
         )
     assert runtime.cache == {}
-
-
-def _refuse_template_construction(**kwargs: object) -> object:
-    del kwargs
-    raise AssertionError("Budgeted prewarming allocated concrete templates")
-
-
-def test_budgeted_prewarming_defers_before_building_templates(
-    *, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """An AOT hint cannot certify future output residency from zero templates."""
-    model, params, _ = WITNESSES["multi_regime"](
-        execution_config=ExecutionConfig(device_memory_bytes=1_000_000), n_subjects=7
-    )
-    monkeypatch.setattr(
-        compile_module,
-        "_get_regime_V_shapes_and_shardings",
-        _refuse_template_construction,
-    )
-    with caplog.at_level(logging.INFO):
-        model._ensure_simulate_compiled(
-            compile_batch_size=7,
-            flat_params=model._process_params(params),
-            max_compilation_workers=2,
-            log=logging.getLogger("budgeted-prewarm"),
-        )
-    assert "live residency" in caplog.text

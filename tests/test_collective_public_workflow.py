@@ -8,16 +8,14 @@ fixture supplying a flat params dict by hand never reaches — the template is
 built from the finalized regimes, so a parameter the model consumes but the
 template omits is invisible until a user follows the documented route.
 
-`n_subjects` is parametrized so the ahead-of-time compiled path is covered
-alongside the ordinary one; it changes when compilation happens, not what is
-computed, so both must publish the same frame.
+Repeated simulation reuses the active runtime executor and must preserve
+every routed subject.
 """
 
 from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from lcm import Model
 from lcm.ages import AgeGrid
@@ -53,13 +51,12 @@ _N_SUBJECTS = 3
 _N_LIVE_PERIODS = 3
 
 
-def _make_model(*, n_subjects: int | None) -> Model:
-    """The dissolution model, optionally pinned to an ahead-of-time batch size."""
+def _make_model() -> Model:
+    """Build the dissolution model for call-time simulation populations."""
     return Model(
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
-        n_subjects=n_subjects,
     )
 
 
@@ -114,14 +111,14 @@ def _initial_conditions(model: Model) -> MappingProxyType:
 
 def test_the_template_asks_for_exactly_the_parameters_the_model_consumes():
     """The template's leaves are the model's parameters — no more, no fewer."""
-    template = _make_model(n_subjects=None).get_params_template()
+    template = _make_model().get_params_template()
 
     assert frozenset(_leaf_paths(node=template)) == _EXPECTED_TEMPLATE_LEAVES
 
 
 def test_every_template_leaf_is_a_parameter_this_test_can_name():
     """A leaf whose name this test cannot fill would make the fill silently partial."""
-    template = _make_model(n_subjects=None).get_params_template()
+    template = _make_model().get_params_template()
     leaf_names = {path.rsplit("__", 1)[-1] for path in _leaf_paths(node=template)}
 
     assert leaf_names <= set(_VALUES)
@@ -129,7 +126,7 @@ def test_every_template_leaf_is_a_parameter_this_test_can_name():
 
 def test_a_gated_edge_contributes_a_branch_per_target_under_its_source():
     """The edge's own callables are addressed under the target they route to."""
-    template = _make_model(n_subjects=None).get_params_template()
+    template = _make_model().get_params_template()
 
     assert set(template["married"]["married_ir"]) == {
         "gate",
@@ -141,14 +138,14 @@ def test_a_gated_edge_contributes_a_branch_per_target_under_its_source():
 
 def test_a_branch_that_binds_no_parameter_is_an_empty_container():
     """Filling the template has to recurse: not every branch bottoms out in a leaf."""
-    template = _make_model(n_subjects=None).get_params_template()
+    template = _make_model().get_params_template()
 
     assert template["married"]["married_ir"]["next_regime"] == {}
 
 
 def test_the_filled_template_solves_to_the_same_values_as_a_flat_params_dict():
     """Following the documented route publishes the same solution, bit for bit."""
-    model = _make_model(n_subjects=None)
+    model = _make_model()
     from_template = model.solve(
         params=_filled_template(model), log_level="debug"
     ).values
@@ -165,10 +162,9 @@ def test_the_filled_template_solves_to_the_same_values_as_a_flat_params_dict():
             ), f"period {period}, regime {regime_name}"
 
 
-@pytest.mark.parametrize("n_subjects", [None, _N_SUBJECTS])
-def test_the_documented_workflow_produces_a_frame(n_subjects: int | None):
+def test_the_documented_workflow_produces_a_frame():
     """Template → solve → simulate → dataframe runs at `log_level="debug"`."""
-    model = _make_model(n_subjects=n_subjects)
+    model = _make_model()
     params = _filled_template(model)
     solution = model.solve(params=params, log_level="debug")
     result = model.simulate(
@@ -188,13 +184,13 @@ def test_the_documented_workflow_produces_a_frame(n_subjects: int | None):
     }
 
 
-def test_the_ahead_of_time_path_routes_the_same_subjects_as_the_ordinary_one():
-    """Pinning `n_subjects` changes when compilation happens, not what is routed."""
-    frames = {}
-    for n_subjects in (None, _N_SUBJECTS):
-        model = _make_model(n_subjects=n_subjects)
-        params = _filled_template(model)
-        solution = model.solve(params=params, log_level="debug")
+def test_repeated_simulation_routes_the_same_subjects():
+    """Repeated calls on the same model preserve every subject's routed regime."""
+    model = _make_model()
+    params = _filled_template(model)
+    solution = model.solve(params=params, log_level="debug")
+    frames = []
+    for _ in range(2):
         result = model.simulate(
             params=params,
             initial_conditions=_initial_conditions(model),
@@ -202,6 +198,5 @@ def test_the_ahead_of_time_path_routes_the_same_subjects_as_the_ordinary_one():
             log_level="debug",
             seed=0,
         )
-        frames[n_subjects] = result.to_dataframe()["regime_name"].tolist()
-
-    assert frames[None] == frames[_N_SUBJECTS]
+        frames.append(result.to_dataframe()["regime_name"].tolist())
+    assert frames[0] == frames[1]

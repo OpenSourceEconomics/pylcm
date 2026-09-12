@@ -178,15 +178,14 @@ are completed. Their resulting arrays are counted, but this entry work is not
 pre-admitted by the chunk profiles. Budgeted host replay routes remain refused until
 their complete stages and owners have profiles.
 
-The same fixed `seed` also gives the same EV1 taste-shock choices in lazy and
-ahead-of-time simulation. Subject chunking and `Model(n_subjects=...)` change
-compilation and workspace shape, not which per-subject Gumbel key is used. Keep the
-seed, parameters, initial conditions, and model fixed when using that invariance as a
-regression check.
+The same fixed `seed` gives the same per-subject EV1 taste-shock choices across subject
+chunk widths and repeated calls. Keep the seed, parameters, initial conditions, and
+model fixed when checking that invariance.
 
-If `Model(n_subjects=n)` was constructed, a matching first simulation can compile for
-that population/chunk shape ahead of execution and cache it. Reuse requires stable
-parameter shapes and dtypes.
+Each `simulate(...)` call takes its population from the initial conditions. A model can
+simulate different populations; runtime executors reuse compiled programs when their
+shapes and other compilation inputs match. Parameter and support validation still run
+for every call.
 
 ## Reuse compilation
 

@@ -39,8 +39,8 @@ _PROGRAM_MUTATIONS = (
     "compiler_options_dropped",
     "duplicate_future_replaced",
     "resolved_widths_ignored",
-    "prewarm_program_replaced",
-    "prewarm_failure_hidden",
+    "runtime_binding_replaced",
+    "runtime_failure_hidden",
 )
 
 # Local controls for newly profiled helpers supplement the historical registry.
@@ -1139,11 +1139,6 @@ _FINITE_POLICY_MUTATIONS = {
         "payload = ReplayPayload.from_policy(sim_policy)",
         "payload = ReplayPayload.from_policy(candidate_filter(sim_policy))",
     ),
-    "finite_policy:prewarm_cartesian_template_admitted": (
-        "src/_lcm/simulation/compile.py",
-        "if period in programs.policy_rank:",
-        "if False and period in programs.policy_rank:",
-    ),
     "finite_policy:rank_occurrence_ownership_omitted": (
         "src/_lcm/simulation/period_inputs.py",
         "            regime.simulation.programs.policy_rank,",
@@ -1415,7 +1410,7 @@ def test_live_simulation_program_sources_are_certified(source: str):
         "caller_simulate:published_empty_mapping",
         "caller_simulate:attribute_simulation_phase",
         "aot_compile:argmax_index_shift",
-        "aot_model:compiled_regime_filter",
+        "runtime_model:compiled_regime_filter",
         "simulation_index_consumer:next_candidate",
     ]
     + list(direct_flow._SIMULATION_ADAPTER_MUTATIONS)

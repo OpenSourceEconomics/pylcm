@@ -215,7 +215,6 @@ def validate_model_inputs(  # noqa: C901
     n_periods: int,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_id_class: type,
-    n_subjects: int | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
     ages: AgeGrid | None = None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
@@ -231,7 +230,6 @@ def validate_model_inputs(  # noqa: C901
     each regime's representative age, so a state read only by a policy-specialized
     function still counts as used.
     """
-    _fail_if_invalid_n_subjects(n_subjects=n_subjects)
 
     # DC-EGM contract checks run before the generic checks below: a contract
     # violation (e.g. a missing resources function) typically also leaves
@@ -364,19 +362,6 @@ def _representative_for_validation(
             ages=ages, user_regimes=user_regimes
         ),
     ).representative_user_regimes
-
-
-def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
-    """Raise TypeError if non-int, ValueError if non-positive."""
-    if n_subjects is None:
-        return
-    # `bool` is a subclass of `int`; reject explicitly so True/False don't slip through.
-    if not isinstance(n_subjects, int) or isinstance(n_subjects, bool):
-        msg = f"n_subjects must be an int or None, got {type(n_subjects).__name__}."
-        raise TypeError(msg)
-    if n_subjects <= 0:
-        msg = f"n_subjects must be a positive integer, got {n_subjects}."
-        raise ValueError(msg)
 
 
 def _model_wide_conditioning_names(

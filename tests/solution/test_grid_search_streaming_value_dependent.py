@@ -118,12 +118,12 @@ def _aligned_transfer_plan(
 
 def _participation_case() -> Model:
     """Build the same-period participation fixture."""
-    return _make_participation_model(n_subjects=None)
+    return _make_participation_model()
 
 
 def _consent_case() -> Model:
     """Build the gated-transition consent fixture."""
-    return _make_consent_model(n_subjects=None)
+    return _make_consent_model()
 
 
 @pytest.mark.parametrize(

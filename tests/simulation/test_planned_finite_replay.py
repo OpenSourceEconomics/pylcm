@@ -71,13 +71,9 @@ def test_finite_replay_dispatches_reconstruction_and_ranking_programs(monkeypatc
     assert ("simulate_decision", 0) not in observed
 
 
-@pytest.mark.parametrize(
-    ("discrete", "prewarm"), [(False, False), (True, False), (False, True)]
-)
-def test_planned_replay_preserves_public_legacy_frames(
-    *, monkeypatch, discrete, prewarm
-):
-    """Real fixed-parameter, discrete, and prewarmed routes keep legacy choices."""
+@pytest.mark.parametrize("discrete", [False, True])
+def test_planned_replay_preserves_public_legacy_frames(*, monkeypatch, discrete):
+    """Real fixed-parameter and discrete routes keep the declared choices."""
     factory = discrete_toy if discrete else toy
     base = factory.build_model(variant="n_nbegm", n_periods=2)
     model = Model(
@@ -86,7 +82,6 @@ def test_planned_replay_preserves_public_legacy_frames(
         regime_id_class=toy.RegimeId,
         fixed_params=base.fixed_params,
         execution_config=ExecutionConfig(axis_widths={"subject": 1}),
-        n_subjects=2 if prewarm else None,
     )
     params = {"discount_factor": 0.95}
     if discrete:

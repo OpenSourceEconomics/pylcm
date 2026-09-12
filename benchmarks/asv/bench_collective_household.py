@@ -40,14 +40,13 @@ _GPU_N_SUBJECTS = 100_000
 _GPU_DEPTH = 8
 
 
-def _make_model(*, n_subjects=None):
+def _make_model():
     from lcm_examples import collective_household
 
     model = collective_household.get_model(
         n_periods=_N_PERIODS,
         wealth_n_points=_WEALTH_N_POINTS,
         consumption_n_points=_CONSUMPTION_N_POINTS,
-        n_subjects=n_subjects,
     )
     return model, collective_household.get_params()
 

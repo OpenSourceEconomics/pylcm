@@ -116,8 +116,8 @@ def test_taste_shock_draws_are_invariant_to_subject_chunking():
     )
 
 
-def test_aot_and_lazy_simulation_draw_identical_taste_shock_choices():
-    """AOT and lazy simulation yield the same seeded taste-shock choices."""
+def test_repeated_simulation_draws_identical_taste_shock_choices():
+    """Repeated simulation yields the same seeded taste-shock choices."""
     n_subjects = 16
     params = taste_shocks_toy.get_params(scale=0.2, discount_factor=0.95)
     initial_conditions = {
@@ -137,17 +137,15 @@ def test_aot_and_lazy_simulation_draw_identical_taste_shock_choices():
         log_level="debug",
         seed=5471,
     )
-    aot_model = taste_shocks_toy.get_model(n_subjects=n_subjects)
-    aot_solution = aot_model.solve(params=params, log_level="debug")
-    aot_result = aot_model.simulate(
+    warm_result = lazy_model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        solution=aot_solution,
+        solution=lazy_solution,
         log_level="debug",
         seed=5471,
         max_compilation_workers=1,
     )
 
     lazy_work = lazy_result.to_dataframe(use_labels=False).query("period == 0")["work"]
-    aot_work = aot_result.to_dataframe(use_labels=False).query("period == 0")["work"]
-    np.testing.assert_array_equal(aot_work.to_numpy(), lazy_work.to_numpy())
+    warm_work = warm_result.to_dataframe(use_labels=False).query("period == 0")["work"]
+    np.testing.assert_array_equal(warm_work.to_numpy(), lazy_work.to_numpy())

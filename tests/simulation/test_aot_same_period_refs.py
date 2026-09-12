@@ -1,10 +1,10 @@
-"""Ahead-of-time compiled simulation of a regime reading same-period values.
+"""Runtime-compiled simulation of a regime reading same-period values.
 
 A collective regime declaring `same_period_refs` chooses its action against a
 value-aware feasibility mask whose operands are another regime's value function
 *in the same period*. Simulate dispatches those arrays — and each reference
 regime's own flat params — alongside the continuation, so a program compiled
-ahead of time for `Model(n_subjects=N)` has to be lowered with them too.
+at runtime for the current population has to be lowered with them too.
 
 The model below is exact arithmetic. Wages are $1$ at low education and $2$ at
 high; the wife earns three times her wage when she works, the husband values
@@ -30,7 +30,6 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import simulate as simulate_with_replay_readers
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -47,6 +46,7 @@ from lcm.solver_api import ActionOutput, ValueStore
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
 
 _N_SUBJECTS = 2
 
@@ -74,18 +74,18 @@ class _AlwaysWorkReplayReader:
         )
 
 
-@pytest.mark.parametrize("declared_n_subjects", [None, _N_SUBJECTS])
+@pytest.mark.parametrize("n_subjects", [2, 4])
 def test_same_period_ref_model_simulates_to_its_participation_constrained_values(
-    declared_n_subjects: int | None,
-):
-    """A collective regime reading same-period values keeps them when AOT-compiled.
+    *, n_subjects: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Runtime programs preserve participation-constrained values at each population.
 
     Each household works because the wife's participation constraint rules
     leisure out, and both stakeholders' period-0 values are the ones the model
-    solves to — whether the decision runs interpreted (`Model(n_subjects=None)`)
-    or as a program compiled ahead of time for the simulated population.
+    solves to, including when the runtime population repeats both education levels.
     """
-    model = _make_participation_model(n_subjects=declared_n_subjects)
+    compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
+    model = _make_participation_model()
     params = {
         "couple": {"koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR}},
         "couple_terminal": {},
@@ -93,10 +93,13 @@ def test_same_period_ref_model_simulates_to_its_participation_constrained_values
         "single_f_terminal": {},
     }
     initial_conditions = {
-        "education": jnp.array([Education.low, Education.high], dtype=jnp.int32),
-        "age": jnp.zeros(_N_SUBJECTS),
+        "education": jnp.tile(
+            jnp.array([Education.low, Education.high], dtype=jnp.int32),
+            n_subjects // 2,
+        ),
+        "age": jnp.zeros(n_subjects),
         "regime_id": jnp.full(
-            _N_SUBJECTS, ParticipationRegimeId.couple, dtype=jnp.int32
+            n_subjects, ParticipationRegimeId.couple, dtype=jnp.int32
         ),
     }
 
@@ -105,21 +108,20 @@ def test_same_period_ref_model_simulates_to_its_participation_constrained_values
         initial_conditions=initial_conditions,
         log_level="debug",
     )
-    if declared_n_subjects is not None:
-        _fail_if_aot_programs_missing(model=model, n_subjects=declared_n_subjects)
+    assert compiled, "Simulation must dispatch an actual compiled program."
 
     simulated = result.to_dataframe()
     period_0 = simulated.loc[simulated["period"] == 0, ["value_f", "value_m"]]
     aaae(
         period_0.to_numpy(),
-        np.asarray(COUPLE_V_PERIOD_0),
+        np.tile(np.asarray(COUPLE_V_PERIOD_0), (n_subjects // 2, 1)),
         decimal=DECIMAL_PRECISION,
     )
 
 
 def test_external_replay_scores_actions_with_same_period_reference_inputs() -> None:
     """External canonical-Q replay receives the reference arrays and their params."""
-    model = _make_participation_model(n_subjects=None)
+    model = _make_participation_model()
     params = {
         "couple": {"koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR}},
         "couple_terminal": {},
@@ -162,35 +164,6 @@ def test_external_replay_scores_actions_with_same_period_reference_inputs() -> N
     )
 
 
-def _fail_if_aot_programs_missing(*, model: Model, n_subjects: int) -> None:
-    """Raise unless every dispatched decision function is an AOT program.
-
-    The test is a claim about the compiled programs, so a model that quietly
-    fell back to the interpreted path would make it assert nothing.
-    """
-    cached = model._simulate_compile_cache.get(n_subjects)
-    if cached is None:
-        msg = (
-            f"no simulate program was compiled for {n_subjects} subjects; "
-            f"compiled batch shapes: {sorted(model._simulate_compile_cache)}"
-        )
-        raise AssertionError(msg)
-    interpreted = [
-        f"{regime_name}/simulate_decision[{period}]"
-        for regime_name, regime in cached.items()
-        for period in regime.active_periods
-        if not (
-            isinstance(regime.simulation.programs.executor, SimulationRuntime)
-            and regime.simulation.programs.executor.is_prepared(
-                program=regime.simulation.programs.decision[period], period=period
-            )
-        )
-    ]
-    if interpreted:
-        msg = f"these decision functions were not AOT-compiled: {interpreted}"
-        raise AssertionError(msg)
-
-
 @categorical(ordered=True)
 class Education:
     """The single state of the participation model, and its own wage level."""
@@ -217,16 +190,12 @@ class ParticipationRegimeId:
     single_f_terminal: ScalarInt  # code 3
 
 
-def _make_participation_model(*, n_subjects: int | None) -> Model:
+def _make_participation_model() -> Model:
     """Build a collective regime whose feasibility reads a single's value.
 
     `couple` and `single_f` are both active at age 0, so `single_f`'s value is
     available in the same period the couple chooses its action — the reference
     the wife's participation constraint compares her own $Q^f$ against.
-
-    Args:
-        n_subjects: Simulate batch size to compile ahead of time, or `None` to
-            compile at runtime.
 
     Returns:
         The model.
@@ -288,7 +257,6 @@ def _make_participation_model(*, n_subjects: int | None) -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=ParticipationRegimeId,
-        n_subjects=n_subjects,
     )
 
 

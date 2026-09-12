@@ -41,18 +41,17 @@ MULTI_INITIAL_CONDITIONS = {
 
 
 def multi_regime(
-    *, execution_config: ExecutionConfig | None = None, n_subjects: int | None = None
+    *, execution_config: ExecutionConfig | None = None
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the two-non-terminal-regime shock model and its simulate inputs."""
     model = get_multi_regime_model(n_periods=6, distribution_type="normal")
-    if execution_config is not None or n_subjects is not None:
+    if execution_config is not None:
         model = Model(
             regimes=model.user_regimes,
             ages=model.ages,
             regime_id_class=MultiRegimeId,
             fixed_params=model.fixed_params,
             execution_config=execution_config or ExecutionConfig(),
-            n_subjects=n_subjects,
         )
     return (
         model,
@@ -62,7 +61,7 @@ def multi_regime(
 
 
 def dissolution(
-    *, execution_config: ExecutionConfig | None = None, n_subjects: int | None = None
+    *, execution_config: ExecutionConfig | None = None
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the collective dissolution model and its simulate inputs."""
     from lcm_examples.collective_regimes import (
@@ -72,14 +71,13 @@ def dissolution(
     )
 
     model = get_dissolution_model()
-    if execution_config is not None or n_subjects is not None:
+    if execution_config is not None:
         model = Model(
             regimes=model.user_regimes,
             ages=model.ages,
             regime_id_class=DissolutionRegimeId,
             fixed_params=model.fixed_params,
             execution_config=execution_config or ExecutionConfig(),
-            n_subjects=n_subjects,
         )
     initial_conditions = {
         "wage": jnp.array([1.0, 2.0, 3.0]),

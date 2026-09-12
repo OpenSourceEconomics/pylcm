@@ -433,10 +433,11 @@ and fixes their inner compiled width. The outer chunk is aligned to the selected
 devices; this alignment does not increase the fixed inner width. With a memory budget
 and no explicit width, complete chunk profiles select the widest fitting candidate.
 Retained full-population inputs and result assembly remain part of the bound even when
-chunks shrink. `Model(n_subjects=...)` is a prewarm hint; it does not choose the chunk
-extent. `seed` controls random draws independently of those chunk boundaries. A
-collective model may require an addressed dissolution replay artifact and
-`own_stakeholder`; see [Collective regimes](collective_regimes.md).
+chunks shrink. Each simulation takes its population from the initial conditions, so the
+same model accepts different call-time populations. `seed` controls random draws
+independently of those chunk boundaries. A collective model may require an addressed
+dissolution replay artifact and `own_stakeholder`; see
+[Collective regimes](collective_regimes.md).
 
 Initial conditions are a mapping of state names plus `regime_id` to equal-length arrays,
 or a DataFrame with a `regime_name` column.

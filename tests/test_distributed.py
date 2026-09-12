@@ -112,7 +112,6 @@ def test_importing_this_module_after_jax_init_leaves_the_platform_unpinned():
 
 def _make_correct_distributed_model(
     *,
-    n_subjects: int | None = None,
     distributed: bool = True,
     distribute_type2: bool | None = None,
     retirement_reads_type2: bool = True,
@@ -206,7 +205,6 @@ def _make_correct_distributed_model(
             if move_type2
             else fixed_transition("type2"),
         },
-        n_subjects=n_subjects,
         execution_config=ExecutionConfig(
             axis_widths={
                 **({"cell": cell_width} if cell_width is not None else {}),
@@ -1140,16 +1138,15 @@ def test_save_load_preserves_sharding_and_dataframe(
 
 
 @_skip_pytest_parallel
-def test_aot_compiled_simulation_running_on_multiple_cpus():
-    """AOT-compiled simulate functions run on multi-device-sharded inputs.
+def test_compiled_simulation_running_on_multiple_cpus():
+    """Compiled simulate functions run on multi-device-sharded inputs.
 
-    Setting `n_subjects` makes the first matching `simulate(...)` AOT-compile
-    every simulate function for that batch shape. With distributed grids the
+    With distributed grids the
     runtime state and value-function arrays are device-sharded, so the
     compiled programs must be lowered with shardings matching what runtime
     dispatches rather than single-device defaults.
     """
-    model = _make_correct_distributed_model(n_subjects=36)
+    model = _make_correct_distributed_model()
 
     res = model.simulate(
         log_level="debug",
@@ -1247,16 +1244,16 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
 
 
 @_skip_pytest_parallel
-def test_distributed_aot_simulation_pads_subjects_to_a_chunk_multiple():
+def test_distributed_simulation_pads_subjects_to_a_chunk_multiple():
     """A chunk size that does not divide the subject count simulates cleanly.
 
     Under distributed grids the chunk size is rounded up to a device multiple
-    and every chunk must match the AOT-compiled shape, so the subject axis is
+    and every chunk must match the compiled shape, so the subject axis is
     padded up to a chunk multiple (duplicating the last subject) and the pad
     rows are trimmed back out — the result holds exactly the real subjects and
     equals the single-pass result.
     """
-    model = _make_correct_distributed_model(n_subjects=12)
+    model = _make_correct_distributed_model()
     initial_conditions = {
         "age": jnp.full(12, 0),
         "wealth": jnp.linspace(50.0, 120.0, 12),
@@ -1270,7 +1267,7 @@ def test_distributed_aot_simulation_pads_subjects_to_a_chunk_multiple():
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    chunked = _make_correct_distributed_model(n_subjects=12, subject_width=8).simulate(
+    chunked = _make_correct_distributed_model(subject_width=8).simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,

@@ -45,10 +45,9 @@ machines and backends. A level is defended by the ASV history on one machine.
   nothing else. Construction that grew with a *grid* size would mean a grid was
   materialized during the scan.
 - **First-solve assembly** is `O(regimes × periods)` programs plus `O(edges × periods)`
-  folds. It contains no gate evaluator: those are compiled on the simulate side, when a
-  declared `Model(n_subjects=N)` matches the first `simulate()` call, and this workload
-  only solves. Nothing here sets `n_subjects`, so the ahead-of-time path is deliberately
-  outside the contract's measured surface.
+  folds. It contains no gate evaluator: those execute on the simulation side, while this
+  workload only solves. Forward gate compilation is outside the contract's measured
+  surface.
 - **Warm solve** is `O(periods × regimes × cells)`, the same order as a singleton model
   of the same total grid size. A collective regime multiplies the cell count by its
   stakeholder count; a gated edge adds one fold over the target's grid per period. It

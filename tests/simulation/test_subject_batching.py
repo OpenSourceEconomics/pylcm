@@ -36,16 +36,14 @@ def _simulate_df(
     *,
     subject_batch_size: int,
     additional_targets: list[str] | None = None,
-    n_subjects: int | None = None,
+    repeat: bool = False,
 ) -> pd.DataFrame:
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
-    # The optional population hint prewarms the selected chunk shape.
     model = Model(
         regimes=dict(base.user_regimes),
         regime_id_class=MultiRegimeId,
         ages=base.ages,
         fixed_params=dict(base.fixed_params),
-        n_subjects=n_subjects,
         execution_config=ExecutionConfig(
             axis_widths={}
             if subject_batch_size == 0
@@ -59,6 +57,13 @@ def _simulate_df(
         initial_conditions=_INITIAL_CONDITIONS,
         seed=42,
     )
+    if repeat:
+        result = model.simulate(
+            log_level="debug",
+            params=params,
+            initial_conditions=_INITIAL_CONDITIONS,
+            seed=42,
+        )
     return (
         result.to_dataframe(additional_targets=additional_targets)
         .sort_values(["subject_id", "period"])
@@ -116,20 +121,12 @@ def test_to_dataframe_targets_are_invariant_to_subject_batch_size(
 
 
 @pytest.mark.parametrize("subject_batch_size", [2, 3, 4])
-def test_aot_compiled_simulation_is_invariant_to_subject_batch_size(
+def test_warm_simulation_is_invariant_to_subject_batch_size(
     subject_batch_size: int,
 ) -> None:
-    """A model with `n_subjects` set chunks subjects through one AOT-compiled program.
-
-    The simulate functions are compiled once for the chunk shape. With a batch size
-    that does not divide the 7-subject population, the population is padded up to a
-    multiple of the batch size with duplicate last-subject rows so every chunk is
-    exactly the compiled size; the pad rows are trimmed before output. The
-    `to_dataframe()` result matches the unbatched, lazily-compiled run for every
-    subject-period.
-    """
+    """Warm chunked calls match the unbatched simulation for every subject-period."""
     baseline = _simulate_df(subject_batch_size=0)
-    batched = _simulate_df(subject_batch_size=subject_batch_size, n_subjects=7)
+    batched = _simulate_df(subject_batch_size=subject_batch_size, repeat=True)
     _assert_columns_invariant(baseline=baseline, batched=batched)
 
 

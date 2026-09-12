@@ -231,7 +231,6 @@ def _build_model(
     n_types: int,
     devices: tuple[int, ...],
     sharded: bool,
-    prewarm: bool = False,
     subject_width: int | None = None,
     budget: int | None = None,
 ) -> Model:
@@ -265,18 +264,15 @@ def _build_model(
             axis_widths={} if subject_width is None else {"subject": subject_width},
             device_memory_bytes=budget,
         ),
-        n_subjects=7 if prewarm else None,
     )
 
 
 @cache
 def _simulate(
-    *, n_types: int, devices: tuple[int, ...], sharded: bool, prewarm: bool = False
+    *, n_types: int, devices: tuple[int, ...], sharded: bool
 ) -> tuple[SolutionResult, SimulationResult, SimulationResult]:
     """Replay the same owned solution twice with a population requiring padding."""
-    model = _build_model(
-        n_types=n_types, devices=devices, sharded=sharded, prewarm=prewarm
-    )
+    model = _build_model(n_types=n_types, devices=devices, sharded=sharded)
     params = {"discount_factor": 0.95}
     solution = model.solve(params=params, log_level="off")
     initial = {
@@ -306,14 +302,11 @@ _PLACEMENTS = [(3, (0, 1, 2, 3)), (4, (0, 1, 2, 3)), (3, (1, 2, 3))]
 
 
 @pytest.mark.parametrize(("n_types", "devices"), _PLACEMENTS)
-@pytest.mark.parametrize("prewarm", [False, True])
 def test_placed_solution_simulates_to_the_single_device_result(
-    *, n_types: int, devices: tuple[int, ...], prewarm: bool
+    *, n_types: int, devices: tuple[int, ...]
 ) -> None:
     """Full and proper submeshes preserve all seven subjects' simulated paths."""
-    _, actual, _ = _simulate(
-        n_types=n_types, devices=devices, sharded=True, prewarm=prewarm
-    )
+    _, actual, _ = _simulate(n_types=n_types, devices=devices, sharded=True)
     _, expected, _ = _simulate(n_types=n_types, devices=(0,), sharded=False)
     got = actual.to_dataframe(use_labels=False)
     want = expected.to_dataframe(use_labels=False)
