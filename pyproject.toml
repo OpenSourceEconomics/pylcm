@@ -129,7 +129,7 @@ grid-search-pair = "python -m benchmarks.grid_search_pair"
 # Reviewed ACA migration to explicit Model execution policy. Retired GridConfig
 # execution keywords are rejected; omitted GPU policies derive an allocator budget.
 # Keep an exact revision so benchmark model construction is reproducible.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "b941507c14932b85b482d77ed8d7f3034c5dbfee" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "735a25090ec647ef8d42cbb919369acc46f1a493" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]

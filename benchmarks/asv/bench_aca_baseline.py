@@ -117,7 +117,6 @@ def _build() -> tuple[object, object, object]:
     from lcm import DiscreteGrid
 
     model = create_benchmark_model(
-        n_subjects=_N_SUBJECTS,
         pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
     )
     edge_periods = model.reachability.solution.periods_for_edge(
