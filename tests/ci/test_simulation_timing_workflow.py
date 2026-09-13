@@ -17,6 +17,10 @@ _TIMING_NODES = (
         "tests/simulation/test_compile_requests.py::"
         "test_simulate_host_time_at_progress_is_within_the_bar_of_off"
     ),
+    (
+        "tests/simulation/test_preflight_contract.py::"
+        "test_unstubbed_warm_full_call_progress_meets_existing_time_bar"
+    ),
 )
 _ROUTES = (
     ("tests", "Run pytest", 64),
@@ -29,7 +33,7 @@ _ROUTES = (
 def test_each_cpu_route_runs_timing_cases_once_after_parallel_work(
     *, job: str, step_name: str, precision: int
 ) -> None:
-    """Route both timing families to one serial process with complete reports."""
+    """Route all three timing families to one serial process with complete reports."""
     workflow = yaml.safe_load(
         (_REPO_ROOT / ".github/workflows/cpu.yml").read_text(encoding="utf-8")
     )

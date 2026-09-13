@@ -13,6 +13,7 @@ from tests.ci.check_simulation_timing_report import check_report
     [
         "empty",
         "missing",
+        "legacy_four_only",
         "duplicate",
         "foreign",
         "skipped",
@@ -34,6 +35,11 @@ def test_incomplete_or_unsuccessful_timing_report_is_refused(
         suite.clear()
     elif defect == "missing":
         suite.remove(suite[0])
+    elif defect == "legacy_four_only":
+        for case in tuple(suite):
+            if case.get("classname") == "tests.simulation.test_preflight_contract":
+                suite.remove(case)
+        assert len(suite) == 4
     elif defect == "duplicate":
         suite[1].attrib.update(suite[0].attrib)
     elif defect == "foreign":
@@ -46,12 +52,12 @@ def test_incomplete_or_unsuccessful_timing_report_is_refused(
         ET.SubElement(suite[0], defect)
     path = tmp_path / "timing.xml"
     ET.ElementTree(report).write(path)
-    with pytest.raises(ValueError, match="exactly four successful timing cases"):
+    with pytest.raises(ValueError, match="exactly six successful timing cases"):
         check_report(path=path)
 
 
-def test_all_four_successful_timing_cases_are_accepted(tmp_path: Path) -> None:
-    """Accept the two timing families with both model witnesses."""
+def test_all_six_successful_timing_cases_are_accepted(tmp_path: Path) -> None:
+    """Accept the three timing families with both model witnesses."""
     path = tmp_path / "timing.xml"
     ET.ElementTree(_report()).write(path)
     check_report(path=path)
@@ -72,4 +78,14 @@ def _report() -> ET.Element:
                 classname="tests.simulation.test_compile_requests",
                 name=f"{function}[{witness}]",
             )
+    for witness in ("dissolution", "multi_regime"):
+        ET.SubElement(
+            suite,
+            "testcase",
+            classname="tests.simulation.test_preflight_contract",
+            name=(
+                "test_unstubbed_warm_full_call_progress_meets_existing_time_bar"
+                f"[{witness}]"
+            ),
+        )
     return report

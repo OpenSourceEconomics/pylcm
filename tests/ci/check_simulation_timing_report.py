@@ -7,14 +7,24 @@ from xml.etree import ElementTree as ET
 
 
 def check_report(*, path: Path) -> None:
-    """Require exactly four successful simulation timing cases in JUnit."""
+    """Require exactly six successful simulation timing cases in JUnit."""
     # The workflow supplies the JUnit file written by its own pytest process.
     report = ET.parse(path).getroot()  # noqa: S314
     expected = Counter(
-        ("tests.simulation.test_compile_requests", f"{function}[{witness}]")
-        for function in (
-            "test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off",
-            "test_simulate_host_time_at_progress_is_within_the_bar_of_off",
+        (module, f"{function}[{witness}]")
+        for module, function in (
+            (
+                "tests.simulation.test_compile_requests",
+                "test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off",
+            ),
+            (
+                "tests.simulation.test_compile_requests",
+                "test_simulate_host_time_at_progress_is_within_the_bar_of_off",
+            ),
+            (
+                "tests.simulation.test_preflight_contract",
+                "test_unstubbed_warm_full_call_progress_meets_existing_time_bar",
+            ),
         )
         for witness in ("dissolution", "multi_regime")
     )
@@ -31,7 +41,7 @@ def check_report(*, path: Path) -> None:
     )
     if actual != expected or unsuccessful:
         raise ValueError(
-            f"Expected exactly four successful timing cases in {path}; "
+            f"Expected exactly six successful timing cases in {path}; "
             f"found {dict(actual)!r}, unsuccessful={unsuccessful}."
         )
 

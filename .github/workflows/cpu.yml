@@ -134,11 +134,13 @@ jobs:
           pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
           --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off
           --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off
+          --deselect=tests/simulation/test_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar
           --policy-child --ci-policy=full --hardware-profile=cpu
           --junitxml=reports/junit-cpu-${{ runner.os }}.xml
           && pixi run -e tests-cpu pytest
           tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off
           tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off
+          tests/simulation/test_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar
           --precision=64 --policy-child --ci-policy=full --hardware-profile=cpu
           --timeout=600 --timeout-method=thread -v -n 0
           --junitxml=reports/junit-cpu-fp64-simulation-timing.xml
@@ -182,6 +184,7 @@ jobs:
           pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
             --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
             --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
+            --deselect=tests/simulation/test_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
@@ -298,6 +301,7 @@ jobs:
           && pixi run -e tests-cpu pytest \
             tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
             tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
+            tests/simulation/test_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
             --precision=64 --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v -n 0 \
             --junitxml=reports/junit-cpu-fp64-simulation-timing.xml \
@@ -466,6 +470,7 @@ jobs:
           pixi run -e tests-cpu pytest tests --precision=32 \
             --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
             --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
+            --deselect=tests/simulation/test_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
             -m "not slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
@@ -568,6 +573,7 @@ jobs:
           && pixi run -e tests-cpu pytest \
             tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
             tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
+            tests/simulation/test_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
             --precision=32 --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v -n 0 \
             --junitxml=reports/junit-cpu-fp32-simulation-timing.xml \
