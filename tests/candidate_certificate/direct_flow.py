@@ -423,7 +423,7 @@ _SOURCE_SEALS = {
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "bead6bc363f0d3bcddb4028d4adea4042e3a1c63b16e25beec95b474f8a9bfc4",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
-    INITIAL_CONDITIONS_SOURCE: "3cc9d1e03fdc2c005b5fe6d72caa34b3b35fbaa9171ca9cf71e3ce4d8f187da2",
+    INITIAL_CONDITIONS_SOURCE: "e0873f716dfb19c1ba82850d9ff1bef9c25178cc729a2d088dfd690469e2a5cc",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
@@ -3279,7 +3279,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
     # The entry coordinator preserves both validation families and passes the
     # real retained inventory to each newly profiled summary allocation.
     INITIAL_CONDITIONS_SOURCE: (
-        "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
+        "76d4bdfe1e71ff3b6bd9d0cbfa6d6042bc5dce4cc0b4c7f3fa4d84fe617bcd1a",
         {
             "validate_simulation_inputs": "2b042fa4d4a80a19bed4be769cae0789e80b4390b0d773ba805d05a9b52dc1b5",
             "_preflight_memory": "24af3b888fd7f85f2f580b19b08c0ed565ed2bc3da34ed883c4e7982f5bc5caf",
@@ -3289,15 +3289,15 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "validate_initial_conditions": "706a297af1125941763bf594511ee343f31dc8a725d38aa1614048c232a8d9c8",
             "_collect_feasibility_errors": "ccb25705a003d95b1cd10f406df14ef43a809508c0f0028b6e1a13ddf7022b02",
             "_age_specialized_feasibility_message": "1eefe701cada0b668ab2eab2e404120b47d2c65ff390afeb1e726ae420fde174",
-            "_check_regime_feasibility": "9017964aeb5f3fb33515244c7694b34af260dbad32c8ade442e794a32de643b2",
+            "_check_regime_feasibility": "697f56ea2750627de988226022db4f519209a71b434bd9bf780dcab3682d5dff",
             "_run_profiled_feasibility": "7d26c0b25de59dc7402148d72e4a95b9cca6c4999c1c36fcb79351fe7074139e",
             "_FeasibilityCompiler.__call__": "4c1ea17d3d5b511d3299af73798c6bfc6868dd32112e6e89497f80c8bc25f57b",
             "_batched_feasibility_check": "6e921929b1b422ce2cf1b097824ab8d2bf016a160b15f0acda829352aef5ee3b",
             "_evaluate_constant_feasibility": "12c654a6e1a02d4267156e8e501fe98a7a295eb46da3e736840b85eab506e012",
             "_admits_any_action": "546746b14fcca4269a3e438d2ec0c5c214259c3199169f5e727839c4d9fb0463",
-            "_per_constraint_feasibility": "ee8b914b3346b2d1304b96aa358880c4b61c2addf49b6d9a6acff2f1175a0bad",
+            "_per_constraint_feasibility": "e74cb94395615def30c4f11cea311c64c42f0711a22fe91b417dbd3197c554df",
             "_format_infeasibility_message": "cbacb8c81970497c4fd808f428a896685f752a1be534788d7581417e8604d046",
-            "_gather_feasibility_inputs": "042f8474176d738b9219516fd96c3d09c5ccc3e4ce18d0641bede57a8ce7d40e",
+            "_gather_feasibility_inputs": "557c76957b3e216d9a95166daee80fefdd0af163633920b30b1d7215596d8515",
             "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
             "_constant_feasibility_flag": "f7b994fa04576c7157f8bab30ef0e17126c181ba874cbe493c1e19e6be056f17",
             "canonicalize_initial_conditions": "c11e1f052794f712ecff808acc643787e6347c4f2234d4612d3e5ae2c4fecca0",
@@ -4219,7 +4219,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
+        "76d4bdfe1e71ff3b6bd9d0cbfa6d6042bc5dce4cc0b4c7f3fa4d84fe617bcd1a",
         {
             "_CarrierWriter.__call__": "697bae0eaa97d3806c3079466e8c3de66ce08eec331d66402da3fa02958a573e",
             "_build_admitted_initial_states": "ca3e5c754d9c86385c7302441e2199c338239d89edde06c5620874793afc68ec",
@@ -6228,12 +6228,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
+        "76d4bdfe1e71ff3b6bd9d0cbfa6d6042bc5dce4cc0b4c7f3fa4d84fe617bcd1a",
         {
             "validate_simulation_inputs": "2b042fa4d4a80a19bed4be769cae0789e80b4390b0d773ba805d05a9b52dc1b5",
             "validate_initial_conditions": "706a297af1125941763bf594511ee343f31dc8a725d38aa1614048c232a8d9c8",
             "_collect_feasibility_errors": "ccb25705a003d95b1cd10f406df14ef43a809508c0f0028b6e1a13ddf7022b02",
-            "_check_regime_feasibility": "9017964aeb5f3fb33515244c7694b34af260dbad32c8ade442e794a32de643b2",
+            "_check_regime_feasibility": "697f56ea2750627de988226022db4f519209a71b434bd9bf780dcab3682d5dff",
         },
     ),
     "src/_lcm/simulation/simulate.py": (
@@ -6637,12 +6637,12 @@ _ACTION_GRID_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "01c20f1c5f5c0f58554f0a58f83063913ad5c2143dfd78377893de45e9159a5a",
+        "76d4bdfe1e71ff3b6bd9d0cbfa6d6042bc5dce4cc0b4c7f3fa4d84fe617bcd1a",
         {
             "validate_simulation_inputs": "2b042fa4d4a80a19bed4be769cae0789e80b4390b0d773ba805d05a9b52dc1b5",
             "validate_initial_conditions": "706a297af1125941763bf594511ee343f31dc8a725d38aa1614048c232a8d9c8",
             "_collect_feasibility_errors": "ccb25705a003d95b1cd10f406df14ef43a809508c0f0028b6e1a13ddf7022b02",
-            "_check_regime_feasibility": "9017964aeb5f3fb33515244c7694b34af260dbad32c8ade442e794a32de643b2",
+            "_check_regime_feasibility": "697f56ea2750627de988226022db4f519209a71b434bd9bf780dcab3682d5dff",
             "_build_flat_action_grid": "65b4591dd17c07ed9e30c5ddf8f89ead9a2899c2af663b9a1d1286fb9e990e0a",
         },
     ),

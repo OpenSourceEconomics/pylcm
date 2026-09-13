@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from dags import get_ancestors
 from jax import numpy as jnp
-from numpy.typing import NDArray
+from jaxtyping import Int32
 
 from _lcm.dtypes import (
     CanonicalArrayWriter,
@@ -84,6 +84,10 @@ PSEUDO_STATE_NAMES: frozenset[str] = frozenset({"age"})
 # Only module-level numerical operation identities and abstract signatures are
 # cached here. Each validation call owns its input bindings and admission.
 _PREFLIGHT_OPERATIONS = ProfiledSimulationOperations()
+
+# NumPy 2.5 NDArray is a generic alias whose dtype beartype cannot resolve.
+# Keep the host int32 contract in jaxtyping, alongside the JAX array aliases.
+type _HostIntArray = Int32[np.ndarray, "..."]
 
 type _DiscreteInitialSpec = tuple[str, tuple[int, ...], tuple[int, ...]]
 
@@ -1584,7 +1588,7 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
         subject_states=subject_states,
         regime_params=regime_params,
         flat_actions=flat_actions,
-        idx_arr=cast("Int1D | NDArray[np.int32]", idx_arr),
+        idx_arr=cast("Int1D | _HostIntArray", idx_arr),
         infeasible_indices=infeasible_indices,
         memory=memory,
     )
@@ -1603,8 +1607,8 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
 def _gather_feasibility_inputs(
     *,
     states: Mapping[str, jax.Array],
-    indices: Int1D | NDArray[np.int32],
-    periods: Int1D | NDArray[np.int32],
+    indices: Int1D | _HostIntArray,
+    periods: Int1D | _HostIntArray,
     needs_period: bool,
 ) -> dict[str, jax.Array]:
     """Gather the host-selected cohort without dynamic-size device reads."""
@@ -1730,7 +1734,7 @@ def _per_constraint_feasibility(
     subject_states: Mapping[str, FloatND | IntND],
     regime_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, FloatND | IntND],
-    idx_arr: Int1D | NDArray[np.int32],
+    idx_arr: Int1D | _HostIntArray,
     infeasible_indices: Sequence[int],
     memory: SimulationMemory | None = None,
 ) -> dict[str, np.ndarray]:
