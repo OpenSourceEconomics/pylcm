@@ -119,6 +119,19 @@ _METHOD_ALIASES = {
 _METHOD_DISPLAY = {
     "time_execution": "execution time",
     "track_gpu_peak_mem": "peak GPU mem",
+    "track_peak_gpu_mem_automatic_solve_simulate": (
+        "peak GPU mem: automatic solve + simulate"
+    ),
+    "track_peak_gpu_mem_solve_save_all_persistable": (
+        "peak GPU mem: solve + save all persistable artifacts"
+    ),
+    "track_peak_gpu_mem_load_supplied_solution_simulate": (
+        "peak GPU mem: load saved solution + simulate"
+    ),
+    "track_host_ms_per_period_regime": (
+        "warm simulation time per period and regime (ms)"
+    ),
+    "track_second_call_compiles": "backend compile requests on second simulation call",
     "track_compilation_time": "first call (including compilation)",
     "peakmem_execution": "peak CPU mem",
 }
