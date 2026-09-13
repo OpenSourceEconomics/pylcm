@@ -20,7 +20,7 @@ def test_action_grid_controls_preserve_historical_mutation_populations() -> None
     assert len(registered) == 406
     assert (
         _name_digest(registered)
-        == "8a05b3e83750ca635e61bd66bc0667278710dc750e0ccb58f85fc8e1c63f8454"
+        == "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
     )
     assert len(supplemental) == 50
     assert (

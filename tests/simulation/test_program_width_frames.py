@@ -51,20 +51,25 @@ def _frames(
     *,
     witness: str,
     seed: int,
-    prewarm: bool,
+    warm_call: bool,
     action_width: int,
     subject_width: int | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Compare widths with fixed model declarations and a globally addressed seed."""
+    """Compare first or repeated public calls at fixed widths and seed."""
     expected = _baseline(witness=witness, seed=seed).frame
-    _, params, initial = WITNESSES[witness]()
     widths = {} if subject_width is None else {"subject": subject_width}
     if witness == "multi_regime":
         widths["action_product"] = action_width
-    model, _, _ = WITNESSES[witness](
+    model, params, initial = WITNESSES[witness](
         execution_config=ExecutionConfig(axis_widths=widths),
-        n_subjects=len(initial["regime_id"]) if prewarm else None,
     )
+    if warm_call:
+        # Complete one public call on this same model and shape so its runtime
+        # executables are cached. Materialize and discard its output before the
+        # checked call, without retaining the warm-up result or its frame.
+        model.simulate(
+            params=params, initial_conditions=initial, seed=seed, log_level="off"
+        ).to_dataframe(use_labels=False)
     got = model.simulate(
         params=params, initial_conditions=initial, seed=seed, log_level="off"
     ).to_dataframe(use_labels=False)
@@ -73,7 +78,7 @@ def _frames(
 
 @pytest.mark.parametrize("witness", sorted(WITNESSES))
 @pytest.mark.parametrize("seed", [0, 1])
-@pytest.mark.parametrize("prewarm", [False, True])
+@pytest.mark.parametrize("warm_call", [False, True], ids=["cold", "warm"])
 @pytest.mark.parametrize(
     ("action_width", "subject_width"), [(1, 1), (2, 3), (3, 7), (7, None)]
 )
@@ -81,7 +86,7 @@ def test_program_widths_preserve_structural_frame_columns(
     *,
     witness: str,
     seed: int,
-    prewarm: bool,
+    warm_call: bool,
     action_width: int,
     subject_width: int | None,
 ) -> None:
@@ -89,7 +94,7 @@ def test_program_widths_preserve_structural_frame_columns(
     got, expected = _frames(
         witness=witness,
         seed=seed,
-        prewarm=prewarm,
+        warm_call=warm_call,
         action_width=action_width,
         subject_width=subject_width,
     )
@@ -108,7 +113,7 @@ def test_program_widths_preserve_structural_frame_columns(
 
 @pytest.mark.parametrize("witness", sorted(WITNESSES))
 @pytest.mark.parametrize("seed", [0, 1])
-@pytest.mark.parametrize("prewarm", [False, True])
+@pytest.mark.parametrize("warm_call", [False, True], ids=["cold", "warm"])
 @pytest.mark.parametrize(
     ("action_width", "subject_width"), [(1, 1), (2, 3), (3, 7), (7, None)]
 )
@@ -116,7 +121,7 @@ def test_program_widths_preserve_continuous_frame_columns(
     *,
     witness: str,
     seed: int,
-    prewarm: bool,
+    warm_call: bool,
     action_width: int,
     subject_width: int | None,
 ) -> None:
@@ -124,7 +129,7 @@ def test_program_widths_preserve_continuous_frame_columns(
     got, expected = _frames(
         witness=witness,
         seed=seed,
-        prewarm=prewarm,
+        warm_call=warm_call,
         action_width=action_width,
         subject_width=subject_width,
     )
