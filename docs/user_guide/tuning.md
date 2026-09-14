@@ -126,10 +126,22 @@ visible to JAX. Solver-specific restrictions also apply; see
 [Solvers and capabilities](../reference/solvers.md).
 
 Ordinary singleton hard-max `GridSearch` also supports one model-level `LinSpacedGrid`
-as the sole continuous and sole sharded state. Every regime must retain that same static
-grid; all other states must be discrete. Carried or runtime grids, additional continuous
-axes, mixed solvers, collective or gated routes, same-period references and taste shocks
-are outside this route.
+as the sole sharded state. Every regime must retain that same static grid. Unsharded
+states may include:
+
+- Concrete discrete grids.
+- At most one static `PiecewiseLinSpacedGrid` interpolation coordinate per regime.
+- Fully specified, unconditioned `RouwenhorstAR1Process` nodes and unfolded
+  `NormalIIDProcess` nodes with Gauss-Hermite quadrature.
+- Carried states declared with a `LinSpacedGrid` simulation domain. Their solve
+  imputation does not add a value-array dimension.
+
+Runtime state grids, folded processes, other process families, mixed solvers, collective
+or gated routes, same-period references and taste shocks remain outside this route.
+Runtime action grids keep their ordinary GridSearch semantics. Process nodes retain the
+ordinary index-based continuation read; sharding does not enable process-aware off-grid
+interpolation. Additional continuous coordinates keep their named positions, so the
+sharded axis need not be trailing.
 
 For example, a 24-point assets axis can use eight selected devices, with three assets
 coordinates on each device. Logical value-axis order stays unchanged. Interpolation

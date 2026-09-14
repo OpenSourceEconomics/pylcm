@@ -1,0 +1,29 @@
+{
+  "current_candidate_qualification": "Executed snapshot predates the capability-helper refactor; no current-head native execution claim. Consult source_python_tree_sha256 and original per-file hashes.",
+  "derived_capacity": {
+    "derivation": {
+      "native_capacity_receipt_sha256": "c0e70663561cf9d242cbfc95b9a10c19fe92372523f48ab121d13c17fc6d970c",
+      "native_job_id": "27535505",
+      "native_phase_inventory_sha256": "54d5a3ec94ba67a6d786b059f2881cb183cbf3bd3c24901b862abafcee42cc86",
+      "source_delta": "Native factory snapshot predates capability-helper refactor; source hashes identify executed bytes. This schema correction makes no current-head execution or admission claim.",
+      "status": "static arithmetic and schema correction from existing native shape receipt; no native rerun"
+    },
+    "schema_version": 2,
+    "sha256": "561a8921d7c7d0e236481a83ca4907ae55e011c3d5e43d0a6b42ed0eeeba9a08"
+  },
+  "devices": "eight virtual CPU devices",
+  "job_id": "27535505",
+  "numerical_dispatch": false,
+  "precision": "fp32",
+  "promoted_exact_bytes_sha256": {
+    "aca-phase-inventory.json": "54d5a3ec94ba67a6d786b059f2881cb183cbf3bd3c24901b862abafcee42cc86"
+  },
+  "resource_admission": false,
+  "source_evidence_directory": "/tmp/aca-production-implementation-20260914/verification/green-dtypes-results/inventory",
+  "source_python_tree_sha256": {
+    "aca-model": "e52486a6b64cbb13cb1f8450904f1848744aa2b2749e403f07ae9aac71dc0861",
+    "aca-slurm": "38f03a2cc01b77324506603262ce6daf6f06cb64b2e01c59142e2d74773c83b0",
+    "pylcm": "d895a32934b8a34251304931bf5e908e68e5d21742f7f78edbabcdb539c38d07"
+  },
+  "status": "native-construction-only"
+}

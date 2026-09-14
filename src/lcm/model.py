@@ -32,7 +32,7 @@ from _lcm.execution.execution_plan import (
     resolve_execution_config,
     visible_device_ids,
 )
-from _lcm.grids import DiscreteGrid, LinSpacedGrid
+from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_processing import (
     _validate_param_types,
     build_regimes_and_template,
@@ -53,7 +53,9 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
+from _lcm.processes.ar1 import RouwenhorstAR1Process
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.processes.iid import NormalIIDProcess
 from _lcm.reachability import ModelReachability
 from _lcm.regime_building.broadcast import (
     merge_model_slots,
@@ -154,6 +156,7 @@ from _lcm.utils.logging import (
     validation_enabled,
     validation_raises,
 )
+from _lcm.variables import carried_state_grids, from_regime, get_grids
 from lcm._solver_api.authority import _ArrayCopier
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
@@ -2657,7 +2660,7 @@ def _validate_sharded_state_capability(
     model_states: Mapping[str, object],
     sharded_states: frozenset[StateName],
 ) -> StateName | None:
-    """Keep discrete sharding and validate the sole continuous GridSearch route.
+    """Keep discrete sharding and validate the bounded continuous GridSearch route.
 
     The returned name is an internal capability: only this construction gate may
     enable full ordinary continuation replicas for a continuous sharded state.
@@ -2679,10 +2682,12 @@ def _validate_sharded_state_capability(
     message = (
         f"ExecutionConfig.sharded_states {sorted(sharded_states)!r}: "
         "Continuous sharding requires one concrete model-level LinSpacedGrid as "
-        "the sole continuous and sole sharded state, retained in every regime, "
-        "with singleton hard-max GridSearch. Other states must be concrete "
-        "DiscreteGrid states; carried/runtime grids, folded processes, mixed "
-        "solvers, collective/gated/same-period routes and taste shocks are unsupported."
+        "the sole sharded state, retained in every regime, with singleton hard-max "
+        "GridSearch. Unsharded states may include one static piecewise-linear "
+        "coordinate, concrete discrete grids, fixed unfolded normal/Rouwenhorst "
+        "processes and carried linear grids. Runtime state grids, folded processes, "
+        "mixed solvers, collective/gated/same-period routes and taste shocks "
+        "are unsupported."
     )
     if len(sharded_states) != 1:
         raise ExecutionPlanningError(message)
@@ -2693,10 +2698,8 @@ def _validate_sharded_state_capability(
     for regime_name, regime in user_regimes.items():
         if (
             regime.states.get(name) is not grid
-            or any(
-                not isinstance(other_grid, DiscreteGrid)
-                for other_name, other_grid in regime.states.items()
-                if other_name != name
+            or not _supports_continuous_sharding_vocabulary(
+                regime=regime, sharded_state=name
             )
             or type(regime.solver) is not GridSearch
             or regime.stakeholders is not None
@@ -2709,6 +2712,57 @@ def _validate_sharded_state_capability(
                 f"{message} Unsupported regime: {regime_name!r}."
             )
     return name
+
+
+def _supports_continuous_sharding_vocabulary(
+    *, regime: FinalizedUserRegime, sharded_state: StateName
+) -> bool:
+    """Check unsharded grids using the canonical solve and carried-state roles.
+
+    Process nodes remain discrete solve axes. A carried state contributes no
+    solve axis. Only one additional piecewise-linear interpolation axis is
+    supported; neither its name nor its position determines eligibility.
+    """
+    variables = from_regime(user_regime=regime)
+    grids = get_grids(user_regime=regime)
+    carried = carried_state_grids(regime)
+    extra_continuous = tuple(
+        name for name in variables.continuous_state_names if name != sharded_state
+    )
+    if (
+        set(regime.states) != set(variables.state_names) | set(carried)
+        or any(type(grid) is not LinSpacedGrid for grid in carried.values())
+        or len(extra_continuous) > 1
+    ):
+        return False
+    for name in variables.state_names:
+        if name == sharded_state:
+            continue
+        grid = grids[name]
+        if name in extra_continuous:
+            if type(grid) is not PiecewiseLinSpacedGrid:
+                return False
+        elif variables.info[name].is_process:
+            if not _supports_unsharded_continuous_process(grid):
+                return False
+        elif not isinstance(grid, DiscreteGrid):
+            return False
+    return True
+
+
+def _supports_unsharded_continuous_process(grid: Grid) -> bool:
+    """Accept fixed unfolded normal quadrature and Rouwenhorst node laws."""
+    if type(grid) not in (NormalIIDProcess, RouwenhorstAR1Process):
+        return False
+    process = cast("NormalIIDProcess | RouwenhorstAR1Process", grid)
+    return (
+        process.is_fully_specified
+        and process.state_conditioned is None
+        and (
+            not isinstance(process, NormalIIDProcess)
+            or (not process.fold and process.gauss_hermite)
+        )
+    )
 
 
 def _fail_if_a_sharded_state_is_pruned(
