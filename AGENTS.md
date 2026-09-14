@@ -378,8 +378,10 @@ only when dead in both phases. Regime-level declarations are never pruned.
 `model.pruned_variables` records the result per regime.
 
 Declare device axes with `Model(execution_config=ExecutionConfig(sharded_states=...))`,
-using model-level discrete states. A sharded state pruned from a non-terminal regime is
-an error (unshard or make the regime use it). Grids define outcome spaces only;
+using model-level discrete states or the narrow continuous GridSearch route described in
+`docs/user_guide/tuning.md`: one concrete `LinSpacedGrid`, sole continuous and sharded
+state, retained in every regime. A sharded state pruned from a non-terminal regime is an
+error (unshard or make the regime use it). Grids define outcome spaces only;
 planner-owned widths live in `ExecutionConfig(axis_widths=...)` and name axes the
 model's actual core programs declare.
 

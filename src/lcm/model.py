@@ -74,6 +74,7 @@ from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
+from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
     pad_initial_conditions_to_multiple,
@@ -447,6 +448,9 @@ class Model:
     _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
     """Program executors shared by calls with the same outer subject shape."""
 
+    _simulate_entry_operations: ProfiledSimulationOperations
+    """Pure entry executable profiles; no call owners or admission decisions."""
+
     _simulate_compile_lock: threading.Lock
     """Serialize creation of runtime executors for each subject shape."""
 
@@ -522,6 +526,7 @@ class Model:
         self.n_periods = ages.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self._simulate_runtime_regimes = {}
+        self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
         # In-memory result provenance. Kept in pickle state so a model and a
         # result round-tripped together remain compatible, but deliberately not
@@ -716,6 +721,7 @@ class Model:
         for transient in (
             "_simulate_compile_lock",
             "_simulate_runtime_regimes",
+            "_simulate_entry_operations",
             "_declared_authority_cache",
             "_declared_authority_lock",
             "_solution_param_projection",
@@ -736,6 +742,7 @@ class Model:
         if "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
         self._simulate_runtime_regimes = {}
+        self._simulate_entry_operations = ProfiledSimulationOperations()
         self._simulate_compile_lock = threading.Lock()
         self._declared_authority_cache = OrderedDict()
         self._declared_authority_lock = threading.Lock()
@@ -2269,6 +2276,7 @@ class Model:
             None
             if entry_inputs is None
             else SimulationEntryAllocations(
+                operations=self._simulate_entry_operations,
                 original_inputs=entry_inputs,
                 solution=solution,
                 model_roots=(
