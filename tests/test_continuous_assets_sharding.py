@@ -7,18 +7,21 @@ It does not use pylcm interpolation, reductions, or the native solved arrays.
 CPU tests establish semantics and ownership only, never GPU performance.
 """
 
+import dataclasses
 from fractions import Fraction
 from functools import cache
+from types import MappingProxyType
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from dags.signature import rename_arguments
 
 import _lcm.simulation.runtime as simulation_runtime
 import _lcm.simulation.simulate as simulation
-from _lcm.execution import output_layout, value_transfer
+from _lcm.execution import output_layout, scheduler, value_transfer
 from _lcm.execution.value_transfer import ValueInputChannel, ValueTransferKind
 from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
@@ -652,3 +655,289 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
             global_ids[index_map[device]],
             global_ids[:, :, 3 * position : 3 * (position + 1)],
         )
+
+
+def _renamed_functions(*, regime: Regime) -> dict[str, Any]:
+    """Rename arguments of the fixture's ordinary callable economic nodes."""
+    result = {}
+    for key, function in regime.functions.items():
+        assert callable(function)
+        result[key] = rename_arguments(function, mapper={"assets": "liquid"})
+    return result
+
+
+def _renamed_public_model(*, original: Model) -> Model:
+    """Apply only a state-name bijection to the existing fixture declarations."""
+    regimes = {}
+    for source, name in enumerate(("r0", "r1")):
+        regime = _regime(source=source, identity=False)
+        regimes[name] = dataclasses.replace(
+            regime,
+            functions=_renamed_functions(regime=regime),
+            state_transitions={
+                "liquid" if key == "assets" else key: law
+                for key, law in regime.state_transitions.items()
+            },
+        )
+    terminal = original.user_regimes["terminal"]
+    regimes["terminal"] = dataclasses.replace(
+        terminal,
+        states={},
+        functions=_renamed_functions(regime=terminal),
+    )
+    return Model(
+        regimes=regimes,
+        states={
+            "liquid" if key == "assets" else key: grid
+            for key, grid in terminal.states.items()
+        },
+        ages=original.ages,
+        regime_id_class=_RegimeId,
+        execution_config=ExecutionConfig(
+            devices=tuple(reversed(range(8))),
+            sharded_states=("liquid",),
+            axis_widths={"action_product": 3, "cell": 9, "subject": 432},
+            device_memory_bytes=2**30,
+        ),
+    )
+
+
+def _assert_renamed_values(*, original: Any, renamed: Any) -> None:
+    exact, _ = _reference()
+    assert set(renamed.values) == set(original.values)
+    for period, values in original.values.items():
+        assert set(renamed.values[period]) == set(values)
+        for regime, value in values.items():
+            _assert_assets_shards(value)
+            actual = renamed.values[period][regime]
+            assert actual.shape == (3, 3, 24)
+            assert isinstance(actual.sharding, jax.NamedSharding)
+            assert actual.sharding.spec == jax.P(None, None, "liquid")
+            assert tuple(
+                device.id for device in actual.sharding.mesh.devices.flat
+            ) == tuple(range(8))
+            assert len(actual.addressable_shards) == 8
+            cells = np.arange(216).reshape(3, 3, 24)
+            for shard in actual.addressable_shards:
+                assert shard.data.shape == (3, 3, 3)
+                position = shard.device.id
+                np.testing.assert_array_equal(
+                    cells[shard.index], cells[:, :, 3 * position : 3 * (position + 1)]
+                )
+            assert_agrees_to_ulp(got=actual, expected=value, n_ulp=8)
+            expected = np.array(
+                [float(x) for x in exact[period, regime].values()], dtype=actual.dtype
+            ).reshape(3, 3, 24)
+            assert_agrees_to_ulp(got=actual, expected=expected, n_ulp=8)
+
+
+def test_public_state_rename_and_reversed_device_selection_preserve_solve_and_rng() -> (
+    None
+):
+    """Identifier changes preserve the model; caller device order normalizes."""
+    _require_eight()
+    original = _model(devices=tuple(range(8)), widths=(3, 9))
+    renamed = _renamed_public_model(original=original)
+    assert original.execution_devices == renamed.execution_devices == tuple(range(8))
+    params = {"discount_factor": 0.5}
+    solution = original.solve(params=params, log_level="off")
+    renamed_solution = renamed.solve(params=params, log_level="off")
+    _assert_renamed_values(original=solution, renamed=renamed_solution)
+    initial = {
+        "assets": np.array([-4.0, 17.0, *np.linspace(-3, 18, 15)]),
+        "pref_type": np.arange(17, dtype=np.int32) % 3,
+        "spousal_income": (np.arange(17, dtype=np.int32) // 3) % 3,
+        "regime_id": np.arange(17, dtype=np.int32) % 2,
+        "age": np.zeros(17),
+    }
+    renamed_initial = {
+        "liquid" if key == "assets" else key: value for key, value in initial.items()
+    }
+    for seed in (0, 42):
+        result = original.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions=initial,
+            seed=seed,
+            log_level="off",
+        )
+        renamed_result = renamed.simulate(
+            params=params,
+            solution=renamed_solution,
+            initial_conditions=renamed_initial,
+            seed=seed,
+            log_level="off",
+        )
+        assert result.n_subjects == renamed_result.n_subjects == 17
+        assert isinstance(result.raw_results, MappingProxyType)
+        assert isinstance(renamed_result.raw_results, MappingProxyType)
+        assert tuple(renamed_result.raw_results) == tuple(result.raw_results)
+        for regime, periods in renamed_result.raw_results.items():
+            assert isinstance(periods, MappingProxyType)
+            assert isinstance(result.raw_results[regime], MappingProxyType)
+            assert tuple(periods) == tuple(result.raw_results[regime])
+        normalized = MappingProxyType(
+            {
+                regime: MappingProxyType(
+                    {
+                        period: dataclasses.replace(
+                            data,
+                            states=MappingProxyType(
+                                {
+                                    "assets" if name == "liquid" else name: array
+                                    for name, array in data.states.items()
+                                }
+                            ),
+                        )
+                        for period, data in periods.items()
+                    }
+                )
+                for regime, periods in renamed_result.raw_results.items()
+            }
+        )
+        assert jax.tree.structure(normalized) == jax.tree.structure(result.raw_results)
+        for got, expected in zip(
+            jax.tree.leaves(normalized),
+            jax.tree.leaves(result.raw_results),
+            strict=True,
+        ):
+            if np.issubdtype(np.asarray(expected).dtype, np.inexact):
+                assert_agrees_to_ulp(got=got, expected=expected, n_ulp=8)
+            else:
+                np.testing.assert_array_equal(got, expected)
+    _assert_renamed_values(original=solution, renamed=renamed_solution)
+
+
+def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # noqa: C901, PLR0915
+    *, monkeypatch: pytest.MonkeyPatch, record_property: Any
+) -> None:
+    """Observe the real solve cache; wider-replica aliases have separate tests."""
+    _require_eight()
+    model = _model(devices=tuple(range(8)), widths=(3, 9))
+    tracked: dict[str, Any] = {}
+    materializations = []
+    commits = []
+    hits = []
+    barriers = []
+    apply = value_transfer.apply_value_transfer
+    put = scheduler.PeriodTransferCache.put
+    get = scheduler.PeriodTransferCache.get
+    commit = scheduler.PeriodTransferCache.commit_consumer
+    release = scheduler.release_closed_artifacts
+    wait = jax.block_until_ready
+
+    def observe_apply(**kwargs: Any) -> Any:
+        result = apply(**kwargs)
+        transfer = kwargs["transfer"]
+        materializations.append((transfer.target, transfer.source_sharding))
+        return result
+
+    def observe_put(self: Any, **kwargs: Any) -> None:
+        transfer, copied, stored = (
+            kwargs["transfer"],
+            kwargs["array"],
+            kwargs["stored"],
+        )
+        if not tracked and transfer.kind is ValueTransferKind.ALL_GATHER:
+            _assert_assets_shards(stored)
+            assert copied.is_fully_replicated
+            assert len(copied.addressable_shards) == 8
+            assert all(
+                shard.data.shape == (3, 3, 24) for shard in copied.addressable_shards
+            )
+            aliased = scheduler.shares_a_buffer(first=copied, second=stored)
+            record_property("native_all_gather_aliases_source", aliased)
+            assert not aliased
+            tracked.update(
+                cache=self,
+                key=(transfer.target, transfer.source_sharding),
+                copy=copied,
+                source=stored,
+                expected=np.asarray(stored).copy(),
+            )
+            np.testing.assert_array_equal(copied, stored)
+        put(self, **kwargs)
+
+    def observe_get(self: Any, **kwargs: Any) -> Any:
+        result = get(self, **kwargs)
+        if tracked and self is tracked["cache"] and result is not None:
+            transfer = kwargs["transfer"]
+            if (transfer.target, transfer.source_sharding) == tracked["key"]:
+                assert result is tracked["copy"]
+                assert not result.is_deleted()
+                hits.append(result)
+        return result
+
+    def observe_commit(self: Any, **kwargs: Any) -> Any:
+        selected = (
+            tracked and self is tracked["cache"] and kwargs["key"] == tracked["key"]
+        )
+        if selected:
+            assert not tracked["copy"].is_deleted()
+        result = commit(self, **kwargs)
+        if selected:
+            commits.append(tracked["copy"].is_deleted())
+            assert commits in ([False], [False, True])
+            np.testing.assert_array_equal(tracked["source"], tracked["expected"])
+        return result
+
+    def observe_wait(tree: Any) -> Any:
+        result = wait(tree)
+        if tracked.get("releasing", False):
+            ids = tuple(id(leaf) for leaf in jax.tree.leaves(tree))
+            if ids == tracked["pending_ids"]:
+                assert not tracked["copy"].is_deleted()
+                barriers.append(ids)
+        return result
+
+    def observe_release(**kwargs: Any) -> Any:
+        selected = (
+            tracked
+            and any(
+                array is tracked["copy"]
+                for array in kwargs["arrays_by_artifact"].values()
+            )
+            and tracked["key"] in kwargs["artifacts"]
+        )
+        if not selected:
+            return release(**kwargs)
+        assert commits == [False]
+        pending = kwargs["pending_outputs"]
+        assert len(pending) == 2
+        tracked["pending_ids"] = tuple(
+            id(leaf) for leaf in jax.tree.leaves(tuple(pending))
+        )
+        tracked["releasing"] = True
+        before = kwargs["before_delete"]
+
+        def observe_before_delete(*, arrays: Any) -> None:
+            assert len(barriers) == 1
+            assert any(array is tracked["copy"] for array in arrays)
+            assert not tracked["copy"].is_deleted()
+            np.testing.assert_array_equal(tracked["source"], tracked["expected"])
+            if before is not None:
+                before(arrays=arrays)
+
+        kwargs["before_delete"] = observe_before_delete
+        try:
+            return release(**kwargs)
+        finally:
+            tracked["releasing"] = False
+
+    with monkeypatch.context() as probe:
+        probe.setattr(value_transfer, "apply_value_transfer", observe_apply)
+        probe.setattr(scheduler.PeriodTransferCache, "put", observe_put)
+        probe.setattr(scheduler.PeriodTransferCache, "get", observe_get)
+        probe.setattr(scheduler.PeriodTransferCache, "commit_consumer", observe_commit)
+        probe.setattr(scheduler, "release_closed_artifacts", observe_release)
+        probe.setattr(jax, "block_until_ready", observe_wait)
+        solution = model.solve(params={"discount_factor": 0.5}, log_level="off")
+    assert tracked
+    assert materializations.count(tracked["key"]) == 1
+    assert hits
+    assert commits == [False, True]
+    assert len(barriers) == 1
+    assert tracked["copy"].is_deleted()
+    _assert_assets_shards(tracked["source"])
+    np.testing.assert_array_equal(tracked["source"], tracked["expected"])
+    np.testing.assert_array_equal(solution.values[2]["terminal"], tracked["expected"])
