@@ -521,3 +521,64 @@ def test_mahler_configured_identity_has_no_ratio_against_legacy_default(
     assert len(rows) == 1
     assert rows[0].class_name == "MahlerYumBudgetedGpu"
     assert rows[0].ratio is None
+
+
+@pytest.mark.parametrize(
+    "prefix", ["", "bench_simulation_dispatch.SimulationDispatch."]
+)
+@pytest.mark.parametrize(
+    ("method", "value", "expected"),
+    [
+        ("track_host_ms_per_period_regime", 2.5, "2.50 ms"),
+        ("track_host_ms_per_period_regime", 0, "0.00 ms"),
+        ("track_second_call_compiles", 0, "0"),
+        ("track_second_call_compiles", 12, "12"),
+        ("track_compilation_time", 2.5, "2.50 s"),
+    ],
+)
+def test_simulation_dispatch_metric_units(
+    *, prefix: str, method: str, value: float, expected: str
+) -> None:
+    """Bare and fully qualified metric names retain their declared units."""
+    assert pr_comment._format_value(bench_name=prefix + method, value=value) == expected
+
+
+def test_simulation_dispatch_units_preserve_raw_values_and_ratios(
+    tmp_path: Path,
+) -> None:
+    """Display units change neither stored metrics nor zero-baseline policy."""
+    prefix = "bench_simulation_dispatch.SimulationDispatch."
+    methods = ("track_host_ms_per_period_regime", "track_second_call_compiles")
+    base_file, head_file = tmp_path / "base.json", tmp_path / "head.json"
+    for path, values in ((base_file, (5.0, 0)), (head_file, (2.5, 0))):
+        path.write_text(
+            json.dumps(
+                {
+                    "results": {
+                        prefix + method: [[value], []]
+                        for method, value in zip(methods, values, strict=True)
+                    }
+                }
+            )
+        )
+    before = head_file.read_bytes()
+    rows = pr_comment._build_comparison_rows(base_file=base_file, head_file=head_file)
+    by_method = {row.method_name: row for row in rows}
+    timing, count = (by_method[method] for method in methods)
+    assert (timing.before_value, timing.after_value, timing.ratio) == (
+        "5.00 ms",
+        "2.50 ms",
+        0.5,
+    )
+    assert (count.before_value, count.after_value, count.ratio) == ("", "0", None)
+    raw = pr_comment._parse_raw_values(head_file)
+    assert raw == {
+        ("SimulationDispatch", methods[0], ""): 2.5,
+        ("SimulationDispatch", methods[1], ""): 0,
+    }
+    table = pr_comment._format_raw_results(result_file=head_file, head_sha="head")
+    assert "| 2.50 ms |" in table
+    assert "| 0 |" in table
+    assert "2.50 s" not in table
+    assert "0.00 s" not in table
+    assert head_file.read_bytes() == before

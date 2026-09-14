@@ -530,14 +530,19 @@ def _expand_params(params: list[list[str]]) -> list[str]:
 
 def _format_value(*, bench_name: str, value: float) -> str:
     """Format a benchmark value with appropriate units."""
+    method_name = bench_name.rsplit(".", 1)[-1]
+    metric_formats = {
+        "track_host_ms_per_period_regime": "{:.2f} ms",
+        "track_second_call_compiles": "{:.0f}",
+    }
+    if method_name in metric_formats:
+        return metric_formats[method_name].format(value)
     if (
         "peakmem" in bench_name
         or "gpu_peak_mem" in bench_name
         or "track_peak_gpu_mem" in bench_name
     ):
-        if value >= 1e9:
-            return f"{value / 1e9:.2f} GB"
-        return f"{value / 1e6:.0f} MB"
+        return f"{value / 1e9:.2f} GB" if value >= 1e9 else f"{value / 1e6:.0f} MB"
     if "compilation_time" in bench_name or "track" in bench_name:
         return f"{value:.2f} s"
     if value >= 1.0:
