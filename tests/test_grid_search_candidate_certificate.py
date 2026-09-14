@@ -972,6 +972,7 @@ def test_certified_sources_are_read_as_utf_8_whatever_the_platform_default_is():
         patch.setattr(Path, "read_text", recording_read_text)
         for relative in CERTIFIED_SOURCES:
             _parse(relative)
+        test_backward_copy_mutation_preserves_required_full_replica_branch()
 
     assert set(recorded) == {"utf-8"}
 
@@ -2511,7 +2512,7 @@ def test_backward_copy_mutation_preserves_required_full_replica_branch() -> None
     root = _SRC_ROOT.parent
     mutations = direct_flow_mutation_specs(repo_root=root)
     mutation = mutations["value_transfer:backward_copy_uses_output_spec"]
-    expected = ast.parse((root / mutation["path"]).read_text())
+    expected = ast.parse((root / mutation["path"]).read_text(encoding="utf-8"))
     resolver = next(
         node
         for node in expected.body
