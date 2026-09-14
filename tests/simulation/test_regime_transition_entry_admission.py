@@ -1,16 +1,21 @@
 """Regime-transition validation admits its complete probability producer."""
 
+import copy
 import dataclasses
 from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
 from lcm import AgeGrid, ExecutionConfig, MarkovTransition, Model, Regime, categorical
-from lcm.exceptions import ExecutionPlanningError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    InvalidRegimeTransitionProbabilitiesError,
+)
 from lcm.typing import (
     FloatND,
     ScalarFloat,
@@ -130,20 +135,138 @@ def _controlled_post_validation_refusal(*args: Any, **kwargs: Any) -> Any:
     raise ExecutionPlanningError("controlled refusal after transition validation")
 
 
+def _alive_payoff() -> ScalarFloat:
+    return jnp.asarray(2, dtype=_FLOAT_DTYPE)
+
+
+def _done_payoff() -> ScalarFloat:
+    return jnp.asarray(6, dtype=_FLOAT_DTYPE)
+
+
+def _parameterized_regime_probabilities(done_probability: float) -> FloatND:
+    return jnp.stack((jnp.asarray(0, dtype=_FLOAT_DTYPE), done_probability))
+
+
+def _numerical_inputs(
+    *, budget: int | None
+) -> tuple[Model, UserParams, UserInitialConditions]:
+    """A two-period oracle: V_alive=2+0.5*6=5 and V_done=6."""
+    model = Model(
+        regimes={
+            "alive": Regime(
+                transition=MarkovTransition(_parameterized_regime_probabilities),
+                active=_active_alive,
+                functions={"utility": _alive_payoff},
+            ),
+            "done": Regime(
+                transition=None,
+                active=_active_done,
+                functions={"utility": _done_payoff},
+            ),
+        },
+        regime_id_class=_RegimeId,
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        execution_config=ExecutionConfig(device_memory_bytes=budget),
+    )
+    return (
+        model,
+        {
+            "alive": {
+                "koopmans_aggregator": {"discount_factor": 0.5},
+                "next_regime": {"done_probability": 1.0},
+            },
+            "done": {},
+        },
+        {
+            "age": jnp.zeros(3),
+            "regime_id": jnp.full(3, _RegimeId.alive),
+        },
+    )
+
+
+def _assert_same_raw_results(*, actual: Any, expected: Any) -> None:
+    """Compare the complete public record, including routes and masks."""
+    assert jax.tree.structure(actual.raw_results) == jax.tree.structure(
+        expected.raw_results
+    )
+    for got, want in zip(
+        jax.tree.leaves(actual.raw_results),
+        jax.tree.leaves(expected.raw_results),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(got, want)
+
+
 @pytest.mark.requires(device="cpu")
 def test_admitted_regime_probability_pytree_completes() -> None:
-    """A successful budgeted regime law completes every output leaf."""
-    model, params, initial = _inputs(budget=2**28, valid=True)
+    """Admission preserves analytical values, destinations and caller arrays."""
+    model, params, initial = _numerical_inputs(budget=2**28)
+    oracle, _, _ = _numerical_inputs(budget=None)
+    snapshots = {name: np.array(value) for name, value in initial.items()}
     solution = model.solve(params=params, log_level="off")
-
     result = model.simulate(
         params=params,
         initial_conditions=initial,
         solution=solution,
+        seed=17,
         log_level="debug",
     )
+    expected = oracle.simulate(
+        params=params, initial_conditions=initial, seed=17, log_level="debug"
+    )
+    assert result.n_subjects == expected.n_subjects == 3
+    assert set(result.raw_results) == {"alive", "done"}
+    assert set(result.raw_results["alive"]) == {0}
+    assert set(result.raw_results["done"]) == {1}
+    for regime, period, value in (("alive", 0, 5), ("done", 1, 6)):
+        data = result.raw_results[regime][period]
+        np.testing.assert_array_equal(data.V_arr, np.full(3, value))
+        np.testing.assert_array_equal(data.in_regime, np.ones(3, dtype=bool))
+    _assert_same_raw_results(actual=result, expected=expected)
+    for name, value in initial.items():
+        assert isinstance(value, jax.Array)
+        assert not value.is_deleted()
+        np.testing.assert_array_equal(value, snapshots[name])
 
-    assert result.n_subjects == 1
+
+@pytest.mark.requires(device="cpu")
+def test_invalid_regime_diagnostic_matches_unbudgeted_and_recovers() -> None:
+    """A rejected probability law cannot poison the same model's valid reuse."""
+    models = [_numerical_inputs(budget=budget) for budget in (None, 2**28)]
+    errors = []
+    recovered_results = []
+    for model, params, initial in models:
+        snapshots = {name: np.array(value) for name, value in initial.items()}
+        first = model.simulate(
+            params=params, initial_conditions=initial, seed=17, log_level="debug"
+        )
+        invalid = copy.deepcopy(params)
+        assert isinstance(invalid, dict)
+        alive_params = invalid["alive"]
+        assert isinstance(alive_params, dict)
+        law_params = alive_params["next_regime"]
+        assert isinstance(law_params, dict)
+        law_params["done_probability"] = 0.5
+        with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as error:
+            model.simulate(
+                params=invalid,
+                initial_conditions=initial,
+                seed=17,
+                log_level="debug",
+            )
+        errors.append(str(error.value))
+        recovered = model.simulate(
+            params=params, initial_conditions=initial, seed=17, log_level="debug"
+        )
+        _assert_same_raw_results(actual=recovered, expected=first)
+        recovered_results.append(recovered)
+        for name, value in initial.items():
+            assert isinstance(value, jax.Array)
+            assert not value.is_deleted()
+            np.testing.assert_array_equal(value, snapshots[name])
+    assert errors[0] == errors[1]
+    assert errors[0]
+    _assert_same_raw_results(actual=recovered_results[1], expected=recovered_results[0])
 
 
 @pytest.mark.requires(device="cpu")
