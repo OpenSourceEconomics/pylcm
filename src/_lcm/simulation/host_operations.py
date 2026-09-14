@@ -109,7 +109,8 @@ class ProfiledSimulationOperations:
                 live_footprint(),
                 measure_buffer_footprint(tree=arguments),
                 argument_buffers,
-            )
+            ),
+            devices=budget_devices,
         )
         require_transfer_headroom(
             live=live,

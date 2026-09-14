@@ -47,7 +47,7 @@ def slice_population(
             subject_arg_names=("array",) if len(devices) > 1 else (),
             subject_outputs=len(devices) > 1,
             devices=devices,
-            live_footprint=memory.snapshot,
+            live_footprint=memory.budget_snapshot,
             budget_devices=memory.devices,
             budget_bytes=memory.budget_bytes,
         ),

@@ -81,12 +81,21 @@ def measure_buffer_footprint(*, tree: object) -> DeviceBufferFootprint:
 
 
 def union_buffer_footprints(
-    *, footprints: tuple[DeviceBufferFootprint, ...]
+    *,
+    footprints: tuple[DeviceBufferFootprint, ...],
+    devices: tuple[jax.Device, ...] | None = None,
 ) -> DeviceBufferFootprint:
-    """Combine input, publication and transient metadata without duplicate aliases."""
+    """Combine live metadata, optionally only on an explicit consumer device set.
+
+    Projection precedes interval normalization: unrelated retained history costs
+    only a device-key lookup. The original footprints remain complete for other
+    consumers. Callers must select every device their admission check requires.
+    """
     spans_by_device: dict[jax.Device, list[tuple[int, int]]] = {}
     for footprint in footprints:
-        for device, spans in footprint.spans.items():
+        selected = footprint.spans if devices is None else devices
+        for device in selected:
+            spans = footprint.spans.get(device, ())
             spans_by_device.setdefault(device, []).extend(spans)
     return DeviceBufferFootprint(
         spans={device: tuple(spans) for device, spans in spans_by_device.items()}

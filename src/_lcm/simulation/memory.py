@@ -50,7 +50,12 @@ class SimulationMemory:
         """Own the call's selected common specialization independently of its caller."""
         self.axis_widths = MappingProxyType(dict(self.axis_widths))
 
-    def snapshot(self, *, additional: object = ()) -> DeviceBufferFootprint:
+    def snapshot(
+        self,
+        *,
+        additional: object = (),
+        devices: tuple[jax.Device, ...] | None = None,
+    ) -> DeviceBufferFootprint:
         """Drain known transfers and inventory the current explicit live roots."""
         roots = (
             self.unit_inputs,
@@ -65,8 +70,13 @@ class SimulationMemory:
                 self.chunk_inputs,
                 self.outputs,
                 measure_buffer_footprint(tree=roots),
-            )
+            ),
+            devices=devices,
         )
+
+    def budget_snapshot(self, *, additional: object = ()) -> DeviceBufferFootprint:
+        """Read current live roots while projecting retained admission metadata."""
+        return self.snapshot(additional=additional, devices=self.devices)
 
     def set_chunk_inputs(self, *, tree: object) -> None:
         """Replace a chunk's grids/params while its actual owners remain alive."""
@@ -98,7 +108,7 @@ class SimulationMemory:
         required_devices = transfer.source_sharding.device_set
         participating_devices = required_devices | transfer.stored_sharding.device_set
         require_transfer_headroom(
-            live=self.snapshot(additional=live_values),
+            live=self.budget_snapshot(additional=live_values),
             destination_bytes=dict.fromkeys(required_devices, cost.per_device_bytes),
             scratch_bytes=dict.fromkeys(participating_devices, cost.temporary_bytes),
             budget_bytes=self.budget_bytes,
@@ -108,7 +118,7 @@ class SimulationMemory:
     def check_resident(self) -> None:
         """Refuse an already-infeasible known-buffer inventory."""
         require_transfer_headroom(
-            live=self.snapshot(),
+            live=self.budget_snapshot(),
             destination_bytes={},
             scratch_bytes={},
             budget_bytes=self.budget_bytes,
@@ -134,7 +144,7 @@ class SimulationMemory:
                 static_arguments=static_arguments,
                 subject_outputs=subject_outputs,
                 devices=self.subject_devices,
-                live_footprint=self.snapshot,
+                live_footprint=self.budget_snapshot,
                 budget_devices=self.devices,
                 budget_bytes=self.budget_bytes,
             ),

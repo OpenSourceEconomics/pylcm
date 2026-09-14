@@ -681,7 +681,7 @@ def _simulate_subject_chunk(
                 value_reads=(),
                 devices=devices,
                 budget_bytes=None if memory is None else memory.budget_bytes,
-                live_footprint=None if memory is None else memory.snapshot(),
+                live_footprint=None if memory is None else memory.budget_snapshot(),
                 budget_devices=() if memory is None else memory.devices,
             )["age"],
         )
@@ -898,7 +898,7 @@ def _bind_unit_executor(
                     runtime=cast(
                         "SimulationRuntime", regime.simulation.programs.executor
                     ),
-                    live_footprint=memory.snapshot,
+                    live_footprint=memory.budget_snapshot,
                     budget_devices=memory.devices,
                     axis_widths=memory.axis_widths,
                     on_output=memory.hold,
