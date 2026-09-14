@@ -324,7 +324,7 @@ def test_sharded_state_must_be_declared_at_model_level() -> None:
     ],
     ids=["concrete-continuous", "runtime-continuous", "carried-discrete"],
 )
-def test_sharded_state_requires_a_concrete_discrete_grid(*, grid) -> None:
+def test_unsupported_sharded_state_combinations_are_refused(*, grid) -> None:
     """Unsupported and runtime grids are refused with the offending state name."""
     with pytest.raises(ExecutionPlanningError, match=r"skill.*concrete DiscreteGrid"):
         _build_model(

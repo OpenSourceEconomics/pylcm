@@ -10,6 +10,7 @@ import dataclasses
 import operator
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
+from typing import Literal
 
 import jax
 
@@ -34,6 +35,12 @@ class ResolvedExecution:
 
     device_memory_bytes: int | None
     """Per-device workspace budget, or `None`."""
+
+    simulation_chunk_policy: Literal["legacy", "independent"] = "legacy"
+    """Simulation outer-cohort selection, independent of inner program widths."""
+
+    continuous_sharded_state: StateName | None = None
+    """Internal capability set only after Model validates continuous GridSearch."""
 
     donate_buffers: bool = True
     """Whether eligible solve inputs may be donated to a compiled executable."""
@@ -85,6 +92,7 @@ def resolve_execution_config(
         axis_widths=MappingProxyType(dict(config.axis_widths)),
         device_memory_bytes=config.device_memory_bytes,
         donate_buffers=config.donate_buffers,
+        simulation_chunk_policy=config.simulation_chunk_policy,
     )
 
 

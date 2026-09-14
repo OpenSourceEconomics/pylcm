@@ -111,11 +111,74 @@ class SimulationChunkProfile:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ChunkDeviceReceipt:
+    """Scalar decomposition of one candidate's represented device requirement."""
+
+    platform: str
+    device_id: int
+    resident_bytes: int
+    fixed_bytes: int
+    output_bytes: int
+    max_stage_bytes: int
+    limiting_stage: str | None
+    required_bytes: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkCandidateReceipt:
+    """One bounded profile attempt, containing no executable or caller owner."""
+
+    n_subjects: int
+    padded_population: int
+    chunk_count: int
+    axis_widths: tuple[tuple[str, int], ...]
+    admitted: bool
+    devices: tuple[ChunkDeviceReceipt, ...]
+    profile_seconds: float
+    stage_entries: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class IndependentChunkReceipt:
+    """Call-local bounded search evidence, not persistent admission permission.
+
+    Stage entries count returned profile records, not preparation or compilation
+    requests. Lowering/backend counters and times are unavailable at this boundary;
+    None explicitly prevents mistaking profile wall time for backend compile time.
+    """
+
+    original_population: int
+    entry_population: int
+    alignment: int
+    subject_width: int
+    candidates: tuple[int, ...]
+    attempts: tuple[ChunkCandidateReceipt, ...]
+    selected_subjects: int
+    axis_widths: tuple[tuple[str, int], ...]
+    stopping_reason: str
+    anchor_map_reason: str
+    planning_seconds: float
+    """Bounded search wall time, excluding the preceding call-input preparation."""
+    mode: str = "independent"
+    frontier_version: int = 1
+    stage_preparation_requests: int | None = None
+    unique_backend_compile_requests: int | None = None
+    lowering_seconds: float | None = None
+    backend_seconds: float | None = None
+
+    @property
+    def profile_count(self) -> int:
+        """Count complete profile attempts, including rejected candidates."""
+        return len(self.attempts)
+
+
+@dataclass(frozen=True, kw_only=True)
 class SimulationChunkPlan:
     """Selected code and per-device required bytes; feasibility is call-local."""
 
     profile: SimulationChunkProfile
     required_bytes: Mapping[jax.Device, int]
+    receipt: IndependentChunkReceipt | None = None
 
     def __post_init__(self) -> None:
         """Own the accepted integer inventory rather than a mutable caller mapping."""

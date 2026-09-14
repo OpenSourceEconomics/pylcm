@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import Literal
 
 from lcm.typing import StateName
 
@@ -34,6 +35,9 @@ class ExecutionConfig:
     devices: tuple[int, ...] | None = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
+    simulation_chunk_policy: Literal["legacy", "independent"] = "legacy"
+    """Outer-cohort policy; independent requires a budget and inner subject pin."""
+
     donate_buffers: bool = True
     """Allow eligible owned inputs to be donated by compiled solve programs."""
 
@@ -44,6 +48,21 @@ class ExecutionConfig:
             raise TypeError("ExecutionConfig.donate_buffers must be an exact bool.")
         widths = dict(self.axis_widths)
         _fail_if_axis_widths_invalid(axis_widths=widths)
+        if type(self.simulation_chunk_policy) is not str:
+            raise TypeError(
+                "ExecutionConfig.simulation_chunk_policy must be an exact str."
+            )
+        if self.simulation_chunk_policy not in ("legacy", "independent"):
+            raise ValueError(
+                "ExecutionConfig.simulation_chunk_policy must be legacy or independent."
+            )
+        if self.simulation_chunk_policy == "independent" and (
+            self.device_memory_bytes is None or "subject" not in widths
+        ):
+            raise ValueError(
+                "Independent simulation_chunk_policy requires device_memory_bytes "
+                "and an explicit positive subject axis width."
+            )
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))
         sharded = tuple(self.sharded_states)
         _fail_if_sharded_states_invalid(sharded_states=sharded)

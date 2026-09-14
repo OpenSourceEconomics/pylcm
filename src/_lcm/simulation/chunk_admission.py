@@ -8,6 +8,7 @@ candidate uses the same actual completed grids and retained solution owners.
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from time import perf_counter
 from types import MappingProxyType
 
 import jax
@@ -21,6 +22,9 @@ from _lcm.simulation.chunk_inputs import (
     prepare_simulation_call_inputs,
 )
 from _lcm.simulation.chunk_planning import (
+    ChunkCandidateReceipt,
+    ChunkDeviceReceipt,
+    IndependentChunkReceipt,
     SimulationChunkPlan,
     SimulationChunkProfile,
     _required_bytes,
@@ -121,7 +125,7 @@ def prepare_simulation_chunks(
     policies: Mapping[int, Mapping[str, object]] | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> PreparedSimulationChunks:
-    """Exhaust inner choices before shrinking an outer chunk's admitted extent."""
+    """Select a complete admitted chunk under the declared outer-cohort policy."""
     runtime = next(iter(regimes.values())).simulation.programs.executor
     if (
         not isinstance(runtime, SimulationRuntime)
@@ -181,26 +185,6 @@ def prepare_simulation_chunks(
     memory.close_unit()
     population = initial_conditions["regime_id"].shape[0]
     alignment = len(runtime.subject_devices)
-    outer = TiledOutputAxis(
-        name="subject",
-        state_names=("subject",),
-        extent=population,
-        width_keyword="__lcm_subject_width__",
-        alignment=alignment,
-    )
-    configured = runtime.execution.axis_widths
-    if "subject" in configured:
-        extent = min(configured["subject"], population)
-        candidates = (-(-extent // alignment) * alignment,)
-    elif population == 1:
-        candidates = (1,)
-    else:
-        candidates = tuple(
-            choice["subject"]
-            for choice in workspace_width_candidates(
-                axes=(outer,), budget_bytes=memory.budget_bytes
-            )
-        )
     resident = resident_bytes_by_device(
         live=memory.inputs, arguments=DeviceBufferFootprint(spans={}), devices=devices
     )
@@ -220,13 +204,36 @@ def prepare_simulation_chunks(
         resident=resident,
         devices=devices,
     )
-    plan = plan_simulation_chunks(
-        candidates=candidates,
-        profile_candidate=profiler,
-        live=memory.inputs,
-        budget_bytes=memory.budget_bytes,
-        devices=devices,
-    )
+    if runtime.execution.simulation_chunk_policy == "independent":
+        plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
+    else:
+        outer = TiledOutputAxis(
+            name="subject",
+            state_names=("subject",),
+            extent=population,
+            width_keyword="__lcm_subject_width__",
+            alignment=alignment,
+        )
+        configured = runtime.execution.axis_widths
+        if "subject" in configured:
+            extent = min(configured["subject"], population)
+            candidates = (-(-extent // alignment) * alignment,)
+        elif population == 1:
+            candidates = (1,)
+        else:
+            candidates = tuple(
+                choice["subject"]
+                for choice in workspace_width_candidates(
+                    axes=(outer,), budget_bytes=memory.budget_bytes
+                )
+            )
+        plan = plan_simulation_chunks(
+            candidates=candidates,
+            profile_candidate=profiler,
+            live=memory.inputs,
+            budget_bytes=memory.budget_bytes,
+            devices=devices,
+        )
     return PreparedSimulationChunks(
         plan=plan, call_inputs=call_inputs, admitted_inputs=memory.inputs
     )
@@ -265,23 +272,7 @@ class _ChunkProfiler:
         best = None
         best_peak = math.inf
         for widths in choices:
-            profile = profile_simulation_chunk(
-                runtime=self.runtime,
-                regimes=self.regimes,
-                flat_params=self.call_inputs.flat_params,
-                base_spaces=self.call_inputs.base_state_action_spaces,
-                values=self.values,
-                policies=self.policies,
-                ages=self.ages,
-                initial_conditions=self.initial_conditions,
-                regime_names_to_ids=self.regime_names_to_ids,
-                n_subjects=n_subjects,
-                population=self.population,
-                original_population=self.original_population,
-                widths=widths,
-                independent_taste=self.independent_taste,
-                log_level=self.log_level,
-            )
+            profile = self.profile_widths(n_subjects=n_subjects, widths=widths)
             peak = max(
                 _required_bytes(
                     profile=profile, resident=self.resident, devices=self.devices
@@ -296,6 +287,190 @@ class _ChunkProfiler:
                 "No compiled simulation chunk candidate was declared."
             )
         return best
+
+    def profile_widths(
+        self, *, n_subjects: int, widths: Mapping[str, int]
+    ) -> SimulationChunkProfile:
+        """Profile exactly one whole inner map without reopening its search."""
+        return profile_simulation_chunk(
+            runtime=self.runtime,
+            regimes=self.regimes,
+            flat_params=self.call_inputs.flat_params,
+            base_spaces=self.call_inputs.base_state_action_spaces,
+            values=self.values,
+            policies=self.policies,
+            ages=self.ages,
+            initial_conditions=self.initial_conditions,
+            regime_names_to_ids=self.regime_names_to_ids,
+            n_subjects=n_subjects,
+            population=self.population,
+            original_population=self.original_population,
+            widths=widths,
+            independent_taste=self.independent_taste,
+            log_level=self.log_level,
+        )
+
+
+def _independent_outer_candidates(
+    *, population: int, alignment: int, subject_width: int
+) -> tuple[int, ...]:
+    """Return the two-scale integer frontier, deduplicated in anchor-first order."""
+    return tuple(
+        dict.fromkeys(
+            -(-min(scale * subject_width, population) // alignment) * alignment
+            for scale in (1, 2)
+        )
+    )
+
+
+def _independent_anchor_widths(
+    *, axes: tuple[ReducedAxis | TiledOutputAxis, ...], configured: Mapping[str, int]
+) -> tuple[Mapping[str, int], ...]:
+    """Generate two maps and retain pins absent from a scalar anchor's axes.
+
+    A subject pin remains relevant when the larger candidate introduces that axis.
+    Existing axes keep the enumerator's admissible clamp, without inventing axes
+    for scalar programs or reopening the map at the larger extent.
+    """
+    full = {axis.name: axis.extent for axis in axes} | dict(configured)
+    choices = tuple(
+        MappingProxyType(
+            dict(configured)
+            | dict(
+                workspace_width_candidates(
+                    axes=axes, fixed_widths=pins, budget_bytes=None
+                )[0]
+            )
+        )
+        for pins in (full, configured)
+    )
+    return choices[:1] if choices[0] == choices[1] else choices
+
+
+def _plan_independent_chunks(
+    *, profiler: _ChunkProfiler, alignment: int
+) -> SimulationChunkPlan:
+    """Admit an anchor then one larger extent with its entire inner map frozen."""
+    started = perf_counter()
+    budget = profiler.runtime.execution.device_memory_bytes
+    if budget is None:
+        raise ExecutionPlanningError("Independent chunk admission needs a budget.")
+    configured = profiler.runtime.execution.axis_widths
+    subject_width = configured["subject"]
+    candidates = _independent_outer_candidates(
+        population=profiler.population, alignment=alignment, subject_width=subject_width
+    )
+    anchor = candidates[0]
+    axes = _common_axes(regimes=profiler.regimes, n_subjects=anchor)
+    choices = _independent_anchor_widths(axes=axes, configured=configured)
+    attempts: list[ChunkCandidateReceipt] = []
+    map_reason = "full/bootstrap maps identical; duplicate suppressed"
+    if len(choices) > 1:
+        map_reason = "bootstrap skipped after full anchor admitted"
+    selected = None
+    for index, widths in enumerate(choices):
+        if index:
+            map_reason = "full anchor rejected; bootstrap profiled"
+        candidate = _profile_independent_candidate(
+            profiler=profiler, n_subjects=anchor, widths=widths, attempts=attempts
+        )
+        if candidate is not None:
+            selected = candidate
+            break
+    if selected is None:
+        raise ExecutionPlanningError(
+            "no candidate in the bounded independent frontier fits "
+            f"the {budget}-byte device budget ({len(attempts)} anchor profiles; "
+            f"{map_reason}); rejected attempts: " + repr(tuple(attempts))
+        )
+    reason = "duplicate outer extent; anchor retained"
+    if len(candidates) > 1:
+        larger = _profile_independent_candidate(
+            profiler=profiler,
+            n_subjects=candidates[1],
+            widths=selected.profile.axis_widths,
+            attempts=attempts,
+        )
+        reason = "larger candidate rejected; admitted anchor retained"
+        if larger is not None:
+            selected = larger
+            reason = "larger candidate admitted; bounded frontier exhausted"
+    return replace(
+        selected,
+        receipt=IndependentChunkReceipt(
+            original_population=profiler.original_population,
+            entry_population=profiler.population,
+            alignment=alignment,
+            subject_width=subject_width,
+            candidates=candidates,
+            attempts=tuple(attempts),
+            selected_subjects=selected.profile.n_subjects,
+            axis_widths=tuple(sorted(selected.profile.axis_widths.items())),
+            stopping_reason=reason,
+            anchor_map_reason=map_reason,
+            planning_seconds=perf_counter() - started,
+        ),
+    )
+
+
+def _profile_independent_candidate(
+    *,
+    profiler: _ChunkProfiler,
+    n_subjects: int,
+    widths: Mapping[str, int],
+    attempts: list[ChunkCandidateReceipt],
+) -> SimulationChunkPlan | None:
+    """Profile once, keeping scalar evidence and no rejected executable owners."""
+    started = perf_counter()
+    profile = profiler.profile_widths(n_subjects=n_subjects, widths=widths)
+    elapsed = perf_counter() - started
+    if profile.n_subjects != n_subjects or dict(profile.axis_widths) != dict(widths):
+        raise ExecutionPlanningError(
+            "Independent chunk profile changed its extent or widths."
+        )
+    required = _required_bytes(
+        profile=profile, resident=profiler.resident, devices=profiler.devices
+    )
+    budget = profiler.runtime.execution.device_memory_bytes
+    if budget is None:
+        raise ExecutionPlanningError("Independent chunk admission needs a budget.")
+    admitted = all(value <= budget for value in required.values())
+    devices = []
+    for device in profiler.devices:
+        limiting = max(
+            (stage for stage in profile.stages if device in stage.devices),
+            key=lambda stage: stage.reservation_bytes,
+            default=None,
+        )
+        devices.append(
+            ChunkDeviceReceipt(
+                platform=device.platform,
+                device_id=device.id,
+                resident_bytes=profiler.resident[device],
+                fixed_bytes=profile.fixed_reservation.get(device, 0),
+                output_bytes=profile.output_reservation.get(device, 0),
+                max_stage_bytes=0 if limiting is None else limiting.reservation_bytes,
+                limiting_stage=None if limiting is None else limiting.name,
+                required_bytes=required[device],
+            )
+        )
+    attempts.append(
+        ChunkCandidateReceipt(
+            n_subjects=n_subjects,
+            padded_population=profile.padded_population,
+            chunk_count=profile.padded_population // n_subjects,
+            axis_widths=tuple(sorted(profile.axis_widths.items())),
+            admitted=admitted,
+            devices=tuple(devices),
+            profile_seconds=elapsed,
+            stage_entries=len(profile.stages) + len(profile.host_stages),
+        )
+    )
+    return (
+        SimulationChunkPlan(profile=profile, required_bytes=required)
+        if admitted
+        else None
+    )
 
 
 def _common_axes(

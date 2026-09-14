@@ -165,7 +165,9 @@ jobs:
         # stay inert without a policy to drive. None of those files declares a
         # `requires`/`coverage`/`isolation`/`ci` marker, so no policy-gated test
         # is skipped by omitting them. Coverage from this base leg and the fp64
-        # shards is merged by Codecov.
+        # shards is merged by Codecov. Environment-configured eight-device
+        # witnesses from the same registry run separately with the full policy;
+        # their report guards refuse even partial native-case skips.
         run: |
           mkdir -p reports
           check_population() {
@@ -178,6 +180,10 @@ jobs:
             fi
             if [ "$skipped" -eq "$total" ]; then
               echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
               return 1
             fi
           }
@@ -298,6 +304,48 @@ jobs:
             --cov=./ --cov-append --cov-report= -n 0 \
           && check_population \
             reports/junit-cpu-fp64-test-distributed-template-placement.xml \
+          && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/test_distributed_simulation_eight_devices.py \
+            --precision=64 -p no:randomly --policy-child \
+            --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp64-simulation-eight-devices.xml \
+            --cov=./ --cov-append --cov-report= \
+          && check_population \
+            reports/junit-cpu-fp64-simulation-eight-devices.xml no-skips \
+          && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_independent_outer_cohorts.py \
+            --precision=64 -p no:randomly --policy-child \
+            --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp64-independent-outer-cohorts.xml \
+            --cov=./ --cov-append --cov-report= \
+          && check_population \
+            reports/junit-cpu-fp64-independent-outer-cohorts.xml no-skips \
+          && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest tests/test_continuous_assets_sharding.py \
+            --precision=64 -p no:randomly --policy-child \
+            --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp64-continuous-assets-sharding.xml \
+            --cov=./ --cov-append --cov-report= \
+          && check_population \
+            reports/junit-cpu-fp64-continuous-assets-sharding.xml no-skips \
+          && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest tests/test_continuous_transfer_admission.py \
+            --precision=64 -p no:randomly --policy-child \
+            --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp64-continuous-transfer-admission.xml \
+            --cov=./ --cov-append --cov-report= \
+          && check_population \
+            reports/junit-cpu-fp64-continuous-transfer-admission.xml no-skips \
           && pixi run -e tests-cpu pytest \
             tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
             tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
@@ -466,6 +514,10 @@ jobs:
               echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
               return 1
             fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
           }
           pixi run -e tests-cpu pytest tests --precision=32 \
             --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
@@ -570,6 +622,44 @@ jobs:
             -n 0 \
           && check_population \
             reports/junit-cpu-fp32-test-distributed-template-placement.xml \
+          && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/test_distributed_simulation_eight_devices.py \
+            --precision=32 -p no:randomly --policy-child \
+            --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp32-simulation-eight-devices.xml \
+          && check_population \
+            reports/junit-cpu-fp32-simulation-eight-devices.xml no-skips \
+          && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_independent_outer_cohorts.py \
+            --precision=32 -p no:randomly --policy-child \
+            --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp32-independent-outer-cohorts.xml \
+          && check_population \
+            reports/junit-cpu-fp32-independent-outer-cohorts.xml no-skips \
+          && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest tests/test_continuous_assets_sharding.py \
+            --precision=32 -p no:randomly --policy-child \
+            --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp32-continuous-assets-sharding.xml \
+          && check_population \
+            reports/junit-cpu-fp32-continuous-assets-sharding.xml no-skips \
+          && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest tests/test_continuous_transfer_admission.py \
+            --precision=32 -p no:randomly --policy-child \
+            --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml=reports/junit-cpu-fp32-continuous-transfer-admission.xml \
+          && check_population \
+            reports/junit-cpu-fp32-continuous-transfer-admission.xml no-skips \
           && pixi run -e tests-cpu pytest \
             tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
             tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\

@@ -15,11 +15,17 @@ identifies which one is such an exemption, so every contract test that needs the
 exemption agrees with the others by construction instead of by a separately
 maintained list. It also discovers which test files pin such a topology, so the
 registry below is checked against the suite rather than trusted.
+
+`EIGHT_DEVICE_TEST_FILES` instead names environment-configured native witnesses.
+They are excluded from implicit shared collection and run explicitly in fresh
+processes whose environment establishes eight CPU devices before pytest starts.
+Those invocations can activate the full policy without losing their topology.
 """
 
 import ast
 import re
 import shlex
+from collections.abc import Sequence
 from pathlib import Path
 
 FOUR_DEVICE_TEST_FILES = (
@@ -38,6 +44,30 @@ FOUR_DEVICE_TEST_FILES = (
     "tests/test_distributed_taste_stream.py",
     "tests/test_distributed_entry_allocations.py",
 )
+
+# These modules receive eight devices from the process environment; they never
+# mutate import-time topology. Explicit invocation is required so a shared suite
+# cannot silently skip their topology-dependent cases or initialize another mesh.
+EIGHT_DEVICE_TEST_FILES = (
+    "tests/test_distributed_simulation_eight_devices.py",
+    "tests/simulation/test_independent_outer_cohorts.py",
+    "tests/test_continuous_assets_sharding.py",
+    "tests/test_continuous_transfer_admission.py",
+)
+
+
+def ignore_implicit_eight_device_collection(
+    *, collection_path: Path, root: Path, invocation_args: Sequence[str]
+) -> bool:
+    """Exclude registered native witnesses unless their file is explicitly named."""
+    registered = {root / name for name in EIGHT_DEVICE_TEST_FILES}
+    if collection_path not in registered:
+        return False
+    explicit = {
+        (root / argument.split("::", 1)[0]).resolve() for argument in invocation_args
+    }
+    return collection_path.resolve() not in explicit
+
 
 #: The configuration option a multi-device test file pins when it is imported.
 _DEVICE_COUNT_OPTION = "jax_num_cpu_devices"

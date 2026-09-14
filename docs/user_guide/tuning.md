@@ -117,14 +117,30 @@ Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 [Upper envelopes](../reference/envelopes.md), and
 [Outer search](../reference/outer_search.md).
 
-## Distribute independent discrete state work
+## Distribute state work
 
 Declare a discrete state at model level, then name it in
 `ExecutionConfig(sharded_states=("preference",))` to shard its axis. Select devices with
 `ExecutionConfig(devices=(0, 1, 2, 3), ...)`; omitting `devices` uses all devices
-visible to JAX. Continuous states cannot be sharded because interpolation reads their
-full coordinate axis. Solver-specific restrictions also apply; see
+visible to JAX. Solver-specific restrictions also apply; see
 [Solvers and capabilities](../reference/solvers.md).
+
+Ordinary singleton hard-max `GridSearch` also supports one model-level `LinSpacedGrid`
+as the sole continuous and sole sharded state. Every regime must retain that same static
+grid; all other states must be discrete. Carried or runtime grids, additional continuous
+axes, mixed solvers, collective or gated routes, same-period references and taste shocks
+are outside this route.
+
+For example, a 24-point assets axis can use eight selected devices, with three assets
+coordinates on each device. Logical value-axis order stays unchanged. Interpolation
+still needs the complete target value: the planner explicitly replicates each needed
+continuation on its consumer mesh before the numerical core runs. Retained shards,
+replicas and transfer workspace all count toward admission. Budgeted continuous sharding
+currently requires every regime and transfer to use the complete selected device set.
+Transfer workspace is reserved conservatively across the period, even when individual
+copies finish earlier. These copies can limit capacity and add communication time; eight
+shards do not imply an eightfold memory reduction or speedup. Reducing a cell width
+cannot remove the full-continuation storage requirement.
 
 If a shard remains too large, reduce an applicable execution width. For example,
 `ExecutionConfig(sharded_states=("preference",), axis_widths={"cell": 32})` keeps the
@@ -157,6 +173,26 @@ example, width three uses outer chunks of four on four devices while retaining a
 width of three. Completed chunks are offloaded to host. Random keys retain their
 original population and global subject indices, so changing the width does not change
 simulated draws.
+
+The default `simulation_chunk_policy="legacy"` keeps this relation between inner width
+and outer chunk size. To keep the inner width fixed while considering a larger chunk,
+set `simulation_chunk_policy="independent"` together with a positive
+`device_memory_bytes` budget and an explicit `axis_widths["subject"]`. Both are
+required; unsupported budgeted replay routes still refuse execution.
+
+Independent mode considers two outer sizes: the device-aligned inner width and twice
+that width, each clamped to the population before alignment. It first tries full
+unpinned inner axes, then their conservative bootstrap widths if necessary. After one
+complete inner-width map fits, that map stays fixed while the larger outer size is
+profiled. The search uses at most three complete profiles and keeps the admitted smaller
+profile if the larger one does not fit. A refused search means this bounded frontier has
+no fitting candidate; other unsearched configurations may fit.
+
+For example, an inner subject width of 2,048 on three subject devices offers outer sizes
+2,049 and 4,098 for a sufficiently large population. The larger choice uses more padding
+and storage and is selected only after admission. It is not a measured maximum capacity
+or a promise of faster simulation. Different outer shapes still need distinct compiled
+specializations; fixing the inner width does not make those shapes identical.
 
 With a device-memory budget and no fixed subject width, simulation selects the widest
 outer candidate whose complete retained storage and compiled stages fit. It tries the
@@ -230,7 +266,7 @@ the [Development](../development/benchmarking.md) chapter.
 - Refine grids against an accuracy target.
 - Distinguish true streaming controls, retained banks, inert requests, and active
   admitted branch strides before tuning.
-- Shard only supported discrete axes and verify device visibility.
+- Shard only supported state axes and verify actual shard indices and device use.
 - Measure compilation separately from execution.
 - Treat large-GPU speedups and solver break-even points as empirical.
 - Record the complete configuration with every timing.

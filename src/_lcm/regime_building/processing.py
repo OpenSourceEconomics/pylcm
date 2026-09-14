@@ -3269,6 +3269,7 @@ def _build_solution_phase(  # noqa: PLR0915
             state_names=state_action_space.state_names,
             sharded_state_names=sharded_state_names,
             transitions=core.transitions,
+            grids=all_grids[regime_name],
         )
         # A co-mapped state's axis is sliced only off the leaves that carry it; a
         # target regime where the state is pruned keeps its full leaf (`None`).
@@ -7280,18 +7281,20 @@ def _co_map_state_names(
     state_names: tuple[StateName, ...],
     sharded_state_names: frozenset[StateName],
     transitions: TransitionFunctionsMapping,
+    grids: MappingProxyType[StateOrActionName, Grid],
 ) -> tuple[StateName, ...]:
-    """Return the distributed, never-transitioning states, in state-axis order.
+    """Return distributed, identity discrete states in state-axis order.
 
     A state qualifies when it is explicitly sharded and its law of motion is the
     identity in every target bundle that carries it — so its next value equals its
     current value, and the continuation V can be read from the device-local slice
-    rather than all-gathered. Distributed states sort first in `state_names`, so the
-    result is a leading prefix of it (what the co-map requires).
+    rather than all-gathered. Sharded discrete states sort first within the leading
+    discrete group. Continuous identity states still require the full interpolation
+    line and must never enter this leading discrete-axis slice optimization.
     """
     co_map: list[StateName] = []
     for name in state_names:
-        if name not in sharded_state_names:
+        if name not in sharded_state_names or not isinstance(grids[name], DiscreteGrid):
             continue
         next_key = f"next_{name}"
         carrying = [

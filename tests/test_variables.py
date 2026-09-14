@@ -202,8 +202,8 @@ def test_from_regime_distributed_discrete_state_sorts_outermost(
     """Explicitly sharded discrete states sort before unsharded discrete states.
 
     Sharded axes belong at the outermost productmap position so the cross-device
-    collective wraps the inner per-device kernel. Sharding lives only on discrete
-    state grids — model placement rejects continuous-state sharding.
+    collective wraps the inner per-device kernel. Continuous sharding retains
+    the separate trailing continuous group and does not change this ordering.
     """
 
     def next_state(x):

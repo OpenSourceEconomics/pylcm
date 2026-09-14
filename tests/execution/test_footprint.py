@@ -19,6 +19,7 @@ import pytest
 
 from _lcm.execution.footprint import (
     ArtifactFootprint,
+    ResidentInventory,
     ScheduledUnit,
     per_device_footprint,
     plan_resident_bytes,
@@ -715,3 +716,38 @@ def test_an_argument_on_another_device_leaves_that_devices_charge_standing() -> 
     )
 
     assert resident[(0, "a")] == 6
+
+
+def test_transfer_scratch_is_immutable_and_never_compiler_excluded() -> None:
+    """Scratch survives complete input exclusions and remains per-device."""
+    scratch = {0: 7, 1: 19}
+    inventory = ResidentInventory(
+        device_ids=(0, 1),
+        live={},
+        peer_bytes={0: 20, 1: 0},
+        declared_inputs=(),
+        shared_copies={
+            "copy": ArtifactFootprint(bytes_per_device=100, device_ids=(0, 1))
+        },
+        transfer_scratch_bytes=scratch,
+    )
+    scratch[0] = 1000
+    assert inventory.resident_bytes() == 27
+    assert (
+        inventory.resident_bytes(consumes=(), consumed_copies=frozenset({"copy"})) == 27
+    )
+    assert inventory.resident_bytes(consumes=()) == 127
+    with pytest.raises(TypeError):
+        inventory.transfer_scratch_bytes[0] = 0  # ty: ignore[invalid-assignment]
+
+
+def test_transfer_scratch_default_preserves_existing_reservation() -> None:
+    """Legacy inventories add no transfer scratch implicitly."""
+    inventory = ResidentInventory(
+        device_ids=(0,),
+        live={},
+        peer_bytes={0: 11},
+        declared_inputs=(),
+    )
+    assert dict(inventory.transfer_scratch_bytes) == {}
+    assert inventory.resident_bytes() == 11

@@ -104,6 +104,9 @@ class ResidentInventory:
     )
     """Whole-period reservations for one destination per shared transfer key."""
 
+    transfer_scratch_bytes: Mapping[int, int] = dataclasses.field(default_factory=dict)
+    """Declared whole-period transfer scratch bound, never compiler-excludable."""
+
     internal_bytes: int = 0
     """Conservative per-device runtime internal-output reservation for this cell."""
 
@@ -114,6 +117,12 @@ class ResidentInventory:
         )
         object.__setattr__(
             self, "shared_copies", MappingProxyType(dict(self.shared_copies))
+        )
+
+        object.__setattr__(
+            self,
+            "transfer_scratch_bytes",
+            MappingProxyType(dict(self.transfer_scratch_bytes)),
         )
 
     def resident_bytes(
@@ -141,6 +150,7 @@ class ResidentInventory:
             + self.peer_bytes[device]
             + self.fixed_bytes.get(device, 0)
             + self.internal_bytes
+            + self.transfer_scratch_bytes.get(device, 0)
             + temporary_bytes.get(device, 0)
             + sum(
                 footprint.bytes_per_device

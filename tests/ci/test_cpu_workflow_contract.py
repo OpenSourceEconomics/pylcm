@@ -9,10 +9,12 @@ import pytest
 import yaml
 
 from tests.ci.cpu_suite_invocations import (
+    EIGHT_DEVICE_TEST_FILES,
     FOUR_DEVICE_TEST_FILES,
     carries_policy_activation_flags,
     cpu_suite_invocation_argvs,
     four_device_pinning_test_files,
+    ignore_implicit_eight_device_collection,
 )
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -251,4 +253,79 @@ def test_four_device_file_invocation_omits_policy_activation_flags(
     assert not carries_policy_activation_flags(argv), (
         f"{job}/{step_name!r}: {four_device_file}'s invocation carries a CI "
         "policy activation flag, which silently skips every test in the file"
+    )
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "precision"),
+    [
+        ("tests", "Run pytest and collect coverage", 64),
+        ("tests-fp32", "Run pytest at fp32", 32),
+    ],
+)
+@pytest.mark.parametrize("test_file", EIGHT_DEVICE_TEST_FILES)
+def test_eight_device_witness_has_one_fresh_full_policy_invocation(
+    *, job: str, step_name: str, precision: int, test_file: str
+) -> None:
+    """Environment topology precedes policy initialization; no native skip passes."""
+    run = _step_run_block(job=job, step_name=step_name)
+    argvs = cpu_suite_invocation_argvs(run)
+    matches = [argv for argv in argvs if test_file in argv]
+    assert len(matches) == 1
+    argv = matches[0]
+    assert [arg for arg in argv if arg == "tests" or arg.startswith("tests/")] == [
+        test_file
+    ]
+    assert argv[argv.index("-n") + 1] == "0"
+    assert argv.count("JAX_NUM_CPU_DEVICES=8") == 1
+    assert argv.count("JAX_PLATFORMS=cpu") == 1
+    assert (
+        "XLA_FLAGS=${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"
+        in argv
+    )
+    assert argv.index("JAX_NUM_CPU_DEVICES=8") < argv.index("pixi")
+    for flag in (
+        "--policy-child",
+        "--ci-policy=full",
+        "--hardware-profile=cpu",
+        f"--precision={precision}",
+        "-v",
+    ):
+        assert argv.count(flag) == 1
+    assert "-k" not in argv
+    assert "-m" not in argv
+    assert not any(arg.startswith(("--ignore", "--deselect")) for arg in argv)
+    reports = [
+        arg.removeprefix("--junitxml=") for arg in argv if arg.startswith("--junitxml=")
+    ]
+    assert len(reports) == 1
+    assert reports[0].startswith(f"reports/junit-cpu-fp{precision}-")
+    normalized = " ".join(run.replace("\\\n", " ").split())
+    assert f"&& check_population {reports[0]} no-skips" in normalized
+    assert "EVERYTHING SKIPPED" in run
+    assert '"${2:-}" = "no-skips"' in run
+    assert '"$skipped" -ne 0' in run
+    if precision == 64:
+        assert "--cov-append" in argv
+        assert "--cov-report=" in argv
+        assert "--cov-report=xml" not in argv
+
+
+@pytest.mark.parametrize("test_file", EIGHT_DEVICE_TEST_FILES)
+def test_eight_device_registry_excludes_only_implicit_collection(
+    test_file: str,
+) -> None:
+    path = _REPO_ROOT / test_file
+    for args in (("tests",), ("tests/simulation",), ("tests/test_model.py",)):
+        assert ignore_implicit_eight_device_collection(
+            collection_path=path, root=_REPO_ROOT, invocation_args=args
+        )
+    for argument in (test_file, str(path), f"{test_file}::test_witness"):
+        assert not ignore_implicit_eight_device_collection(
+            collection_path=path, root=_REPO_ROOT, invocation_args=(argument,)
+        )
+    assert not ignore_implicit_eight_device_collection(
+        collection_path=_REPO_ROOT / "tests/test_model.py",
+        root=_REPO_ROOT,
+        invocation_args=("tests",),
     )

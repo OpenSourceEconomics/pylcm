@@ -348,10 +348,10 @@ _SOURCE_SEALS = {
     RUNTIME_SHARDING_SOURCE: "0e7f276d6abad69469ba42707a4dcfc78e9eefd3fb78ed9aad7942559553df9a",
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "070d4936497a9a15089cdc34d188d56873dee724c2275a5fc3424478ce5a3d11",
     COMBINED_ASSEMBLY_SOURCE: "eae7d7e3bdaf96d75671331b3cf5a49ba178316cc1848511615ec9a2f90c6fdb",
-    COMBINED_CHUNK_ADMISSION_SOURCE: "2d3d0bdceeddb9c8a9c7a85d5c12bdbb44b2727438678d1a0065ee19f47bf854",
+    COMBINED_CHUNK_ADMISSION_SOURCE: "39190feed470030db576f312796cfd59fd2e9123361770b11912aca688d64564",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "ebb5e00669a33d9486c3e3f7a6d5752937bf2751ec95ac360903274b6d81304d",
     COMBINED_CHUNK_OPERATIONS_SOURCE: "82057a91e6cf149f750f90b71c9258cf33b310e0675044bf219d466e836614d1",
-    COMBINED_CHUNK_PLANNING_SOURCE: "1723febe963085ec0ef156d9dd331cc76c8b495cff91eed974782b1e0ad0241e",
+    COMBINED_CHUNK_PLANNING_SOURCE: "41bd11e34e591515826b40bd3a508e91074950ba4a610fc14c2f9823dda79a33",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "530f4ff6cb61120d052d1993e0b0265799f5b81f4c4a8a21b473137c593cedb3",
     COMBINED_CHUNK_PROFILES_SOURCE: "88c16b60ce3cf7fc90c8b2ecbaca049e5c9324eeae4aa027c07f9d806884030e",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
@@ -398,12 +398,12 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "e01b3de5cdad12804794a3ce83ff3a74424a9539caa70330e8792ca7878f1bc9",
-    PROCESSING_SOURCE: "3aa08741042207d1dfd26e4bd8e6b65b1c20d80d5eb2b0825f3c5682d76a4ad9",
+    PROCESSING_SOURCE: "f242f1775d5f5d2bf1e885b3dd2c2e062b2cf468eabd34eceaf40b874fcb0172",
     GRID_SEARCH_SOURCE: "ed33d78e3cd17921cbde158534f386014f3a2529af5cf686b7e10c8e3fa43d7e",
     CORE_PROGRAM_SOURCE: "924a99cdcd6eef3b4d3d4085b59fa0a6b487994395715385af689df207942305",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
     VALUE_TRANSFER_SOURCE: "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6",
-    FOOTPRINT_SOURCE: "0dbaa3c673f053a51fa7bcab4e06d2080252dd84d827ed28123d085c4000fd0f",
+    FOOTPRINT_SOURCE: "b18bdf62be85a0061e75beb39ce62089e20081d651c3efff8e18fca7f23185df",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
@@ -419,9 +419,9 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "c2271093a7215f77bafb6e75fd3adc8c6f29c2af2741e79a9771a95bd0fa85f7",
     SIMULATION_TRANSITIONS_SOURCE: "76ba02db6b40070033d1c6b3fd5769a675ff8c1d27e2bb8b179246c06be8066e",
     SIMULATION_COMPILE_SOURCE: "dc7305d70dca72c5b3fca8ed6516af2a951c2ab6eacac2d2db6f199b4684e187",
-    MODEL_SOURCE: "38769ed8684a87ea0084e53c717d716025ade62de1ab2a3b90fcdcc9f95b4092",
+    MODEL_SOURCE: "9b983317c702e638fb45ab74732ccb23bef808040c96d162858f306de757bf28",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "bead6bc363f0d3bcddb4028d4adea4042e3a1c63b16e25beec95b474f8a9bfc4",
+    BACKWARD_INDUCTION_SOURCE: "0b0f98035f8f14547b12f6346bfb382c02a1d95dfcee06660a3224971d4a8dea",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "e0873f716dfb19c1ba82850d9ff1bef9c25178cc729a2d088dfd690469e2a5cc",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
@@ -3187,8 +3187,10 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "4605572adc813090f864df29a4fed7af3c753b6e0c1c610c5e794f02a7adfadf",
+            "de67be724d4a891b5b10a9aa3c85f62abf9360142a65002479a714560a9dbe1d",
             {
+                "_validate_sharded_state_capability": "ad4fdf402d0f64beca06edaffd5feb45250aad3127858a42914ba1c834e70961",
+                "Model.__init__": "208b84baf754d3dc3e33e1ffa7bedd6b86398bdb30cc66e923e461a6151a0343",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "206d37c90f3f765bae07861e9f499e73a0de7df475f56b0396d31f1f198f2e06",
                 # Fixed caller owners flow through both private automatic-solve
@@ -3336,12 +3338,12 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     FOOTPRINT_SOURCE: (
-        "3435d0f9b6f7f6f223374d5678f79343e509e480238bce3df2829f4e748c7726",
+        "d09f1066bdd73567c6c4724353061b85e6f5af70058297031c5c2c49022a5112",
         {
             "ArtifactFootprint.__post_init__": "508bd37bbb30d5e0511ddb2de9d98f6c1c2318ab928635b73b413c942d72a4a7",
             "ScheduledUnit.__post_init__": "2c144891456c3626aaf1b62591a35e6c004e5d182b1ceb12dab4ce10d0b4d7d5",
-            "ResidentInventory.__post_init__": "c3c42a4df472d8fab0ff8c1132f6e17cd7a1dbb578c7fc9f9898d8a4de553804",
-            "ResidentInventory.resident_bytes": "46aa63f56074ead0c13cebc130e4667dcb73744a1c0a2edfd478fb835a7b9b92",
+            "ResidentInventory.__post_init__": "75124f4adb54bfbfc0347d29218b4a83835ac800fe30a53f4008ab55f13df35d",
+            "ResidentInventory.resident_bytes": "1e9d28abeedf020a8023d58fad6a15ea4b891dcdd32c159d54290ec6c8f02e99",
             "concrete_device_bytes": "14a88daf386078b838eacdf48a33e3c9894b3e958894e6973be7f823b6ffaab0",
             "plan_resident_bytes": "e9c46841e6663fe1e7b33a952b2bd7c08335e87e70ca813cd0e3314068ab985f",
             "plan_resident_inventory": "ad8c2a316cade31c67c6ee4ccfcb13d93334971bcac34a9bddb65b39473ece8a",
@@ -3754,10 +3756,15 @@ def _simulation_adapter_errors(*, tree: ast.Module, source: str) -> list[str]:
 # and dispatch bindings; numerical ranking bodies retain their existing contract.
 _FINITE_BUDGET_CONTRACTS = {
     "src/_lcm/simulation/chunk_admission.py": (
-        "a463505b8defc1ebb7dc59e9379cea1b78f388e230b784c6a538cceb033458ef",
+        "6d57ca59555ce41ea6b01b93df0f839dac174cbd320198ba68764f85637ac2b7",
         {
-            "prepare_simulation_chunks": "779466afb797bf87e745db2514fcf58412a9fdf9f8e5993a011bebc65543c210",
-            "_ChunkProfiler.__call__": "32ba0f798b93177f35df91d3e8ded8c725194c2457b02e0d840111da7d3a1329",
+            "_ChunkProfiler.profile_widths": "3a9568b37c2a19e4720c84986d8796e4642126b98b0074bf1ed73a5454fa9842",
+            "_independent_outer_candidates": "573095f0ac73dbdf0b994d8506e8e40eadfe1c63531da96078506777ce38e2a4",
+            "_independent_anchor_widths": "52ef0117a0d5dcebb683261d3da3514cb2d4204d3450c1c21b4d3e790b64eb49",
+            "_plan_independent_chunks": "4b2930fbed5135ad8e7cf77a03f752b2cbc1c9b1169cb3da5ceec416700d1d4a",
+            "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
+            "prepare_simulation_chunks": "312576c968c5176b1259cb9544d060aad36165897f322113d9e1f824d25bcf8b",
+            "_ChunkProfiler.__call__": "fd4b7f29a3ce6f8b1acbc3b067e8e7d6cde1b6ec277b567203c790a83697873b",
             "_common_axes": "d76f02f7736b983194410c1c8d137944b5ead924b23dec8893124e1bfcf15e62",
         },
     ),
@@ -3803,8 +3810,10 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "4605572adc813090f864df29a4fed7af3c753b6e0c1c610c5e794f02a7adfadf",
+        "de67be724d4a891b5b10a9aa3c85f62abf9360142a65002479a714560a9dbe1d",
         {
+            "_validate_sharded_state_capability": "ad4fdf402d0f64beca06edaffd5feb45250aad3127858a42914ba1c834e70961",
+            "Model.__init__": "208b84baf754d3dc3e33e1ffa7bedd6b86398bdb30cc66e923e461a6151a0343",
             "Model.simulate": "206d37c90f3f765bae07861e9f499e73a0de7df475f56b0396d31f1f198f2e06",
         },
     ),
@@ -3836,9 +3845,11 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9",
+        "6a357d581fd91ad7a7f261cced0509715e4dc8273ae1e5d8e844dabebd02b3bd",
         {
-            "_compile_all_functions": "816c061720ac8d6131b00fd7e5478eece175fc3d10c2592e008a596b50a6e38d",
+            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
+            "_compile_all_functions": "53df03c312f26ba4c48599c5ca35ad422c5a43b90113e409311dd3d05bd7b540",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -3918,8 +3929,10 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9",
+        "6a357d581fd91ad7a7f261cced0509715e4dc8273ae1e5d8e844dabebd02b3bd",
         {
+            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "solve": "caa95220392e0168fe7e938fcad8fa81ece3b692c60f2194e5fad6ee5878067e",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
             "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
@@ -3981,11 +3994,16 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_ADMISSION_SOURCE: (
-        "a463505b8defc1ebb7dc59e9379cea1b78f388e230b784c6a538cceb033458ef",
+        "6d57ca59555ce41ea6b01b93df0f839dac174cbd320198ba68764f85637ac2b7",
         {
+            "_ChunkProfiler.profile_widths": "3a9568b37c2a19e4720c84986d8796e4642126b98b0074bf1ed73a5454fa9842",
+            "_independent_outer_candidates": "573095f0ac73dbdf0b994d8506e8e40eadfe1c63531da96078506777ce38e2a4",
+            "_independent_anchor_widths": "52ef0117a0d5dcebb683261d3da3514cb2d4204d3450c1c21b4d3e790b64eb49",
+            "_plan_independent_chunks": "4b2930fbed5135ad8e7cf77a03f752b2cbc1c9b1169cb3da5ceec416700d1d4a",
+            "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
             "PreparedSimulationChunks.require_chunk": "6669149a4b503b89411b3485e9cbc811a37820620eb83fb8f133ee129682a4a3",
-            "prepare_simulation_chunks": "779466afb797bf87e745db2514fcf58412a9fdf9f8e5993a011bebc65543c210",
-            "_ChunkProfiler.__call__": "32ba0f798b93177f35df91d3e8ded8c725194c2457b02e0d840111da7d3a1329",
+            "prepare_simulation_chunks": "312576c968c5176b1259cb9544d060aad36165897f322113d9e1f824d25bcf8b",
+            "_ChunkProfiler.__call__": "fd4b7f29a3ce6f8b1acbc3b067e8e7d6cde1b6ec277b567203c790a83697873b",
             "_common_axes": "d76f02f7736b983194410c1c8d137944b5ead924b23dec8893124e1bfcf15e62",
         },
     ),
@@ -4015,8 +4033,9 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_PLANNING_SOURCE: (
-        "3f9bbcf6cebd35aad34eab31558b52e6daaf2e2cbf5dcbcda9165e1ddb84f622",
+        "5f1e1128b6f350e6be10feca10f5169043471ede49eb2ead9ad176a9ddf1d681",
         {
+            "IndependentChunkReceipt.profile_count": "246417809388fdd5e03c2e38c3b81863e76bb7078bd5f2d04338da0ac7caebde",
             "SimulationStageProfile.__post_init__": "526b720fc140e20990ead6e317444427f991107447e1f106094f4a0cc96a35ba",
             "SimulationChunkProfile.__post_init__": "dc35ef9a8a3b963fa62d6f3fb2f54eb645e6d7d2f024a50bf4174d0a32bba602",
             "SimulationChunkPlan.__post_init__": "f6c3be86ea1d1f22e94c94743dc6fea1275027095004ccfdb30684bca8428cca",
@@ -4156,8 +4175,10 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "4605572adc813090f864df29a4fed7af3c753b6e0c1c610c5e794f02a7adfadf",
+        "de67be724d4a891b5b10a9aa3c85f62abf9360142a65002479a714560a9dbe1d",
         {
+            "_validate_sharded_state_capability": "ad4fdf402d0f64beca06edaffd5feb45250aad3127858a42914ba1c834e70961",
+            "Model.__init__": "208b84baf754d3dc3e33e1ffa7bedd6b86398bdb30cc66e923e461a6151a0343",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "4f4323aed83b0f722f019a80320d29f223a6c6d0d9432e84c39b9e2f0976c0f3",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4172,9 +4193,11 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9",
+        "6a357d581fd91ad7a7f261cced0509715e4dc8273ae1e5d8e844dabebd02b3bd",
         {
-            "_prepare_abstract_program": "d9674a5ecfc16c6811cc7858d84f09b9ba3ff6538174e0b014b6b75ee8d28030",
+            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
+            "_prepare_abstract_program": "e52dc8d942166c76985f13cf7cacb53041b1cfe2bedf72a67f23f1d4d90dad93",
         },
     ),
     "src/_lcm/simulation/simulate.py": (
@@ -4359,22 +4382,24 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="backward output-layout transport",
         contracts={
+            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_evaluate_edge_fold": "346ea377233105a19140e0d310c7f5af071ab3ddfa774df618c7245784f3036a",
             "_lower_and_compile_wave": "5861fc4d596eafe76732a20b20a831e2abe1b55a24b3d1c19968b5bc89e821ff",
             "_run_period_kernel": "7507b0912580b34a2e83b9d82d5cf7e5c2f2e0606b2f3e8e8bcf5718a169ffd6",
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "816c061720ac8d6131b00fd7e5478eece175fc3d10c2592e008a596b50a6e38d",
+            "_compile_all_functions": "53df03c312f26ba4c48599c5ca35ad422c5a43b90113e409311dd3d05bd7b540",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
-            "_resolve_output_layouts_and_lowering_keys": "bc1377bdb7e9656f00e34515da8eade6355e1eb503187eafabe8b4731e0155b3",
+            "_resolve_output_layouts_and_lowering_keys": "40b5f822d1eda780821daeb05460ba26befc6d62f45029ca2cda07fc2c25f323",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "2b11ec8152b081ae0e2666a46c79b46ef5062ce2738717da0c93bcc502280c56",
             "_consumer_key": "44f91b9312a058528a7f7d34b843eb23efaae21783e834cc5fa06389f4006c73",
-            "_resolve_program_for_execution": "5d38d4f43925db396c4e21951cac28774eb894bead4865cade4f4c3dbff65b10",
-            "_resolve_value_input_transfer_plan": "72bb5e99e0584e124030d7879265fba08488804c98e20aaec96b6355a34fc0e9",
-            "_resolve_value_transfer_layout": "2a6f86d8232989bb441e8a50371e0d891f82a7af22c797b10b91ab5bd1f230be",
+            "_resolve_program_for_execution": "cc1658c1a344c669c0bfc13ef18749b886774d692fb1f7d2fb7966961619af34",
+            "_resolve_value_input_transfer_plan": "73e9452401434a4230e3e4edd09c66757aa9922e6a837793c818dccf3fad5a31",
+            "_resolve_value_transfer_layout": "de92ed3547e8e9d1b1540607de4957253433a804a7f37dd09bc0651de90050b9",
             "_lowering_key": "a7dbef4ecda41e3acad598b0be6746144b9d9f7877d194456dff7eaa461cb11e",
             "_abstract_arguments_key": "becd5c3e94366bc4e3e0afa31ea20886002228f7064c9a9ea0e7d0e681630dfa",
             "_abstract_value_key": "b79bdd528ed264be0093eb5d04a0341e7376606d478ba0770aa5cb14f813638b",
@@ -4384,7 +4409,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_attach_resolved_output_layout": "f707999431091164dc9aaa784b89560044f95c11c9cf3fe9631cb094952f9944",
             "_publish_kernel_value": "df201c75574aab5280bc841d51cfb143c6a2939a65cc5e8bdee8884760d3e2d2",
             "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
-            "_resident_inventory_by_triple": "cc8ea878525c089c25f56be1bf858394c142a8d47536d3f27ff144d1d9562649",
+            "_resident_inventory_by_triple": "2d2d2d73e47e5dede8ae324bb767649124c7201e637b314c5db2205e9af4b5bb",
             "_candidate_resident_bytes": "e0c819f129b362a5490302b8e758bce8c655df753bcb3476f2a511bcd2fc517d",
             "_compiler_reads_source": "20c00aa592517ee03fba67359c951a15152129e96f3d7ccbf38415506f2fa60e",
             "_period_copy_reservations": "b5ffa438a989ee6e746686b0553ffb90708d4be519dcf19235cddd8cd4623651",
@@ -4396,7 +4421,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9"
+        != "6a357d581fd91ad7a7f261cced0509715e4dc8273ae1e5d8e844dabebd02b3bd"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6200,9 +6225,14 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/chunk_admission.py": (
-        "a463505b8defc1ebb7dc59e9379cea1b78f388e230b784c6a538cceb033458ef",
+        "6d57ca59555ce41ea6b01b93df0f839dac174cbd320198ba68764f85637ac2b7",
         {
-            "prepare_simulation_chunks": "779466afb797bf87e745db2514fcf58412a9fdf9f8e5993a011bebc65543c210"
+            "_ChunkProfiler.profile_widths": "3a9568b37c2a19e4720c84986d8796e4642126b98b0074bf1ed73a5454fa9842",
+            "_independent_outer_candidates": "573095f0ac73dbdf0b994d8506e8e40eadfe1c63531da96078506777ce38e2a4",
+            "_independent_anchor_widths": "52ef0117a0d5dcebb683261d3da3514cb2d4204d3450c1c21b4d3e790b64eb49",
+            "_plan_independent_chunks": "4b2930fbed5135ad8e7cf77a03f752b2cbc1c9b1169cb3da5ceec416700d1d4a",
+            "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
+            "prepare_simulation_chunks": "312576c968c5176b1259cb9544d060aad36165897f322113d9e1f824d25bcf8b",
         },
     ),
     "src/_lcm/simulation/chunk_inputs.py": (
@@ -6245,14 +6275,16 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2984aab072b436faed94d02f3d10b49fb58b5204940cc4f73525da180ec744b9",
+        "6a357d581fd91ad7a7f261cced0509715e4dc8273ae1e5d8e844dabebd02b3bd",
         {
+            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "solve": "caa95220392e0168fe7e938fcad8fa81ece3b692c60f2194e5fad6ee5878067e",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
             "_iter_edge_topologies": "de3078515a59f624e07889c6f3e05c8ac948472416c81a993c8d02f29905789b",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "816c061720ac8d6131b00fd7e5478eece175fc3d10c2592e008a596b50a6e38d",
-            "_resolve_output_layouts_and_lowering_keys": "bc1377bdb7e9656f00e34515da8eade6355e1eb503187eafabe8b4731e0155b3",
+            "_compile_all_functions": "53df03c312f26ba4c48599c5ca35ad422c5a43b90113e409311dd3d05bd7b540",
+            "_resolve_output_layouts_and_lowering_keys": "40b5f822d1eda780821daeb05460ba26befc6d62f45029ca2cda07fc2c25f323",
         },
     ),
     "src/_lcm/solution/diagnostics.py": (
@@ -6326,8 +6358,10 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "4605572adc813090f864df29a4fed7af3c753b6e0c1c610c5e794f02a7adfadf",
+        "de67be724d4a891b5b10a9aa3c85f62abf9360142a65002479a714560a9dbe1d",
         {
+            "_validate_sharded_state_capability": "ad4fdf402d0f64beca06edaffd5feb45250aad3127858a42914ba1c834e70961",
+            "Model.__init__": "208b84baf754d3dc3e33e1ffa7bedd6b86398bdb30cc66e923e461a6151a0343",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "ff9e176801623ee2a12a19ddcc9332ac767c8fd6faee662d6008c448a441d475",
             "Model.solve": "70930b19fb32c7680dc44ffd767c234f65865787e36b9a4288a8e47ae7a3a498",

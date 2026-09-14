@@ -1,5 +1,6 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
+import dataclasses
 import logging
 import operator
 import threading
@@ -31,7 +32,7 @@ from _lcm.execution.execution_plan import (
     resolve_execution_config,
     visible_device_ids,
 )
-from _lcm.grids import DiscreteGrid
+from _lcm.grids import DiscreteGrid, LinSpacedGrid
 from _lcm.model_processing import (
     _validate_param_types,
     build_regimes_and_template,
@@ -195,6 +196,7 @@ from lcm.solver_api import (
     _replay_route_identity,
     _same_exact_artifact_contract,
 )
+from lcm.solvers import GridSearch
 from lcm.typing import (
     UserFacingParamsTemplate,
     UserFunction,
@@ -608,10 +610,13 @@ class Model:
             pruned_variables=self.pruned_variables,
             sharded_states=self._execution.sharded_states,
         )
-        _fail_if_sharded_states_are_not_model_discrete_states(
+        continuous_sharded_state = _validate_sharded_state_capability(
             user_regimes=self.user_regimes,
             model_states=states,
             sharded_states=self._execution.sharded_states,
+        )
+        self._execution = dataclasses.replace(
+            self._execution, continuous_sharded_state=continuous_sharded_state
         )
         prepared_structure = prepare_model_structure(
             user_regimes=self.user_regimes,
@@ -2638,30 +2643,64 @@ def _readable_template(value: object) -> object:
     return getattr(value, "__name__", str(value))
 
 
-def _fail_if_sharded_states_are_not_model_discrete_states(
+def _validate_sharded_state_capability(
     *,
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
     model_states: Mapping[str, object],
     sharded_states: frozenset[StateName],
-) -> None:
-    """Require explicit device axes to name model-level, concrete discrete states."""
+) -> StateName | None:
+    """Keep discrete sharding and validate the sole continuous GridSearch route.
+
+    The returned name is an internal capability: only this construction gate may
+    enable full ordinary continuation replicas for a continuous sharded state.
+    """
     non_model_states = sorted(sharded_states - model_states.keys())
     if non_model_states:
         raise ExecutionPlanningError(
             "ExecutionConfig.sharded_states must name model-level states declared "
             f"in Model(states=...). Found regime-only states: {non_model_states}."
         )
+    non_discrete = {
+        name
+        for regime in user_regimes.values()
+        for name in sharded_states & regime.states.keys()
+        if not isinstance(regime.states[name], DiscreteGrid)
+    }
+    if not non_discrete:
+        return None
+    message = (
+        f"ExecutionConfig.sharded_states {sorted(sharded_states)!r}: "
+        "Continuous sharding requires one concrete model-level LinSpacedGrid as "
+        "the sole continuous and sole sharded state, retained in every regime, "
+        "with singleton hard-max GridSearch. Other states must be concrete "
+        "DiscreteGrid states; carried/runtime grids, folded processes, mixed "
+        "solvers, collective/gated/same-period routes and taste shocks are unsupported."
+    )
+    if len(sharded_states) != 1:
+        raise ExecutionPlanningError(message)
+    name = next(iter(sharded_states))
+    grid = model_states[name]
+    if type(grid) is not LinSpacedGrid:
+        raise ExecutionPlanningError(message)
     for regime_name, regime in user_regimes.items():
-        for name in sorted(sharded_states & regime.states.keys()):
-            grid = regime.states[name]
-            if not isinstance(grid, DiscreteGrid):
-                msg = (
-                    f"ExecutionConfig.sharded_states names {name!r}, whose grid in "
-                    f"regime {regime_name!r} is a {type(grid).__name__}; only a "
-                    "concrete DiscreteGrid can carry a device axis. Continuous, "
-                    "carried, and parameter-supplied state grids cannot be sharded."
-                )
-                raise ExecutionPlanningError(msg)
+        if (
+            regime.states.get(name) is not grid
+            or any(
+                not isinstance(other_grid, DiscreteGrid)
+                for other_name, other_grid in regime.states.items()
+                if other_name != name
+            )
+            or type(regime.solver) is not GridSearch
+            or regime.stakeholders is not None
+            or regime.gated_edges
+            or regime.value_constraints
+            or regime.same_period_refs
+            or regime.taste_shocks is not None
+        ):
+            raise ExecutionPlanningError(
+                f"{message} Unsupported regime: {regime_name!r}."
+            )
+    return name
 
 
 def _fail_if_a_sharded_state_is_pruned(

@@ -3,11 +3,13 @@
 from dataclasses import FrozenInstanceError
 from inspect import signature
 
+import cloudpickle
 import jax
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
 import lcm
+from _lcm.execution.execution_plan import resolve_execution_config
 from lcm import Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -121,7 +123,11 @@ def test_model_takes_an_execution_config_parameter() -> None:
     assert "execution_config" in signature(Model.__init__).parameters
 
 
-def test_execution_config_does_not_change_the_structure_fingerprint() -> None:
+@pytest.mark.parametrize("independent", [False, True])
+def test_execution_config_does_not_change_the_structure_fingerprint(
+    *,
+    independent: bool,
+) -> None:
     """Two models differing only in `ExecutionConfig` share a fingerprint."""
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     tuned = Model(
@@ -130,7 +136,9 @@ def test_execution_config_does_not_change_the_structure_fingerprint() -> None:
         regime_id_class=MultiRegimeId,
         fixed_params=dict(base.fixed_params),
         execution_config=ExecutionConfig(
-            device_memory_bytes=1 << 30, axis_widths={"action_product": 2}
+            device_memory_bytes=1 << 30,
+            axis_widths={"action_product": 2, "subject": 2},
+            simulation_chunk_policy="independent" if independent else "legacy",
         ),
     )
 
@@ -144,3 +152,39 @@ def test_execution_devices_defaults_to_every_visible_device() -> None:
     assert base.execution_devices == tuple(
         sorted(device.id for device in jax.devices())
     )
+
+
+def test_simulation_chunk_policy_defaults_to_legacy() -> None:
+    assert ExecutionConfig().simulation_chunk_policy == "legacy"
+
+
+@pytest.mark.parametrize("policy", ["automatic", "", None, 1])
+def test_simulation_chunk_policy_rejects_unknown_values(policy: object) -> None:
+    with pytest.raises((BeartypeCallHintViolation, TypeError, ValueError)):
+        ExecutionConfig(simulation_chunk_policy=policy)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize("missing", ["budget", "subject", "both"])
+def test_independent_chunks_require_budget_and_subject_pin(missing: str) -> None:
+    with pytest.raises(ValueError, match=r"requires device_memory_bytes.*subject"):
+        ExecutionConfig(
+            simulation_chunk_policy="independent",
+            device_memory_bytes=None if missing in ("budget", "both") else 1024,
+            axis_widths={} if missing in ("subject", "both") else {"subject": 2},
+        )
+
+
+def test_independent_chunk_policy_resolves_and_roundtrips() -> None:
+    config = ExecutionConfig(
+        simulation_chunk_policy="independent",
+        device_memory_bytes=1024,
+        axis_widths={"subject": 2, "action_product": 3},
+    )
+    restored = cloudpickle.loads(cloudpickle.dumps(config))
+    assert restored == config
+    resolved = resolve_execution_config(
+        config=restored, visible_device_ids=(0,), state_names=frozenset()
+    )
+    assert resolved.simulation_chunk_policy == "independent"
+    assert resolved.axis_widths == {"subject": 2, "action_product": 3}
+    assert resolved.device_memory_bytes == 1024

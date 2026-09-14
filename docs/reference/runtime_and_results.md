@@ -52,14 +52,18 @@ Its fields:
 
 - `device_memory_bytes` declares a per-device ceiling for compiler peak plus accounted
   live residency. `None` (the default) omits memory-budget admission.
-- `sharded_states` names model-level discrete states whose grid axes are spread over the
-  devices their regimes are placed on. A continuous grid cannot be sharded merely
+- `sharded_states` names supported model-level states whose grid axes are spread over
+  the devices their regimes are placed on. A continuous grid cannot be sharded merely
   because its extent divides the number of devices.
 - `axis_widths` fixes the compiled width of one named planner axis, leaving the rest to
   the planner; see [Fix a planner axis width](../user_guide/tuning.md). Every key must
   be an axis some core program declares.
 - `devices` names the device ids the model may use, ascending; `None` (the default)
   means every device JAX reports. Every id must be one JAX reports.
+- `simulation_chunk_policy` is `"legacy"` by default. `"independent"` requires a
+  positive device budget and an explicit subject width, then considers two aligned outer
+  sizes while fixing one admitted inner-width map. It changes simulation planning only
+  and does not enter the economic fingerprint.
 - `donate_buffers` is an exact Boolean, defaulting to `True`. `False` disables compiled
   solve input donation without changing the model fingerprint or economic inputs.
 
@@ -438,6 +442,15 @@ same model accepts different call-time populations. `seed` controls random draws
 independently of those chunk boundaries. A collective model may require an addressed
 dissolution replay artifact and `own_stakeholder`; see
 [Collective regimes](collective_regimes.md).
+
+With `simulation_chunk_policy="independent"`, the explicit subject width controls the
+inner program block while a bounded search considers outer sizes near one and two
+blocks, aligned to the subject devices. At most two inner maps are tried at the smaller
+size; the first admitted map is frozen for one larger-size profile. Existing live
+storage and transfer checks remain active on every call. The default `"legacy"` mode
+preserves the coupled outer-size behavior above. See
+[Batch forward simulation](../user_guide/tuning.md#batch-forward-simulation) for the
+search limits and memory scope.
 
 Initial conditions are a mapping of state names plus `regime_id` to equal-length arrays,
 or a DataFrame with a `regime_name` column.

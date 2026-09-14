@@ -2695,6 +2695,7 @@ def _resident_inventory_by_triple(
     templates: SolveInputMappings,
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
+    reserve_transfer_scratch: bool = False,
     fixed_bytes: Mapping[int, int] = MappingProxyType({}),
 ) -> MappingProxyType[_CoreTriple, ResidentInventory]:
     """Predict, per core triple, the live inventory at its scheduled position.
@@ -2748,12 +2749,30 @@ def _resident_inventory_by_triple(
         period: _period_copy_reservations(period=period, metadata=program_metadata)
         for period in range(_model_n_periods(regimes=regimes))
     }
+    scratch_by_period = (
+        {
+            period: _period_transfer_scratch_reservations(
+                period=period, metadata=program_metadata, device_ids=device_ids
+            )
+            for period in range(_model_n_periods(regimes=regimes))
+        }
+        if reserve_transfer_scratch
+        else {}
+    )
+    if reserve_transfer_scratch and any(
+        inventory.device_ids != device_ids for inventory in resident.values()
+    ):
+        raise ExecutionPlanningError(
+            "Continuous transfer scratch requires every cell to use "
+            "the admission devices."
+        )
     return MappingProxyType(
         {
             (regime_name, period, core_key): dataclasses.replace(
                 resident[(period, regime_name)],
                 fixed_bytes=fixed_bytes,
                 shared_copies=copies_by_period[period],
+                transfer_scratch_bytes=scratch_by_period.get(period, {}),
             )
             for (regime_name, period), core_keys in program_keys_by_cell.items()
             for core_key in core_keys
@@ -2787,6 +2806,44 @@ def _period_copy_reservations(
             and transfer.kind is not ValueTransferKind.ALIGNED_LOCAL
         }
     )
+
+
+def _period_transfer_scratch_reservations(
+    *,
+    period: int,
+    metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+    device_ids: tuple[int, ...],
+) -> Mapping[int, int]:
+    """Bound all pending copy scratch for one validated continuous-route period.
+
+    This deliberately overlaps every copy miss with every core's compiler peak;
+    it is a declared conservative envelope, not measured allocator scratch.
+    Shared artifact/layout copies count once, while unshared occurrences can all
+    be pending simultaneously. Endpoint equality keeps this narrow route within
+    the devices whose resident and concurrent-output burdens were planned.
+    """
+    scratch: dict[int, int] = {}
+    shared: set[Hashable] = set()
+    for triple, program in metadata.items():
+        if triple[1] != period:
+            continue
+        for transfer in program.input_transfer_plan:
+            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:
+                continue
+            cost = transfer.cost
+            if cost.devices != device_ids:
+                raise ExecutionPlanningError(
+                    "Continuous transfer scratch requires transfer endpoints to "
+                    "equal the admission devices."
+                )
+            if transfer.reused_by_several_consumers:
+                key = (transfer.target, transfer.source_sharding)
+                if key in shared:
+                    continue
+                shared.add(key)
+            for device in cost.devices:
+                scratch[device] = scratch.get(device, 0) + cost.temporary_bytes
+    return MappingProxyType(scratch)
 
 
 def _internal_reservations_by_cell(
@@ -3243,6 +3300,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         budget_bytes=execution.device_memory_bytes,
         fixed_widths=execution.axis_widths,
         enable_jit=enable_jit,
+        continuous_sharded_state=execution.continuous_sharded_state,
         donate_buffers=execution.donate_buffers,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
@@ -3362,6 +3420,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             program_metadata=representative_metadata,
             device_ids=execution.device_ids,
             fixed_bytes=fixed_bytes,
+            reserve_transfer_scratch=execution.continuous_sharded_state is not None,
         )
     )
     if budget_bytes is not None:
@@ -3879,6 +3938,7 @@ def _resolve_output_layouts_and_lowering_keys(
     budget_bytes: int | None,
     fixed_widths: Mapping[str, int],
     enable_jit: bool,
+    continuous_sharded_state: str | None = None,
     donate_buffers: bool = True,
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
@@ -3964,6 +4024,9 @@ def _resolve_output_layouts_and_lowering_keys(
             program=materialized,
             source_value_template=next_regime_to_V_arr[regime_name],
             source=triple,
+            require_full_next_value=_continuous_value_replica_required(
+                regime=regime, state_name=continuous_sharded_state
+            ),
         )
         width_candidates = workspace_width_candidates(
             axes=materialized.requirements.axes,
@@ -4258,12 +4321,26 @@ def _width_key(*, widths: Mapping[str, int]) -> _WidthKey:
     return tuple(widths.items())
 
 
+def _continuous_value_replica_required(
+    *, regime: Regime, state_name: str | None
+) -> bool:
+    """Read the construction-validated capability, never infer it from a grid."""
+    if state_name is None:
+        return False
+    if state_name not in regime.solution.sharded_state_names:
+        raise ExecutionPlanningError(
+            "The validated continuous sharded state is missing from a source regime."
+        )
+    return True
+
+
 def _resolve_program_for_execution(
     *,
     program: MaterializedCoreProgram,
     tile_widths: Mapping[str, int],
     source_value_template: object,
     source: _CoreTriple,
+    require_full_next_value: bool = False,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] | None = None,
     abstract_inputs: bool = False,
 ) -> ResolvedCoreProgram:
@@ -4274,6 +4351,7 @@ def _resolve_program_for_execution(
                 program=program,
                 source_value_template=source_value_template,
                 source=source,
+                require_full_next_value=require_full_next_value,
             )
             if program.disposition is CoreExecutionDisposition.PLANNED
             else ()
@@ -4291,6 +4369,7 @@ def _prepare_abstract_program(
     program: MaterializedCoreProgram,
     source_value_template: FloatND,
     source: _CoreTriple,
+    require_full_next_value: bool = False,
 ) -> tuple[MaterializedCoreProgram, tuple[ResolvedValueTransfer, ...]]:
     """Resolve one core's exact read destinations before enumerating widths."""
     transfers = (
@@ -4298,6 +4377,7 @@ def _prepare_abstract_program(
             program=program,
             source_value_template=source_value_template,
             source=source,
+            require_full_next_value=require_full_next_value,
         )
         if program.disposition is CoreExecutionDisposition.PLANNED
         else ()
@@ -4317,6 +4397,7 @@ def _resolve_value_input_transfer_plan(
     program: MaterializedCoreProgram,
     source_value_template: object,
     source: _CoreTriple,
+    require_full_next_value: bool = False,
 ) -> tuple[ResolvedValueTransfer, ...]:
     """Resolve every declared value read against its source core's placement.
 
@@ -4348,6 +4429,10 @@ def _resolve_value_input_transfer_plan(
         kind, source_sharding = _resolve_value_transfer_layout(
             stored_sharding=stored_sharding,
             source_execution_sharding=source_execution_sharding,
+            require_full_replica=(
+                require_full_next_value
+                and read.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
+            ),
         )
         result.append(
             resolve_value_transfer(
@@ -4365,13 +4450,27 @@ def _resolve_value_transfer_layout(
     *,
     stored_sharding: object,
     source_execution_sharding: jax.sharding.Sharding,
+    require_full_replica: bool = False,
 ) -> tuple[ValueTransferKind, jax.sharding.Sharding]:
     """Choose the required value layout and name the operator that reaches it."""
     if not isinstance(stored_sharding, jax.sharding.Sharding):
         msg = "A stored target value must expose a concrete JAX sharding."
         raise TypeError(msg)
 
-    if stored_sharding == source_execution_sharding or (
+    if require_full_replica:
+        # Continuous interpolation consumes the complete target line, including
+        # remote shard crossings. Declare the replica before lowering so transfer
+        # classification, liveness and budget admission own it outside the core.
+        source_sharding = (
+            jax.NamedSharding(
+                mesh=source_execution_sharding.mesh,
+                spec=jax.P(),
+                memory_kind=source_execution_sharding.memory_kind,
+            )
+            if isinstance(source_execution_sharding, jax.NamedSharding)
+            else source_execution_sharding
+        )
+    elif stored_sharding == source_execution_sharding or (
         isinstance(stored_sharding, jax.NamedSharding)
         and isinstance(source_execution_sharding, jax.NamedSharding)
         and stored_sharding.mesh == source_execution_sharding.mesh

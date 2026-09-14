@@ -12,16 +12,32 @@ resident, the latest acting period streams at the full extent and the earlier
 ones stream narrower.
 """
 
+import dataclasses
 import math
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
+import jax
 import jax.numpy as jnp
 import pytest
 
+from _lcm.execution.core_program import (
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    ProgramScope,
+    ValueRead,
+)
 from _lcm.execution.scheduler import DispatchUnit, ScheduledNode, plan_period_waves
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+    ValueTransferKind,
+)
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.solution import backward_induction
 from _lcm.solution.solve_inputs import SolveInputMappings
@@ -431,3 +447,99 @@ def test_a_cell_the_budget_can_host_enters_a_compilation_wave(
     _selected_width_products(monkeypatch=monkeypatch, budget_bytes=100 * _value_bytes())
 
     assert ("acting", 0) in lowered
+
+
+def _scratch_transfer(*, shared: bool) -> ResolvedValueTransfer:
+    """Declare a real one-device layout change without allocating a value."""
+    mesh = jax.sharding.Mesh(jax.devices()[:1], ("state",))
+    return ResolvedValueTransfer(
+        target=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=3, regime="done"
+        ),
+        source=ValueConsumerAddress(
+            source_period=2,
+            source_regime="a",
+            core_key="core",
+            channel=ValueInputChannel.NEXT_REGIME_VALUE,
+            path=("done",),
+        ),
+        kind=ValueTransferKind.ALL_GATHER,
+        stored_sharding=jax.NamedSharding(mesh, jax.P("state")),
+        source_sharding=jax.NamedSharding(mesh, jax.P()),
+        expected_shape=(13,),
+        expected_dtype=jnp.int8,
+        reused_by_several_consumers=shared,
+    )
+
+
+def _scratch_metadata(
+    *, transfers: tuple[ResolvedValueTransfer, ...]
+) -> backward_induction._ProgramExecutionMetadata:
+    """Use the same validated declaration containers as solve planning."""
+    return backward_induction._ProgramExecutionMetadata(
+        requirements=CoreExecutionRequirements(
+            value_reads=tuple(
+                ValueRead(target=transfer.target, source=transfer.source)
+                for transfer in transfers
+            )
+        ),
+        disposition=CoreExecutionDisposition.PLANNED,
+        scope=ProgramScope.ANY,
+        input_transfer_plan=transfers,
+    )
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_period_transfer_scratch_counts_pending_copy_occurrences(
+    *, shared: bool
+) -> None:
+    """Typed transfer metadata isolates period, layout and shared-copy charges."""
+    transfer = _scratch_transfer(shared=shared)
+    other_layout = dataclasses.replace(
+        transfer,
+        source=dataclasses.replace(transfer.source, argument="other", path=()),
+        source_sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+        kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
+    )
+    aligned = dataclasses.replace(
+        transfer,
+        source=dataclasses.replace(transfer.source, argument="aligned", path=()),
+        source_sharding=transfer.stored_sharding,
+        kind=ValueTransferKind.ALIGNED_LOCAL,
+    )
+    second = dataclasses.replace(
+        transfer, source=dataclasses.replace(transfer.source, source_regime="b")
+    )
+    earlier = dataclasses.replace(
+        other_layout,
+        target=dataclasses.replace(other_layout.target, period=2),
+        source=dataclasses.replace(other_layout.source, source_period=1),
+    )
+    metadata = {
+        ("a", 2, "core"): _scratch_metadata(
+            transfers=(transfer, other_layout, aligned)
+        ),
+        ("b", 2, "core"): _scratch_metadata(transfers=(second,)),
+        ("a", 1, "core"): _scratch_metadata(transfers=(earlier,)),
+    }
+    device = jax.devices()[0].id
+    result = backward_induction._period_transfer_scratch_reservations(
+        period=2,
+        metadata=metadata,
+        device_ids=(device,),
+    )
+    assert dict(result) == {device: 26 if shared else 39}
+    with pytest.raises(TypeError):
+        result[device] = 0  # ty: ignore[invalid-assignment]
+
+
+def test_period_transfer_scratch_refuses_unbudgeted_endpoint() -> None:
+    """A real source outside admission cannot acquire zero resident charges."""
+    transfer = _scratch_transfer(shared=False)
+    metadata = {("a", 2, "core"): _scratch_metadata(transfers=(transfer,))}
+    with pytest.raises(ExecutionPlanningError, match=r"endpoints.*admission devices"):
+        backward_induction._period_transfer_scratch_reservations(
+            period=2,
+            metadata=metadata,
+            device_ids=(jax.devices()[0].id + 1,),
+        )
