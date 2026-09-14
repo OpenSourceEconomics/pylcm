@@ -9975,8 +9975,16 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            spec=jax.P(),",
-                new="            spec=source_execution_sharding.spec,",
+                old=(
+                    "        source_sharding = jax.NamedSharding(\n"
+                    "            mesh=source_execution_sharding.mesh,\n"
+                    "            spec=jax.P(),"
+                ),
+                new=(
+                    "        source_sharding = jax.NamedSharding(\n"
+                    "            mesh=source_execution_sharding.mesh,\n"
+                    "            spec=source_execution_sharding.spec,"
+                ),
                 label="backward replicated copy destination",
             ),
         },

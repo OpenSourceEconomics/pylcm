@@ -2504,3 +2504,38 @@ def test_dropping_one_candidate_leaves_every_other_candidate_alone():
 def test_solve_completion_owner_is_a_literal_certificate_dependency():
     """Authenticate the live owner in the solve transport certificate inventory."""
     assert isinstance(_parse("src/_lcm/execution/pending_work.py"), ast.Module)
+
+
+def test_backward_copy_mutation_preserves_required_full_replica_branch() -> None:
+    """The legacy-copy negative control corrupts only its intended assignment."""
+    root = _SRC_ROOT.parent
+    mutations = direct_flow_mutation_specs(repo_root=root)
+    mutation = mutations["value_transfer:backward_copy_uses_output_spec"]
+    expected = ast.parse((root / mutation["path"]).read_text())
+    resolver = next(
+        node
+        for node in expected.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_resolve_value_transfer_layout"
+    )
+    assignments = [
+        node
+        for node in ast.walk(resolver)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "NamedSharding"
+        and any(
+            isinstance(target, ast.Name) and target.id == "source_sharding"
+            for target in node.targets
+        )
+    ]
+    assert len(assignments) == 1
+    call = assignments[0].value
+    assert isinstance(call, ast.Call)
+    spec = next(keyword for keyword in call.keywords if keyword.arg == "spec")
+    assert ast.dump(spec.value) == ast.dump(ast.parse("jax.P()", mode="eval").body)
+    spec.value = ast.parse("source_execution_sharding.spec", mode="eval").body
+    assert ast.dump(
+        ast.parse(mutation["source"]), include_attributes=False
+    ) == ast.dump(expected, include_attributes=False)
