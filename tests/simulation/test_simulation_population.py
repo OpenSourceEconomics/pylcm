@@ -11,7 +11,7 @@ import pytest
 from jax import Array
 
 from lcm import AgeGrid, Model
-from lcm.exceptions import InvalidSimulationInputError
+from lcm.exceptions import InvalidInitialConditionsError, InvalidSimulationInputError
 from tests.simulation.test_process_grid_entry_admission import _inputs
 from tests.test_models.deterministic.regression import (
     RegimeId,
@@ -58,30 +58,42 @@ def test_model_constructor_rejects_population_keyword(population: int | None) ->
         )
 
 
-def test_one_model_accepts_different_call_time_populations() -> None:
-    """Changing population preserves each requested initial row and result extent."""
+@pytest.mark.parametrize("counts", [(1, 4, 2, 4), (4, 2, 4, 1)])
+def test_one_model_accepts_different_call_time_populations(
+    *, counts: tuple[int, ...]
+) -> None:
+    """Both shape orders preserve complete trajectories against fresh models."""
     model = _model()
     params = get_params(n_periods=3)
     solution = model.solve(params=params, log_level="debug")
-    observed = []
-    for count in (1, 4, 2, 4):
+    for count in counts:
+        initial = _initial(count=count)
         result = model.simulate(
             params=params,
             solution=solution,
-            initial_conditions=_initial(count=count),
+            initial_conditions=initial,
             log_level="debug",
+            seed=0,
         )
         frame = result.to_dataframe(use_labels=False)
-        observed.append(
-            (result.n_subjects, frame.loc[frame["period"] == 0, "wealth"].tolist())
+        expected = (
+            _model()
+            .simulate(
+                params=params, initial_conditions=initial, log_level="debug", seed=0
+            )
+            .to_dataframe(use_labels=False)
         )
-    assert observed == [(n, _initial(count=n)["wealth"].tolist()) for n in (1, 4, 2, 4)]
+        assert result.n_subjects == count
+        assert frame.loc[frame["period"] == 0, "wealth"].tolist() == (
+            initial["wealth"].tolist()
+        )
+        pd.testing.assert_frame_equal(frame, expected, check_exact=True)
 
 
 def test_repeated_simulation_reuses_compilation_and_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Repeated equal-shape calls retain results and require no new lowering compile."""
+    """A warm shape consumes changed rows without recompiling or reusing old data."""
     model = _model()
     params = get_params(n_periods=3)
     solution = model.solve(params=params, log_level="debug")
@@ -89,6 +101,13 @@ def test_repeated_simulation_reuses_compilation_and_values(
     first = model.simulate(
         params=params, solution=solution, initial_conditions=initial, log_level="debug"
     ).to_dataframe()
+    changed = {**initial, "wealth": jnp.asarray([120.0, 40.0, 280.0, 80.0])}
+    expected = (
+        _model()
+        .simulate(params=params, initial_conditions=changed, log_level="debug")
+        .to_dataframe()
+    )
+    assert not first.equals(expected)
     compilations: list[None] = []
     original = jax.stages.Lowered.compile
 
@@ -98,9 +117,13 @@ def test_repeated_simulation_reuses_compilation_and_values(
 
     monkeypatch.setattr(jax.stages.Lowered, "compile", observe)
     second = model.simulate(
+        params=params, solution=solution, initial_conditions=changed, log_level="debug"
+    ).to_dataframe()
+    pd.testing.assert_frame_equal(expected, second, check_exact=True)
+    repeated = model.simulate(
         params=params, solution=solution, initial_conditions=initial, log_level="debug"
     ).to_dataframe()
-    pd.testing.assert_frame_equal(first, second)
+    pd.testing.assert_frame_equal(first, repeated, check_exact=True)
     assert compilations == []
 
 
@@ -108,9 +131,13 @@ def test_warm_simulation_revalidates_changed_process_support() -> None:
     """A cached forward executor cannot make a stale solution support admissible."""
     model, params, initial = _inputs(budget=2**28)
     solution = model.solve(params=params, log_level="debug")
-    model.simulate(
-        params=params, solution=solution, initial_conditions=initial, log_level="debug"
-    )
+    first = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions=initial,
+        log_level="debug",
+        seed=0,
+    ).to_dataframe()
     alive = params["alive"]
     assert isinstance(alive, dict)
     changed = {
@@ -124,6 +151,49 @@ def test_warm_simulation_revalidates_changed_process_support() -> None:
             initial_conditions=initial,
             log_level="debug",
         )
+
+    recovered = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions=initial,
+        log_level="debug",
+        seed=0,
+    ).to_dataframe()
+    pd.testing.assert_frame_equal(first, recovered, check_exact=True)
+
+
+def test_warm_simulation_rejects_invalid_rows_before_dispatch_and_recovers(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cached shapes cannot bypass validation or poison the next valid call."""
+    model = _model()
+    params = get_params(n_periods=3)
+    solution = model.solve(params=params, log_level="debug")
+    initial = _initial(count=4)
+    first = model.simulate(
+        params=params, solution=solution, initial_conditions=initial, log_level="debug"
+    ).to_dataframe()
+    invalid = {**initial, "regime_id": jnp.full(4, 999, dtype=jnp.int32)}
+    assert invalid["regime_id"].tolist() == [999] * 4
+
+    def refuse_runtime_selection(**kwargs: object) -> None:
+        del kwargs
+        raise AssertionError("Invalid population reached forward runtime selection")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(model, "_runtime_regimes_for_shape", refuse_runtime_selection)
+        with pytest.raises(InvalidInitialConditionsError, match="Invalid regime IDs"):
+            model.simulate(
+                params=params,
+                solution=solution,
+                initial_conditions=invalid,
+                log_level="debug",
+            )
+    recovered = model.simulate(
+        params=params, solution=solution, initial_conditions=initial, log_level="debug"
+    ).to_dataframe()
+    pd.testing.assert_frame_equal(first, recovered, check_exact=True)
 
 
 def test_runtime_model_and_result_round_trip_through_pickle() -> None:

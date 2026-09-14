@@ -19,9 +19,12 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
-from lcm import Model
+from lcm import AgeGrid, LinSpacedGrid, Model, Regime, RouwenhorstAR1Process
 from lcm.exceptions import ExecutionPlanningError
+from lcm.execution import ExecutionConfig
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
+from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 from tests.simulation.test_process_grid_entry_admission import (
     _COMPOSITE_CASES,
     _inputs,
@@ -204,6 +207,80 @@ def test_automatic_simulation_consumes_each_admitted_runtime_process(
         first[["income", "saving", "value"]].to_numpy(dtype=float),
         [2.0, 1.0, 3.0],
     )
+
+
+def test_runtime_process_support_changes_public_value_and_saving() -> None:
+    """A changed two-point support changes the hand-evaluated saving decision.
+
+    With rho=0 and sigma=1, the two support points are mu-1 and mu+1,
+    equally weighted. Current assets and companion are flow endowments;
+    saving costs 1.5 and pays next period's process value. At initial
+    assets=0 and companion=mu, Q(saving)=mu+saving*(mu-1.5). The optimal
+    saving/value pairs are (0, 0) at mu=0 and (1, 2.5) at mu=2. Returning to mu=0 must
+    recover the first decision even though the model's executors are warm.
+    """
+    states = {
+        "companion": RouwenhorstAR1Process(n_points=2, rho=0.0, sigma=1.0),
+        "assets": LinSpacedGrid(start=0, stop=1, n_points=2),
+    }
+    model = Model(
+        regimes={
+            "alive": Regime(
+                transition=_support_next_regime,
+                active=lambda age: age == 0,
+                states=states,
+                actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
+                state_transitions={"assets": _support_next_assets},
+                functions={"utility": _support_current_payoff},
+            ),
+            "done": Regime(
+                transition=None,
+                states=states,
+                functions={"utility": _support_terminal_payoff},
+            ),
+        },
+        regime_id_class=_LifecycleRegimeId,
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        execution_config=ExecutionConfig(device_memory_bytes=2**28),
+    )
+    for mu, expected in ((0.0, [0.0, 0.0]), (2.0, [1.0, 2.5]), (0.0, [0.0, 0.0])):
+        result = model.simulate(
+            params={"mu": mu, "discount_factor": 1.0},
+            initial_conditions={
+                "companion": jax.numpy.asarray([mu]),
+                "assets": jax.numpy.asarray([0.0]),
+                "age": jax.numpy.asarray([0.0]),
+                "regime_id": jax.numpy.asarray([_LifecycleRegimeId.alive]),
+            },
+            seed=0,
+            log_level="debug",
+        )
+        frame = result.to_dataframe(use_labels=False)
+        initial_row = frame.loc[frame["period"] == 0]
+        assert len(initial_row) == 1
+        np.testing.assert_array_equal(
+            initial_row[["saving", "value"]].to_numpy(dtype=float)[0], expected
+        )
+
+
+def _support_current_payoff(
+    *, saving: ContinuousAction, companion: ContinuousState, assets: ContinuousState
+) -> FloatND:
+    return assets + companion - 1.5 * saving
+
+
+def _support_next_assets(*, saving: ContinuousAction) -> FloatND:
+    return saving
+
+
+def _support_terminal_payoff(
+    *, companion: ContinuousState, assets: ContinuousState
+) -> FloatND:
+    return companion * assets
+
+
+def _support_next_regime() -> ScalarInt:
+    return _LifecycleRegimeId.done
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
