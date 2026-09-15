@@ -6,9 +6,10 @@ from types import MappingProxyType
 
 import jax
 
-from _lcm.engine import Regime, placed_devices_for_ids
+from _lcm.engine import Regime
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.subject_devices import simulation_subject_devices
 from _lcm.typing import RegimeName
 
 
@@ -23,7 +24,7 @@ def bind_simulation_runtime(
         execution=execution,
         enable_jit=enable_jit,
         subject_devices=_subject_devices(
-            regimes=regimes, device_ids=execution.device_ids
+            regimes=regimes, device_ids=execution.device_ids, execution=execution
         ),
     )
     return MappingProxyType(
@@ -43,14 +44,12 @@ def bind_simulation_runtime(
 
 
 def _subject_devices(
-    *, regimes: Mapping[RegimeName, Regime], device_ids: tuple[int, ...]
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    device_ids: tuple[int, ...],
+    execution: ResolvedExecution | None = None,
 ) -> tuple[jax.Device, ...]:
-    """Resolve the actual population devices from the canonical regime axes."""
-    devices = placed_devices_for_ids(
-        submesh_device_ids=(), visible_device_ids=device_ids
-    )
-    return (
-        devices
-        if any(regime.solution.sharded_state_names for regime in regimes.values())
-        else devices[:1]
+    """Resolve the same forward devices used by profiles and population carriers."""
+    return simulation_subject_devices(
+        regimes=regimes, device_ids=device_ids, execution=execution
     )

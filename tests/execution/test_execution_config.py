@@ -188,3 +188,22 @@ def test_independent_chunk_policy_resolves_and_roundtrips() -> None:
     assert resolved.simulation_chunk_policy == "independent"
     assert resolved.axis_widths == {"subject": 2, "action_product": 3}
     assert resolved.device_memory_bytes == 1024
+
+
+def test_simulation_sharding_is_an_explicit_legacy_preserving_opt_in() -> None:
+    assert ExecutionConfig().simulation_sharding == "legacy"
+    config = ExecutionConfig(devices=(0, 1), simulation_sharding="subjects")
+    restored = cloudpickle.loads(cloudpickle.dumps(config))
+    assert restored == config
+    resolved = resolve_execution_config(
+        config=restored, visible_device_ids=(0, 1), state_names=frozenset()
+    )
+    assert resolved.simulation_sharding == "subjects"
+    assert resolved.sharded_states == frozenset()
+    assert resolved.axis_widths == {}
+
+
+@pytest.mark.parametrize("mode", ["automatic", "", None, True, 1])
+def test_simulation_sharding_rejects_unknown_modes(mode: object) -> None:
+    with pytest.raises((BeartypeCallHintViolation, TypeError, ValueError)):
+        ExecutionConfig(simulation_sharding=mode)  # ty: ignore[invalid-argument-type]

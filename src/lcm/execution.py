@@ -38,6 +38,14 @@ class ExecutionConfig:
     simulation_chunk_policy: Literal["legacy", "independent"] = "legacy"
     """Outer-cohort policy; independent requires a budget and inner subject pin."""
 
+    simulation_sharding: Literal["legacy", "subjects"] = "legacy"
+    """Use solve-derived placement, or shard forward subjects on every device.
+
+    The subjects mode puts each compiled subject tile loop inside a device shard.
+    Its subject width is a per-device upper bound, independent of solve axes.
+    Outer cohort selection still follows ``simulation_chunk_policy``.
+    """
+
     donate_buffers: bool = True
     """Allow eligible owned inputs to be donated by compiled solve programs."""
 
@@ -46,6 +54,12 @@ class ExecutionConfig:
         _fail_if_budget_invalid(device_memory_bytes=self.device_memory_bytes)
         if type(self.donate_buffers) is not bool:
             raise TypeError("ExecutionConfig.donate_buffers must be an exact bool.")
+        if type(self.simulation_sharding) is not str:
+            raise TypeError("ExecutionConfig.simulation_sharding must be an exact str.")
+        if self.simulation_sharding not in ("legacy", "subjects"):
+            raise ValueError(
+                "ExecutionConfig.simulation_sharding must be legacy or subjects."
+            )
         widths = dict(self.axis_widths)
         _fail_if_axis_widths_invalid(axis_widths=widths)
         if type(self.simulation_chunk_policy) is not str:

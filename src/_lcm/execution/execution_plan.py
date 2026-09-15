@@ -39,6 +39,9 @@ class ResolvedExecution:
     simulation_chunk_policy: Literal["legacy", "independent"] = "legacy"
     """Simulation outer-cohort selection, independent of inner program widths."""
 
+    simulation_sharding: Literal["legacy", "subjects"] = "legacy"
+    """Forward placement and local-loop policy, separate from solve-state axes."""
+
     continuous_sharded_state: StateName | None = None
     """Internal capability set only after Model validates continuous GridSearch."""
 
@@ -93,6 +96,7 @@ def resolve_execution_config(
         device_memory_bytes=config.device_memory_bytes,
         donate_buffers=config.donate_buffers,
         simulation_chunk_policy=config.simulation_chunk_policy,
+        simulation_sharding=config.simulation_sharding,
     )
 
 
