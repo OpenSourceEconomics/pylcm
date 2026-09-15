@@ -96,6 +96,7 @@ class _ControlledCompiler:
     subject_devices: tuple[jax.Device, ...]
     compilations: list[int]
     executable_widths: dict[int, int]
+    shard_subjects: bool = False
 
     def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
         assert self.subject_devices == (jax.devices()[0],)
