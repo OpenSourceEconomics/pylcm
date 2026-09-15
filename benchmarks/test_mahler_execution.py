@@ -182,9 +182,9 @@ def test_active_mahler_routes_use_fixed_forward_simulation_seed(
         benchmark.initial_conditions = {"state": object()}
 
     monkeypatch.setattr(benchmark, "_build", _build)
-    benchmark.setup()
-    benchmark.time_execution()
-    benchmark.peakmem_execution()
+    benchmark._build()
+    benchmark.execute_for_measurement()  # the cold call setup_cache would run
+    benchmark.execute_for_measurement()  # a warm call setup_cache would run
     benchmark.execute_gpu_memory_phase(
         phase=_gpu_mem.AUTOMATIC_SOLVE_SIMULATE,
         archive_path=tmp_path / "unused.h5",
@@ -202,8 +202,8 @@ def test_active_mahler_routes_use_fixed_forward_simulation_seed(
         archive_path=tmp_path / "solution.h5",
     )
 
-    assert len(model.calls) == 5
+    assert len(model.calls) == 4
     assert {call["seed"] for call in model.calls} == {0}
     assert model.calls[-1]["solution"] is loaded_solution
-    assert bench_mahler_yum.MahlerYumBudgetedGpu.version == "2"
+    assert bench_mahler_yum.MahlerYumBudgetedGpu.version == "3"
     assert bench_mahler_yum.MahlerYumBudgetedGpuPeakMem.version == "2"

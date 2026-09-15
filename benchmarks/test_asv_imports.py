@@ -1,17 +1,15 @@
 """ASV workers resolve Mahler metadata without the repository on their path."""
 
-import importlib.util
 import json
 import os
-import pickle
 import subprocess
 import sys
 from pathlib import Path
 
 _BENCHMARK_ROOT = Path(__file__).resolve().parent / "asv"
 _MAHLER_IDENTITIES = {
-    "bench_mahler_yum.MahlerYumBudgetedGpu.peakmem_execution",
-    "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution",
+    "bench_mahler_yum.MahlerYumBudgetedGpu.track_execution_time",
+    "bench_mahler_yum.MahlerYumBudgetedGpu.track_peak_cpu_mem",
     "bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time",
     (
         "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
@@ -27,38 +25,17 @@ _MAHLER_IDENTITIES = {
     ),
 }
 
-
-def test_asv_setup_cache_imports_mahler_in_its_temporary_working_directory(
-    tmp_path: Path,
-) -> None:
-    """The real ASV cache worker imports a timing identity without running a model."""
-    spec = importlib.util.find_spec("asv")
-    assert spec is not None
-    assert spec.origin is not None
-    runner = Path(spec.origin).with_name("benchmark.py")
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in {"PYTHONPATH", "ASV_PYTHONPATH"}
-    }
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(runner),
-            "setup_cache",
-            str(_BENCHMARK_ROOT),
-            "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution",
-            "{}",
-        ],
-        cwd=tmp_path,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert (tmp_path / "cache.pickle").read_bytes() == pickle.dumps(None)
+# `test_asv_setup_cache_imports_mahler_in_its_temporary_working_directory` was
+# retired: it exercised the real ASV `setup_cache` subcommand against
+# `MahlerYumBudgetedGpu.time_execution`, an identity whose class had no
+# `setup_cache` at all, specifically so the check could assert a no-op
+# `cache.pickle == pickle.dumps(None)` without touching a GPU. Sharing the
+# heavy timing measurement across `track_execution_time`/`track_peak_cpu_mem`/
+# `track_compilation_time` gave `MahlerYumBudgetedGpu` a real `setup_cache`
+# (see bench_mahler_yum.py), so no current Mahler identity has that no-op
+# property any more; the deferred-import/forkserver-safety property this test
+# also covered remains checked below via direct resolution, without running
+# `setup_cache` for real.
 
 
 def test_fresh_asv_worker_resolves_all_mahler_identities_without_gpu_imports(

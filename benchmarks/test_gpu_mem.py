@@ -30,6 +30,40 @@ def _run_without_resource_module(*, code: str) -> subprocess.CompletedProcess[st
     )
 
 
+class _FakeCombinedBenchmark:
+    def __init__(self) -> None:
+        self.setup_calls = 0
+        self.execution_calls = 0
+
+    def setup_for_gpu_measurement(self) -> None:
+        self.setup_calls += 1
+
+    def execute_for_measurement(self) -> None:
+        self.execution_calls += 1
+
+
+def test_combined_warm_samples_runs_one_cold_and_exactly_n_warm_executions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One cold call plus exactly `warm_samples` warm calls, not one per metric."""
+    benchmark = _FakeCombinedBenchmark()
+    clock = iter((10.0, 13.0, 20.0, 21.0, 30.0, 32.5, 40.0, 44.0))
+    monkeypatch.setattr(_gpu_mem.time, "perf_counter", lambda: next(clock))
+    monkeypatch.setattr(_gpu_mem, "_get_cpu_peak_bytes", lambda: 123_000)
+
+    result = _gpu_mem._collect_combined_measurements_with_warm_samples(
+        instance=benchmark, warm_samples=3
+    )
+
+    assert benchmark.setup_calls == 1
+    assert benchmark.execution_calls == 4  # one cold + three warm
+    assert result == {
+        "compilation_time": 3.0,
+        "peak_cpu_mem": 123_000,
+        "warm_samples": [1.0, 2.5, 4.0],
+    }
+
+
 def test_subprocess_env_disables_autotuning():
     """GPU-mem subprocess disables XLA autotuning for a deterministic compile."""
     env = _subprocess_env({"PATH": "/usr/bin"})
@@ -444,8 +478,8 @@ def test_mahler_yum_asv_discovers_only_the_budgeted_fp64_series() -> None:
         sys.modules.update(original_asv_modules)
 
     assert discovered == {
-        "bench_mahler_yum.MahlerYumBudgetedGpu.peakmem_execution",
-        "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution",
+        "bench_mahler_yum.MahlerYumBudgetedGpu.track_execution_time",
+        "bench_mahler_yum.MahlerYumBudgetedGpu.track_peak_cpu_mem",
         "bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time",
         (
             "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."

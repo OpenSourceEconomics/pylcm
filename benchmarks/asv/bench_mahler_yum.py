@@ -2,12 +2,19 @@
 
 import gc
 import pathlib
+import statistics
 import time
 
 from . import _gpu_mem
 from ._mahler_execution import create_mahler_gpu_model
 
 _N_SUBJECTS = 100
+
+# Warm samples MahlerYumBudgetedGpu's setup_cache collects per commit, shared
+# by track_execution_time and track_peak_cpu_mem: build once, one cold call,
+# then this many timed warm calls -- not one independent build+warm cycle
+# per metric.
+_WARM_SAMPLES = 3
 
 
 class _MahlerYum:
@@ -51,14 +58,12 @@ class _MahlerYum:
         self._build()
 
     def time_execution(self):
-        self.model.simulate(
-            params=self.model_params,
-            initial_conditions=self.initial_conditions,
-            seed=self.simulation_seed,
-            log_level="off",
-        )
+        self.execute_for_measurement()
 
     def peakmem_execution(self):
+        self.execute_for_measurement()
+
+    def execute_for_measurement(self) -> None:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -74,7 +79,7 @@ class _MahlerYum:
     ) -> None:
         """Run one exact solution-lifecycle phase in its dedicated child process."""
         if phase == _gpu_mem.AUTOMATIC_SOLVE_SIMULATE:
-            self.time_execution()
+            self.execute_for_measurement()
             return
         if phase == _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE:
             from lcm.solver_api import ResultRetention
@@ -121,14 +126,63 @@ class _MahlerYumGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
 
 
 class MahlerYumBudgetedGpu(_MahlerYum):
-    """Distinct fp64 ASV series with capacity-admitted GPU execution."""
+    """Distinct fp64 ASV series with capacity-admitted GPU execution.
 
-    version = "2"
+    Unlike the retired `_MahlerYum` base, timing is not ASV-native: ASV calls
+    `setup()` once per discovered benchmark (and again per round), so a
+    class exposing `time_execution`, `peakmem_execution`, and
+    `track_compilation_time` as three separate native/track benchmarks paid
+    for three (or more, across rounds) independent build+compile+solve
+    cycles for what is the same underlying measurement. `setup_cache`
+    collects one cold call and `_WARM_SAMPLES` warm calls in one isolated
+    subprocess (mirroring `AcaBaseline`'s combined producer); the three
+    cheap `track_*` methods below read the shared result. `time_execution`
+    and `peakmem_execution` are unset so ASV does not also discover the
+    inherited native-timing identities for this subclass.
+    """
+
+    version = "3"
     simulation_seed = 0
+    time_execution = None
+    peakmem_execution = None
 
     def _build(self):
         self.model, self.capacity_receipt = create_mahler_gpu_model()
         self._build_inputs()
+
+    def setup_cache(self) -> dict[str, float | list[float]]:
+        return _gpu_mem.measure_combined_with_warm_samples(
+            bench_module="benchmarks.asv.bench_mahler_yum",
+            bench_class="MahlerYumBudgetedGpu",
+            warm_samples=_WARM_SAMPLES,
+        )
+
+    def setup(self, cache: dict[str, float | list[float]]) -> None:
+        self._measurements = cache
+
+    def track_execution_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return statistics.median(measurements["warm_samples"])
+
+    track_execution_time.unit = "seconds"
+
+    def track_peak_cpu_mem(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["peak_cpu_mem"]
+
+    track_peak_cpu_mem.unit = "bytes"
+
+    def track_compilation_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["compilation_time"]
+
+    track_compilation_time.unit = "seconds"
 
 
 def _load_inputs_api():

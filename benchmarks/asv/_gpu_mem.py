@@ -57,6 +57,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # this line instead of parsing stdout wholesale.
 _PEAK_MARKER = "__PEAK_BYTES_IN_USE__"
 _COMBINED_MARKER = "__COMBINED_MEASUREMENTS__"
+_COMBINED_WARM_SAMPLES_MARKER = "__COMBINED_WARM_SAMPLES_MEASUREMENTS__"
 _PROFILE_MARKER = "__GPU_MEMORY_PROFILE_PHASE__"
 _PROFILE_PROTOCOL_VERSION = 1
 
@@ -464,6 +465,85 @@ def measure_combined(*, bench_module: str, bench_class: str) -> dict[str, float]
     raise RuntimeError(msg)
 
 
+def measure_combined_with_warm_samples(
+    *, bench_module: str, bench_class: str, warm_samples: int
+) -> dict[str, float | list[float]]:
+    """Collect one cold measurement and `warm_samples` bounded warm timings.
+
+    Like `measure_combined`, but for a benchmark whose ASV-native timing
+    previously repeated its own build+warm cycle once per metric (execution
+    time, CPU peak, compilation time): one isolated subprocess builds once,
+    runs one cold call (compilation time + CPU peak), then times exactly
+    `warm_samples` immediately-following warm calls and returns their raw
+    elapsed seconds, so a cheap tracker can derive a summary statistic
+    without re-running the model.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "benchmarks.asv._gpu_mem",
+            "--combined-warm-samples",
+            str(warm_samples),
+            bench_module,
+            bench_class,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=_PROJECT_ROOT,
+        env=_subprocess_env(os.environ),
+    )
+    if result.returncode != 0:
+        msg = (
+            f"Combined warm-samples measurement subprocess failed "
+            f"(exit {result.returncode}).\n"
+            f"stdout: {result.stdout!r}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        raise RuntimeError(msg)
+    for line in result.stdout.splitlines():
+        if line.startswith(_COMBINED_WARM_SAMPLES_MARKER):
+            payload = json.loads(
+                line.removeprefix(_COMBINED_WARM_SAMPLES_MARKER).strip()
+            )
+            return {
+                "compilation_time": float(payload["compilation_time"]),
+                "peak_cpu_mem": float(payload["peak_cpu_mem"]),
+                "warm_samples": [float(sample) for sample in payload["warm_samples"]],
+            }
+    msg = (
+        "Combined warm-samples measurement subprocess produced no result line.\n"
+        f"stdout: {result.stdout!r}\n"
+        f"stderr: {result.stderr!r}"
+    )
+    raise RuntimeError(msg)
+
+
+def _collect_combined_measurements_with_warm_samples(
+    *, instance, warm_samples: int
+) -> dict[str, float | list[float]]:
+    """Measure one cold execution, then exactly `warm_samples` warm executions."""
+    instance.setup_for_gpu_measurement()
+
+    start = time.perf_counter()
+    instance.execute_for_measurement()
+    compilation_time = time.perf_counter() - start
+    peak_cpu_mem = _get_cpu_peak_bytes()
+
+    samples = []
+    for _ in range(warm_samples):
+        start = time.perf_counter()
+        instance.execute_for_measurement()
+        samples.append(time.perf_counter() - start)
+
+    return {
+        "compilation_time": compilation_time,
+        "peak_cpu_mem": peak_cpu_mem,
+        "warm_samples": samples,
+    }
+
+
 def _collect_combined_measurements(instance) -> dict[str, float]:
     """Measure one cold execution and one immediately following warm execution."""
     instance.setup_for_gpu_measurement()
@@ -703,6 +783,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--combined", action="store_true")
+    mode.add_argument("--combined-warm-samples", type=int)
     mode.add_argument("--profile-phase", choices=GPU_MEMORY_PHASES)
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--invocation-token")
@@ -717,6 +798,8 @@ if __name__ == "__main__":
         args.archive is not None or args.invocation_token is not None
     ):
         parser.error("--archive and --invocation-token require --profile-phase")
+    if args.combined_warm_samples is not None and args.combined_warm_samples <= 0:
+        parser.error("--combined-warm-samples must be a positive integer")
 
     module = importlib.import_module(args.bench_module)
     cls = getattr(module, args.bench_class)
@@ -725,6 +808,14 @@ if __name__ == "__main__":
     if args.combined:
         measurements = _collect_combined_measurements(instance)
         print(f"{_COMBINED_MARKER} {json.dumps(measurements, sort_keys=True)}")
+    elif args.combined_warm_samples is not None:
+        measurements = _collect_combined_measurements_with_warm_samples(
+            instance=instance, warm_samples=args.combined_warm_samples
+        )
+        print(
+            f"{_COMBINED_WARM_SAMPLES_MARKER} "
+            f"{json.dumps(measurements, sort_keys=True)}"
+        )
     elif is_profile:
         assert args.profile_phase is not None
         assert args.archive is not None
