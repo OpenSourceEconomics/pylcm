@@ -17,6 +17,7 @@ class _MahlerYum:
     # refactors that don't change what's measured.
     version = "1"
     timeout = 1200
+    simulation_seed: int | None = None
 
     def _build(self):
         from lcm_examples.mahler_yum_2024 import (
@@ -41,6 +42,7 @@ class _MahlerYum:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            seed=self.simulation_seed,
             log_level="off",
         )
         self._compile_time = time.perf_counter() - start
@@ -52,6 +54,7 @@ class _MahlerYum:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            seed=self.simulation_seed,
             log_level="off",
         )
 
@@ -59,6 +62,7 @@ class _MahlerYum:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            seed=self.simulation_seed,
             log_level="off",
         )
 
@@ -89,6 +93,7 @@ class _MahlerYum:
             self.model.simulate(
                 params=self.model_params,
                 initial_conditions=self.initial_conditions,
+                seed=self.simulation_seed,
                 solution=solution,
                 log_level="off",
             )
@@ -118,7 +123,8 @@ class _MahlerYumGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
 class MahlerYumBudgetedGpu(_MahlerYum):
     """Distinct fp64 ASV series with capacity-admitted GPU execution."""
 
-    version = "1"
+    version = "2"
+    simulation_seed = 0
 
     def _build(self):
         self.model, self.capacity_receipt = create_mahler_gpu_model()
@@ -134,5 +140,6 @@ def _load_inputs_api():
 class MahlerYumBudgetedGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
     """Lifecycle GPU peaks for the capacity-admitted fp64 ASV series."""
 
+    version = "2"
     bench_module = "benchmarks.asv.bench_mahler_yum"
     bench_class = "MahlerYumBudgetedGpu"

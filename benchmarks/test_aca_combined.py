@@ -155,6 +155,7 @@ def test_aca_gpu_memory_phases_dispatch_exact_workloads(
         archive_path=archive,
     )
     assert model.simulate_calls[-1].get("solution") is None
+    assert model.simulate_calls[-1]["seed"] == 0
 
     benchmark.execute_gpu_memory_phase(
         phase=_gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE,
@@ -173,9 +174,16 @@ def test_aca_gpu_memory_phases_dispatch_exact_workloads(
     )
     assert load_calls == [archive]
     assert model.simulate_calls[-1]["solution"] is loaded
+    assert model.simulate_calls[-1]["seed"] == 0
 
     with pytest.raises(ValueError, match="Unknown GPU memory profile phase"):
         benchmark.execute_gpu_memory_phase(
             phase="not-a-phase",
             archive_path=archive,
         )
+
+
+def test_aca_asv_version_identifies_fixed_forward_simulation_seed() -> None:
+    """ACA timing and memory observations identify the deterministic series."""
+    assert bench_aca_baseline.AcaBaseline.version == "2"
+    assert bench_aca_baseline.AcaBaselineDebugLog.version == "2"

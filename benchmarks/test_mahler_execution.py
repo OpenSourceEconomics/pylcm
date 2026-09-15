@@ -15,7 +15,7 @@ from uuid import UUID
 import jax
 import pytest
 
-from benchmarks.asv import _mahler_execution
+from benchmarks.asv import _gpu_mem, _mahler_execution, bench_mahler_yum
 
 _MIB = 2**20
 _UUID_A = "GPU-11111111-1111-1111-1111-111111111111"
@@ -158,3 +158,52 @@ def test_receipt_paths_are_unique_and_retained_under_asv_directory(
     assert (
         Path(__file__).resolve().parents[1] / ".asv" / "mahler-receipts"
     ) == _mahler_execution._RECEIPT_DIRECTORY
+
+
+class _SimulationRecorder:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def simulate(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return object()
+
+
+def test_active_mahler_routes_use_fixed_forward_simulation_seed(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every active Mahler timing and memory route uses the same random stream."""
+    model = _SimulationRecorder()
+    benchmark = bench_mahler_yum.MahlerYumBudgetedGpu()
+
+    def _build() -> None:
+        benchmark.model = model
+        benchmark.model_params = {"parameter": 1}
+        benchmark.initial_conditions = {"state": object()}
+
+    monkeypatch.setattr(benchmark, "_build", _build)
+    benchmark.setup()
+    benchmark.time_execution()
+    benchmark.peakmem_execution()
+    benchmark.execute_gpu_memory_phase(
+        phase=_gpu_mem.AUTOMATIC_SOLVE_SIMULATE,
+        archive_path=tmp_path / "unused.h5",
+    )
+
+    loaded_solution = object()
+
+    def _load_solution(*, path: Path) -> object:
+        del path
+        return loaded_solution
+
+    monkeypatch.setattr("lcm.persistence.load_solution", _load_solution)
+    benchmark.execute_gpu_memory_phase(
+        phase=_gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE,
+        archive_path=tmp_path / "solution.h5",
+    )
+
+    assert len(model.calls) == 5
+    assert {call["seed"] for call in model.calls} == {0}
+    assert model.calls[-1]["solution"] is loaded_solution
+    assert bench_mahler_yum.MahlerYumBudgetedGpu.version == "2"
+    assert bench_mahler_yum.MahlerYumBudgetedGpuPeakMem.version == "2"
