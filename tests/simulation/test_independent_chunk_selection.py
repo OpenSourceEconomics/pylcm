@@ -296,6 +296,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
                     name="decode_actions",
                     executable=prepared.executable,
                     devices=(device,),
+                    memory=prepared.memory,
                 ),
             ),
             fixed_reservation={device: width * originals.dtype.itemsize},

@@ -6,6 +6,7 @@ import jax
 import numpy as np
 import pytest
 
+from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.simulation.chunk_admission import PreparedSimulationChunks
 from _lcm.simulation.chunk_inputs import SimulationCallInputs
 from _lcm.simulation.chunk_planning import (
@@ -27,7 +28,12 @@ def test_unrelated_retained_input_does_not_fulfill_future_setup() -> None:
     device = jax.devices()[0]
     source = jax.device_put(np.arange(32, dtype=np.int32), device)
     compiled = jax.jit(_copy_output).lower(source=source).compile()
-    stage = SimulationStageProfile(name="copy", executable=compiled, devices=(device,))
+    stage = SimulationStageProfile(
+        name="copy",
+        executable=compiled,
+        devices=(device,),
+        memory=compiler_memory_reservation(compiled=compiled, widths={}),
+    )
     profile = SimulationChunkProfile(
         n_subjects=32,
         padded_population=32,

@@ -13,24 +13,32 @@ from typing import Protocol, runtime_checkable
 
 import jax
 
-from _lcm.execution.workspace_planning import compiler_memory_reservation
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.simulation.residency import DeviceBufferFootprint, resident_bytes_by_device
 from lcm.exceptions import ExecutionPlanningError
 
 
 @dataclass(frozen=True, kw_only=True)
 class SimulationStageProfile:
-    """One actual compiled allocation stage on its ordered execution devices."""
+    """One actual compiled allocation stage on its ordered execution devices.
+
+    `memory` is the caller's already-computed complete compiler report for
+    this exact `executable` — read once per compiled executable identity by
+    the caller (a `CompiledSimulationProgram` or `_ProfiledOperation` cache
+    entry), never recomputed here. This is a narrow pass-through, not a new
+    cache: the stage profile still validates the report it is handed.
+    """
 
     name: str
     executable: jax.stages.Compiled
     devices: tuple[jax.Device, ...]
+    memory: CompilerMemoryReservation
     peak_bytes: int = field(init=False)
     reservation_bytes: int = field(init=False)
     """Represented compiler requirement, calculated before external residency."""
 
     def __post_init__(self) -> None:
-        """Read raw peak and compiler reservation before external residency."""
+        """Validate placement and adopt the caller's complete compiler report."""
         _validate_devices(devices=self.devices)
         compiled_devices = set().union(
             *(
@@ -47,9 +55,13 @@ class SimulationStageProfile:
             )
         if not self.name:
             raise ExecutionPlanningError("A simulation chunk stage needs a name.")
-        memory = compiler_memory_reservation(compiled=self.executable, widths={})
-        object.__setattr__(self, "peak_bytes", memory.peak_bytes)
-        object.__setattr__(self, "reservation_bytes", memory.reservation_bytes)
+        if not isinstance(self.memory, CompilerMemoryReservation):
+            raise ExecutionPlanningError(
+                f"Simulation chunk stage {self.name!r} needs a complete compiler "
+                "memory reservation, not a recomputed or missing report."
+            )
+        object.__setattr__(self, "peak_bytes", self.memory.peak_bytes)
+        object.__setattr__(self, "reservation_bytes", self.memory.reservation_bytes)
 
 
 @dataclass(frozen=True, kw_only=True)

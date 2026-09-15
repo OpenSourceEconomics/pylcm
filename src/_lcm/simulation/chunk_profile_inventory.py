@@ -13,6 +13,7 @@ from types import MappingProxyType
 
 import jax
 
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.simulation.chunk_planning import SimulationStageProfile
 from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.operand_placement import subject_operand_sharding
@@ -109,6 +110,7 @@ class ChunkProfileInventory:
         return self.compiled(
             name=getattr(function, "__name__", type(function).__qualname__),
             executable=compiled.executable,
+            memory=compiled.memory,
             arguments=placed,
             devices=devices,
         )
@@ -118,14 +120,16 @@ class ChunkProfileInventory:
         *,
         name: str,
         executable: jax.stages.Compiled,
+        memory: CompilerMemoryReservation,
         arguments: Mapping[str, object],
         devices: tuple[jax.Device, ...] | None = None,
     ) -> object:
-        """Keep raw compiler peaks separate from conservative future owner slots."""
+        """Adopt the caller's already-read compiler report; never reread it here."""
         self.stages.append(
             SimulationStageProfile(
                 name=name,
                 executable=executable,
+                memory=memory,
                 devices=self.runtime.subject_devices if devices is None else devices,
             )
         )

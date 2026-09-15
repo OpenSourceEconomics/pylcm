@@ -324,6 +324,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 actions = inventory.compiled(
                     name="_lookup_values_from_indices",
                     executable=decoder.executable,
+                    memory=decoder.memory,
                     arguments=decoder.arguments,
                 )
                 if not value.shape:
@@ -794,6 +795,7 @@ def _record_core(
     return inventory.compiled(
         name=f"core:{family}",
         executable=profile.executable,
+        memory=profile.memory,
         arguments=profile.arguments,
     )
 

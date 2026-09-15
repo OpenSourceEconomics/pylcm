@@ -15,6 +15,7 @@ from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import CoreProgram
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
@@ -41,10 +42,18 @@ from lcm.exceptions import ExecutionPlanningError
 
 @dataclass(frozen=True, kw_only=True)
 class AbstractSimulationProfile:
-    """Actual code plus abstract inputs; output shape comes from compiled.out_info."""
+    """Actual code plus abstract inputs; output shape comes from compiled.out_info.
+
+    `memory` is the exact executable's compiler report, already read once at
+    compilation by the runtime's own executable cache
+    (`CompiledSimulationProgram.memory` / `_ProfiledOperation.memory`). It is
+    carried here so chunk-profile construction adopts it instead of rereading
+    it from `executable` on every candidate.
+    """
 
     executable: jax.stages.Compiled
     arguments: Mapping[str, object]
+    memory: CompilerMemoryReservation
 
     def __post_init__(self) -> None:
         """Reject caller owners and snapshot only their immutable descriptors."""
@@ -345,7 +354,9 @@ def profile_forward_unit(  # noqa: C901, PLR0915
         profiles["decision"] = replace(
             decision_profile,
             action_decoder=AbstractSimulationProfile(
-                executable=decoded.executable, arguments=decoder_arguments
+                executable=decoded.executable,
+                arguments=decoder_arguments,
+                memory=decoded.memory,
             ),
         )
         actions = decoded.executable.out_info
@@ -481,8 +492,15 @@ def _profile_program(
         n_subjects=n_subjects,
         widths=concrete_widths,
     )
+    if compiled.memory is None:
+        raise ExecutionPlanningError(
+            "Chunk profiling requires a compiled executable with cached "
+            "compiler memory accounting."
+        )
     return ForwardProgramProfile(
-        executable=cast("jax.stages.Compiled", compiled.executable), arguments=arguments
+        executable=cast("jax.stages.Compiled", compiled.executable),
+        arguments=arguments,
+        memory=compiled.memory,
     )
 
 

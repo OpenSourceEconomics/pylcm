@@ -78,6 +78,11 @@ class CompiledSimulationProgram:
     widths: Mapping[str, int] = dataclasses.field(default_factory=_empty_widths)
     """Concrete compiler specialization, never a cached budget admission."""
 
+    memory: CompilerMemoryReservation | None = None
+    """Complete compiler accounting for this exact executable, cached once at
+    compilation. `None` for an eager or host-driven callable, which never
+    reaches budgeted dispatch."""
+
     def __call__(self, **arguments: object) -> object:
         """Execute with live arrays; retain no call arguments on the cache entry."""
         return self.executable(**arguments, **self.static_kwargs)
@@ -405,6 +410,15 @@ class SimulationRuntime:
             compiled = dataclasses.replace(
                 compile_candidate(widths), widths=MappingProxyType(dict(widths))
             )
+            if isinstance(compiled.executable, jax.stages.Compiled):
+                # Read the compiler's report exactly once per compiled executable,
+                # not once per `plan_workspace` call that later admits it.
+                compiled = dataclasses.replace(
+                    compiled,
+                    memory=compiler_memory_reservation(
+                        compiled=compiled.executable, widths=compiled.widths
+                    ),
+                )
         except BaseException as error:
             with self.lock:
                 del self.in_flight[key]
@@ -479,10 +493,19 @@ class _CachedSimulationCandidateCompiler:
 def _simulation_memory(
     compiled: CompiledSimulationProgram,
 ) -> CompilerMemoryReservation:
-    """Read the underlying executable's raw peak and represented allocations."""
-    return compiler_memory_reservation(
-        compiled=compiled.executable, widths=compiled.widths
-    )
+    """Return the exact executable's compiler accounting, cached at compilation.
+
+    Budgeted dispatch only ever reaches a compiled candidate (see
+    `SimulationRuntime._require_budget_context`), so a `None` record here means
+    the workspace planner asked for memory of an eager or host-driven
+    executable outside that contract.
+    """
+    if compiled.memory is None:
+        raise ExecutionPlanningError(
+            "Budgeted simulation dispatch requires a compiled executable with "
+            "cached compiler memory accounting; got an uncompiled candidate."
+        )
+    return compiled.memory
 
 
 def _require_abstract_arguments(*, arguments: Mapping[str, object]) -> None:

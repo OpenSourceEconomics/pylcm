@@ -76,6 +76,7 @@ def test_whole_chunk_selection_uses_real_profiles_and_fresh_retained_storage(
                     name="decode_actions",
                     executable=profile.executable,
                     devices=(device,),
+                    memory=profile.memory,
                 ),
             ),
             fixed_reservation={device: width * originals.dtype.itemsize},
