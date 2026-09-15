@@ -7502,7 +7502,7 @@ _ALLOCATION_RESERVATION_MUTATIONS = {
     ),
     "allocation_reservation:runtime_peak_only": (
         SIMULATION_RUNTIME_SOURCE,
-        "_simulation_memory",
+        "SimulationRuntime.compile_candidate",
         "expression",
         "compiler_memory_reservation(compiled=compiled.executable, widths=compiled.widths)",
         "compiler_peak_bytes(compiled=compiled.executable, widths=compiled.widths)",
