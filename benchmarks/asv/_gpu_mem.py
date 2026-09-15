@@ -23,8 +23,9 @@ subprocess.  Subclass it and set ``bench_module`` / ``bench_class``::
         bench_class = "MahlerYum"
 
 The subprocess calls ``setup_for_gpu_measurement()`` (model + params only, no
-warm-up) followed by ``time_execution()`` (cold = compile + run), then prints
-``peak_bytes_in_use``.
+warm-up) followed by the benchmark's one measured cold call -- either the
+modern ``execute_for_measurement()`` or, for a benchmark still on the
+ASV-native pattern, ``time_execution()`` -- then prints ``peak_bytes_in_use``.
 
 ACA's long-running benchmarks also use ``measure_combined``. Its subprocess
 performs one cold execution, captures cold elapsed time plus CPU peak memory,
@@ -652,6 +653,21 @@ def _collect_combined_measurements_with_warm_samples_and_gpu_peak(
     }
 
 
+def _run_gpu_peak_measured_call(instance) -> None:
+    """Run one measured cold call for `GpuPeakMem`'s subprocess entry point.
+
+    Prefers the modern one-cold-call protocol (`execute_for_measurement`);
+    falls back to the ASV-native `time_execution` for a benchmark still on
+    that pattern (e.g. `CollectiveHouseholdSimulate` -- see its module
+    docstring for why it stays there).
+    """
+    instance.setup_for_gpu_measurement()
+    if hasattr(instance, "execute_for_measurement"):
+        instance.execute_for_measurement()
+    else:
+        instance.time_execution()
+
+
 def _collect_combined_measurements(instance) -> dict[str, float]:
     """Measure one cold execution and one immediately following warm execution."""
     instance.setup_for_gpu_measurement()
@@ -965,6 +981,5 @@ if __name__ == "__main__":
         )
         print(f"{_PROFILE_MARKER} {json.dumps(record, sort_keys=True)}")
     else:
-        instance.setup_for_gpu_measurement()
-        instance.time_execution()
+        _run_gpu_peak_measured_call(instance)
         print(f"{_PEAK_MARKER} {_get_gpu_peak_bytes()}")

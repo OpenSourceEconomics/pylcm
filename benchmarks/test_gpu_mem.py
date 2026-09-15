@@ -98,6 +98,49 @@ def test_combined_warm_samples_gpu_peak_reads_peak_before_any_warm_call(
     }
 
 
+class _FakeModernBenchmark:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def setup_for_gpu_measurement(self) -> None:
+        self.calls.append("setup_for_gpu_measurement")
+
+    def execute_for_measurement(self) -> None:
+        self.calls.append("execute_for_measurement")
+
+
+class _FakeAsvNativeBenchmark:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def setup_for_gpu_measurement(self) -> None:
+        self.calls.append("setup_for_gpu_measurement")
+
+    def time_execution(self) -> None:
+        self.calls.append("time_execution")
+
+
+def test_gpu_peak_measured_call_prefers_execute_for_measurement() -> None:
+    """A benchmark on the modern one-cold-call protocol is not asked for
+    `time_execution`, the ASV-native name it no longer has (regression:
+    this crashed six benchmark-pr GpuPeakMem probes in production)."""
+    benchmark = _FakeModernBenchmark()
+
+    _gpu_mem._run_gpu_peak_measured_call(benchmark)
+
+    assert benchmark.calls == ["setup_for_gpu_measurement", "execute_for_measurement"]
+
+
+def test_gpu_peak_measured_call_falls_back_to_time_execution() -> None:
+    """A benchmark still on the ASV-native pattern (no
+    `execute_for_measurement`) is measured via `time_execution`."""
+    benchmark = _FakeAsvNativeBenchmark()
+
+    _gpu_mem._run_gpu_peak_measured_call(benchmark)
+
+    assert benchmark.calls == ["setup_for_gpu_measurement", "time_execution"]
+
+
 def test_subprocess_env_disables_autotuning():
     """GPU-mem subprocess disables XLA autotuning for a deterministic compile."""
     env = _subprocess_env({"PATH": "/usr/bin"})
