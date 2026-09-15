@@ -36,9 +36,6 @@ class ResolvedExecution:
     device_memory_bytes: int | None
     """Per-device workspace budget, or `None`."""
 
-    simulation_chunk_policy: Literal["legacy", "independent"] = "legacy"
-    """Simulation outer-cohort selection, independent of inner program widths."""
-
     simulation_sharding: Literal["legacy", "subjects"] = "legacy"
     """Forward placement and local-loop policy, separate from solve-state axes."""
 
@@ -95,7 +92,6 @@ def resolve_execution_config(
         axis_widths=MappingProxyType(dict(config.axis_widths)),
         device_memory_bytes=config.device_memory_bytes,
         donate_buffers=config.donate_buffers,
-        simulation_chunk_policy=config.simulation_chunk_policy,
         simulation_sharding=config.simulation_sharding,
     )
 

@@ -41,7 +41,6 @@ def test_public_subject_partition_matches_supplied_solution_reference(
             simulation_sharding="subjects",
             device_memory_bytes=(1 << 28) if budgeted else None,
             axis_widths={"subject": 3} if budgeted else {},
-            simulation_chunk_policy="independent" if budgeted else "legacy",
         ),
     )
     params = get_params(n_periods=2)

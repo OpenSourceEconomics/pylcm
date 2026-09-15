@@ -1,10 +1,9 @@
 """Native acceptance for planned, budgeted gated simulation."""
 
-from typing import Any, Literal
+from typing import Any
 
 import jax
 import numpy as np
-import pytest
 
 from benchmarks.asv._simulation_witnesses import dissolution
 from lcm.execution import ExecutionConfig
@@ -23,10 +22,7 @@ def _assert_raw_equal(*, actual: Any, expected: Any) -> None:
         np.testing.assert_array_equal(np.asarray(got), np.asarray(want))
 
 
-@pytest.mark.parametrize("policy", ["legacy", "independent"])
-def test_budgeted_gated_simulation_preserves_raw_results(
-    policy: Literal["legacy", "independent"],
-) -> None:
+def test_budgeted_gated_simulation_preserves_raw_results() -> None:
     baseline, params, initial = dissolution()
     expected = baseline.simulate(
         params=params, initial_conditions=initial, seed=6606, log_level="off"
@@ -36,7 +32,6 @@ def test_budgeted_gated_simulation_preserves_raw_results(
             devices=(0,),
             axis_widths={"subject": 2},
             device_memory_bytes=2**30,
-            simulation_chunk_policy=policy,
         )
     )
     actual = model.simulate(
@@ -54,7 +49,6 @@ def test_budgeted_gated_simulation_accepts_loaded_native_flags(tmp_path) -> None
             devices=(0,),
             axis_widths={"subject": 2},
             device_memory_bytes=2**30,
-            simulation_chunk_policy="legacy",
         )
     )
     expected = source.simulate(

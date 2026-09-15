@@ -174,7 +174,7 @@
           },
           {
             "path": "src/_lcm/simulation/chunk_admission.py",
-            "sha256": "d0aff2ec48f8d05e613c02e184071642b5456f6d6e37c4f28744e8317cf1d3c3"
+            "sha256": "61932b2155f243f81d9248c33e42c9e8aa6e2e8ea0cd9169c4a0e17b941ecc63"
           },
           {
             "path": "src/_lcm/simulation/chunk_inputs.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "7c0b0fd3efc6dc6adfef14ee291431399a886d18fd6e16ffeecbc8e81ca2c1b8"
+        "source_inventory_sha256": "77a8d03fab17a3067dd56f68cc8398609d28e0a3fbaf9c2fdbacf56e7abc1dc9"
       },
       "fast": {
         "candidate_sources": [
@@ -644,7 +644,7 @@
           },
           {
             "path": "src/_lcm/simulation/chunk_admission.py",
-            "sha256": "d0aff2ec48f8d05e613c02e184071642b5456f6d6e37c4f28744e8317cf1d3c3"
+            "sha256": "61932b2155f243f81d9248c33e42c9e8aa6e2e8ea0cd9169c4a0e17b941ecc63"
           },
           {
             "path": "src/_lcm/simulation/chunk_inputs.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "7c0b0fd3efc6dc6adfef14ee291431399a886d18fd6e16ffeecbc8e81ca2c1b8"
+        "source_inventory_sha256": "77a8d03fab17a3067dd56f68cc8398609d28e0a3fbaf9c2fdbacf56e7abc1dc9"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "7c0b0fd3efc6dc6adfef14ee291431399a886d18fd6e16ffeecbc8e81ca2c1b8",
+  "source_inventory_sha256": "77a8d03fab17a3067dd56f68cc8398609d28e0a3fbaf9c2fdbacf56e7abc1dc9",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1118,7 +1118,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_admission.py",
-      "sha256": "d0aff2ec48f8d05e613c02e184071642b5456f6d6e37c4f28744e8317cf1d3c3"
+      "sha256": "61932b2155f243f81d9248c33e42c9e8aa6e2e8ea0cd9169c4a0e17b941ecc63"
     },
     {
       "path": "src/_lcm/simulation/chunk_inputs.py",

@@ -123,11 +123,7 @@ def test_model_takes_an_execution_config_parameter() -> None:
     assert "execution_config" in signature(Model.__init__).parameters
 
 
-@pytest.mark.parametrize("independent", [False, True])
-def test_execution_config_does_not_change_the_structure_fingerprint(
-    *,
-    independent: bool,
-) -> None:
+def test_execution_config_does_not_change_the_structure_fingerprint() -> None:
     """Two models differing only in `ExecutionConfig` share a fingerprint."""
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     tuned = Model(
@@ -138,7 +134,6 @@ def test_execution_config_does_not_change_the_structure_fingerprint(
         execution_config=ExecutionConfig(
             device_memory_bytes=1 << 30,
             axis_widths={"action_product": 2, "subject": 2},
-            simulation_chunk_policy="independent" if independent else "legacy",
         ),
     )
 
@@ -154,29 +149,15 @@ def test_execution_devices_defaults_to_every_visible_device() -> None:
     )
 
 
-def test_simulation_chunk_policy_defaults_to_legacy() -> None:
-    assert ExecutionConfig().simulation_chunk_policy == "legacy"
+def test_a_budget_alone_is_a_complete_configuration() -> None:
+    """The single budgeted outer-cohort planner needs no explicit subject pin."""
+    config = ExecutionConfig(device_memory_bytes=40 * 1024**3)
+    assert config.device_memory_bytes == 40 * 1024**3
+    assert dict(config.axis_widths) == {}
 
 
-@pytest.mark.parametrize("policy", ["automatic", "", None, 1])
-def test_simulation_chunk_policy_rejects_unknown_values(policy: object) -> None:
-    with pytest.raises((BeartypeCallHintViolation, TypeError, ValueError)):
-        ExecutionConfig(simulation_chunk_policy=policy)  # ty: ignore[invalid-argument-type]
-
-
-@pytest.mark.parametrize("missing", ["budget", "subject", "both"])
-def test_independent_chunks_require_budget_and_subject_pin(missing: str) -> None:
-    with pytest.raises(ValueError, match=r"requires device_memory_bytes.*subject"):
-        ExecutionConfig(
-            simulation_chunk_policy="independent",
-            device_memory_bytes=None if missing in ("budget", "both") else 1024,
-            axis_widths={} if missing in ("subject", "both") else {"subject": 2},
-        )
-
-
-def test_independent_chunk_policy_resolves_and_roundtrips() -> None:
+def test_budgeted_config_resolves_and_roundtrips() -> None:
     config = ExecutionConfig(
-        simulation_chunk_policy="independent",
         device_memory_bytes=1024,
         axis_widths={"subject": 2, "action_product": 3},
     )
@@ -185,7 +166,6 @@ def test_independent_chunk_policy_resolves_and_roundtrips() -> None:
     resolved = resolve_execution_config(
         config=restored, visible_device_ids=(0,), state_names=frozenset()
     )
-    assert resolved.simulation_chunk_policy == "independent"
     assert resolved.axis_widths == {"subject": 2, "action_product": 3}
     assert resolved.device_memory_bytes == 1024
 

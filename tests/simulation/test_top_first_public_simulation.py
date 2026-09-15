@@ -26,7 +26,6 @@ def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
         execution_config=ExecutionConfig(
             devices=(jax.devices()[0].id,),
             axis_widths={"subject": 2},
-            simulation_chunk_policy="independent",
             device_memory_bytes=2**32,
         ),
     )

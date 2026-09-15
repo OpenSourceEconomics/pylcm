@@ -124,7 +124,6 @@ def _construct(packet_root: Path) -> dict[str, Any]:
         devices=tuple(range(8)),
         sharded_states=("assets",),
         axis_widths={"subject": 2048},
-        simulation_chunk_policy="legacy",
     )
     fixed, params = _assemble(inputs=inputs, grid_config=grid)
     model = create_model(

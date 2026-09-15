@@ -186,21 +186,25 @@ width of three. Completed chunks are offloaded to host. Random keys retain their
 original population and global subject indices, so changing the width does not change
 simulated draws.
 
-The default `simulation_chunk_policy="legacy"` keeps this relation between inner width
-and outer chunk size. To keep the inner width fixed while considering a larger chunk,
-set `simulation_chunk_policy="independent"` together with a positive
-`device_memory_bytes` budget and an explicit `axis_widths["subject"]`. Both are
-required; unsupported budgeted replay routes still refuse execution.
+With a positive `device_memory_bytes` budget, every call is planned by the same
+top-first outer-cohort search, whether or not `axis_widths["subject"]` is pinned.
+Unsupported budgeted replay routes still refuse execution.
 
-Independent mode constructs device-aligned outer sizes by repeatedly doubling the
-configured subject width, clamping to the population, and suppressing duplicates. The
-largest size covers the population. It derives the preferred full inner-width map from
-the smallest size's axis declarations, without compiling or admitting that size first.
-It then profiles the largest size. If that complete profile fits, it returns
-immediately: one whole-chunk profile, no smaller-shape sweep, and no predicted memory
-verdict.
+A pinned `axis_widths["subject"]` fixes the anchor width the frontier doubles from.
+Without a pin, the existing single-axis workspace search proposes the widest
+representable subject width the budget admits as that anchor; the frontier and its map
+selection then proceed identically either way. The anchor only seeds the search — it is
+not a memory verdict, and the admitted extent may use a different inner map than the
+anchor if a fallback runs.
 
-After a largest-size refusal, it selects the original full/bootstrap map at the smallest
+The planner constructs device-aligned outer sizes by repeatedly doubling the anchor
+width, clamping to the population, and suppressing duplicates. The largest size covers
+the population. It derives the preferred full inner-width map from the anchor's axis
+declarations, without compiling or admitting the anchor size first. It then profiles the
+largest size. If that complete profile fits, it returns immediately: one whole-chunk
+profile, no smaller-shape sweep, and no predicted memory verdict.
+
+After a largest-size refusal, it selects the original full/bootstrap map at the anchor
 size. The full map is tried first; a distinct conservative bootstrap map is tried only
 if the full anchor fails. That complete admitted map then stays frozen while the
 remaining outer sizes are tried largest first. The first fitting descending candidate
@@ -230,14 +234,12 @@ attempts record actual profile order, including refusals and map fallback. profi
 counts complete profiles, not backend compilations. Current inputs and resident owners
 are checked on each call, and live admission is still checked before chunk execution.
 
-With a device-memory budget and no fixed subject width, simulation selects the widest
-outer candidate whose complete retained storage and compiled stages fit. It tries the
-available inner widths before shrinking a chunk. The bound includes the retained
-solution, full-population inputs and RNG workspace, pending period owners, published
-results, padding, and final assembly. It is conservative about future aliases; it does
-not estimate an allocator optimum. On CPU, retaining all chunks and assembling the final
-result can impose a floor that narrower chunks cannot remove. CPU assembly after GPU
-offload uses host RAM outside the GPU ceiling.
+The bound includes the retained solution, full-population inputs and RNG workspace,
+pending period owners, published results, padding, and final assembly. It is
+conservative about future aliases; it does not estimate an allocator optimum. On CPU,
+retaining all chunks and assembling the final result can impose a floor that narrower
+chunks cannot remove. CPU assembly after GPU offload uses host RAM outside the GPU
+ceiling.
 
 Finite NNBEGM replay includes candidate preparation, diagnostics and canonical ranking
 in this bound. The prepared bank has one row per subject in the outer chunk and keeps

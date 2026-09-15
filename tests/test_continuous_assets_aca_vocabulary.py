@@ -166,7 +166,6 @@ def _model(
             else (),
             axis_widths={"action_product": widths[0], "cell": widths[1], "subject": 32},
             device_memory_bytes=budget,
-            simulation_chunk_policy="legacy",
         ),
     )
 

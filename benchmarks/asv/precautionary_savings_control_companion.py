@@ -197,18 +197,20 @@ def _make_initial_conditions() -> dict[str, Any]:
 
 
 def run_cell(
-    *, name: str, policy: str, width: int, budget_bytes: int
+    *, name: str, _policy: str, width: int, budget_bytes: int
 ) -> dict[str, Any]:
     devices = jax.devices()
     if len(devices) != 1 or devices[0].platform != "gpu":
         raise RuntimeError(f"Expected exactly one GPU, got {devices!r}.")
     workers = int(os.environ.get("SLURM_CPUS_PER_TASK", "1"))
+    # `policy` no longer selects an ExecutionConfig field: the single budgeted
+    # planner now runs unconditionally. The cell name and CLI argument stay for
+    # provenance continuity across historical measurement records.
     controls = {
         "device_memory_bytes": budget_bytes,
         "sharded_states": [],
         "axis_widths": {"subject": width},
         "devices": [int(devices[0].id)],
-        "simulation_chunk_policy": policy,
         "donate_buffers": True,
         "max_compilation_workers": workers,
     }
@@ -218,7 +220,6 @@ def run_cell(
         sharded_states=(),
         axis_widths={"subject": width},
         devices=(int(devices[0].id),),
-        simulation_chunk_policy=policy,
         donate_buffers=True,
     )
     model = precautionary_savings.create_model(
@@ -431,7 +432,7 @@ def main() -> None:
     try:
         result = run_cell(
             name=args.cell,
-            policy=args.policy,
+            _policy=args.policy,
             width=args.width,
             budget_bytes=args.budget_bytes,
         )

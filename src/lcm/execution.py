@@ -35,15 +35,11 @@ class ExecutionConfig:
     devices: tuple[int, ...] | None = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
-    simulation_chunk_policy: Literal["legacy", "independent"] = "legacy"
-    """Outer-cohort policy; independent requires a budget and inner subject pin."""
-
     simulation_sharding: Literal["legacy", "subjects"] = "legacy"
     """Use solve-derived placement, or shard forward subjects on every device.
 
     The subjects mode puts each compiled subject tile loop inside a device shard.
     Its subject width is a per-device upper bound, independent of solve axes.
-    Outer cohort selection still follows ``simulation_chunk_policy``.
     """
 
     donate_buffers: bool = True
@@ -62,21 +58,6 @@ class ExecutionConfig:
             )
         widths = dict(self.axis_widths)
         _fail_if_axis_widths_invalid(axis_widths=widths)
-        if type(self.simulation_chunk_policy) is not str:
-            raise TypeError(
-                "ExecutionConfig.simulation_chunk_policy must be an exact str."
-            )
-        if self.simulation_chunk_policy not in ("legacy", "independent"):
-            raise ValueError(
-                "ExecutionConfig.simulation_chunk_policy must be legacy or independent."
-            )
-        if self.simulation_chunk_policy == "independent" and (
-            self.device_memory_bytes is None or "subject" not in widths
-        ):
-            raise ValueError(
-                "Independent simulation_chunk_policy requires device_memory_bytes "
-                "and an explicit positive subject axis width."
-            )
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))
         sharded = tuple(self.sharded_states)
         _fail_if_sharded_states_invalid(sharded_states=sharded)

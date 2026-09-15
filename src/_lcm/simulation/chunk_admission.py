@@ -28,7 +28,6 @@ from _lcm.simulation.chunk_planning import (
     SimulationChunkPlan,
     SimulationChunkProfile,
     _required_bytes,
-    plan_simulation_chunks,
 )
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
 from _lcm.simulation.memory import SimulationMemory
@@ -127,7 +126,7 @@ def prepare_simulation_chunks(
     policies: Mapping[int, Mapping[str, object]] | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> PreparedSimulationChunks:
-    """Select a complete admitted chunk under the declared outer-cohort policy."""
+    """Select a complete admitted outer cohort with the top-first planner."""
     runtime = next(iter(regimes.values())).simulation.programs.executor
     if (
         not isinstance(runtime, SimulationRuntime)
@@ -209,36 +208,7 @@ def prepare_simulation_chunks(
         resident=resident,
         devices=devices,
     )
-    if runtime.execution.simulation_chunk_policy == "independent":
-        plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
-    else:
-        outer = TiledOutputAxis(
-            name="subject",
-            state_names=("subject",),
-            extent=population,
-            width_keyword="__lcm_subject_width__",
-            alignment=alignment,
-        )
-        configured = runtime.execution.axis_widths
-        if "subject" in configured:
-            extent = min(configured["subject"], population)
-            candidates = (-(-extent // alignment) * alignment,)
-        elif population == 1:
-            candidates = (1,)
-        else:
-            candidates = tuple(
-                choice["subject"]
-                for choice in workspace_width_candidates(
-                    axes=(outer,), budget_bytes=memory.budget_bytes
-                )
-            )
-        plan = plan_simulation_chunks(
-            candidates=candidates,
-            profile_candidate=profiler,
-            live=memory.inputs,
-            budget_bytes=memory.budget_bytes,
-            devices=devices,
-        )
+    plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
     return PreparedSimulationChunks(
         plan=plan, call_inputs=call_inputs, admitted_inputs=memory.inputs
     )
@@ -318,6 +288,38 @@ class _ChunkProfiler:
         )
 
 
+def _resolve_subject_anchor_width(
+    *,
+    configured: Mapping[str, int],
+    population: int,
+    alignment: int,
+    budget: int,
+) -> int:
+    """Return the pinned subject width, or auto-resolve one (AUTO_ANCHOR).
+
+    A pinned width is clamped to the population and aligned to the device
+    count. Without a pin, the existing single-axis workspace search proposes
+    the widest representable subject width the budget admits as the frontier's
+    starting anchor, exactly as it always has for an unpinned budgeted call.
+    A unit population needs no search. This anchor only seeds the frontier and
+    the fallback width map; the outer-cohort planner still profiles the actual
+    admitted extent before accepting it.
+    """
+    if "subject" in configured:
+        extent = min(configured["subject"], population)
+        return -(-extent // alignment) * alignment
+    if population == 1:
+        return 1
+    outer = TiledOutputAxis(
+        name="subject",
+        state_names=("subject",),
+        extent=population,
+        width_keyword="__lcm_subject_width__",
+        alignment=alignment,
+    )
+    return workspace_width_candidates(axes=(outer,), budget_bytes=budget)[0]["subject"]
+
+
 def _independent_outer_candidates(
     *, population: int, alignment: int, subject_width: int
 ) -> tuple[int, ...]:
@@ -376,7 +378,12 @@ def _plan_independent_chunks(
     if budget is None:
         raise ExecutionPlanningError("Independent chunk admission needs a budget.")
     configured = profiler.runtime.execution.axis_widths
-    subject_width = configured["subject"]
+    subject_width = _resolve_subject_anchor_width(
+        configured=configured,
+        population=profiler.population,
+        alignment=alignment,
+        budget=budget,
+    )
     candidates = _independent_outer_candidates(
         population=profiler.population, alignment=alignment, subject_width=subject_width
     )

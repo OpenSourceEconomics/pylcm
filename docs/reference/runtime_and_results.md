@@ -60,10 +60,10 @@ Its fields:
   be an axis some core program declares.
 - `devices` names the device ids the model may use, ascending; `None` (the default)
   means every device JAX reports. Every id must be one JAX reports.
-- `simulation_chunk_policy` is `"legacy"` by default. `"independent"` requires a
-  positive device budget and an explicit subject width, then considers two aligned outer
-  sizes while fixing one admitted inner-width map. It changes simulation planning only
-  and does not enter the economic fingerprint.
+- A positive `device_memory_bytes` budget selects the top-first outer-cohort planner for
+  simulation regardless of whether `axis_widths["subject"]` is pinned; without a pin the
+  planner resolves its own starting anchor. It changes simulation planning only and does
+  not enter the economic fingerprint.
 - `donate_buffers` is an exact Boolean, defaulting to `True`. `False` disables compiled
   solve input donation without changing the model fingerprint or economic inputs.
 
@@ -443,12 +443,10 @@ independently of those chunk boundaries. A collective model may require an addre
 dissolution replay artifact and `own_stakeholder`; see
 [Collective regimes](collective_regimes.md).
 
-With `simulation_chunk_policy="independent"`, the explicit subject width controls the
-inner program block while a bounded search considers outer sizes near one and two
-blocks, aligned to the subject devices. At most two inner maps are tried at the smaller
-size; the first admitted map is frozen for one larger-size profile. Existing live
-storage and transfer checks remain active on every call. The default `"legacy"` mode
-preserves the coupled outer-size behavior above. See
+With a positive `device_memory_bytes` budget, the top-first outer-cohort planner
+profiles the whole-population candidate first and descends only on refusal, using either
+the pinned subject width or an automatically resolved one as its starting anchor.
+Existing live storage and transfer checks remain active on every call. See
 [Batch forward simulation](../user_guide/tuning.md#batch-forward-simulation) for the
 search limits and memory scope.
 

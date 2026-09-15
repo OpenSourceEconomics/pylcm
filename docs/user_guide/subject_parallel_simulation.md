@@ -27,7 +27,6 @@ execution_config = ExecutionConfig(
     devices=tuple(range(8)),
     sharded_states=("assets",),  # Keep the intended SOLVE policy; not required here.
     simulation_sharding="subjects",
-    simulation_chunk_policy="independent",
     axis_widths={"subject": 2048},
     device_memory_bytes=per_device_budget_bytes,  # Measured allocator envelope.
 )
@@ -38,11 +37,10 @@ positive integer resolved for the selected hardware and existing owners; the pop
 count is not a memory budget. Other valid solve-state declarations, including
 `sharded_states=()`, can use the same forward mode.
 
-`simulation_chunk_policy="independent"` lets the existing planner explore larger
+A positive `device_memory_bytes` budget lets the top-first planner explore larger
 **global** outer cohorts. It does not force full-population admission. Inspect the
 selected global extent and divide by the number of subject devices to obtain the local
-row count. A fixed inner width plus the legacy outer policy still selects small outer
-cohorts; selecting eight GPUs alone does not change that coupling.
+row count.
 
 In `"subjects"` mode the configured inner subject width is an upper bound per device,
 clamped to the local population. In `"legacy"` mode its meaning is unchanged.

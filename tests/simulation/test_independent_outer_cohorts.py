@@ -45,7 +45,7 @@ class _RegimeId:
     retired: ScalarInt
 
 
-def _model(*, devices: tuple[int, ...], width: int) -> Model:
+def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
     return Model(
         regimes={
             "working": Regime(
@@ -77,9 +77,8 @@ def _model(*, devices: tuple[int, ...], width: int) -> Model:
         execution_config=ExecutionConfig(
             devices=devices,
             sharded_states=("kind",),
-            axis_widths={"subject": width},
+            axis_widths={} if width is None else {"subject": width},
             device_memory_bytes=2**30,
-            simulation_chunk_policy="independent",
         ),
     )
 
@@ -453,7 +452,6 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
             devices=(0,),
             axis_widths={"subject": 1},
             device_memory_bytes=2**30,
-            simulation_chunk_policy="independent",
         ),
     )
     params = {"discount_factor": 0.95}
@@ -519,3 +517,41 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
         for extent in (1, 3)
     }
     _assert_raw_equal(actual=results[1], expected=results[0])
+
+
+def test_auto_anchor_admits_a_budgeted_call_without_an_explicit_subject_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A budget alone admits an outer cohort; no `simulation_chunk_policy` exists."""
+    model = _model(devices=(0,), width=None)
+    receipts = []
+    original_plan = chunk_admission._plan_independent_chunks
+
+    def record_plan(**call: Any) -> Any:
+        plan = original_plan(**call)
+        receipts.append(plan.receipt)
+        return plan
+
+    monkeypatch.setattr(chunk_admission, "_plan_independent_chunks", record_plan)
+    params = {"discount_factor": 0.5}
+    solution = model.solve(params=params, log_level="off")
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "wealth": jnp.array([20.0, 21.0, 22.0]),
+            "kind": jnp.array([0, 1, 2], dtype=jnp.int32),
+            "age": jnp.zeros(3),
+            "regime_id": jnp.zeros(3, dtype=jnp.int32),
+        },
+        seed=17,
+        log_level="off",
+    )
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt.selected_subjects > 0
+    assert receipt.selected_subjects % receipt.alignment == 0 or (
+        receipt.selected_subjects == 3
+    )
+    assert dict(receipt.axis_widths)["subject"] > 0
+    assert result.n_subjects == 3

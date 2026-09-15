@@ -54,8 +54,7 @@
     "device_memory_bytes": "None",
     "devices": "(0, 1, 2, 3, 4, 5, 6, 7)",
     "donate_buffers": "True",
-    "sharded_states": "('assets',)",
-    "simulation_chunk_policy": "'legacy'"
+    "sharded_states": "('assets',)"
   },
   "grid_config": {
     "n_aime_gridpoints": 12,
