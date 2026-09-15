@@ -205,5 +205,5 @@ def test_active_mahler_routes_use_fixed_forward_simulation_seed(
     assert len(model.calls) == 4
     assert {call["seed"] for call in model.calls} == {0}
     assert model.calls[-1]["solution"] is loaded_solution
-    assert bench_mahler_yum.MahlerYumBudgetedGpu.version == "3"
-    assert bench_mahler_yum.MahlerYumBudgetedGpuPeakMem.version == "2"
+    assert bench_mahler_yum.MahlerYumBudgetedGpu.version == "4"
+    assert bench_mahler_yum.MahlerYumBudgetedGpuPeakMem.version == "3"

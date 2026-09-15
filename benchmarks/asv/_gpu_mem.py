@@ -58,6 +58,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PEAK_MARKER = "__PEAK_BYTES_IN_USE__"
 _COMBINED_MARKER = "__COMBINED_MEASUREMENTS__"
 _COMBINED_WARM_SAMPLES_MARKER = "__COMBINED_WARM_SAMPLES_MEASUREMENTS__"
+_COMBINED_WARM_SAMPLES_GPU_PEAK_MARKER = (
+    "__COMBINED_WARM_SAMPLES_GPU_PEAK_MEASUREMENTS__"
+)
 _PROFILE_MARKER = "__GPU_MEMORY_PROFILE_PHASE__"
 _PROFILE_PROTOCOL_VERSION = 1
 
@@ -305,9 +308,15 @@ def _register_profile_child_pid(*, child_pid: int, seen_child_pids: set[int]) ->
 
 
 def measure_gpu_memory_profile(
-    *, bench_module: str, bench_class: str
+    *, bench_module: str, bench_class: str, phases: tuple[str, ...] = GPU_MEMORY_PHASES
 ) -> dict[str, int]:
-    """Measure three solve/persistence/simulate peaks in fresh sequential processes."""
+    """Measure the given solution-lifecycle peaks in fresh sequential processes.
+
+    `phases` defaults to all three lifecycle phases; a subclass whose
+    `automatic_solve_simulate` peak is captured elsewhere (see
+    `bench_mahler_yum.MahlerYumBudgetedGpu`) can pass a reduced tuple so this
+    function does not spend a redundant isolated cold run on that phase.
+    """
     peaks: dict[str, int] = {}
     seen_child_pids: set[int] = set()
     with tempfile.TemporaryDirectory(prefix="pylcm-gpu-memory-profile-") as tmp:
@@ -315,7 +324,7 @@ def measure_gpu_memory_profile(
         archive_path = profile_root / "solution.lcm"
         saved_archive: dict[str, object] | None = None
 
-        for phase in GPU_MEMORY_PHASES:
+        for phase in phases:
             if phase in (AUTOMATIC_SOLVE_SIMULATE, SOLVE_SAVE_ALL_PERSISTABLE):
                 if archive_path.exists():
                     msg = f"GPU memory profile archive exists before phase {phase!r}."
@@ -544,6 +553,95 @@ def _collect_combined_measurements_with_warm_samples(
     }
 
 
+def measure_combined_with_warm_samples_and_gpu_peak(
+    *, bench_module: str, bench_class: str, warm_samples: int
+) -> dict[str, float | list[float]]:
+    """Like `measure_combined_with_warm_samples`, plus the automatic
+    solve+simulate GPU peak from the SAME cold call.
+
+    `GpuPeakMemProfile`'s `automatic_solve_simulate` phase used to spend its
+    own fully independent isolated cold build+solve+simulate cycle just to
+    read the GPU peak. This subprocess already runs that cold call for
+    timing/CPU-peak purposes, so reading the GPU peak here (before any warm
+    call) absorbs that phase's isolated run into this one and eliminates it
+    entirely -- see `bench_mahler_yum.MahlerYumBudgetedGpu`/
+    `MahlerYumBudgetedGpuPeakMem`.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "benchmarks.asv._gpu_mem",
+            "--combined-warm-samples-gpu-peak",
+            str(warm_samples),
+            bench_module,
+            bench_class,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=_PROJECT_ROOT,
+        env=_subprocess_env(os.environ),
+    )
+    if result.returncode != 0:
+        msg = (
+            f"Combined warm-samples-and-gpu-peak measurement subprocess failed "
+            f"(exit {result.returncode}).\n"
+            f"stdout: {result.stdout!r}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        raise RuntimeError(msg)
+    for line in result.stdout.splitlines():
+        if line.startswith(_COMBINED_WARM_SAMPLES_GPU_PEAK_MARKER):
+            payload = json.loads(
+                line.removeprefix(_COMBINED_WARM_SAMPLES_GPU_PEAK_MARKER).strip()
+            )
+            return {
+                "compilation_time": float(payload["compilation_time"]),
+                "peak_cpu_mem": float(payload["peak_cpu_mem"]),
+                "peak_gpu_mem_automatic_solve_simulate": float(
+                    payload["peak_gpu_mem_automatic_solve_simulate"]
+                ),
+                "warm_samples": [float(sample) for sample in payload["warm_samples"]],
+            }
+    msg = (
+        "Combined warm-samples-and-gpu-peak measurement subprocess produced no "
+        "result line.\n"
+        f"stdout: {result.stdout!r}\n"
+        f"stderr: {result.stderr!r}"
+    )
+    raise RuntimeError(msg)
+
+
+def _collect_combined_measurements_with_warm_samples_and_gpu_peak(
+    *, instance, warm_samples: int
+) -> dict[str, float | list[float]]:
+    """Cold call captures time + CPU peak + GPU peak; then time `warm_samples`."""
+    instance.setup_for_gpu_measurement()
+
+    start = time.perf_counter()
+    instance.execute_for_measurement()
+    compilation_time = time.perf_counter() - start
+    peak_cpu_mem = _get_cpu_peak_bytes()
+    # GPU peak must be read before any warm call: a warm call can only lower
+    # or hold peak_bytes_in_use, never usefully raise it after the cold
+    # compile+execute has already claimed the working set.
+    peak_gpu_mem = _get_gpu_peak_bytes()
+
+    samples = []
+    for _ in range(warm_samples):
+        start = time.perf_counter()
+        instance.execute_for_measurement()
+        samples.append(time.perf_counter() - start)
+
+    return {
+        "compilation_time": compilation_time,
+        "peak_cpu_mem": peak_cpu_mem,
+        "peak_gpu_mem_automatic_solve_simulate": peak_gpu_mem,
+        "warm_samples": samples,
+    }
+
+
 def _collect_combined_measurements(instance) -> dict[str, float]:
     """Measure one cold execution and one immediately following warm execution."""
     instance.setup_for_gpu_measurement()
@@ -716,6 +814,7 @@ def _profile_setup_cache(self) -> dict[str, int]:
     return measure_gpu_memory_profile(
         bench_module=self.bench_module,
         bench_class=self.bench_class,
+        phases=self.phases,
     )
 
 
@@ -753,25 +852,37 @@ _track_peak_gpu_mem_load_supplied_solution_simulate.unit = "bytes"
 
 
 class GpuPeakMemProfile:
-    """ASV base for the exact three-process solution-lifecycle memory profile."""
+    """ASV base for the fresh-process solution-lifecycle memory profile.
+
+    Subclasses measure `phases` (default: all three lifecycle phases) in
+    separate isolated processes. A subclass may narrow `phases` when one
+    phase's peak is captured elsewhere instead -- see
+    `bench_mahler_yum.MahlerYumBudgetedGpuPeakMem`, which drops
+    `automatic_solve_simulate` because `MahlerYumBudgetedGpu`'s own
+    `setup_cache` already captures that peak from its own cold call.
+    """
 
     bench_module: str
     bench_class: str
+    phases: tuple[str, ...] = GPU_MEMORY_PHASES
     version = "1"
     timeout = 3600
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         cls.setup_cache = _profile_setup_cache
-        cls.track_peak_gpu_mem_automatic_solve_simulate = (
-            _track_peak_gpu_mem_automatic_solve_simulate
-        )
-        cls.track_peak_gpu_mem_solve_save_all_persistable = (
-            _track_peak_gpu_mem_solve_save_all_persistable
-        )
-        cls.track_peak_gpu_mem_load_supplied_solution_simulate = (
-            _track_peak_gpu_mem_load_supplied_solution_simulate
-        )
+        if AUTOMATIC_SOLVE_SIMULATE in cls.phases:
+            cls.track_peak_gpu_mem_automatic_solve_simulate = (
+                _track_peak_gpu_mem_automatic_solve_simulate
+            )
+        if SOLVE_SAVE_ALL_PERSISTABLE in cls.phases:
+            cls.track_peak_gpu_mem_solve_save_all_persistable = (
+                _track_peak_gpu_mem_solve_save_all_persistable
+            )
+        if LOAD_SUPPLIED_SOLUTION_SIMULATE in cls.phases:
+            cls.track_peak_gpu_mem_load_supplied_solution_simulate = (
+                _track_peak_gpu_mem_load_supplied_solution_simulate
+            )
 
     def setup(self, cache: dict[str, int]) -> None:
         self._measurements = cache
@@ -784,6 +895,7 @@ if __name__ == "__main__":
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--combined", action="store_true")
     mode.add_argument("--combined-warm-samples", type=int)
+    mode.add_argument("--combined-warm-samples-gpu-peak", type=int)
     mode.add_argument("--profile-phase", choices=GPU_MEMORY_PHASES)
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--invocation-token")
@@ -800,6 +912,11 @@ if __name__ == "__main__":
         parser.error("--archive and --invocation-token require --profile-phase")
     if args.combined_warm_samples is not None and args.combined_warm_samples <= 0:
         parser.error("--combined-warm-samples must be a positive integer")
+    if (
+        args.combined_warm_samples_gpu_peak is not None
+        and args.combined_warm_samples_gpu_peak <= 0
+    ):
+        parser.error("--combined-warm-samples-gpu-peak must be a positive integer")
 
     module = importlib.import_module(args.bench_module)
     cls = getattr(module, args.bench_class)
@@ -814,6 +931,14 @@ if __name__ == "__main__":
         )
         print(
             f"{_COMBINED_WARM_SAMPLES_MARKER} "
+            f"{json.dumps(measurements, sort_keys=True)}"
+        )
+    elif args.combined_warm_samples_gpu_peak is not None:
+        measurements = _collect_combined_measurements_with_warm_samples_and_gpu_peak(
+            instance=instance, warm_samples=args.combined_warm_samples_gpu_peak
+        )
+        print(
+            f"{_COMBINED_WARM_SAMPLES_GPU_PEAK_MARKER} "
             f"{json.dumps(measurements, sort_keys=True)}"
         )
     elif is_profile:

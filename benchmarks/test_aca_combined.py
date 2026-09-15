@@ -100,8 +100,11 @@ def test_aca_gpu_peak_mem_asv_surface_has_exact_phase_trackers(
     }
     profile_calls: list[str] = []
 
-    def _measure_profile(*, bench_module: str, bench_class: str) -> dict[str, int]:
+    def _measure_profile(
+        *, bench_module: str, bench_class: str, phases: tuple[str, ...]
+    ) -> dict[str, int]:
         assert bench_module == "benchmarks.asv.bench_aca_baseline"
+        assert phases == _gpu_mem.GPU_MEMORY_PHASES
         profile_calls.append(bench_class)
         return profile
 

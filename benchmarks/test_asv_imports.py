@@ -12,7 +12,7 @@ _MAHLER_IDENTITIES = {
     "bench_mahler_yum.MahlerYumBudgetedGpu.track_peak_cpu_mem",
     "bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time",
     (
-        "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+        "bench_mahler_yum.MahlerYumBudgetedGpu."
         "track_peak_gpu_mem_automatic_solve_simulate"
     ),
     (

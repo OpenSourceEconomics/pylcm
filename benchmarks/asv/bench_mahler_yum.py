@@ -135,13 +135,20 @@ class MahlerYumBudgetedGpu(_MahlerYum):
     for three (or more, across rounds) independent build+compile+solve
     cycles for what is the same underlying measurement. `setup_cache`
     collects one cold call and `_WARM_SAMPLES` warm calls in one isolated
-    subprocess (mirroring `AcaBaseline`'s combined producer); the three
-    cheap `track_*` methods below read the shared result. `time_execution`
-    and `peakmem_execution` are unset so ASV does not also discover the
+    subprocess (mirroring `AcaBaseline`'s combined producer); the cheap
+    `track_*` methods below read the shared result. `time_execution` and
+    `peakmem_execution` are unset so ASV does not also discover the
     inherited native-timing identities for this subclass.
+
+    `setup_cache` also reads the automatic solve+simulate GPU peak from that
+    same cold call (before any warm call). `GpuPeakMemProfile`'s
+    `automatic_solve_simulate` phase previously spent its own fully
+    independent isolated cold run just to measure that peak;
+    `MahlerYumBudgetedGpuPeakMem` below now only covers the two phases that
+    still need a genuinely separate process.
     """
 
-    version = "3"
+    version = "4"
     simulation_seed = 0
     time_execution = None
     peakmem_execution = None
@@ -151,7 +158,7 @@ class MahlerYumBudgetedGpu(_MahlerYum):
         self._build_inputs()
 
     def setup_cache(self) -> dict[str, float | list[float]]:
-        return _gpu_mem.measure_combined_with_warm_samples(
+        return _gpu_mem.measure_combined_with_warm_samples_and_gpu_peak(
             bench_module="benchmarks.asv.bench_mahler_yum",
             bench_class="MahlerYumBudgetedGpu",
             warm_samples=_WARM_SAMPLES,
@@ -184,6 +191,14 @@ class MahlerYumBudgetedGpu(_MahlerYum):
 
     track_compilation_time.unit = "seconds"
 
+    def track_peak_gpu_mem_automatic_solve_simulate(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["peak_gpu_mem_automatic_solve_simulate"]
+
+    track_peak_gpu_mem_automatic_solve_simulate.unit = "bytes"
+
 
 def _load_inputs_api():
     from lcm_examples.mahler_yum_2024 import START_PARAMS, create_inputs
@@ -192,8 +207,18 @@ def _load_inputs_api():
 
 
 class MahlerYumBudgetedGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
-    """Lifecycle GPU peaks for the capacity-admitted fp64 ASV series."""
+    """Lifecycle GPU peaks for the capacity-admitted fp64 ASV series.
 
-    version = "2"
+    `automatic_solve_simulate` is deliberately absent from `phases`:
+    `MahlerYumBudgetedGpu.setup_cache` now captures that peak from its own
+    cold call, so this class only spends isolated processes on the two
+    phases -- solve+save and load+simulate -- that genuinely need one.
+    """
+
+    version = "3"
+    phases = (
+        _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE,
+        _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE,
+    )
     bench_module = "benchmarks.asv.bench_mahler_yum"
     bench_class = "MahlerYumBudgetedGpu"

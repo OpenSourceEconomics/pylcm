@@ -64,6 +64,40 @@ def test_combined_warm_samples_runs_one_cold_and_exactly_n_warm_executions(
     }
 
 
+def test_combined_warm_samples_gpu_peak_reads_peak_before_any_warm_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The GPU peak is read once, right after the cold call, before warm calls."""
+    benchmark = _FakeCombinedBenchmark()
+    clock = iter((10.0, 13.0, 20.0, 21.0, 30.0, 32.5, 40.0, 44.0))
+    monkeypatch.setattr(_gpu_mem.time, "perf_counter", lambda: next(clock))
+    monkeypatch.setattr(_gpu_mem, "_get_cpu_peak_bytes", lambda: 123_000)
+
+    gpu_peak_calls_at_execution_count: list[int] = []
+
+    def _fake_gpu_peak() -> int:
+        gpu_peak_calls_at_execution_count.append(benchmark.execution_calls)
+        return 555_000
+
+    monkeypatch.setattr(_gpu_mem, "_get_gpu_peak_bytes", _fake_gpu_peak)
+
+    result = _gpu_mem._collect_combined_measurements_with_warm_samples_and_gpu_peak(
+        instance=benchmark, warm_samples=3
+    )
+
+    assert benchmark.setup_calls == 1
+    assert benchmark.execution_calls == 4  # one cold + three warm
+    # The GPU peak was read right after the cold call (1 execution so far),
+    # not after any of the three warm calls.
+    assert gpu_peak_calls_at_execution_count == [1]
+    assert result == {
+        "compilation_time": 3.0,
+        "peak_cpu_mem": 123_000,
+        "peak_gpu_mem_automatic_solve_simulate": 555_000,
+        "warm_samples": [1.0, 2.5, 4.0],
+    }
+
+
 def test_subprocess_env_disables_autotuning():
     """GPU-mem subprocess disables XLA autotuning for a deterministic compile."""
     env = _subprocess_env({"PATH": "/usr/bin"})
@@ -339,21 +373,30 @@ def test_gpu_memory_profile_requires_exactly_one_child_marker(
 def test_mahler_yum_asv_surface_has_exact_phase_trackers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mahler-Yum exposes one independent series for each profile phase."""
-    measured = dict(zip(_gpu_mem.GPU_MEMORY_PHASES, (101, 202, 303), strict=True))
+    """MahlerYumBudgetedGpuPeakMem covers only the two remaining fresh-process
+    phases; automatic_solve_simulate moved to MahlerYumBudgetedGpu's own
+    setup_cache (see test_gpu_peak_is_captured_before_warm_calls below)."""
+    expected_phases = (
+        _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE,
+        _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE,
+    )
+    measured = dict(zip(expected_phases, (202, 303), strict=True))
 
-    def _measure(*, bench_module: str, bench_class: str) -> dict[str, int]:
+    def _measure(
+        *, bench_module: str, bench_class: str, phases: tuple[str, ...]
+    ) -> dict[str, int]:
         assert bench_module == "benchmarks.asv.bench_mahler_yum"
         assert bench_class == "MahlerYumBudgetedGpu"
+        assert phases == expected_phases
         return measured
 
     monkeypatch.setattr(_gpu_mem, "measure_gpu_memory_profile", _measure)
 
     instance = bench_mahler_yum.MahlerYumBudgetedGpuPeakMem()
+    assert instance.phases == expected_phases
     cache = instance.setup_cache()
     instance.setup(cache)
 
-    assert instance.track_peak_gpu_mem_automatic_solve_simulate(cache) == 101
     assert instance.track_peak_gpu_mem_solve_save_all_persistable(cache) == 202
     assert instance.track_peak_gpu_mem_load_supplied_solution_simulate(cache) == 303
     metric_names = {
@@ -362,10 +405,53 @@ def test_mahler_yum_asv_surface_has_exact_phase_trackers(
         if name.startswith(("time_", "peakmem_", "track_"))
     }
     assert metric_names == {
-        "track_peak_gpu_mem_automatic_solve_simulate",
         "track_peak_gpu_mem_solve_save_all_persistable",
         "track_peak_gpu_mem_load_supplied_solution_simulate",
     }
+
+
+def test_gpu_peak_is_captured_before_warm_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MahlerYumBudgetedGpu.setup_cache sources its own automatic-solve-simulate
+    GPU peak from the combined producer, not a separate isolated process."""
+    calls: list[dict[str, object]] = []
+
+    def _fake_measure(*, bench_module: str, bench_class: str, warm_samples: int):
+        calls.append(
+            {
+                "bench_module": bench_module,
+                "bench_class": bench_class,
+                "warm_samples": warm_samples,
+            }
+        )
+        return {
+            "compilation_time": 5.0,
+            "peak_cpu_mem": 999.0,
+            "peak_gpu_mem_automatic_solve_simulate": 777.0,
+            "warm_samples": [1.0, 2.0, 3.0],
+        }
+
+    monkeypatch.setattr(
+        _gpu_mem, "measure_combined_with_warm_samples_and_gpu_peak", _fake_measure
+    )
+
+    instance = bench_mahler_yum.MahlerYumBudgetedGpu()
+    cache = instance.setup_cache()
+    instance.setup(cache)
+
+    assert calls == [
+        {
+            "bench_module": "benchmarks.asv.bench_mahler_yum",
+            "bench_class": "MahlerYumBudgetedGpu",
+            "warm_samples": bench_mahler_yum._WARM_SAMPLES,
+        }
+    ]
+    assert instance.track_peak_gpu_mem_automatic_solve_simulate(cache) == 777.0
+    assert instance.track_peak_cpu_mem(cache) == 999.0
+    assert instance.track_compilation_time(cache) == 5.0
+    assert instance.track_execution_time(cache) == 2.0
+    assert bench_mahler_yum.MahlerYumBudgetedGpu.version == "4"
 
 
 class _FakeMahlerSolution:
@@ -482,7 +568,7 @@ def test_mahler_yum_asv_discovers_only_the_budgeted_fp64_series() -> None:
         "bench_mahler_yum.MahlerYumBudgetedGpu.track_peak_cpu_mem",
         "bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time",
         (
-            "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+            "bench_mahler_yum.MahlerYumBudgetedGpu."
             "track_peak_gpu_mem_automatic_solve_simulate"
         ),
         (
