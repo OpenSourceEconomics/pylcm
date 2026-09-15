@@ -14,10 +14,15 @@ Model building blocks (utility, budget, labor income) are shared with
 chosen, death occurs at a fixed age) as in the original paper.
 """
 
-import gc
-import time
+import statistics
 
 from . import _gpu_mem
+
+# Warm samples each class's setup_cache collects per commit, shared by
+# track_execution_time and track_peak_cpu_mem: build once, one cold call,
+# then this many timed warm calls -- not one independent build+warm cycle
+# per metric (mirrors bench_mahler_yum.py's MahlerYumBudgetedGpu).
+_WARM_SAMPLES = 3
 
 _N_PERIODS = 10
 _TASTE_SHOCK_SCALE = 0.1
@@ -253,19 +258,20 @@ def _make_initial_conditions(n_subjects: int):
     }
 
 
-def _clear_gpu_memory() -> None:
-    import jax
-
-    jax.clear_caches()
-    gc.collect()
-
-
 class IskhakovEtAl2017Solve:
-    """Brute-force solve with EV1 taste shocks on the work/retire choice."""
+    """Brute-force solve with EV1 taste shocks on the work/retire choice.
 
-    # Stable version stamp so asv keeps continuity across benchmark-body
-    # refactors that don't change what's measured.
-    version = "1"
+    `time_execution`/`peakmem_execution` were previously separate ASV-native
+    benchmarks; each independently calls `setup()`, so measuring both paid
+    for two independent build+solve cycles for the same underlying
+    operation. `setup_cache` now collects one cold call and `_WARM_SAMPLES`
+    warm calls in one isolated subprocess; the cheap `track_*` methods below
+    read the shared result.
+    """
+
+    # Version bumped: setup_cache-based combined producer replaces the
+    # separate ASV-native time_execution/peakmem_execution benchmarks.
+    version = "2"
     timeout = 600
 
     def _build(self) -> None:
@@ -274,26 +280,43 @@ class IskhakovEtAl2017Solve:
             consumption_n_points=_SOLVE_CONSUMPTION_N_POINTS,
         )
 
-    def setup(self) -> None:
-        self._build()
-        start = time.perf_counter()
-        self.model.solve(params=self.model_params, log_level="off")
-        self._compile_time = time.perf_counter() - start
-
     def setup_for_gpu_measurement(self) -> None:
         self._build()
 
-    def time_execution(self) -> None:
+    def execute_for_measurement(self) -> None:
         self.model.solve(params=self.model_params, log_level="off")
 
-    def peakmem_execution(self) -> None:
-        self.model.solve(params=self.model_params, log_level="off")
+    def setup_cache(self) -> dict[str, float | list[float]]:
+        return _gpu_mem.measure_combined_with_warm_samples(
+            bench_module="benchmarks.asv.bench_iskhakov_et_al_2017",
+            bench_class="IskhakovEtAl2017Solve",
+            warm_samples=_WARM_SAMPLES,
+        )
 
-    def teardown(self) -> None:
-        _clear_gpu_memory()
+    def setup(self, cache: dict[str, float | list[float]]) -> None:
+        self._measurements = cache
 
-    def track_compilation_time(self) -> float:
-        return self._compile_time
+    def track_execution_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return statistics.median(measurements["warm_samples"])
+
+    track_execution_time.unit = "seconds"
+
+    def track_peak_cpu_mem(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["peak_cpu_mem"]
+
+    track_peak_cpu_mem.unit = "bytes"
+
+    def track_compilation_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["compilation_time"]
 
     track_compilation_time.unit = "seconds"
 
@@ -315,7 +338,9 @@ class IskhakovEtAl2017DCEGMSolve:
     speed win waits on the envelope GPU-performance work.
     """
 
-    version = "2"
+    # Version bumped: setup_cache-based combined producer replaces the
+    # separate ASV-native time_execution/peakmem_execution benchmarks.
+    version = "3"
     timeout = 600
 
     def _build(self) -> None:
@@ -325,39 +350,53 @@ class IskhakovEtAl2017DCEGMSolve:
             solver="dcegm",
         )
 
-    def setup(self) -> None:
-        self._build()
-        start = time.perf_counter()
-        self.model.solve(params=self.model_params, log_level="off")
-        self._compile_time = time.perf_counter() - start
-
     def setup_for_gpu_measurement(self) -> None:
         self._build()
 
-    def time_execution(self) -> None:
+    def execute_for_measurement(self) -> None:
         self.model.solve(params=self.model_params, log_level="off")
 
-    def peakmem_execution(self) -> None:
-        self.model.solve(params=self.model_params, log_level="off")
+    def setup_cache(self) -> dict[str, float | list[float]]:
+        return _gpu_mem.measure_combined_with_warm_samples(
+            bench_module="benchmarks.asv.bench_iskhakov_et_al_2017",
+            bench_class="IskhakovEtAl2017DCEGMSolve",
+            warm_samples=_WARM_SAMPLES,
+        )
 
-    def teardown(self) -> None:
-        _clear_gpu_memory()
+    def setup(self, cache: dict[str, float | list[float]]) -> None:
+        self._measurements = cache
 
-    def track_compilation_time(self) -> float:
-        return self._compile_time
+    def track_execution_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return statistics.median(measurements["warm_samples"])
+
+    track_execution_time.unit = "seconds"
+
+    def track_peak_cpu_mem(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["peak_cpu_mem"]
+
+    track_peak_cpu_mem.unit = "bytes"
+
+    def track_compilation_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["compilation_time"]
 
     track_compilation_time.unit = "seconds"
-
-
-class IskhakovEtAl2017DCEGMSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.asv.bench_iskhakov_et_al_2017"
-    bench_class = "IskhakovEtAl2017DCEGMSolve"
 
 
 class IskhakovEtAl2017Simulate:
     """Simulate with Gumbel-max discrete choices from a pre-solved model."""
 
-    version = "1"
+    # Version bumped: setup_cache-based combined producer replaces the
+    # separate ASV-native time_execution/peakmem_execution benchmarks.
+    version = "2"
     timeout = 600
 
     def _build(self) -> None:
@@ -370,21 +409,10 @@ class IskhakovEtAl2017Simulate:
         )
         self.initial_conditions = _make_initial_conditions(_N_SUBJECTS)
 
-    def setup(self) -> None:
-        self._build()
-        start = time.perf_counter()
-        self.model.simulate(
-            params=self.model_params,
-            initial_conditions=self.initial_conditions,
-            solution=self.period_to_regime_to_V_arr,
-            log_level="off",
-        )
-        self._compile_time = time.perf_counter() - start
-
     def setup_for_gpu_measurement(self) -> None:
         self._build()
 
-    def time_execution(self) -> None:
+    def execute_for_measurement(self) -> None:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -392,19 +420,37 @@ class IskhakovEtAl2017Simulate:
             log_level="off",
         )
 
-    def peakmem_execution(self) -> None:
-        self.model.simulate(
-            params=self.model_params,
-            initial_conditions=self.initial_conditions,
-            solution=self.period_to_regime_to_V_arr,
-            log_level="off",
+    def setup_cache(self) -> dict[str, float | list[float]]:
+        return _gpu_mem.measure_combined_with_warm_samples(
+            bench_module="benchmarks.asv.bench_iskhakov_et_al_2017",
+            bench_class="IskhakovEtAl2017Simulate",
+            warm_samples=_WARM_SAMPLES,
         )
 
-    def teardown(self) -> None:
-        _clear_gpu_memory()
+    def setup(self, cache: dict[str, float | list[float]]) -> None:
+        self._measurements = cache
 
-    def track_compilation_time(self) -> float:
-        return self._compile_time
+    def track_execution_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return statistics.median(measurements["warm_samples"])
+
+    track_execution_time.unit = "seconds"
+
+    def track_peak_cpu_mem(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["peak_cpu_mem"]
+
+    track_peak_cpu_mem.unit = "bytes"
+
+    def track_compilation_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["compilation_time"]
 
     track_compilation_time.unit = "seconds"
 
@@ -423,7 +469,9 @@ class IskhakovEtAl2017DCEGMSimulate:
     DC-EGM regime against `IskhakovEtAl2017Simulate`.
     """
 
-    version = "1"
+    # Version bumped: setup_cache-based combined producer replaces the
+    # separate ASV-native time_execution/peakmem_execution benchmarks.
+    version = "2"
     timeout = 600
 
     def _build(self) -> None:
@@ -437,21 +485,10 @@ class IskhakovEtAl2017DCEGMSimulate:
         )
         self.initial_conditions = _make_initial_conditions(_N_SUBJECTS)
 
-    def setup(self) -> None:
-        self._build()
-        start = time.perf_counter()
-        self.model.simulate(
-            params=self.model_params,
-            initial_conditions=self.initial_conditions,
-            solution=self.period_to_regime_to_V_arr,
-            log_level="off",
-        )
-        self._compile_time = time.perf_counter() - start
-
     def setup_for_gpu_measurement(self) -> None:
         self._build()
 
-    def time_execution(self) -> None:
+    def execute_for_measurement(self) -> None:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -459,19 +496,37 @@ class IskhakovEtAl2017DCEGMSimulate:
             log_level="off",
         )
 
-    def peakmem_execution(self) -> None:
-        self.model.simulate(
-            params=self.model_params,
-            initial_conditions=self.initial_conditions,
-            solution=self.period_to_regime_to_V_arr,
-            log_level="off",
+    def setup_cache(self) -> dict[str, float | list[float]]:
+        return _gpu_mem.measure_combined_with_warm_samples(
+            bench_module="benchmarks.asv.bench_iskhakov_et_al_2017",
+            bench_class="IskhakovEtAl2017DCEGMSimulate",
+            warm_samples=_WARM_SAMPLES,
         )
 
-    def teardown(self) -> None:
-        _clear_gpu_memory()
+    def setup(self, cache: dict[str, float | list[float]]) -> None:
+        self._measurements = cache
 
-    def track_compilation_time(self) -> float:
-        return self._compile_time
+    def track_execution_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return statistics.median(measurements["warm_samples"])
+
+    track_execution_time.unit = "seconds"
+
+    def track_peak_cpu_mem(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["peak_cpu_mem"]
+
+    track_peak_cpu_mem.unit = "bytes"
+
+    def track_compilation_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["compilation_time"]
 
     track_compilation_time.unit = "seconds"
 

@@ -46,7 +46,6 @@ _CLASS_DISPLAY = {
     "MahlerYumBudgetedGpu": "Mahler-Yum",
     "MahlerYumBudgetedGpuPeakMem": "Mahler-Yum",
     "PrecautionarySavingsSolve": "Precautionary Savings - Solve",
-    "PrecautionarySavingsSolveGpuPeakMem": "Precautionary Savings - Solve",
     "PrecautionarySavingsSimulate": "Precautionary Savings - Simulate",
     "PrecautionarySavingsSimulateGpuPeakMem": "Precautionary Savings - Simulate",
     "PrecautionarySavingsSimulateWithSolve": (
@@ -64,7 +63,6 @@ _CLASS_DISPLAY = {
     "IskhakovEtAl2017Solve": "Iskhakov et al. (2017) - GridSearch Solve",
     "IskhakovEtAl2017SolveGpuPeakMem": ("Iskhakov et al. (2017) - GridSearch Solve"),
     "IskhakovEtAl2017DCEGMSolve": "Iskhakov et al. (2017) - DC-EGM Solve",
-    "IskhakovEtAl2017DCEGMSolveGpuPeakMem": ("Iskhakov et al. (2017) - DC-EGM Solve"),
     "IskhakovEtAl2017Simulate": "Iskhakov et al. (2017) - GridSearch Simulate",
     "IskhakovEtAl2017SimulateGpuPeakMem": (
         "Iskhakov et al. (2017) - GridSearch Simulate"
@@ -75,11 +73,9 @@ _CLASS_DISPLAY = {
     ),
     "CollectiveHouseholdConstruct": "Collective Household - Construct",
     "CollectiveHouseholdSolve": "Collective Household - Solve",
-    "CollectiveHouseholdSolveGpuPeakMem": "Collective Household - Solve",
     "CollectiveHouseholdSimulate": "Collective Household - Simulate",
     "CollectiveHouseholdSimulateGpuPeakMem": "Collective Household - Simulate",
     "ReferenceChainSolve": "Reference Chain - Solve",
-    "ReferenceChainSolveGpuPeakMem": "Reference Chain - Solve",
 }
 
 # GPU wrappers have no ASV parameter axis. Record the concrete largest case
