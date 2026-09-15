@@ -309,7 +309,7 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
 def test_scalar_anchor_preserves_subject_pin_for_larger_outer_candidate(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A scalar anchor must retain the pin needed by every larger candidate."""
+    """A scalar anchor must retain the pin needed by the largest candidate."""
     if jax.default_backend() != "cpu":
         pytest.skip("Requires an actual CPU device")
     model = _model(devices=(0,), width=1)
@@ -342,7 +342,7 @@ def test_scalar_anchor_preserves_subject_pin_for_larger_outer_candidate(
     assert receipt.candidates == (1, 2, 3)
     assert receipt.selected_subjects == 3
     assert dict(receipt.axis_widths)["subject"] == 1
-    assert [attempt.n_subjects for attempt in receipt.attempts] == [1, 2, 3]
+    assert [attempt.n_subjects for attempt in receipt.attempts] == [3]
     assert all(
         dict(attempt.axis_widths)["subject"] == 1 for attempt in receipt.attempts
     )

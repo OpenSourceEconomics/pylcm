@@ -348,7 +348,7 @@ _SOURCE_SEALS = {
     RUNTIME_SHARDING_SOURCE: "0e7f276d6abad69469ba42707a4dcfc78e9eefd3fb78ed9aad7942559553df9a",
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "070d4936497a9a15089cdc34d188d56873dee724c2275a5fc3424478ce5a3d11",
     COMBINED_ASSEMBLY_SOURCE: "eae7d7e3bdaf96d75671331b3cf5a49ba178316cc1848511615ec9a2f90c6fdb",
-    COMBINED_CHUNK_ADMISSION_SOURCE: "aa3c63d46116a20a95b4d91ec877bf854edda9dd5c145441eb15aa8b8589c87e",
+    COMBINED_CHUNK_ADMISSION_SOURCE: "d0aff2ec48f8d05e613c02e184071642b5456f6d6e37c4f28744e8317cf1d3c3",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "ebb5e00669a33d9486c3e3f7a6d5752937bf2751ec95ac360903274b6d81304d",
     COMBINED_CHUNK_OPERATIONS_SOURCE: "82057a91e6cf149f750f90b71c9258cf33b310e0675044bf219d466e836614d1",
     COMBINED_CHUNK_PLANNING_SOURCE: "41bd11e34e591515826b40bd3a508e91074950ba4a610fc14c2f9823dda79a33",
@@ -3772,12 +3772,12 @@ def _simulation_adapter_errors(*, tree: ast.Module, source: str) -> list[str]:
 # and dispatch bindings; numerical ranking bodies retain their existing contract.
 _FINITE_BUDGET_CONTRACTS = {
     "src/_lcm/simulation/chunk_admission.py": (
-        "4909ba0abd968f5f537582ba67dc24638a1c190bd626a5ebb5492c4fe891bba3",
+        "2e4e38614acb4f014a698a2e0014c8d021b5950ab1215487802779d9777dc3cb",
         {
             "_ChunkProfiler.profile_widths": "c245f2801cb4e5cb76ece6df5fe92a03cde1485bc99f65e953686aac52617411",
             "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
             "_independent_anchor_widths": "52ef0117a0d5dcebb683261d3da3514cb2d4204d3450c1c21b4d3e790b64eb49",
-            "_plan_independent_chunks": "3ff071ed902daa026dfedca34a465f4941e3881d725f0874784d4774ee5c342d",
+            "_plan_independent_chunks": "711e7f70a1a4cfc86fec3f355cf568bc5551743097844ed754f4d4fd94483b11",
             "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
             "prepare_simulation_chunks": "cce75d247c46bf3d109f28ee3e8b241de8750404ca9d893f7650f571f7fe4f3a",
             "_ChunkProfiler.__call__": "fd4b7f29a3ce6f8b1acbc3b067e8e7d6cde1b6ec277b567203c790a83697873b",
@@ -4014,12 +4014,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_ADMISSION_SOURCE: (
-        "4909ba0abd968f5f537582ba67dc24638a1c190bd626a5ebb5492c4fe891bba3",
+        "2e4e38614acb4f014a698a2e0014c8d021b5950ab1215487802779d9777dc3cb",
         {
             "_ChunkProfiler.profile_widths": "c245f2801cb4e5cb76ece6df5fe92a03cde1485bc99f65e953686aac52617411",
             "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
             "_independent_anchor_widths": "52ef0117a0d5dcebb683261d3da3514cb2d4204d3450c1c21b4d3e790b64eb49",
-            "_plan_independent_chunks": "3ff071ed902daa026dfedca34a465f4941e3881d725f0874784d4774ee5c342d",
+            "_plan_independent_chunks": "711e7f70a1a4cfc86fec3f355cf568bc5551743097844ed754f4d4fd94483b11",
             "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
             "PreparedSimulationChunks.require_chunk": "6669149a4b503b89411b3485e9cbc811a37820620eb83fb8f133ee129682a4a3",
             "prepare_simulation_chunks": "cce75d247c46bf3d109f28ee3e8b241de8750404ca9d893f7650f571f7fe4f3a",
@@ -6247,12 +6247,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/chunk_admission.py": (
-        "4909ba0abd968f5f537582ba67dc24638a1c190bd626a5ebb5492c4fe891bba3",
+        "2e4e38614acb4f014a698a2e0014c8d021b5950ab1215487802779d9777dc3cb",
         {
             "_ChunkProfiler.profile_widths": "c245f2801cb4e5cb76ece6df5fe92a03cde1485bc99f65e953686aac52617411",
             "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
             "_independent_anchor_widths": "52ef0117a0d5dcebb683261d3da3514cb2d4204d3450c1c21b4d3e790b64eb49",
-            "_plan_independent_chunks": "3ff071ed902daa026dfedca34a465f4941e3881d725f0874784d4774ee5c342d",
+            "_plan_independent_chunks": "711e7f70a1a4cfc86fec3f355cf568bc5551743097844ed754f4d4fd94483b11",
             "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
             "prepare_simulation_chunks": "cce75d247c46bf3d109f28ee3e8b241de8750404ca9d893f7650f571f7fe4f3a",
         },

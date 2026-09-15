@@ -326,7 +326,7 @@ def _independent_outer_candidates(
     The anchor is the inner subject width; each further candidate doubles the
     previous one until a candidate covers the whole population, and every
     candidate is rounded up to the device alignment. The frontier is finite and
-    ordered, so admission can walk it and stop at the first refusal.
+    ordered geometrically; admission chooses the order in which to profile it.
     """
     candidates: dict[int, None] = {}
     scale = 1
@@ -365,10 +365,11 @@ def _independent_anchor_widths(
 def _plan_independent_chunks(
     *, profiler: _ChunkProfiler, alignment: int
 ) -> SimulationChunkPlan:
-    """Admit an anchor, then ever larger extents with its entire inner map frozen.
+    """Try the largest extent first, with exact profiles and anchor-derived widths.
 
-    Larger candidates are profiled in frontier order; the walk stops at the
-    first refusal and the last admitted extent is retained.
+    A successful first profile avoids compiling the smaller shapes. After refusal,
+    select the existing full/bootstrap map at the anchor, freeze it, and descend
+    through the remaining frontier. No fit or refusal is extrapolated between shapes.
     """
     started = perf_counter()
     budget = profiler.runtime.execution.device_memory_bytes
@@ -380,41 +381,23 @@ def _plan_independent_chunks(
         population=profiler.population, alignment=alignment, subject_width=subject_width
     )
     anchor = candidates[0]
+    largest = candidates[-1]
     axes = _common_axes(regimes=profiler.regimes, n_subjects=anchor)
     choices = _independent_anchor_widths(axes=axes, configured=configured)
     attempts: list[ChunkCandidateReceipt] = []
-    map_reason = "full/bootstrap maps identical; duplicate suppressed"
-    if len(choices) > 1:
-        map_reason = "bootstrap skipped after full anchor admitted"
-    selected = None
-    for index, widths in enumerate(choices):
-        if index:
-            map_reason = "full anchor rejected; bootstrap profiled"
-        candidate = _profile_independent_candidate(
-            profiler=profiler, n_subjects=anchor, widths=widths, attempts=attempts
-        )
-        if candidate is not None:
-            selected = candidate
-            break
+    selected = _profile_independent_candidate(
+        profiler=profiler, n_subjects=largest, widths=choices[0], attempts=attempts
+    )
+    reason = "largest candidate admitted; smaller profiles skipped"
+    map_reason = "preferred anchor-derived map admitted at largest candidate"
     if selected is None:
-        raise ExecutionPlanningError(
-            "no candidate in the bounded independent frontier fits "
-            f"the {budget}-byte device budget ({len(attempts)} anchor profiles; "
-            f"{map_reason}); rejected attempts: " + repr(tuple(attempts))
-        )
-    reason = "duplicate outer extent; anchor retained"
-    for extent in candidates[1:]:
-        larger = _profile_independent_candidate(
+        selected, reason, map_reason = _admit_anchor_then_descend(
             profiler=profiler,
-            n_subjects=extent,
-            widths=selected.profile.axis_widths,
+            candidates=candidates,
+            choices=choices,
             attempts=attempts,
+            budget=budget,
         )
-        if larger is None:
-            reason = "larger candidate rejected; last admitted extent retained"
-            break
-        selected = larger
-        reason = "bounded frontier exhausted; largest candidate admitted"
     return replace(
         selected,
         receipt=IndependentChunkReceipt(
@@ -429,9 +412,67 @@ def _plan_independent_chunks(
             stopping_reason=reason,
             anchor_map_reason=map_reason,
             planning_seconds=perf_counter() - started,
-            frontier_version=2,
+            frontier_version=3,
         ),
     )
+
+
+def _admit_anchor_then_descend(
+    *,
+    profiler: _ChunkProfiler,
+    candidates: tuple[int, ...],
+    choices: tuple[Mapping[str, int], ...],
+    attempts: list[ChunkCandidateReceipt],
+    budget: int,
+) -> tuple[SimulationChunkPlan, str, str]:
+    """Admit an anchor map after a largest-candidate refusal, then descend.
+
+    The full map is tried at the anchor first, then a distinct bootstrap map. The
+    admitted map is frozen while the remaining frontier is profiled largest first;
+    the pair already refused at the top is not repeated. Returns the selected plan
+    with its stopping and anchor-map reasons.
+    """
+    anchor = candidates[0]
+    largest = candidates[-1]
+    map_reason = "full/bootstrap maps identical; duplicate suppressed"
+    if len(choices) > 1:
+        map_reason = "bootstrap skipped after full anchor admitted"
+    selected = None
+    for index, widths in enumerate(choices):
+        # When alignment collapses the frontier, this exact pair just refused.
+        if largest == anchor and index == 0:
+            continue
+        if index:
+            map_reason = "full anchor rejected; bootstrap profiled"
+        selected = _profile_independent_candidate(
+            profiler=profiler, n_subjects=anchor, widths=widths, attempts=attempts
+        )
+        if selected is not None:
+            break
+    if selected is None:
+        raise ExecutionPlanningError(
+            "no anchor map fits after top-first admission in the bounded "
+            f"independent frontier with the {budget}-byte device budget "
+            f"({len(attempts)} complete profiles; {map_reason}); "
+            "rejected attempts: " + repr(tuple(attempts))
+        )
+    reason = "descending candidates rejected; admitted anchor retained"
+    frozen_widths = selected.profile.axis_widths
+    for extent in reversed(candidates[1:]):
+        # Revisit the top only if anchor fallback changed the entire width map.
+        if extent == largest and dict(frozen_widths) == dict(choices[0]):
+            continue
+        larger = _profile_independent_candidate(
+            profiler=profiler,
+            n_subjects=extent,
+            widths=frozen_widths,
+            attempts=attempts,
+        )
+        if larger is not None:
+            selected = larger
+            reason = "first fitting descending candidate admitted"
+            break
+    return selected, reason, map_reason
 
 
 def _profile_independent_candidate(
