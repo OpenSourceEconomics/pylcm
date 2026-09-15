@@ -20,6 +20,13 @@ identified by module, class and method name, so those names are the identity
 under which a measurement is stored and compared across commits: renaming one
 starts a new series and silently orphans the old, which is why they stay as
 they are even though what the first counts is a compile *request*.
+
+`setup_cache` measures every witness/log_level combination exactly once (one
+warm call, then one counted+timed call) and both trackers read the shared
+result. Previously each tracker ran its own independent warm-plus-measured
+cycle per combination, doubling the simulate calls for no additional
+information: the elapsed time and the compile-request count come from the
+same call.
 """
 
 import time
@@ -41,54 +48,86 @@ def count_period_regime_iterations(model: object) -> int:
     )
 
 
-class SimulationDispatch:
-    """One warm call, then a measured call, per witness and log level."""
+def _measure_combination(*, witness: str, log_level: str) -> dict[str, float]:
+    """Build one witness, warm it, and take one measured call at `log_level`."""
+    import jax
 
-    version = "1"
-    timeout = 600
-    params = (list(WITNESS_NAMES), list(LOG_LEVELS))
-    param_names = ["witness", "log_level"]
+    from benchmarks.asv._compile_counters import count_compile_requests
+    from benchmarks.asv._simulation_witnesses import WITNESSES
 
-    # keyword-only-exempt: library-callback=asv
-    def setup(self, witness: str, log_level: str) -> None:
-        """Build the witness, solve it, and warm the measured log level."""
-        from ._simulation_witnesses import WITNESSES
+    model, model_params, initial_conditions = WITNESSES[witness]()
+    solution = model.solve(params=model_params, log_level="off")
 
-        model, model_params, initial_conditions = WITNESSES[witness]()
-        self.model = model
-        self.model_params = model_params
-        self.initial_conditions = initial_conditions
-        self.solution = model.solve(params=model_params, log_level="off")
-        self._simulate(log_level=log_level)
-
-    # keyword-only-exempt: library-callback=asv
-    def track_host_ms_per_period_regime(self, witness: str, log_level: str) -> float:
-        """Return host milliseconds per (period, regime) of a warm simulate call."""
-        elapsed, _ = self._measure(log_level=log_level)
-        return 1e3 * elapsed / count_period_regime_iterations(self.model)
-
-    # keyword-only-exempt: library-callback=asv
-    def track_second_call_compiles(self, witness: str, log_level: str) -> int:
-        """Return the backend compilations a warm simulate call issues."""
-        return self._measure(log_level=log_level)[1]
-
-    def _simulate(self, *, log_level: str) -> object:
-        return self.model.simulate(
-            params=self.model_params,
-            initial_conditions=self.initial_conditions,
-            solution=self.solution,
+    def _simulate() -> object:
+        return model.simulate(
+            params=model_params,
+            initial_conditions=initial_conditions,
+            solution=solution,
             log_level=log_level,
             seed=0,
         )
 
-    def _measure(self, *, log_level: str) -> tuple[float, int]:
-        import jax
+    _simulate()  # warm-up call; not measured
 
-        from benchmarks.asv._compile_counters import count_compile_requests
+    with count_compile_requests() as counts:
+        start = time.perf_counter()
+        result = _simulate()
+        jax.block_until_ready(result.raw_results)
+        elapsed = time.perf_counter() - start
 
-        with count_compile_requests() as counts:
-            start = time.perf_counter()
-            result = self._simulate(log_level=log_level)
-            jax.block_until_ready(result.raw_results)
-            elapsed = time.perf_counter() - start
-        return elapsed, counts.compile_requests
+    return {
+        "elapsed": elapsed,
+        "compile_requests": counts.compile_requests,
+        "period_regime_iterations": count_period_regime_iterations(model),
+    }
+
+
+class SimulationDispatch:
+    """One warm call, then one measured call, per witness and log level."""
+
+    # Bumped from "1": measurement moved from a per-tracker warm+measured
+    # cycle into one shared `setup_cache` producer per combination.
+    version = "2"
+    timeout = 600
+    params = (list(WITNESS_NAMES), list(LOG_LEVELS))
+    param_names = ["witness", "log_level"]
+
+    def setup_cache(self) -> dict[tuple[str, str], dict[str, float]]:
+        """Warm and measure each witness/log_level combination exactly once."""
+        return {
+            (witness, log_level): _measure_combination(
+                witness=witness, log_level=log_level
+            )
+            for witness in WITNESS_NAMES
+            for log_level in LOG_LEVELS
+        }
+
+    # keyword-only-exempt: library-callback=asv
+    def setup(
+        self,
+        cache: dict[tuple[str, str], dict[str, float]],
+        witness: str,
+        log_level: str,
+    ) -> None:
+        self._measurement = cache[(witness, log_level)]
+
+    # keyword-only-exempt: library-callback=asv
+    def track_host_ms_per_period_regime(
+        self,
+        cache: dict[tuple[str, str], dict[str, float]],
+        witness: str,
+        log_level: str,
+    ) -> float:
+        """Return host milliseconds per (period, regime) of the measured call."""
+        measurement = self._measurement
+        return 1e3 * measurement["elapsed"] / measurement["period_regime_iterations"]
+
+    # keyword-only-exempt: library-callback=asv
+    def track_second_call_compiles(
+        self,
+        cache: dict[tuple[str, str], dict[str, float]],
+        witness: str,
+        log_level: str,
+    ) -> int:
+        """Return the backend compilations the measured call issued."""
+        return self._measurement["compile_requests"]
