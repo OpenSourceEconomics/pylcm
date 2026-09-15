@@ -176,6 +176,12 @@ def _source_identity() -> dict[str, Any]:
         "jax": importlib.metadata.version("jax"),
         "jaxlib": importlib.metadata.version("jaxlib"),
         "lcm": importlib.metadata.version("pylcm"),
+        "source_files": {
+            "companion": _sha256_bytes(Path(__file__).read_bytes()),
+            "model_builder": _sha256_bytes(
+                Path(precautionary_savings.__file__).read_bytes()
+            ),
+        },
     }
 
 
@@ -305,6 +311,15 @@ def run_cell(
             "cpu_affinity": sorted(os.sched_getaffinity(0)),
             "jax_compilation_cache_dir": os.environ.get("JAX_COMPILATION_CACHE_DIR"),
             "xla_flags": os.environ.get("XLA_FLAGS"),
+            "xla_python_client_preallocate": os.environ.get(
+                "XLA_PYTHON_CLIENT_PREALLOCATE"
+            ),
+            "xla_python_client_allocator": os.environ.get(
+                "XLA_PYTHON_CLIENT_ALLOCATOR"
+            ),
+            "xla_python_client_mem_fraction": os.environ.get(
+                "XLA_PYTHON_CLIENT_MEM_FRACTION"
+            ),
         },
         "controls": controls,
         "budget_rationale": (
