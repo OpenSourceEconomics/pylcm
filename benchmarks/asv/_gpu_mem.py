@@ -566,6 +566,14 @@ def measure_combined_with_warm_samples_and_gpu_peak(
     call) absorbs that phase's isolated run into this one and eliminates it
     entirely -- see `bench_mahler_yum.MahlerYumBudgetedGpu`/
     `MahlerYumBudgetedGpuPeakMem`.
+
+    The returned `peak_gpu_mem_automatic_solve_simulate` is captured after
+    the cold call and before any warm call, so it is the cold-call peak, not
+    a "warm peak" -- do not present it as one. Likewise
+    `compilation_time` is the cold public call's wall time (the first,
+    uncached `execute_for_measurement()`), not an isolated measurement of
+    time spent in the compiler alone; it includes dispatch and execution
+    overhead of that first call.
     """
     result = subprocess.run(
         [
@@ -623,9 +631,11 @@ def _collect_combined_measurements_with_warm_samples_and_gpu_peak(
     instance.execute_for_measurement()
     compilation_time = time.perf_counter() - start
     peak_cpu_mem = _get_cpu_peak_bytes()
-    # GPU peak must be read before any warm call: a warm call can only lower
-    # or hold peak_bytes_in_use, never usefully raise it after the cold
-    # compile+execute has already claimed the working set.
+    # GPU peak is read here, before any warm call, so it stays the
+    # automatic-solve-simulate phase's own observation: peak_bytes_in_use is
+    # a high-water mark that a warm call could still raise (it does not only
+    # lower or hold), so reading it after warm calls would fold their
+    # allocations into what is supposed to be a single cold-call peak.
     peak_gpu_mem = _get_gpu_peak_bytes()
 
     samples = []
