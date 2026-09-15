@@ -21,7 +21,7 @@ def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
     *,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """All candidate extents are profiled, and no chunk starts below the result bank."""
+    """Every candidate map at the anchor is profiled before any chunk starts."""
     model = _stateful_target_model()
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     initial = {
@@ -65,19 +65,21 @@ def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
     )
     budgeted_solution = budgeted.solve(params=params, log_level="off")
     candidates: list[int] = []
-    profile = _ChunkProfiler.__call__
+    profile_widths = _ChunkProfiler.profile_widths
 
-    # keyword-only-exempt: library-callback=_ChunkProfiler.__call__
-    def observe_profile(self: _ChunkProfiler, *, n_subjects: int) -> object:
+    # keyword-only-exempt: library-callback=_ChunkProfiler.profile_widths
+    def observe_profile(
+        self: _ChunkProfiler, *, n_subjects: int, widths: Any
+    ) -> object:
         candidates.append(n_subjects)
-        return profile(self, n_subjects=n_subjects)
+        return profile_widths(self, n_subjects=n_subjects, widths=widths)
 
     def forbid_chunk(**_call: object) -> object:
         raise AssertionError("A chunk allocated before its retained output bank fit")
 
-    monkeypatch.setattr(_ChunkProfiler, "__call__", observe_profile)
+    monkeypatch.setattr(_ChunkProfiler, "profile_widths", observe_profile)
     monkeypatch.setattr(simulation, "_simulate_subject_chunk", forbid_chunk)
-    with pytest.raises(ExecutionPlanningError, match="No declared simulation chunk"):
+    with pytest.raises(ExecutionPlanningError, match="no anchor map fits"):
         budgeted.simulate(
             params=params,
             solution=budgeted_solution,
@@ -85,4 +87,7 @@ def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
             seed=3,
             log_level="off",
         )
-    assert candidates == [64, 32, 16, 8, 4, 2, 1]
+    # The irreducible output floor is chunk-size invariant, so the top-first
+    # planner tries both anchor maps (full, then bootstrap) and gives up
+    # rather than sweeping smaller extents that could never help.
+    assert candidates == [64, 64]

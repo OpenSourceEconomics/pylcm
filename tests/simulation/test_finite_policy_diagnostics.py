@@ -99,7 +99,7 @@ def test_real_finite_diagnostic_preserves_log_gate_and_precedes_ranking(
         expected_events = (
             ["prepare", "rank"] if log_level == "off" else ["prepare", "count", "rank"]
         )
-        assert events == expected_events * 2
+        assert events == expected_events
         rows = result.to_dataframe().query("regime_name == 'alive' and period == 0")
         assert np.isneginf(rows["value"]).all()
         assert np.isnan(rows["consumption"]).all()
@@ -112,6 +112,6 @@ def test_real_finite_diagnostic_preserves_log_gate_and_precedes_ranking(
         if log_level == "off":
             assert messages == []
         else:
-            assert len(messages) == 2
+            assert len(messages) == 1
             for message, count in zip(messages, expected_live, strict=True):
                 assert f"{count} of {count} live outer candidates" in message

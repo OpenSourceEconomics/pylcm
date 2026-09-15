@@ -63,5 +63,5 @@ def test_budgeted_public_chunks_prepare_without_real_prewarm_templates(
         log_level="off",
     )
     assert result.n_subjects == count
-    assert chunk_sizes == ([1] if count == 1 else [2, 2, 2])
-    assert set(abstract_preparations) == {min(count, 2)}
+    assert chunk_sizes == [count]
+    assert set(abstract_preparations) == {count}

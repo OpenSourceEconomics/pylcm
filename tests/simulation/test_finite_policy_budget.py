@@ -80,8 +80,8 @@ def test_budgeted_finite_policy_profiles_actual_prepare_and_rank(
     )
     assert prepared.count("simulate_policy_prepare") >= 1
     assert prepared.count("simulate_policy_rank") >= 1
-    assert dispatched.count("simulate_policy_prepare") == 2
-    assert dispatched.count("simulate_policy_rank") == 2
+    assert dispatched.count("simulate_policy_prepare") == 1
+    assert dispatched.count("simulate_policy_rank") == 1
     rows = result.to_dataframe().query("regime_name == 'alive' and period == 0")
     assert len(rows) == 2
     assert np.isfinite(rows["value"]).all()

@@ -59,8 +59,11 @@ def test_finite_bank_keeps_the_full_outer_extent_without_allocating(
             )
         return result
 
-    # keyword-only-exempt: library-callback=_ChunkProfiler.__call__
-    def inspect_profile(self: admission._ChunkProfiler, *, n_subjects: int) -> object:
+    # keyword-only-exempt: library-callback=_ChunkProfiler.profile_widths
+    def inspect_profile(
+        self: admission._ChunkProfiler, *, n_subjects: int, widths: Any
+    ) -> object:
+        del widths
         assert n_subjects == 7
         with monkeypatch.context() as guard:
             guard.setattr(jax, "device_put", _forbid_concrete)
@@ -90,7 +93,7 @@ def test_finite_bank_keeps_the_full_outer_extent_without_allocating(
         raise _ProfileObservedError
 
     monkeypatch.setattr(ChunkProfileInventory, "compiled", observe_bank)
-    monkeypatch.setattr(admission._ChunkProfiler, "__call__", inspect_profile)
+    monkeypatch.setattr(admission._ChunkProfiler, "profile_widths", inspect_profile)
     with pytest.raises(_ProfileObservedError):
         model.simulate(
             params=params,
@@ -129,7 +132,7 @@ def test_public_finite_bank_floor_refuses_before_any_chunk_allocation(
 
     monkeypatch.setattr(admission, "profile_simulation_chunk", observe_profile)
     monkeypatch.setattr(simulation, "_simulate_subject_chunk", _forbid_concrete)
-    with pytest.raises(ExecutionPlanningError, match="No declared simulation chunk"):
+    with pytest.raises(ExecutionPlanningError, match="no anchor map fits"):
         model.simulate(
             params=params,
             solution=solution,
@@ -201,7 +204,7 @@ def test_finite_diagnostic_counts_the_live_bank_and_admits_before_dispatch(
             log_level="warning",
             seed=17,
         )
-        assert observed == [True, True]
+        assert observed == [True]
         assert result.n_subjects == 2
         jax.block_until_ready(result.period_to_regime_to_V_arr)
         gc.collect()

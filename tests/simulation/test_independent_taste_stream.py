@@ -175,7 +175,7 @@ def test_budgeted_padded_chunks_preserve_independent_taste_keys_and_choices(
                 log_level="off",
             )
             frames.append(result.to_dataframe(use_labels=False))
-    assert len(captured) == 4
+    assert len(captured) == 2
     np.testing.assert_array_equal(captured[0], np.concatenate(captured[1:])[:7])
     # This control owns exact RNG, state and selected-action semantics. Value
     # arithmetic remains covered by the separate width-comparison contracts.

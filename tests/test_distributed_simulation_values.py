@@ -362,7 +362,7 @@ def test_fixed_inner_subject_width_survives_outer_device_alignment(
     devices: tuple[int, ...],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """W=3 stays three while the outer chunk aligns to four on either mesh."""
+    """W=3 stays three while an unlimited budget admits one whole-population cohort."""
     from typing import Any
 
     import numpy as np
@@ -406,13 +406,13 @@ def test_fixed_inner_subject_width_survives_outer_device_alignment(
             seed=0,
             log_level="off",
         )
-    assert chunks == [4, 4]
+    assert chunks == [8]
     assert widths
     assert set(widths) == {3}
     assert actual.n_subjects == 7
+    all_devices = {jax.devices()[index] for index in devices}
     assert all(
-        array.devices() == {jax.devices()[devices[0]]}
-        for array in jax.tree.leaves(actual.raw_results)
+        array.devices() == all_devices for array in jax.tree.leaves(actual.raw_results)
     )
     _, expected, _ = _simulate(n_types=4, devices=(0,), sharded=False)
     got, want = (

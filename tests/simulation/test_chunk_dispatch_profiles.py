@@ -212,7 +212,7 @@ def test_profiled_public_chunks_need_no_additional_core_compilation(
         log_level="debug",
     )
     assert result.n_subjects == 5
-    assert len(before) == 3
+    assert len(before) == 1
     assert all(count == len(runtime.cache) for runtime, count in before)
 
 

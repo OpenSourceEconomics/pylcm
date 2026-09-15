@@ -362,9 +362,7 @@ def test_native_source_budget_includes_retained_bank_and_future_copy_scratch(
     monkeypatch.setattr(model_module, "prepare_simulation_chunks", prepare)
     monkeypatch.setattr(chunk_admission, "_required_bytes", required)
     monkeypatch.setattr(model_module, "simulate", _forbid_source_overflow_dispatch)
-    with pytest.raises(
-        ExecutionPlanningError, match="No declared simulation chunk fits"
-    ):
+    with pytest.raises(ExecutionPlanningError, match="no anchor map fits"):
         model.simulate(
             params=params, initial_conditions=initial, solution=loaded, log_level="off"
         )
