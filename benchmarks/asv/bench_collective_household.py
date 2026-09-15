@@ -136,7 +136,11 @@ class CollectiveHouseholdSimulate:
 
     version = "1"
     timeout = 900
-    params = [1_000, 10_000, 100_000]
+    # 10,000 (the intermediate point) added little coverage over the two
+    # endpoints in the PR#440 benchmark review's measured run (warm
+    # simulation ~337/355/354 ms at 1,000/10,000/100,000) and cost 3m24s;
+    # dropped rather than kept as a third routine point.
+    params = [1_000, 100_000]
     param_names = ["n_subjects"]
 
     def _build(self, n_subjects):
@@ -206,7 +210,13 @@ class ReferenceChainSolve:
 
     version = "1"
     timeout = 900
-    params = [1, 2, 4, 8]
+    # Depths 2 and 4 (the intermediate points) had warm-solve ratios of
+    # 1.20/1.21 against the depth-1 baseline in the PR#440 benchmark
+    # review's measured run -- almost indistinguishable from depth-8's
+    # 1.21 -- and cost 2m29s; dropped rather than kept as routine points.
+    # Depth 1 (short chain) and depth 8 (genuinely transitive long chain)
+    # remain.
+    params = [1, 8]
     param_names = ["depth"]
 
     def _build(self, depth):
