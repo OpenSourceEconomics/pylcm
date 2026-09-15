@@ -45,6 +45,7 @@ import time
 from . import _gpu_mem
 
 _N_SUBJECTS = 1000
+_SIMULATION_SEED = 0
 
 _LOG_DIR_PREFIX = "aca-bench-debug-log-"
 
@@ -139,9 +140,8 @@ def _build() -> tuple[object, object, object]:
 class AcaBaseline:
     """aca-baseline simulate with runtime validation and logging off."""
 
-    # Stable version stamp so asv keeps continuity across benchmark-body
-    # refactors that don't change what's measured.
-    version = "1"
+    # Benchmark semantics version for deterministic forward simulation.
+    version = "2"
     timeout = 14400
     # Simulate logging configuration; `AcaBaselineDebugLog` overrides both.
     log_level = "off"
@@ -162,6 +162,7 @@ class AcaBaseline:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            seed=_SIMULATION_SEED,
             log_level=self.log_level,
             log_path=self.log_path,
         )
@@ -194,6 +195,7 @@ class AcaBaseline:
             self.model.simulate(
                 params=self.model_params,
                 initial_conditions=self.initial_conditions,
+                seed=_SIMULATION_SEED,
                 solution=solution,
                 log_level=self.log_level,
                 log_path=self.log_path,
