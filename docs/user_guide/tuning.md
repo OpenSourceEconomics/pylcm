@@ -192,19 +192,29 @@ set `simulation_chunk_policy="independent"` together with a positive
 `device_memory_bytes` budget and an explicit `axis_widths["subject"]`. Both are
 required; unsupported budgeted replay routes still refuse execution.
 
-Independent mode considers two outer sizes: the device-aligned inner width and twice
-that width, each clamped to the population before alignment. It first tries full
-unpinned inner axes, then their conservative bootstrap widths if necessary. After one
-complete inner-width map fits, that map stays fixed while the larger outer size is
-profiled. The search uses at most three complete profiles and keeps the admitted smaller
-profile if the larger one does not fit. A refused search means this bounded frontier has
-no fitting candidate; other unsearched configurations may fit.
+Independent mode builds a geometric outer-size frontier from the inner subject width:
+one, two, four, eight, and further powers of two times that width, ending with a
+candidate that covers the population. Each size is clamped to the population before
+rounding up to the subject-device count; duplicate aligned sizes are suppressed. It
+first tries full unpinned inner axes at the smallest outer size, then their conservative
+bootstrap widths if necessary. Once a complete inner-width map fits, that entire map
+stays fixed for all larger candidates. The search walks the frontier in order, stops at
+the first refusal, and retains the last admitted profile. If neither anchor map fits, it
+refuses execution. This tests an ordered prefix, not every feasible size: an untested
+larger configuration may still fit, and the selected size is not a measured speed
+optimum.
 
-For example, an inner subject width of 2,048 on three subject devices offers outer sizes
-2,049 and 4,098 for a sufficiently large population. The larger choice uses more padding
-and storage and is selected only after admission. It is not a measured maximum capacity
-or a promise of faster simulation. Different outer shapes still need distinct compiled
-specializations; fixing the inner width does not make those shapes identical.
+With K distinct outer sizes, the search uses at most K + 1 complete profiles. The extra
+profile is needed only when the full anchor map is rejected and a distinct bootstrap map
+is tried. Each profile covers the complete simulation; fixing inner widths does not
+remove shape-specific compilation or repeated profiling work.
+
+For example, 226,848 subjects with an inner width of 2,048 on three devices offer outer
+sizes 2,049, 4,098, 8,193, 16,386, 32,769, 65,538, 131,073, and 226,848. If all sizes
+are admitted, the final choice processes the population in one outer cohort. The search
+can require eight profiles, or nine with the bootstrap retry. Every size is checked
+against its own retained storage, padding, and compiler requirements. Measure planning,
+cold and warm runtime, and memory before treating fewer cohort traversals as a speedup.
 
 With a device-memory budget and no fixed subject width, simulation selects the widest
 outer candidate whose complete retained storage and compiled stages fit. It tries the

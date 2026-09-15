@@ -111,7 +111,7 @@ def test_independent_freezes_full_map_and_reuses_anchor(
     ] * (3 if larger_fits else 2)
     receipt = selected.receipt
     assert receipt is not None
-    assert receipt.profile_count == 3 if larger_fits else 2
+    assert receipt.profile_count == (3 if larger_fits else 2)
     assert receipt.anchor_map_reason == "bootstrap skipped after full anchor admitted"
     assert [attempt.admitted for attempt in receipt.attempts] == (
         [True, True, True] if larger_fits else [True, False]
