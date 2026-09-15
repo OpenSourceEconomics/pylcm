@@ -37,30 +37,14 @@ _MARKER = "<!-- benchmark-check -->"
 _RESULTS_DIR = Path(".asv/results")
 
 _CLASS_DISPLAY = {
-    "AcaBaseline": (
-        "ACA reduced benchmark "
-        "(tiny continuous grids, 2 preference types, 1,000 subjects)"
-    ),
-    "AcaBaselineGpuPeakMem": (
-        "ACA reduced benchmark "
-        "(tiny continuous grids, 2 preference types, 1,000 subjects)"
-    ),
-    "AcaBaselineDebugLog": (
-        "ACA reduced benchmark, debug logging "
-        "(tiny continuous grids, 2 preference types, 1,000 subjects)"
-    ),
-    "AcaBaselineDebugLogGpuPeakMem": (
-        "ACA reduced benchmark, debug logging "
-        "(tiny continuous grids, 2 preference types, 1,000 subjects)"
-    ),
+    "AcaBaseline": "ACA (reduced)",
+    "AcaBaselineGpuPeakMem": "ACA (reduced)",
+    "AcaBaselineDebugLog": "ACA (reduced, debug logging)",
+    "AcaBaselineDebugLogGpuPeakMem": "ACA (reduced, debug logging)",
     "MahlerYum": "Mahler-Yum",
     "MahlerYumGpuPeakMem": "Mahler-Yum",
-    "MahlerYumBudgetedGpu": (
-        "Mahler-Yum GPU fp64 configured series (capacity-half-a64-c4096-v1)"
-    ),
-    "MahlerYumBudgetedGpuPeakMem": (
-        "Mahler-Yum GPU fp64 configured series, memory (capacity-half-a64-c4096-v1)"
-    ),
+    "MahlerYumBudgetedGpu": "Mahler-Yum",
+    "MahlerYumBudgetedGpuPeakMem": "Mahler-Yum",
     "PrecautionarySavingsSolve": "Precautionary Savings - Solve",
     "PrecautionarySavingsSolveGpuPeakMem": "Precautionary Savings - Solve",
     "PrecautionarySavingsSimulate": "Precautionary Savings - Simulate",

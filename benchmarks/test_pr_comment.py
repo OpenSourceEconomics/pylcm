@@ -381,8 +381,8 @@ def test_benchmark_report_labels_are_specific_to_verified_workloads(
 
     table = pr_comment._build_grouped_table(rows)
 
-    assert "ACA reduced benchmark" in table
-    assert "tiny continuous grids, 2 preference types, 1,000 subjects" in table
+    assert "| ACA (reduced) |" in table
+    assert "tiny continuous grids" not in table
     assert table.count("cold solve + simulate (first run, includes compilation)") == 2
     assert table.count("warm solve + simulate (reuses compiled code)") == 2
     assert table.count("execution time") == 2
@@ -483,11 +483,8 @@ def test_mahler_policy_identities_do_not_compare_to_legacy_default(tmp_path: Pat
     assert timing.ratio == 1.25
     assert memory.ratio is None
     table = pr_comment._build_grouped_table(rows)
-    assert "Mahler-Yum GPU fp64 configured series (capacity-half-a64-c4096-v1)" in table
-    assert (
-        "Mahler-Yum GPU fp64 configured series, memory "
-        "(capacity-half-a64-c4096-v1)" in table
-    )
+    assert table.count("| Mahler-Yum |") == 1
+    assert "capacity-half" not in table
 
 
 def test_mahler_configured_identity_has_no_ratio_against_legacy_default(
