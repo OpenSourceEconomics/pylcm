@@ -190,15 +190,15 @@
           },
           {
             "path": "src/_lcm/simulation/chunk_planning.py",
-            "sha256": "41bd11e34e591515826b40bd3a508e91074950ba4a610fc14c2f9823dda79a33"
+            "sha256": "7b8ff3abda0b6f57bc6bf3901287bb8cbc6fe6ba741cdbec902d45fb4fabb047"
           },
           {
             "path": "src/_lcm/simulation/chunk_profile_inventory.py",
-            "sha256": "b167c937969c9799c847f59c9936f8bc82c38270224d688f57d2d05a2e2f99ac"
+            "sha256": "62bd003bb0e1d3e1331d94fe31efbc2bc7af150a212e1e2e15051f60b01b6514"
           },
           {
             "path": "src/_lcm/simulation/chunk_profiles.py",
-            "sha256": "ea683210e54017ae499420adc8e81e239161d5694cfb21df97b101f51bda2724"
+            "sha256": "27aa9459cfcec1fd3c7f96f5d3d650bc7a625a47a729a7209b060665e2428dcb"
           },
           {
             "path": "src/_lcm/simulation/compile.py",
@@ -218,7 +218,7 @@
           },
           {
             "path": "src/_lcm/simulation/forward_program_profiles.py",
-            "sha256": "c3faab2c46731f2e0a3b4f47e442f431e1ba3d728b15f4d9a749e7a711d41ada"
+            "sha256": "ff6083bc56984ae34d0d4c7ac993a71e3302ed6d27f371541d019ebe273849a7"
           },
           {
             "path": "src/_lcm/simulation/gated_routing.py",
@@ -298,7 +298,7 @@
           },
           {
             "path": "src/_lcm/simulation/runtime.py",
-            "sha256": "acf565881feca934ff0490f385895922379c71587c25a979db1764b497f41922"
+            "sha256": "bac3645a16c8efa7e180d86f707872617448f55406e8f3307cb0fed698ee6861"
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "77a8d03fab17a3067dd56f68cc8398609d28e0a3fbaf9c2fdbacf56e7abc1dc9"
+        "source_inventory_sha256": "f5ede8546710e65d2598f5b713f1db39ad25db5795a6c6a3ee0ac76e9a55f6ac"
       },
       "fast": {
         "candidate_sources": [
@@ -660,15 +660,15 @@
           },
           {
             "path": "src/_lcm/simulation/chunk_planning.py",
-            "sha256": "41bd11e34e591515826b40bd3a508e91074950ba4a610fc14c2f9823dda79a33"
+            "sha256": "7b8ff3abda0b6f57bc6bf3901287bb8cbc6fe6ba741cdbec902d45fb4fabb047"
           },
           {
             "path": "src/_lcm/simulation/chunk_profile_inventory.py",
-            "sha256": "b167c937969c9799c847f59c9936f8bc82c38270224d688f57d2d05a2e2f99ac"
+            "sha256": "62bd003bb0e1d3e1331d94fe31efbc2bc7af150a212e1e2e15051f60b01b6514"
           },
           {
             "path": "src/_lcm/simulation/chunk_profiles.py",
-            "sha256": "ea683210e54017ae499420adc8e81e239161d5694cfb21df97b101f51bda2724"
+            "sha256": "27aa9459cfcec1fd3c7f96f5d3d650bc7a625a47a729a7209b060665e2428dcb"
           },
           {
             "path": "src/_lcm/simulation/compile.py",
@@ -688,7 +688,7 @@
           },
           {
             "path": "src/_lcm/simulation/forward_program_profiles.py",
-            "sha256": "c3faab2c46731f2e0a3b4f47e442f431e1ba3d728b15f4d9a749e7a711d41ada"
+            "sha256": "ff6083bc56984ae34d0d4c7ac993a71e3302ed6d27f371541d019ebe273849a7"
           },
           {
             "path": "src/_lcm/simulation/gated_routing.py",
@@ -768,7 +768,7 @@
           },
           {
             "path": "src/_lcm/simulation/runtime.py",
-            "sha256": "acf565881feca934ff0490f385895922379c71587c25a979db1764b497f41922"
+            "sha256": "bac3645a16c8efa7e180d86f707872617448f55406e8f3307cb0fed698ee6861"
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "77a8d03fab17a3067dd56f68cc8398609d28e0a3fbaf9c2fdbacf56e7abc1dc9"
+        "source_inventory_sha256": "f5ede8546710e65d2598f5b713f1db39ad25db5795a6c6a3ee0ac76e9a55f6ac"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "77a8d03fab17a3067dd56f68cc8398609d28e0a3fbaf9c2fdbacf56e7abc1dc9",
+  "source_inventory_sha256": "f5ede8546710e65d2598f5b713f1db39ad25db5795a6c6a3ee0ac76e9a55f6ac",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1134,15 +1134,15 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_planning.py",
-      "sha256": "41bd11e34e591515826b40bd3a508e91074950ba4a610fc14c2f9823dda79a33"
+      "sha256": "7b8ff3abda0b6f57bc6bf3901287bb8cbc6fe6ba741cdbec902d45fb4fabb047"
     },
     {
       "path": "src/_lcm/simulation/chunk_profile_inventory.py",
-      "sha256": "b167c937969c9799c847f59c9936f8bc82c38270224d688f57d2d05a2e2f99ac"
+      "sha256": "62bd003bb0e1d3e1331d94fe31efbc2bc7af150a212e1e2e15051f60b01b6514"
     },
     {
       "path": "src/_lcm/simulation/chunk_profiles.py",
-      "sha256": "ea683210e54017ae499420adc8e81e239161d5694cfb21df97b101f51bda2724"
+      "sha256": "27aa9459cfcec1fd3c7f96f5d3d650bc7a625a47a729a7209b060665e2428dcb"
     },
     {
       "path": "src/_lcm/simulation/compile.py",
@@ -1162,7 +1162,7 @@
     },
     {
       "path": "src/_lcm/simulation/forward_program_profiles.py",
-      "sha256": "c3faab2c46731f2e0a3b4f47e442f431e1ba3d728b15f4d9a749e7a711d41ada"
+      "sha256": "ff6083bc56984ae34d0d4c7ac993a71e3302ed6d27f371541d019ebe273849a7"
     },
     {
       "path": "src/_lcm/simulation/gated_routing.py",
@@ -1242,7 +1242,7 @@
     },
     {
       "path": "src/_lcm/simulation/runtime.py",
-      "sha256": "acf565881feca934ff0490f385895922379c71587c25a979db1764b497f41922"
+      "sha256": "bac3645a16c8efa7e180d86f707872617448f55406e8f3307cb0fed698ee6861"
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
