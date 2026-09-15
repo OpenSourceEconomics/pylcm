@@ -168,6 +168,7 @@ def test_chunk_assembly_cannot_exempt_an_excluded_cpu_from_a_cpu_budget() -> Non
 def test_chunk_stage_devices_must_match_actual_executable_placement() -> None:
     import numpy as np
 
+    from _lcm.execution.workspace_planning import compiler_memory_reservation
     from _lcm.simulation.chunk_planning import SimulationStageProfile
     from lcm.exceptions import ExecutionPlanningError
 
@@ -177,12 +178,16 @@ def test_chunk_stage_devices_must_match_actual_executable_placement() -> None:
     placement = jax.sharding.SingleDeviceSharding(jax.devices()[3])
     abstract = jax.ShapeDtypeStruct((4,), np.dtype(np.int32), sharding=placement)
     compiled = jax.jit(actual_body).lower(values=abstract).compile()
+    memory = compiler_memory_reservation(compiled=compiled, widths={})
     with pytest.raises(ExecutionPlanningError, match="compiled placement"):
         SimulationStageProfile(
-            name="actual", executable=compiled, devices=(jax.devices()[1],)
+            name="actual",
+            executable=compiled,
+            devices=(jax.devices()[1],),
+            memory=memory,
         )
     valid = SimulationStageProfile(
-        name="actual", executable=compiled, devices=(jax.devices()[3],)
+        name="actual", executable=compiled, devices=(jax.devices()[3],), memory=memory
     )
     assert valid.peak_bytes > 0
 

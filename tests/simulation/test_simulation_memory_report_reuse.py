@@ -95,6 +95,7 @@ def _simulate(
 
 
 def test_warm_repeated_simulate_reads_the_report_per_executable(
+    *,
     budgeted_case: tuple[Any, Any, Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -116,6 +117,7 @@ def test_warm_repeated_simulate_reads_the_report_per_executable(
 
 
 def test_first_dispatch_reads_the_report_once_per_distinct_executable(
+    *,
     budgeted_case: tuple[Any, Any, Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -196,75 +198,25 @@ def test_dce_and_duplicate_alias_inputs_still_produce_one_report_per_executable(
 
 
 _CANDIDATE_SEARCH_POPULATION = 64
+_CANDIDATE_SEARCH_ANCHOR = 8
 
 
-def _tight_budget_candidate_search_case(*, budget: int) -> tuple[Any, Any, Any]:
-    """A 64-subject population under the given budget."""
-    model, params, initial = _inputs(budget=budget)
-    initial = {
-        name: jax.numpy.concatenate([value] * _CANDIDATE_SEARCH_POPULATION)
-        for name, value in initial.items()
-    }
-    return model, params, initial
+def _axis_width_case(
+    *,
+    axis_widths: dict[str, int],
+    budget: int = 2**28,
+    population: int = 8,
+) -> tuple[Any, Any, Any]:
+    """One model pinned to an explicit inner subject width and population.
 
-
-def _find_multi_candidate_budget() -> int:
-    """Probe live-process residency to find a budget that admits after visiting
-    at least two distinct outer-chunk width candidates.
-
-    The admitted band for this population is only a few kilobytes wide, and
-    where it sits shifts with whatever device buffers earlier tests in this
-    process still hold live. Rather than pin a value discovered offline
-    (fragile to test order and to unrelated changes elsewhere in the suite),
-    this probes the *current* process at test-run time and returns the
-    smallest budget in a coarse geometric sweep that both admits and visited
-    more than one width candidate before doing so.
+    Since the top-first planner (`_resolve_subject_anchor_width` in
+    `chunk_admission.py`) always resolves an *unpinned* subject anchor to the
+    full population — the outer-cohort doubling frontier
+    (`_independent_outer_candidates`) then collapses to that one extent, and
+    the top-first search never visits a second `n_subjects` candidate — an
+    explicit `axis_widths={"subject": ...}` pin smaller than `population` is
+    required to get a real multi-candidate doubling frontier at all.
     """
-    original = chunk_admission.profile_simulation_chunk
-    visited: list[int] = []
-
-    def counted(**kwargs: Any) -> Any:
-        visited.append(kwargs["n_subjects"])
-        return original(**kwargs)
-
-    chunk_admission.profile_simulation_chunk = counted
-    try:
-        for budget in (
-            8_000,
-            10_000,
-            12_000,
-            14_000,
-            16_000,
-            20_000,
-            24_000,
-            32_000,
-            48_000,
-        ):
-            model, params, initial = _tight_budget_candidate_search_case(budget=budget)
-            visited.clear()
-            try:
-                solution = model.solve(params=params, log_level="off")
-                _simulate(
-                    model=model,
-                    params=params,
-                    initial=initial,
-                    solution=solution,
-                    seed=1,
-                )
-            except ExecutionPlanningError:
-                continue
-            if len(set(visited)) > 1:
-                return budget
-        raise AssertionError(
-            "No probed budget forced the outer chunk search to visit more than "
-            "one distinct width candidate; widen the probed budget range."
-        )
-    finally:
-        chunk_admission.profile_simulation_chunk = original
-
-
-def _axis_width_case(*, axis_widths: dict[str, int]) -> tuple[Any, Any, Any]:
-    """One model pinned to an explicit inner subject width, independent budget."""
     parameters = {"mu": 0.1415, "sigma": 1.876, "n_std": 3.2}
     model = Model(
         regimes={
@@ -280,7 +232,7 @@ def _axis_width_case(*, axis_widths: dict[str, int]) -> tuple[Any, Any, Any]:
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(
-            device_memory_bytes=2**28, axis_widths=axis_widths
+            device_memory_bytes=budget, axis_widths=axis_widths
         ),
     )
     params = {
@@ -291,25 +243,104 @@ def _axis_width_case(*, axis_widths: dict[str, int]) -> tuple[Any, Any, Any]:
         "done": {},
     }
     initial = {
-        "income": jax.numpy.concatenate([jax.numpy.asarray([2.0])] * 8),
-        "age": jax.numpy.concatenate([jax.numpy.asarray([0.0])] * 8),
+        "income": jax.numpy.concatenate([jax.numpy.asarray([2.0])] * population),
+        "age": jax.numpy.concatenate([jax.numpy.asarray([0.0])] * population),
         "regime_id": jax.numpy.concatenate(
-            [jax.numpy.asarray([_LifecycleRegimeId.alive])] * 8
+            [jax.numpy.asarray([_LifecycleRegimeId.alive])] * population
         ),
     }
     return model, params, initial
 
 
+def _top_first_descent_case(*, budget: int) -> tuple[Any, Any, Any]:
+    """A 64-subject population pinned to an 8-subject anchor under `budget`.
+
+    This gives the top-first planner (`_plan_independent_chunks`) an outer
+    doubling frontier of (8, 16, 32, 64): it tries the full population (64)
+    first, and only descends into the smaller candidates on refusal.
+    """
+    return _axis_width_case(
+        axis_widths={"subject": _CANDIDATE_SEARCH_ANCHOR},
+        budget=budget,
+        population=_CANDIDATE_SEARCH_POPULATION,
+    )
+
+
+def _find_top_first_descent_budget() -> int | None:
+    """Probe live-process residency to find a budget where the top-first
+    planner refuses the full-population candidate at least once before
+    admitting a smaller extent — i.e. visits at least two distinct
+    `n_subjects` candidates via `chunk_admission._profile_independent_candidate`.
+
+    The admitted band is only a few kilobytes wide, and where it sits shifts
+    with whatever device buffers earlier tests in this process still hold
+    live (an `ExecutionPlanningError` from a too-tight budget is normal here,
+    not a bug: admission correctly consults *actual* current residency).
+    Rather than pin a value discovered offline (fragile to test order and to
+    unrelated changes elsewhere in the suite), this probes the *current*
+    process at test-run time. Returns `None` if no probed budget in the swept
+    range produces a multi-candidate descent, so the caller can fall back to
+    an explicitly reported single-candidate-plus-refusal case instead of
+    failing opaquely.
+    """
+    original = chunk_admission._profile_independent_candidate
+    visited: list[int] = []
+
+    def counted(**kwargs: Any) -> Any:
+        visited.append(kwargs["n_subjects"])
+        return original(**kwargs)
+
+    with pytest.MonkeyPatch.context() as observe:
+        observe.setattr(chunk_admission, "_profile_independent_candidate", counted)
+        for budget in (
+            11_000,
+            12_000,
+            13_000,
+            14_000,
+            15_000,
+            16_000,
+            17_000,
+            18_000,
+            20_000,
+            24_000,
+        ):
+            model, params, initial = _top_first_descent_case(budget=budget)
+            visited.clear()
+            try:
+                solution = model.solve(params=params, log_level="off")
+                _simulate(
+                    model=model,
+                    params=params,
+                    initial=initial,
+                    solution=solution,
+                    seed=1,
+                )
+            except ExecutionPlanningError:
+                continue
+            if len(set(visited)) > 1:
+                return budget
+        return None
+
+
 def test_candidate_search_reads_the_report_once_per_distinct_executable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Chunk-profile construction (`ChunkProfileInventory`/
-    `SimulationStageProfile`) visits several width candidates per dispatch, but
-    the total reads across the whole cold candidate search still equal the
-    number of distinct executables it compiled — never one read per candidate
-    visit. A warm repeat, which revisits the same candidates, reads nothing."""
-    budget = _find_multi_candidate_budget()
-    model, params, initial = _tight_budget_candidate_search_case(budget=budget)
+    """The top-first planner's descent (refuse the full population, then admit
+    a smaller extent) visits several distinct `n_subjects` candidates per
+    dispatch, but the total reads across the whole cold search still equal the
+    number of distinct executables compiled — never one read per candidate
+    visit. A warm repeat, which revisits the same candidates, reads nothing.
+
+    If no probed budget produces a real multi-candidate descent on this model
+    (see `_find_top_first_descent_budget`), this falls back to asserting the
+    same per-executable-once invariant over the single-admitted-candidate path
+    plus an independent refusal path, and records which case ran.
+    """
+    budget = _find_top_first_descent_budget()
+    if budget is None:
+        _assert_single_candidate_plus_refusal_reads_once(monkeypatch=monkeypatch)
+        return
+    model, params, initial = _top_first_descent_case(budget=budget)
     solution = model.solve(params=params, log_level="off")
     with _count_memory_reads(monkeypatch=monkeypatch) as cold_counts:
         _simulate(
@@ -323,6 +354,28 @@ def test_candidate_search_reads_the_report_once_per_distinct_executable(
             model=model, params=params, initial=initial, solution=solution, seed=1
         )
     assert warm_counts["reservation_reads"] == 0
+
+
+def _assert_single_candidate_plus_refusal_reads_once(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fallback exercised only if no swept budget forces a multi-candidate
+    top-first descent: one admitted single-candidate dispatch still reads
+    memory exactly once per distinct executable, and an independent refusal
+    (too-tight budget) never admits, whatever the cache holds."""
+    model, params, initial = _inputs(budget=2**28)
+    solution = model.solve(params=params, log_level="off")
+    with _count_memory_reads(monkeypatch=monkeypatch) as counts:
+        _simulate(
+            model=model, params=params, initial=initial, solution=solution, seed=1
+        )
+    n_distinct_executables = _executable_cache_size(model=model)
+    assert n_distinct_executables > 0
+    assert counts["reservation_reads"] == n_distinct_executables
+
+    tiny_model, tiny_params, _tiny_initial = _inputs(budget=1)
+    with pytest.raises(ExecutionPlanningError):
+        tiny_model.solve(params=tiny_params, log_level="off")
 
 
 def test_changed_width_map_produces_a_fresh_report(

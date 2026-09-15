@@ -80,8 +80,12 @@ def test_constant_program_uses_selected_devices_after_all_inputs_are_dropped(
         widths=MappingProxyType({}),
     )
     assert isinstance(compiled.executable, jax.stages.Compiled)
+    assert compiled.memory is not None
     SimulationStageProfile(
-        name="constant_outputs", executable=compiled.executable, devices=devices
+        name="constant_outputs",
+        executable=compiled.executable,
+        devices=devices,
+        memory=compiled.memory,
     )
     assert compiled.executable.input_shardings[1]["dead"] is None
     source = jax.device_put(np.arange(12, dtype=np.int32), layout)
