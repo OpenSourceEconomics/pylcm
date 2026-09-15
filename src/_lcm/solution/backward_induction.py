@@ -185,7 +185,14 @@ from lcm.solver_api import (
     ArtifactStore,
     KernelOutput,
 )
-from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarFloat,
+    ScalarInt,
+)
 
 # Stands in for a period's flag mapping when the model retains no dissolution
 # flags, so every period key is present with nothing behind it. One shared
@@ -1612,7 +1619,7 @@ def _evaluate_edge_fold(
     *,
     fold: CompiledEdgeFold,
     fold_period: int,
-    fold_age: float | None,
+    fold_age: object,
     target_states: Mapping[str, ContinuousState | DiscreteState],
     same_period_mapping: Mapping[RegimeName, FloatND],
     source_flat_params: Mapping[str, object],
@@ -1657,7 +1664,7 @@ def _evaluate_edge_fold(
         bind_edge_period_context(
             func=surfaces,
             fold_period=fold_period,
-            fold_age=fold_age,
+            fold_age=cast("float | ScalarFloat | ScalarInt | None", fold_age),
         )
     )
     kwargs[SAME_PERIOD_V_ARG] = same_period_mapping

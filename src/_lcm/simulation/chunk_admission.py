@@ -32,6 +32,7 @@ from _lcm.simulation.chunk_planning import (
 )
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
 from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.programs import gated_simulation_programs_ready
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -115,6 +116,7 @@ def prepare_simulation_chunks(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     values: Mapping[int, Mapping[str, jax.Array]],
+    flags: Mapping[int, Mapping[str, jax.Array]],
     ages: AgeGrid,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -135,10 +137,12 @@ def prepare_simulation_chunks(
             "Chunk admission requires a budgeted simulation runtime."
         )
     if not runtime.enable_jit or any(
-        regime.gated_edges
-        or (
-            regime.simulation.replay_route.policy_applicable
-            and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+        (
+            (regime.gated_edges and not gated_simulation_programs_ready(regime=regime))
+            or (
+                regime.simulation.replay_route.policy_applicable
+                and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+            )
         )
         or regime.simulation.external_replay_route is not None
         for regime in regimes.values()
@@ -151,7 +155,7 @@ def prepare_simulation_chunks(
         footprints=(
             retained_footprint,
             measure_buffer_footprint(
-                tree=(flat_params, initial_conditions, values, ages.values)
+                tree=(flat_params, initial_conditions, values, flags, ages.values)
             ),
         )
     )
@@ -193,6 +197,7 @@ def prepare_simulation_chunks(
         regimes=regimes,
         call_inputs=call_inputs,
         values=values,
+        flags=flags,
         policies=policies,
         ages=ages,
         initial_conditions=initial_conditions,
@@ -247,6 +252,7 @@ class _ChunkProfiler:
     regimes: Mapping[str, Regime]
     call_inputs: SimulationCallInputs
     values: Mapping[int, Mapping[str, jax.Array]]
+    flags: Mapping[int, Mapping[str, jax.Array]]
     ages: AgeGrid
     initial_conditions: Mapping[str, jax.Array]
     regime_names_to_ids: RegimeNamesToIds
@@ -298,6 +304,7 @@ class _ChunkProfiler:
             flat_params=self.call_inputs.flat_params,
             base_spaces=self.call_inputs.base_state_action_spaces,
             values=self.values,
+            flags=self.flags,
             policies=self.policies,
             ages=self.ages,
             initial_conditions=self.initial_conditions,
@@ -485,6 +492,8 @@ def _common_axes(
             programs.decision,
             programs.transition,
             programs.route,
+            programs.gate_fold,
+            programs.gate_route,
         ):
             for program in family.values():
                 for declared in program.requirements.axes:

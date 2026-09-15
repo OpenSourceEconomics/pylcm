@@ -31,6 +31,7 @@ import jax
 import jax.numpy as jnp
 from dags import with_signature
 
+from _lcm.engine import Regime
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -39,10 +40,21 @@ from _lcm.execution.core_program import (
     ReducedAxis,
     ValueRead,
 )
+from _lcm.simulation.gated_routing import (
+    simulation_gate_fold,
+    simulation_gate_route_delta,
+)
 from _lcm.simulation.program_types import (
     ACTION_INDEX,
     DECISION_PROGRAM,
     DECISION_VALUE,
+    GATE_FOLD_PROGRAM,
+    GATE_ROUTE_PROGRAM,
+    GATED_CONTINUATION,
+    GATED_NEXT_STATE,
+    GATED_REGIME_ID,
+    GATED_ROLE,
+    GATED_ROUTE_MASK,
     ROUTE_PROGRAM,
     SUBJECT_AXIS,
     SUBJECT_WIDTH_KEYWORD,
@@ -67,15 +79,14 @@ from _lcm.typing import (
     ActionName,
     QAndFFunction,
     RegimeName,
+    RegimeNamesToIds,
     StateOrActionName,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, IntND
 
+
 # Why a regime whose routing the host drives cedes its own width.
-_GATED_ROUTE_REASON = "host_driven:gated_edge_adapters"
-
-
 def build_simulation_programs(
     *,
     context: SolverBuildContext,
@@ -113,6 +124,7 @@ def build_simulation_programs(
         The regime's declared programs.
 
     """
+    del has_gated_edges
     streams_actions = _supports_action_streaming(context=context)
     if streams_actions:
         _fail_if_the_streamed_reduction_is_wrong(
@@ -214,19 +226,10 @@ def build_simulation_programs(
                     subject_arg_names=per_subject_route.subject_arg_names,
                 ),
                 requirements=CoreExecutionRequirements(
-                    tiled_axes=(
-                        ()
-                        if has_gated_edges
-                        else (subject_axis(state_names=simulation_state_names),)
-                    ),
+                    tiled_axes=(subject_axis(state_names=simulation_state_names),),
                 ),
                 output_roles=per_subject_route.output_roles,
-                disposition=(
-                    CoreExecutionDisposition.HOST_DRIVEN
-                    if has_gated_edges
-                    else CoreExecutionDisposition.PLANNED
-                ),
-                disposition_reason=_GATED_ROUTE_REASON if has_gated_edges else None,
+                disposition=CoreExecutionDisposition.PLANNED,
                 donation_candidates=(),
             )
 
@@ -235,6 +238,188 @@ def build_simulation_programs(
         transition=MappingProxyType(transition),
         route=MappingProxyType(route),
     )
+
+
+def attach_gated_simulation_programs(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+) -> dict[RegimeName, Regime]:
+    """Attach the two planned gated families after every edge is resolved."""
+    attached = dict(regimes)
+    n_periods = (
+        max(period for regime in regimes.values() for period in regime.active_periods)
+        + 1
+    )
+    for name, regime in regimes.items():
+        if not regime.gated_edges:
+            continue
+        fold = {}
+        route = {}
+        for period in regime.active_periods:
+            if period + 1 >= n_periods:
+                continue
+            folded_targets = tuple(
+                target
+                for target in regime.gated_edges
+                if period + 1 in regimes[target].active_periods
+            )
+            if not folded_targets:
+                continue
+            fold[period] = CoreProgram(
+                name=GATE_FOLD_PROGRAM,
+                function=_GateFoldBody(
+                    regime=regime, name=name, regimes=regimes, period=period
+                ),
+                argument_builder=_ArgumentsBoundAtDispatch(
+                    program_name=GATE_FOLD_PROGRAM
+                ),
+                requirements=CoreExecutionRequirements(),
+                output_roles=MappingProxyType(
+                    dict.fromkeys(folded_targets, GATED_CONTINUATION)
+                ),
+                disposition=CoreExecutionDisposition.PLANNED,
+                donation_candidates=(),
+            )
+            route[period] = CoreProgram(
+                name=GATE_ROUTE_PROGRAM,
+                function=_GateRouteBody(
+                    regime=regime,
+                    regime_names_to_ids=regime_names_to_ids,
+                    fold_period=period + 1,
+                ),
+                argument_builder=_ArgumentsBoundAtDispatch(
+                    program_name=GATE_ROUTE_PROGRAM,
+                    subject_arg_names=(
+                        "next_states",
+                        "new_subject_regime_ids",
+                        "subjects_in_regime",
+                        "own_stakeholder",
+                        "new_own_stakeholder",
+                    ),
+                ),
+                requirements=CoreExecutionRequirements(
+                    tiled_axes=(
+                        subject_axis(state_names=regime.simulation.state_names),
+                    )
+                ),
+                output_roles=(
+                    MappingProxyType(
+                        {
+                            target: MappingProxyType(
+                                {
+                                    "closed": GATED_ROUTE_MASK,
+                                    "projected": MappingProxyType(
+                                        {
+                                            fallback: MappingProxyType(
+                                                dict.fromkeys(
+                                                    regimes[
+                                                        fallback
+                                                    ].simulation.state_names,
+                                                    GATED_NEXT_STATE,
+                                                )
+                                            )
+                                            for fallback in dict.fromkeys(
+                                                leg.realized_fallback.regime
+                                                for leg in regime.gated_edges[
+                                                    target
+                                                ].legs
+                                            )
+                                        }
+                                    ),
+                                }
+                            )
+                            for target in folded_targets
+                        }
+                    ),
+                    GATED_REGIME_ID,
+                    GATED_ROLE,
+                ),
+                disposition=CoreExecutionDisposition.PLANNED,
+                donation_candidates=(),
+            )
+        attached[name] = dataclasses.replace(
+            regime,
+            simulation=dataclasses.replace(
+                regime.simulation,
+                programs=dataclasses.replace(
+                    regime.simulation.programs,
+                    gate_fold=MappingProxyType(fold),
+                    gate_route=MappingProxyType(route),
+                ),
+            ),
+        )
+    return attached
+
+
+def gated_simulation_programs_ready(*, regime: Regime) -> bool:
+    """Return whether every declared gate stage has a planned companion."""
+    if not regime.gated_edges:
+        return True
+    programs = regime.simulation.programs
+    return (
+        bool(programs.gate_fold)
+        and programs.gate_fold.keys() == programs.gate_route.keys()
+        and all(
+            program.disposition is CoreExecutionDisposition.PLANNED
+            for family in (programs.gate_fold, programs.gate_route)
+            for program in family.values()
+        )
+    )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _GateFoldBody:
+    regime: Regime
+    name: RegimeName
+    regimes: Mapping[RegimeName, Regime]
+    period: int
+
+    def __call__(self, **kwargs: Any) -> object:  # noqa: ANN401
+        folded = simulation_gate_fold(
+            regime=self.regime,
+            regime_name=self.name,
+            regimes=self.regimes,
+            period=self.period,
+            next_regime_to_V_arr=kwargs["next_regime_to_V_arr"],
+            base_state_action_spaces=MappingProxyType({}),
+            target_states_by_target=kwargs["target_states_by_target"],
+            edge_values=kwargs["edge_values"],
+            edge_flags=kwargs["edge_flags"],
+            flat_params=kwargs["flat_params"],
+            fold_age=kwargs["fold_age"],
+        )
+        return MappingProxyType(
+            {
+                target: folded[target]
+                for target in self.regime.gated_edges
+                if target in folded
+            }
+        )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _GateRouteBody:
+    regime: Regime
+    regime_names_to_ids: RegimeNamesToIds
+    fold_period: int
+
+    def __call__(self, **kwargs: Any) -> object:  # noqa: ANN401
+        return simulation_gate_route_delta(
+            regime=self.regime,
+            fold_period=self.fold_period,
+            edge_values=kwargs["edge_values"],
+            edge_flags=kwargs["edge_flags"],
+            candidate_states=kwargs["next_states"],
+            regime_names_to_ids=self.regime_names_to_ids,
+            new_subject_regime_ids=kwargs["new_subject_regime_ids"],
+            subjects_in_regime=kwargs["subjects_in_regime"],
+            flat_params=kwargs["flat_params"],
+            own_stakeholder=kwargs["own_stakeholder"],
+            new_own_stakeholder=kwargs["new_own_stakeholder"],
+            fold_age=kwargs["fold_age"],
+            subject_width=kwargs[SUBJECT_WIDTH_KEYWORD],
+        )
 
 
 def _fail_if_the_streamed_reduction_is_wrong(

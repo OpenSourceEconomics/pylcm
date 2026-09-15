@@ -136,7 +136,10 @@ from _lcm.simulation.program_types import (
     route_output_roles,
     transition_output_roles,
 )
-from _lcm.simulation.programs import build_simulation_programs
+from _lcm.simulation.programs import (
+    attach_gated_simulation_programs,
+    build_simulation_programs,
+)
 
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
@@ -760,6 +763,10 @@ def process_regimes(
             grid_schedule=grid_schedule,
             enable_jit=enable_jit,
         )
+
+    canonical_regimes = attach_gated_simulation_programs(
+        regimes=canonical_regimes, regime_names_to_ids=regime_names_to_ids
+    )
 
     _fail_if_a_continuation_demand_is_unmet(
         demands=continuation_demands,

@@ -11,6 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, cast, runtime_checkable
 
+import jax
 import numpy as np
 import pandas as pd
 from beartype import beartype
@@ -337,6 +338,7 @@ def _materialize_artifact_projection(
     key: ArtifactKey,
     authority: SolutionAuthority,
     required_only: bool = False,
+    array_copier: _ArrayCopier | None = None,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, object]]:
     """Materialize one consumed replay projection into an immutable snapshot."""
     projected: dict[int, dict[RegimeName, object]] = {}
@@ -376,6 +378,17 @@ def _materialize_artifact_projection(
                 f"Artifact {ref!r} mismatched_payload: cannot be canonicalized: {error}"
             ) from error
         projected.setdefault(ref.period, {})[ref.regime] = canonical
+        if array_copier is not None:
+            label = f"artifact {ref.period}/{ref.regime}/{ref.key.type_id}"
+
+            projected[ref.period][ref.regime] = jax.tree.map(
+                lambda leaf, label=label: (
+                    array_copier(leaf=leaf, label=label)
+                    if isinstance(leaf, jax.Array)
+                    else leaf
+                ),
+                canonical,
+            )
     return MappingProxyType(
         {
             period: MappingProxyType(regime_to_payload)
@@ -1191,8 +1204,10 @@ class Model:
                 if (
                     regime.simulation.replay_route.policy_applicable
                     or regime.simulation.external_replay_route is not None
-                    or regime.stakeholders is not None
-                    or regime.solution.artifact_authorities
+                    or any(
+                        key != DISSOLUTION_FLAG
+                        for key in regime.solution.artifact_authorities
+                    )
                 ):
                     raise ExecutionPlanningError(
                         f"Budgeted foreign solution for regime {regime_name!r} "
@@ -1216,6 +1231,7 @@ class Model:
             solution=solution,
             authority=authority,
             values=values,
+            array_copier=array_copier,
         )
 
         replay_store = solution.replay_artifacts
@@ -1831,6 +1847,7 @@ class Model:
         solution: _SolutionResultBoundary,
         authority: SolutionAuthority,
         values: PeriodToRegimeToVArr,
+        array_copier: _ArrayCopier | None = None,
     ) -> tuple[
         PeriodToRegimeToSimulationPolicy,
         PeriodToRegimeToDissolutionFlags,
@@ -1846,6 +1863,7 @@ class Model:
             key=DISSOLUTION_FLAG,
             authority=authority,
             required_only=True,
+            array_copier=array_copier,
         )
         self._check_solution_result_replay_policies(
             solution=solution,
@@ -2474,6 +2492,7 @@ class Model:
                 regimes=simulate_regimes,
                 flat_params=flat_params,
                 values=period_to_regime_to_V_arr,
+                flags=period_to_regime_to_dissolution_flags,
                 policies=period_to_regime_to_sim_policy,
                 ages=self.ages,
                 initial_conditions=initial_conditions,

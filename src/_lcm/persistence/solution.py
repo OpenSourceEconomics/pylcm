@@ -401,7 +401,9 @@ class _LazyHdf5Entry(_LazyEntry):
                 )
                 cached = _LoadedEntryPayload(
                     leaves=private_leaves,
-                    template_snapshot=requested_snapshot,
+                    template_snapshot=(
+                        None if self.payload_kind == "array" else requested_snapshot
+                    ),
                 )
                 with self._cache.lock:
                     self._cache.value = cached

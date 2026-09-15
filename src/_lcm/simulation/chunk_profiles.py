@@ -57,8 +57,13 @@ from _lcm.simulation.diagnostic_operations import diagnostic_bindings
 from _lcm.simulation.entry_allocations import _pad_initial_leaf
 from _lcm.simulation.forward_program_profiles import (
     ForwardProgramProfile,
+    _profile_program,
     _stochastic_keys,
     profile_forward_unit,
+)
+from _lcm.simulation.gated_routing import (
+    commit_gated_route_delta,
+    gated_route_candidates,
 )
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
@@ -71,6 +76,7 @@ from _lcm.simulation.membership import (
 )
 from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
+from _lcm.simulation.program_arguments import gate_route_arguments
 from _lcm.simulation.random import (
     _create_simulation_key,
     _generate_windowed_simulation_keys,
@@ -92,7 +98,7 @@ from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
-from lcm.solver_api import SIMULATION_POLICY
+from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
 
 type _FiniteRankOutput = tuple[
     Mapping[str, jax.ShapeDtypeStruct], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct
@@ -107,6 +113,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     flat_params: FlatParams,
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
+    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     ages: AgeGrid,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -235,12 +242,15 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 continue
             cores = profile_forward_unit(
                 runtime=runtime,
+                regimes=regimes,
                 regime=regime,
                 name=name,
                 period=period,
                 flat_params=flat_params,
                 base=base_spaces[name],
+                base_spaces=base_spaces,
                 values=values,
+                flags=flags,
                 ages=ages,
                 n_subjects=n_subjects,
                 widths=widths,
@@ -338,7 +348,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             period_masks.append(cast("jax.ShapeDtypeStruct", mask))
             add_bytes(target=published, source=payload_bytes(tree=record))
             if not regime.terminal:
-                carrier, key, new_ids = _profile_next_subjects(
+                carrier, key, new_ids, own_roles = _profile_next_subjects(
                     inventory=inventory,
                     regime=regime,
                     name=name,
@@ -348,6 +358,12 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     mask=cast("jax.ShapeDtypeStruct", mask),
                     key=key,
                     new_ids=new_ids,
+                    own_roles=own_roles,
+                    flat_params=flat_params,
+                    values=values,
+                    flags=flags,
+                    age=jax.ShapeDtypeStruct((), ages.values.dtype, sharding=shared),
+                    widths=widths,
                     scalar_int=scalar_int,
                     regime_names_to_ids=regime_names_to_ids,
                     population=padded,
@@ -383,6 +399,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             source=_period_copy_reservation(
                 regimes=regimes,
                 values=values,
+                flags=flags,
                 policies=policies,
                 period=period,
                 devices=devices,
@@ -428,6 +445,12 @@ def _profile_next_subjects(
     mask: jax.ShapeDtypeStruct,
     key: jax.ShapeDtypeStruct,
     new_ids: jax.ShapeDtypeStruct,
+    own_roles: jax.ShapeDtypeStruct,
+    flat_params: FlatParams,
+    values: Mapping[int, Mapping[str, jax.Array]],
+    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
+    age: jax.ShapeDtypeStruct,
+    widths: Mapping[str, int],
     scalar_int: jax.ShapeDtypeStruct,
     regime_names_to_ids: RegimeNamesToIds,
     population: int,
@@ -435,6 +458,7 @@ def _profile_next_subjects(
     width: int,
 ) -> tuple[
     Mapping[str, Mapping[str, jax.ShapeDtypeStruct]],
+    jax.ShapeDtypeStruct,
     jax.ShapeDtypeStruct,
     jax.ShapeDtypeStruct,
 ]:
@@ -534,8 +558,69 @@ def _profile_next_subjects(
         ),
     )
     carrier = cast("Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]", advanced)
+    if period in regime.simulation.programs.gate_route:
+        shared = simulation_value_sharding(
+            stored_sharding=mask.sharding,
+            devices=inventory.runtime.subject_devices,
+        )
+        edge_values = MappingProxyType(
+            {
+                target: MappingProxyType(
+                    {
+                        reference: values[period + 1][reference]
+                        for reference in dict.fromkeys(
+                            (target, *edge.reference_regimes)
+                        )
+                    }
+                )
+                for target, edge in regime.gated_edges.items()
+                if target in values.get(period + 1, {})
+            }
+        )
+        edge_flags = MappingProxyType(
+            {
+                target: flags[period + 1][target]
+                for target in edge_values
+                if target in flags.get(period + 1, {})
+            }
+        )
+        gate_profile = _profile_program(
+            runtime=inventory.runtime,
+            program=regime.simulation.programs.gate_route[period],
+            arguments=gate_route_arguments(
+                edge_values=abstract_tree(tree=edge_values, sharding=shared),
+                edge_flags=abstract_tree(tree=edge_flags, sharding=shared),
+                next_states=gated_route_candidates(regime=regime, next_states=carrier),
+                new_subject_regime_ids=new_ids,
+                subjects_in_regime=mask,
+                flat_params=abstract_tree(tree=flat_params, sharding=shared),
+                own_stakeholder=own_roles,
+                new_own_stakeholder=own_roles,
+                fold_age=age,
+            ),
+            period=period,
+            n_subjects=mask.shape[0],
+            widths=widths,
+        )
+        route_delta, new_ids, own_roles = cast(
+            "tuple[Mapping[str, object], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
+            _record_core(
+                inventory=inventory,
+                profile=gate_profile,
+                family="gate_route",
+            ),
+        )
+        carrier = cast(
+            "Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]",
+            inventory.operation(
+                function=commit_gated_route_delta,
+                arguments={"delta": route_delta, "next_states": carrier},
+                subject_arg_names=("delta", "next_states"),
+                subject_outputs=True,
+            ),
+        )
     key = split[2]
-    return carrier, key, new_ids
+    return carrier, key, new_ids, own_roles
 
 
 def _profile_population_roles(
@@ -832,6 +917,7 @@ def _period_copy_reservation(
     *,
     regimes: Mapping[str, Regime],
     values: Mapping[int, Mapping[str, jax.Array]],
+    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     period: int,
     devices: tuple[jax.Device, ...],
     policies: Mapping[int, Mapping[str, object]] | None = None,
@@ -846,15 +932,21 @@ def _period_copy_reservation(
         for family in (
             regime.simulation.programs.policy_prepare,
             regime.simulation.programs.decision,
+            regime.simulation.programs.gate_fold,
+            regime.simulation.programs.gate_route,
         )
         if period in family
         for read in family[period].requirements.value_reads
+        if read.target.kind is not ValueArtifactKind.GATED_CONTINUATION
     )
     seen = set()
     result: dict[jax.Device, int] = {}
     for read in reads:
         source = _retained_read_source(
-            read=read, values=values, policy_sources=policy_sources
+            read=read,
+            values=values,
+            flags=flags,
+            policy_sources=policy_sources,
         )
         required = simulation_value_sharding(
             stored_sharding=source.sharding, devices=devices
@@ -921,6 +1013,7 @@ def _retained_read_source(
     *,
     read: ValueRead,
     values: Mapping[int, Mapping[str, jax.Array]],
+    flags: Mapping[int, Mapping[str, jax.Array]],
     policy_sources: Mapping[ValueArtifactAddress, jax.Array],
 ) -> jax.Array:
     """Resolve only the declared value and finite-policy storage classes."""
@@ -931,8 +1024,14 @@ def _retained_read_source(
         and read.target in policy_sources
     ):
         return policy_sources[read.target]
+    if (
+        read.target.kind is ValueArtifactKind.REPLAY_ARTIFACT_LEAF
+        and read.target.artifact_key == DISSOLUTION_FLAG
+    ):
+        return flags[read.target.period][read.target.regime]
     raise ExecutionPlanningError(
-        "Chunk copies require an explicit retained artifact schema."
+        "Chunk copies require an explicit retained artifact schema for "
+        f"{read.target!r}."
     )
 
 

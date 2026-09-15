@@ -62,8 +62,8 @@ from _lcm.simulation.diagnostic_operations import (
     profiled_transition_counts,
 )
 from _lcm.simulation.gated_routing import (
-    simulation_gate_fold,
-    simulation_gate_route,
+    commit_gated_route_delta,
+    gated_route_candidates,
 )
 from _lcm.simulation.initial_conditions import (
     build_initial_states,
@@ -89,9 +89,12 @@ from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
     decision_arguments,
+    gate_fold_arguments,
+    gate_route_arguments,
     policy_prepare_arguments,
     policy_rank_arguments,
 )
+from _lcm.simulation.programs import gated_simulation_programs_ready
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
@@ -117,6 +120,7 @@ from _lcm.simulation.transitions import (
 )
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.simulation.value_reads import PeriodSimulationReads
+from _lcm.solution.backward_induction import _states_for_period
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.typing import (
@@ -309,7 +313,7 @@ def simulate(  # noqa: C901, PLR0915
                 "Budgeted simulation requires retained solution residency."
             )
         if not runtime.enable_jit or any(
-            regime.gated_edges
+            (regime.gated_edges and not gated_simulation_programs_ready(regime=regime))
             or (
                 regime.simulation.replay_route.policy_applicable
                 and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
@@ -1277,7 +1281,7 @@ def _validate_simulated_value(
         raise_or_warn(logger=logger, error=error)
 
 
-def _simulate_regime_in_period(
+def _simulate_regime_in_period(  # noqa: C901, PLR0915
     *,
     regime_name: RegimeName,
     regime: Regime,
@@ -1422,20 +1426,41 @@ def _simulate_regime_in_period(
         values=period_to_regime_to_V_arr,
         flags=period_to_regime_to_dissolution_flags,
     )
-    next_regime_to_V_arr = simulation_gate_fold(
-        regime=regime,
-        regime_name=regime_name,
-        regimes=regimes,
-        period=period,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        base_state_action_spaces=base_state_action_spaces,
-        edge_values=gate_values,
-        edge_flags=gate_flags,
-        flat_params=flat_params,
-        fold_age=gated_edge_fold_age,
-        subject_devices=subject_devices,
-        on_derived=None if memory is None else memory.set_derived,
-    )
+    if period in regime.simulation.programs.gate_fold:
+        folded_gate_values = cast(
+            "Mapping[RegimeName, FloatND]",
+            execute_simulation_program(
+                programs=regime.simulation.programs,
+                family="gate_fold",
+                period=period,
+                arguments={
+                    **gate_fold_arguments(
+                        edge_values=gate_values,
+                        edge_flags=gate_flags,
+                        flat_params=flat_params,
+                        fold_age=jnp.asarray(
+                            0.0 if gated_edge_fold_age is None else gated_edge_fold_age
+                        ),
+                    ),
+                    "next_regime_to_V_arr": next_regime_to_V_arr,
+                    "target_states_by_target": MappingProxyType(
+                        {
+                            target: _states_for_period(
+                                regime=regimes[target],
+                                state_action_space=base_state_action_spaces[target],
+                                period=period + 1,
+                            )
+                            for target in regime.gated_edges
+                            if target in next_period_values
+                        }
+                    ),
+                },
+                n_subjects=n_subjects,
+            ),
+        )
+        next_regime_to_V_arr = MappingProxyType(
+            {**next_regime_to_V_arr, **folded_gate_values}
+        )
     referenced_value_kwargs = _referenced_value_kwargs(
         regime=regime,
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
@@ -1669,33 +1694,46 @@ def _simulate_regime_in_period(
         # and OVERRIDES both — the target when open, a leg's fallback (with
         # its own projected states) when closed — for every subject in this
         # regime. No-op for a regime without `gated_edges`.
-        route_values, route_flags = acquire_gate_inputs(
-            reads=tuple(
-                read for read in raw_gate_reads if read.source.core_key == GATE_ROUTE
-            ),
-            owner=value_owner,
-            name=regime_name,
-            values=period_to_regime_to_V_arr,
-            flags=period_to_regime_to_dissolution_flags,
-        )
-        next_states, new_subject_regime_ids, new_own_stakeholder = (
-            simulation_gate_route(
-                regime=regime,
-                subject_devices=subject_devices,
-                fold_period=period + 1,
-                edge_values=route_values,
-                edge_flags=route_flags,
-                next_states=next_states,
-                regime_names_to_ids=regime_names_to_ids,
-                new_subject_regime_ids=new_subject_regime_ids,
-                subjects_in_regime=subject_ids_in_regime,
-                flat_params=flat_params,
-                own_stakeholder=own_stakeholder,
-                new_own_stakeholder=new_own_stakeholder,
-                fold_age=gated_edge_fold_age,
-                on_derived=None if memory is None else memory.set_derived,
+        if period in regime.simulation.programs.gate_route:
+            route_values, route_flags = acquire_gate_inputs(
+                reads=tuple(
+                    read
+                    for read in raw_gate_reads
+                    if read.source.core_key == GATE_ROUTE
+                ),
+                owner=value_owner,
+                name=regime_name,
+                values=period_to_regime_to_V_arr,
+                flags=period_to_regime_to_dissolution_flags,
             )
-        )
+            route_delta, new_subject_regime_ids, new_own_stakeholder = cast(
+                "tuple[Mapping[str, Mapping[str, object]], Int1D, Int1D]",
+                execute_simulation_program(
+                    programs=regime.simulation.programs,
+                    family="gate_route",
+                    period=period,
+                    arguments=gate_route_arguments(
+                        edge_values=route_values,
+                        edge_flags=route_flags,
+                        next_states=gated_route_candidates(
+                            regime=regime, next_states=next_states
+                        ),
+                        new_subject_regime_ids=new_subject_regime_ids,
+                        subjects_in_regime=subject_ids_in_regime,
+                        flat_params=flat_params,
+                        own_stakeholder=own_stakeholder,
+                        new_own_stakeholder=new_own_stakeholder,
+                        fold_age=jnp.asarray(
+                            0.0 if gated_edge_fold_age is None else gated_edge_fold_age
+                        ),
+                    ),
+                    n_subjects=n_subjects,
+                ),
+            )
+            next_states = commit_gated_route_delta(
+                delta=route_delta,
+                next_states=next_states,
+            )
         states = next_states
 
     return (

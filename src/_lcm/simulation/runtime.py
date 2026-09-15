@@ -535,6 +535,8 @@ def execute_simulation_program(
         "decision": programs.decision,
         "transition": programs.transition,
         "route": programs.route,
+        "gate_fold": programs.gate_fold,
+        "gate_route": programs.gate_route,
         "policy_prepare": programs.policy_prepare,
         "policy_rank": programs.policy_rank,
     }

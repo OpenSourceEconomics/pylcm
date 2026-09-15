@@ -16,17 +16,24 @@ from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import CoreProgram
 from _lcm.grids import DiscreteGrid
-from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
+from _lcm.regime_building.Q_and_F import (
+    EDGE_REF_PARAMS_ARG,
+    EDGE_REF_V_ARG,
+    SAME_PERIOD_PARAMS_ARG,
+    SAME_PERIOD_V_ARG,
+)
 from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
     decision_arguments,
+    gate_fold_arguments,
     policy_prepare_arguments,
     policy_rank_arguments,
     transition_arguments,
 )
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.solution.backward_induction import _states_for_period
 from _lcm.typing import FlatParams
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
@@ -63,6 +70,7 @@ def profile_forward_programs(
     flat_params: FlatParams,
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
+    flags: Mapping[int, Mapping[str, jax.Array]] = MappingProxyType({}),
     ages: AgeGrid,
     n_subjects: int,
     widths: Mapping[str, int],
@@ -93,12 +101,15 @@ def profile_forward_programs(
         for period in regime.simulation.programs.decision:
             unit = profile_forward_unit(
                 runtime=runtime,
+                regimes=regimes,
                 regime=regime,
                 name=name,
                 period=period,
                 flat_params=flat_params,
                 base=base_spaces[name],
+                base_spaces=base_spaces,
                 values=values,
+                flags=flags,
                 ages=ages,
                 n_subjects=n_subjects,
                 widths=widths,
@@ -113,15 +124,18 @@ def profile_forward_programs(
     return MappingProxyType(profiles)
 
 
-def profile_forward_unit(
+def profile_forward_unit(  # noqa: C901, PLR0915
     *,
     runtime: SimulationRuntime,
+    regimes: Mapping[str, Regime],
     regime: Regime,
     name: str,
     period: int,
     flat_params: FlatParams,
     base: StateActionSpace,
+    base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array]],
+    flags: Mapping[int, Mapping[str, jax.Array]],
     ages: AgeGrid,
     n_subjects: int,
     widths: Mapping[str, int],
@@ -149,13 +163,9 @@ def profile_forward_unit(
                 "Forward key profiles require placed scalar PRNG descriptors."
             )
     if (
-        regime.gated_edges
-        or (
-            regime.simulation.replay_route.policy_applicable
-            and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
-        )
-        or regime.simulation.external_replay_route is not None
-    ):
+        regime.simulation.replay_route.policy_applicable
+        and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+    ) or regime.simulation.external_replay_route is not None:
         raise ExecutionPlanningError(
             "Forward profiles require compiled decision routes."
         )
@@ -192,6 +202,62 @@ def profile_forward_unit(
         if period + 1 < ages.n_periods
         else MappingProxyType({})
     )
+    profiles: dict[str, ForwardProgramProfile] = {}
+    if period in regime.simulation.programs.gate_fold:
+        edge_values = MappingProxyType(
+            {
+                target: MappingProxyType(
+                    {
+                        reference: values[period + 1][reference]
+                        for reference in dict.fromkeys(
+                            (target, *edge.reference_regimes)
+                        )
+                    }
+                )
+                for target, edge in regime.gated_edges.items()
+                if target in values.get(period + 1, {})
+            }
+        )
+        edge_flags = MappingProxyType(
+            {
+                target: flags[period + 1][target]
+                for target in edge_values
+                if target in flags.get(period + 1, {})
+            }
+        )
+        fold_arguments = {
+            **gate_fold_arguments(
+                edge_values=_shared_tree(tree=edge_values, devices=devices),
+                edge_flags=_shared_tree(tree=edge_flags, devices=devices),
+                flat_params=_shared_tree(tree=flat_params, devices=devices),
+                fold_age=age,
+            ),
+            "next_regime_to_V_arr": _shared_tree(tree=next_values, devices=devices),
+            "target_states_by_target": _shared_tree(
+                tree=MappingProxyType(
+                    {
+                        target: _states_for_period(
+                            regime=regimes[target],
+                            state_action_space=base_spaces[target],
+                            period=period + 1,
+                        )
+                        for target in edge_values
+                    }
+                ),
+                devices=devices,
+            ),
+        }
+        profiles["gate_fold"] = _profile_program(
+            runtime=runtime,
+            program=regime.simulation.programs.gate_fold[period],
+            arguments=fold_arguments,
+            period=period,
+            n_subjects=n_subjects,
+            widths=widths,
+        )
+        next_values = MappingProxyType(
+            {**next_values, **profiles["gate_fold"].executable.out_info}
+        )
     references = {}
     if regime.same_period_ref_regimes:
         references[SAME_PERIOD_V_ARG] = MappingProxyType(
@@ -199,6 +265,14 @@ def profile_forward_unit(
         )
         references[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
             {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
+        )
+    edge_references = regime.simulation.edge_reference_regimes_by_period.get(period)
+    if edge_references is not None:
+        references[EDGE_REF_V_ARG] = MappingProxyType(
+            {ref: values[period + 1][ref] for ref in edge_references}
+        )
+        references[EDGE_REF_PARAMS_ARG] = MappingProxyType(
+            {ref: flat_params[ref] for ref in edge_references}
         )
     subject_key = jax.ShapeDtypeStruct(
         (n_subjects,), ordinary_key.dtype, sharding=subject
@@ -209,19 +283,21 @@ def profile_forward_unit(
         sharding=subject,
     )
     if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
-        profiles = _profile_finite_decision(
-            runtime=runtime,
-            regime=regime,
-            period=period,
-            n_subjects=n_subjects,
-            widths=widths,
-            policy=policy,
-            states=current,
-            canonical_states=states,
-            params=params,
-            age=age,
-            next_values=_shared_tree(tree=next_values, devices=devices),
-            references=_shared_tree(tree=references, devices=devices),
+        profiles.update(
+            _profile_finite_decision(
+                runtime=runtime,
+                regime=regime,
+                period=period,
+                n_subjects=n_subjects,
+                widths=widths,
+                policy=policy,
+                states=current,
+                canonical_states=states,
+                params=params,
+                age=age,
+                next_values=_shared_tree(tree=next_values, devices=devices),
+                references=_shared_tree(tree=references, devices=devices),
+            )
         )
         actions, _, _ = profiles["decision"].executable.out_info
     else:
@@ -266,14 +342,12 @@ def profile_forward_unit(
             subject_arg_names=("flat_indices",) if indices.ndim else (),
             devices=devices,
         )
-        profiles = {
-            "decision": replace(
-                decision_profile,
-                action_decoder=AbstractSimulationProfile(
-                    executable=decoded.executable, arguments=decoder_arguments
-                ),
-            )
-        }
+        profiles["decision"] = replace(
+            decision_profile,
+            action_decoder=AbstractSimulationProfile(
+                executable=decoded.executable, arguments=decoder_arguments
+            ),
+        )
         actions = decoded.executable.out_info
     for family in ("transition", "route"):
         program = getattr(regime.simulation.programs, family).get(period)
@@ -431,9 +505,9 @@ def _shared_tree(
     """Project actual retained metadata to the same shared destination layout."""
 
     def abstract(leaf: object) -> jax.ShapeDtypeStruct:
-        if not isinstance(leaf, jax.Array):
+        if not isinstance(leaf, jax.Array | jax.ShapeDtypeStruct):
             raise ExecutionPlanningError(
-                "Forward retained inputs must be canonical JAX arrays."
+                "Forward retained inputs must be canonical JAX array metadata."
             )
         return _placed_abstract(
             leaf=leaf,

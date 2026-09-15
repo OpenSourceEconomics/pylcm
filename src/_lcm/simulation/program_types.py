@@ -28,12 +28,19 @@ SUBJECT_WIDTH_KEYWORD = "__lcm_subject_width__"
 DECISION_PROGRAM = "simulate_decision"
 TRANSITION_PROGRAM = "simulate_transition"
 ROUTE_PROGRAM = "simulate_route"
+GATE_FOLD_PROGRAM = "simulate_gate_fold"
+GATE_ROUTE_PROGRAM = "simulate_gate_route"
 
 # What one leaf of a simulation program's output publishes.
 ACTION_INDEX = "action_index"
 DECISION_VALUE = "decision_value"
 NEXT_STATE = "next_state"
 REGIME_TRANSITION_PROB = "regime_transition_prob"
+GATED_CONTINUATION = "gated_continuation"
+GATED_NEXT_STATE = "gated_next_state"
+GATED_REGIME_ID = "gated_regime_id"
+GATED_ROLE = "gated_role"
+GATED_ROUTE_MASK = "gated_route_mask"
 
 # Subject count a declared tile axis carries until the lowering path rebinds it.
 #
@@ -104,6 +111,16 @@ class SimulationPrograms:
     """Period to the regime-transition program that period dispatches; empty
     where the regime draws no successor, which is every terminal regime."""
 
+    gate_fold: MappingProxyType[int, CoreProgram] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Period to the target-grid gated-continuation fold."""
+
+    gate_route: MappingProxyType[int, CoreProgram] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Period to realized-state gate evaluation and fallback projection."""
+
     policy_prepare: MappingProxyType[int, CoreProgram] = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -123,6 +140,8 @@ class SimulationPrograms:
             "decision",
             "transition",
             "route",
+            "gate_fold",
+            "gate_route",
             "policy_prepare",
             "policy_rank",
         ):
@@ -139,6 +158,8 @@ class SimulationPrograms:
                 self.decision,
                 self.transition,
                 self.route,
+                self.gate_fold,
+                self.gate_route,
                 self.policy_prepare,
                 self.policy_rank,
             )
