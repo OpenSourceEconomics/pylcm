@@ -46,16 +46,24 @@ paper rather than here.
 A solver may also be written outside pylcm. `lcm.solvers` re-exports everything
 such a solver constructs — the execution-contract types (`CoreProgram`,
 `CoreBuildContext`, `CoreExecutionRequirements`, `CoreExecutionDisposition`,
-`ProgramScope`, `StreamableProductAxis`, `ReductionSemantics`, `OutputRole`,
+`ProgramScope`, `ReducedAxis`, `TiledOutputAxis`, `ReductionDeclaration`,
+`ReductionSemantics`, `ACTION_PRODUCT_AXIS`, `STOCHASTIC_NODE_AXIS`,
+`CELL_AXIS`, `SAVINGS_POINT_AXIS`, `EULER_POINT_AXIS`, `ENVELOPE_CELL_AXIS`,
+`OUTER_CANDIDATE_AXIS`,
+`EXACTNESS_VALUES`, `OutputRole`,
 `StateAxesLeading`, `PeriodKernel`, `StateActionSpace`), the continuation types
 and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
 `period_to_continuation_target`, `target_period_grid`, `union_free_params`,
 `union_fixed_params`), and the artifact vocabulary (`KernelOutput`,
 `ArtifactKey`, descriptors and authorities, the four built-in keys,
-`ContinuationArtifact`, and the executable replay contracts) — so no import from
-`_lcm` is needed. Solver, route, and artifact identities are exact-version
-contracts. `docs/reference/custom_solvers.md` states what a solver owes the engine
-and describes the executable in-repository reference fixture for that boundary.
+`ContinuationArtifact`, `ContinuationReader`, `ContinuationCapabilities`,
+`EGM_ENDOGENOUS_COORDINATE`, and the executable replay contracts), and the value-read
+vocabulary (`ValueRead`, `ValueArtifactAddress`, `ValueConsumerAddress`,
+`ValueArtifactKind`, `ValueInputChannel`, `ValueTransferKind`,
+`TransferOperationClass`, `TransferCost`) — so no import from `_lcm` is needed.
+Solver, route, and artifact identities are exact-version contracts.
+`docs/reference/custom_solvers.md` states what a solver owes the engine and
+describes the executable in-repository reference fixture for that boundary.
 
 The solvers are defined engine-side in per-solver modules under
 `_lcm.solution`; this module is a thin re-export so user code (and
@@ -75,17 +83,31 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    InternalInputRef,
+    InternalOutputSpec,
     ProgramScope,
-    ReductionSemantics,
-    StreamableProductAxis,
-    TargetValueAccess,
+    ReducedAxis,
+    TiledOutputAxis,
+    ValueRead,
 )
 from _lcm.execution.output_layout import OutputRole, StateAxesLeading
+from _lcm.execution.reductions import (
+    EXACTNESS_VALUES,
+    INTERVAL_ENVELOPE_REDUCTION,
+    HardMaxWithCarryReduction,
+    IntervalEnvelopeReduction,
+    ReductionDeclaration,
+    ReductionSemantics,
+    WeightedExpectationReduction,
+)
 from _lcm.execution.value_transfer import (
+    TransferCost,
+    TransferOperationClass,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
     ValueInputChannel,
+    ValueTransferKind,
 )
 from _lcm.solution.continuation_target import (
     period_to_continuation_target,
@@ -102,7 +124,12 @@ from _lcm.solution.contract import (
     TwoMarginSolver,
 )
 from _lcm.solution.dcegm import (
+    CELL_AXIS,
     DCEGM,
+    ENVELOPE_CELL_AXIS,
+    EULER_POINT_AXIS,
+    SAVINGS_POINT_AXIS,
+    STOCHASTIC_NODE_AXIS,
     EnvelopeConfig,
     ExactEnvelope,
     FUESEnvelope,
@@ -111,10 +138,11 @@ from _lcm.solution.dcegm import (
     RFCEnvelope,
 )
 from _lcm.solution.egm import EGM
-from _lcm.solution.grid_search import GridSearch
-from _lcm.solution.nbegm import NBEGM
-from _lcm.solution.negm import NEGM
+from _lcm.solution.grid_search import ACTION_PRODUCT_AXIS, GridSearch
+from _lcm.solution.nbegm import BRANCH_AXIS, INTERVAL_AXIS, NBEGM
+from _lcm.solution.negm import NEGM, OUTER_CANDIDATE_AXIS
 from _lcm.solution.nnbegm import NNBEGM
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.branch_aggregation import (
     BranchAggregateResult,
     DeterministicOuterMaximum,
@@ -129,6 +157,7 @@ from lcm.outer_search import (
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
     PYLCM_VERSION,
     SIMULATION_POLICY,
     SOLUTION_FORMAT_VERSION,
@@ -147,6 +176,8 @@ from lcm.solver_api import (
     AxisRole,
     CategoryDomain,
     ContinuationArtifact,
+    ContinuationCapabilities,
+    ContinuationReader,
     DeclaredReplay,
     ExecutableReplayRoute,
     KernelOutput,
@@ -174,19 +205,31 @@ from lcm.solver_api import (
 )
 
 __all__ = [
+    "ACTION_PRODUCT_AXIS",
+    "BRANCH_AXIS",
+    "CELL_AXIS",
     "DCEGM",
     "DISSOLUTION_FLAG",
     "EGM",
     "EGM_CONTINUATION",
+    "EGM_ENDOGENOUS_COORDINATE",
+    "ENVELOPE_CELL_AXIS",
+    "EULER_POINT_AXIS",
+    "EXACTNESS_VALUES",
+    "INTERVAL_AXIS",
+    "INTERVAL_ENVELOPE_REDUCTION",
     "NBEGM",
     "NEGM",
     "NNBEGM",
+    "OUTER_CANDIDATE_AXIS",
     "PYLCM_VERSION",
+    "SAVINGS_POINT_AXIS",
     "SIMULATION_POLICY",
     "SOLUTION_FORMAT_VERSION",
     "SOLUTION_SCHEMA_VERSION",
     "SOLVER_API_VERSION",
     "SOLVER_DIAGNOSTICS",
+    "STOCHASTIC_NODE_AXIS",
     "ActionOutput",
     "AdaptiveOuterMesh",
     "ArtifactAuthority",
@@ -201,6 +244,8 @@ __all__ = [
     "BranchAggregateResult",
     "CategoryDomain",
     "ContinuationArtifact",
+    "ContinuationCapabilities",
+    "ContinuationReader",
     "ContinuationSpec",
     "CoreBuildContext",
     "CoreExecutionDisposition",
@@ -216,6 +261,10 @@ __all__ = [
     "FUESEnvelope",
     "FiniteOuterGrid",
     "GridSearch",
+    "HardMaxWithCarryReduction",
+    "InternalInputRef",
+    "InternalOutputSpec",
+    "IntervalEnvelopeReduction",
     "KernelOutput",
     "LTMEnvelope",
     "LeafAuthority",
@@ -231,6 +280,8 @@ __all__ = [
     "PersistencePolicy",
     "ProgramScope",
     "RFCEnvelope",
+    "ReducedAxis",
+    "ReductionDeclaration",
     "ReductionSemantics",
     "ReplayMode",
     "ReplayModelContext",
@@ -247,11 +298,13 @@ __all__ = [
     "SolutionSource",
     "Solver",
     "SolverBuildContext",
+    "SolverExecutionCapabilities",
     "SolverIdentity",
     "StateActionSpace",
     "StateAxesLeading",
-    "StreamableProductAxis",
-    "TargetValueAccess",
+    "TiledOutputAxis",
+    "TransferCost",
+    "TransferOperationClass",
     "TreePath",
     "TwoMarginSolver",
     "UniformObservedFixedCost",
@@ -260,7 +313,10 @@ __all__ = [
     "ValueArtifactKind",
     "ValueConsumerAddress",
     "ValueInputChannel",
+    "ValueRead",
     "ValueStore",
+    "ValueTransferKind",
+    "WeightedExpectationReduction",
     "period_to_continuation_target",
     "target_period_grid",
     "union_fixed_params",

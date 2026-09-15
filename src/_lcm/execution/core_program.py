@@ -13,20 +13,23 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
+import jax
+
+from _lcm.execution.reductions import ReductionDeclaration
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
     ValueConsumerAddress,
     apply_value_transfer_plan,
 )
-from _lcm.typing import ActionName
+from _lcm.typing import ActionName, StateName
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 
-_CORE_PROGRAM_VERSION = 5
+_CORE_PROGRAM_VERSION = 7
 _INT32_MAX = 2_147_483_647
-_INITIAL_TILE_WIDTH_CAP = 64
 
 if TYPE_CHECKING:
     type _RetainedArtifactKeys = tuple[ArtifactKey, ...]
@@ -39,8 +42,8 @@ else:
 
 
 @dataclass(frozen=True, kw_only=True)
-class TargetValueAccess:
-    """One exact target-value read declared by a solver core.
+class ValueRead:
+    """One exact stored-value read declared by a solver core.
 
     The target preserves artifact identity for liveness; the source preserves the
     complete dynamic-argument locator. Transfer specialization deliberately lives on
@@ -48,15 +51,18 @@ class TargetValueAccess:
     """
 
     target: ValueArtifactAddress
+    """Stored artifact this core reads, by its logical address."""
+
     source: ValueConsumerAddress
+    """Exact core-input leaf the stored artifact enters through."""
 
     def __post_init__(self) -> None:
         """Require the shared, already-validated logical address types."""
         if not isinstance(self.target, ValueArtifactAddress):
-            msg = "A target-value access target must be a ValueArtifactAddress."
+            msg = "A value read's target must be a ValueArtifactAddress."
             raise TypeError(msg)
         if not isinstance(self.source, ValueConsumerAddress):
-            msg = "A target-value access source must be a ValueConsumerAddress."
+            msg = "A value read's source must be a ValueConsumerAddress."
             raise TypeError(msg)
 
 
@@ -69,31 +75,45 @@ class _TransferArgumentLeaf(Protocol):
     sharding: object
 
 
-@runtime_checkable
-class ReductionSemantics(Protocol):
-    """Solver-owned reduction semantics used in static program identity."""
-
-    @property
-    def semantic_key(self) -> Hashable:
-        """Return a stable key for the reduction's numerical contract."""
-        ...
-
-
 @dataclass(frozen=True, kw_only=True)
-class StreamableProductAxis:
-    """One canonical Cartesian-product axis that the planner may tile."""
+class ReducedAxis:
+    """One Cartesian-product axis the planner may stream and fold with `reduction`."""
 
     name: str
+    """Planner-visible axis name; `ExecutionConfig.axis_widths` keys match it."""
+
     coordinate_names: tuple[ActionName, ...]
+    """Names of the grids whose product the axis enumerates."""
+
     coordinate_extents: tuple[int, ...]
-    canonical_order: str
-    reduction: ReductionSemantics
+    """Extent of each coordinate grid, in the same order."""
+
+    canonical_order: Literal["c"]
+    """Order the flat product identity counts the coordinates in."""
+
+    reduction: ReductionDeclaration
+    """Contract the fold behind this axis satisfies, by key and exactness."""
+
     width_keyword: str
+    """Keyword the core function accepts for the compiled block width."""
+
+    minimum_width: int = 1
+    """Narrowest block the planner may propose for this axis."""
+
+    alignment: int = 1
+    """Multiple a proposed block width below the extent is rounded down to."""
 
     def __post_init__(self) -> None:
-        """Snapshot caller-owned sequences while leaving validation late."""
+        """Snapshot caller-owned sequences and require a non-empty name."""
+        _fail_if_axis_name_invalid(name=self.name)
         object.__setattr__(self, "coordinate_names", tuple(self.coordinate_names))
         object.__setattr__(self, "coordinate_extents", tuple(self.coordinate_extents))
+        _fail_if_width_policy_invalid(
+            name=self.name,
+            extent=self.extent,
+            minimum_width=self.minimum_width,
+            alignment=self.alignment,
+        )
 
     @property
     def extent(self) -> int:
@@ -102,25 +122,163 @@ class StreamableProductAxis:
 
 
 @dataclass(frozen=True, kw_only=True)
-class CoreExecutionRequirements:
-    """Static requirements that the execution planner must resolve for a core."""
+class TiledOutputAxis:
+    """One output axis the planner may tile; tiles are concatenated, never folded."""
 
-    streamable_axes: tuple[StreamableProductAxis, ...] = ()
-    target_value_accesses: tuple[TargetValueAccess, ...] = ()
+    name: str
+    """Planner-visible axis name; `ExecutionConfig.axis_widths` keys match it."""
+
+    state_names: tuple[StateName, ...]
+    """Names of the output states the tiles of this axis run over."""
+
+    extent: int
+    """Number of cells along the axis."""
+
+    width_keyword: str
+    """Keyword the core function accepts for the compiled tile width."""
+
+    minimum_width: int = 1
+    """Narrowest tile the planner may propose for this axis."""
+
+    alignment: int = 1
+    """Multiple a proposed tile width below the extent is rounded down to."""
 
     def __post_init__(self) -> None:
-        """Snapshot the declared axes and exact target-value reads."""
-        object.__setattr__(self, "streamable_axes", tuple(self.streamable_axes))
-        object.__setattr__(
-            self, "target_value_accesses", tuple(self.target_value_accesses)
+        """Require a non-empty name and a positive extent."""
+        _fail_if_axis_name_invalid(name=self.name)
+        object.__setattr__(self, "state_names", tuple(self.state_names))
+        if type(self.extent) is not int or self.extent <= 0:
+            msg = f"TiledOutputAxis {self.name!r} extent must be a positive int."
+            raise ValueError(msg)
+        _fail_if_width_policy_invalid(
+            name=self.name,
+            extent=self.extent,
+            minimum_width=self.minimum_width,
+            alignment=self.alignment,
         )
 
 
+@dataclass(frozen=True, kw_only=True)
+class InternalOutputSpec:
+    """One output a program publishes to other programs of the same graph."""
+
+    label: str
+    """Name other programs of the same graph use to request this output."""
+
+    path: tuple[int | str, ...]
+    """Pytree path into the producer's raw output selecting the published subtree."""
+
+    def __post_init__(self) -> None:
+        """Snapshot the caller-owned path and require an exact label spelling."""
+        if type(self.label) is not str or not self.label:
+            msg = "An InternalOutputSpec label must be a non-empty string."
+            raise TypeError(msg)
+        path = tuple(self.path)
+        if any(isinstance(step, bool) or type(step) not in (int, str) for step in path):
+            msg = (
+                f"InternalOutputSpec {self.label!r} path must contain only integer "
+                "and string pytree steps."
+            )
+            raise TypeError(msg)
+        object.__setattr__(self, "path", path)
+
+
+@dataclass(frozen=True, kw_only=True)
+class InternalInputRef:
+    """One argument a program takes from another program of the same graph."""
+
+    producer: str
+    """Graph key of the program whose output is consumed."""
+
+    label: str
+    """`InternalOutputSpec.label` declared by that producer."""
+
+    def __post_init__(self) -> None:
+        """Require an exact producer key and label spelling."""
+        if type(self.producer) is not str or not self.producer:
+            msg = "An InternalInputRef producer must be a non-empty string."
+            raise TypeError(msg)
+        if type(self.label) is not str or not self.label:
+            msg = "An InternalInputRef label must be a non-empty string."
+            raise TypeError(msg)
+
+
+@dataclass(frozen=True, kw_only=True)
+class CoreExecutionRequirements:
+    """Static requirements that the execution planner must resolve for a core."""
+
+    reduced_axes: tuple[ReducedAxis, ...] = ()
+    """Axes folded by a reduction when streamed."""
+
+    tiled_axes: tuple[TiledOutputAxis, ...] = ()
+    """Axes whose tiles are concatenated when streamed."""
+
+    value_reads: tuple[ValueRead, ...] = ()
+    """Stored values this core reads across a regime-period boundary."""
+
+    internal_inputs: Mapping[str, InternalInputRef] = MappingProxyType({})
+    """Consumer argument name to the producer output that fills it at dispatch."""
+
+    host_axis_names: tuple[str, ...] = ()
+    """Names of configurable host loops surrounding this core's dispatches.
+
+    A host loop may surround a planned core without changing the compiled
+    axes inside that core. Its extent may change between dispatches, so these
+    names declare no static extent or compiled width keyword.
+    """
+
+    def __post_init__(self) -> None:
+        """Snapshot the declared axes, value reads, and internal inputs."""
+        object.__setattr__(self, "reduced_axes", tuple(self.reduced_axes))
+        object.__setattr__(self, "tiled_axes", tuple(self.tiled_axes))
+        object.__setattr__(self, "value_reads", tuple(self.value_reads))
+        host_names = tuple(self.host_axis_names)
+        for name in host_names:
+            if type(name) is not str or not name.strip():
+                msg = "A host dispatch axis name must be a non-empty string."
+                raise ValueError(msg)
+        object.__setattr__(self, "host_axis_names", host_names)
+        names = self.axis_names
+        for name in names:
+            if names.count(name) > 1:
+                msg = f"Core program declares a duplicate axis name {name!r}."
+                raise ValueError(msg)
+        internal_inputs = dict(self.internal_inputs)
+        for name, ref in internal_inputs.items():
+            if type(name) is not str or not name:
+                msg = "An internal input must be keyed by a non-empty argument name."
+                raise TypeError(msg)
+            if not isinstance(ref, InternalInputRef):
+                msg = f"Internal input {name!r} must be an InternalInputRef."
+                raise TypeError(msg)
+        object.__setattr__(self, "internal_inputs", MappingProxyType(internal_inputs))
+
+    @property
+    def axes(self) -> tuple[ReducedAxis | TiledOutputAxis, ...]:
+        """Return every planner-visible axis, reduced first, in declaration order."""
+        return (*self.reduced_axes, *self.tiled_axes)
+
+    @property
+    def axis_names(self) -> tuple[str, ...]:
+        """Return compiled axis names, followed by surrounding host-loop names."""
+        return (*tuple(axis.name for axis in self.axes), *self.host_axis_names)
+
+
 class CoreExecutionDisposition(StrEnum):
-    """How the engine must execute one declared core."""
+    """How the engine must execute one declared core.
+
+    - `PLANNED`: the engine owns the width the body runs at and may stream the
+      axes the program declares.
+    - `DENSE`: the solver owns that width, and says why in `disposition_reason`.
+    - `HOST_DRIVEN`: a host loop dispatches the compiled program a data-dependent
+      number of times. The planner lowers the program like a dense one and bounds
+      one dispatch; the driver that owns the loop also owns the results it caches
+      between dispatches.
+    """
 
     PLANNED = "planned"
     DENSE = "dense"
+    HOST_DRIVEN = "host_driven"
 
 
 class ProgramScope(StrEnum):
@@ -190,6 +348,25 @@ class CoreBuildContext:
 
 type CoreArgumentBuilder = Callable[[CoreBuildContext], Mapping[str, object]]
 
+_COMPILER_OPTION_ARITY = 2
+
+
+def _validate_compiler_options(options: tuple[tuple[str, int], ...]) -> None:
+    """Require immutable, uniquely named integer compilation choices."""
+    if not isinstance(options, tuple) or any(
+        not isinstance(option, tuple)
+        or len(option) != _COMPILER_OPTION_ARITY
+        or not isinstance(option[0], str)
+        or not option[0]
+        or type(option[1]) is not int
+        for option in options
+    ):
+        msg = "compiler_options must be a tuple of (non-empty name, integer) tuples."
+        raise TypeError(msg)
+    if len({name for name, _value in options}) != len(options):
+        msg = "compiler_options must name each compiler option only once."
+        raise ValueError(msg)
+
 
 @dataclass(frozen=True, kw_only=True)
 class CoreProgram:
@@ -209,12 +386,18 @@ class CoreProgram:
         {}
     )
     replaces_program: str | None = None
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+    """Outputs another program of the same graph may name as an input."""
+    compiler_options: tuple[tuple[str, int], ...] = ()
+    """Fixed compiler choices bound by the function, separate from its arguments."""
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences."""
+        _validate_compiler_options(self.compiler_options)
         if not isinstance(self.retained_artifact_payload_types, Mapping):
             msg = "CoreProgram retained_artifact_payload_types must be a mapping."
             raise TypeError(msg)
+        object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
         object.__setattr__(
             self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
@@ -241,10 +424,16 @@ class MaterializedCoreProgram:
     scope: ProgramScope = ProgramScope.ANY
     retained_artifact_keys: tuple[ArtifactKey, ...] = ()
     replaces_program: str | None = None
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+    """Outputs another program of the same graph may name as an input."""
+    compiler_options: tuple[tuple[str, int], ...] = ()
+    """Fixed compiler choices inherited from the declaration."""
 
     def __post_init__(self) -> None:
         """Snapshot the exact dynamic argument tree."""
+        _validate_compiler_options(self.compiler_options)
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
         object.__setattr__(
             self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
@@ -343,7 +532,8 @@ def select_programs(
     exact model-authoritative keys selected for this regime-period cell. If no replay
     variant is selected, `VALUES_ONLY` is the value-producing alternative. A graph
     that leaves nothing to dispatch is refused: a period without a program would
-    publish no value.
+    publish no value, as is one that keeps a consumer without the producer of an
+    internal input it declares.
     """
     if type(retain_replay) is not bool:
         raise TypeError("retain_replay must be an exact bool.")
@@ -383,7 +573,30 @@ def select_programs(
             f"{ {name: program.scope.value for name, program in graph.items()}!r}."
         )
         raise ValueError(msg)
+    _validate_selected_internal_edges(selected=selected, graph=graph)
     return MappingProxyType(selected)
+
+
+def _validate_selected_internal_edges(
+    *, selected: Mapping[str, CoreProgram], graph: Mapping[str, CoreProgram]
+) -> None:
+    """Require every kept consumer's producers to survive the same selection.
+
+    A consumer whose producer this retention deselects has no source for the
+    argument it declares, so the scopes of the two programs must be chosen
+    together rather than discovered at lowering.
+    """
+    for name, program in selected.items():
+        for argument_name, ref in program.requirements.internal_inputs.items():
+            if ref.producer in selected:
+                continue
+            msg = (
+                f"CoreProgram {name!r} takes internal input {argument_name!r} from "
+                f"{ref.producer!r}, which this retention does not dispatch: "
+                f"{name!r} has scope {program.scope.value!r} and {ref.producer!r} "
+                f"has scope {graph[ref.producer].scope.value!r}."
+            )
+            raise ValueError(msg)
 
 
 def _reject_native_duplicate_authorities(*, kernel: object) -> None:
@@ -397,7 +610,7 @@ def _reject_native_duplicate_authorities(*, kernel: object) -> None:
             "streamed_core",
             "build_lower_args",
             "build_core_program",
-            "target_value_accesses",
+            "value_reads",
             "output_roles",
             "core_for_output_layout",
         )
@@ -438,7 +651,69 @@ def _snapshot_and_validate_graph(
         _validate_program_declaration(program=program)
     _validate_replay_replacements(graph=snapshot)
     _validate_retained_artifact_payload_type_consistency(graph=snapshot)
+    _validate_internal_edges(graph=snapshot)
     return MappingProxyType(snapshot)
+
+
+def _validate_internal_edges(*, graph: Mapping[str, CoreProgram]) -> None:
+    """Require every internal input to name a declared output and no cycle to form."""
+    for name, program in graph.items():
+        labels = [spec.label for spec in program.internal_outputs]
+        duplicates = sorted({label for label in labels if labels.count(label) > 1})
+        if duplicates:
+            msg = (
+                f"CoreProgram {name!r} declares internal outputs with duplicate "
+                f"labels: {tuple(duplicates)!r}."
+            )
+            raise ValueError(msg)
+    for name, program in graph.items():
+        for argument_name, ref in program.requirements.internal_inputs.items():
+            producer = graph.get(ref.producer)
+            if producer is None:
+                msg = (
+                    f"CoreProgram {name!r} takes internal input {argument_name!r} "
+                    f"from {ref.producer!r}, which is not a program of the same "
+                    f"graph: {tuple(graph)!r}."
+                )
+                raise ValueError(msg)
+            declared = tuple(spec.label for spec in producer.internal_outputs)
+            if ref.label not in declared:
+                msg = (
+                    f"CoreProgram {name!r} takes internal input {argument_name!r} "
+                    f"labelled {ref.label!r} from {ref.producer!r}, which declares "
+                    f"internal outputs {declared!r}."
+                )
+                raise ValueError(msg)
+    _topological_program_order(graph=graph)
+
+
+def _topological_program_order(*, graph: Mapping[str, CoreProgram]) -> tuple[str, ...]:
+    """Return graph keys so every producer precedes its consumers.
+
+    Declaration order breaks ties, so a graph without internal edges keeps the
+    order its kernel published.
+    """
+    remaining = dict(graph)
+    order: list[str] = []
+    while remaining:
+        ready = [
+            name
+            for name, program in remaining.items()
+            if all(
+                ref.producer not in remaining
+                for ref in program.requirements.internal_inputs.values()
+            )
+        ]
+        if not ready:
+            msg = (
+                "Core programs' internal inputs form a cycle among "
+                f"{tuple(remaining)!r}."
+            )
+            raise ValueError(msg)
+        for name in ready:
+            order.append(name)
+            del remaining[name]
+    return tuple(order)
 
 
 def _validate_replay_replacements(*, graph: Mapping[str, CoreProgram]) -> None:
@@ -577,7 +852,20 @@ def _validate_retained_artifact_payload_types(*, program: CoreProgram) -> None:
 def _validate_disposition_reason(
     *, program: CoreProgram | MaterializedCoreProgram
 ) -> None:
-    """Require an explicit, stable explanation for every dense route."""
+    """Require an explicit, stable explanation for every route the engine cedes.
+
+    Only a planned program leaves the width choice to the engine; a dense or
+    host-driven one takes it back and says why.
+    """
+    if (
+        program.requirements.host_axis_names
+        and program.disposition is CoreExecutionDisposition.DENSE
+    ):
+        msg = (
+            f"Dense CoreProgram {program.name!r} cannot declare host dispatch axes; "
+            "use a planned or host-driven program."
+        )
+        raise ValueError(msg)
     reason = program.disposition_reason
     if program.disposition is CoreExecutionDisposition.PLANNED:
         if reason is not None:
@@ -586,7 +874,8 @@ def _validate_disposition_reason(
         return
     if not isinstance(reason, str) or not reason.strip():
         msg = (
-            f"Dense CoreProgram {program.name!r} must declare a non-empty "
+            f"CoreProgram {program.name!r} with disposition "
+            f"{program.disposition.value!r} must declare a non-empty "
             "disposition_reason."
         )
         raise ValueError(msg)
@@ -612,6 +901,8 @@ def materialize_core_program(
         scope=program.scope,
         retained_artifact_keys=program.retained_artifact_keys,
         replaces_program=program.replaces_program,
+        internal_outputs=program.internal_outputs,
+        compiler_options=program.compiler_options,
     )
     missing_donations = set(materialized.donation_candidates) - set(
         materialized.arguments
@@ -645,10 +936,16 @@ class ResolvedCoreProgram:
     scope: ProgramScope = ProgramScope.ANY
     retained_artifact_keys: tuple[ArtifactKey, ...] = ()
     replaces_program: str | None = None
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+    """Outputs another program of the same graph may name as an input."""
+    compiler_options: tuple[tuple[str, int], ...] = ()
+    """Fixed compiler choices included in the engine's lowering identity."""
 
     def __post_init__(self) -> None:
         """Snapshot the materialized argument and planning containers."""
+        _validate_compiler_options(self.compiler_options)
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(
             self,
             "static_kwargs",
@@ -671,41 +968,97 @@ def resolve_core_program(
     program: MaterializedCoreProgram,
     tile_widths: Mapping[str, object] | None = None,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
+    abstract_inputs: bool = False,
 ) -> ResolvedCoreProgram:
     """Validate and bind planner-owned tile widths into program.
 
     Widths are static compilation choices kept separate from the dynamic lowering
     arguments. The engine supplies them as JAX static keyword arguments while retaining
-    the raw core's identity, so equivalent solves reuse JAX's trace cache. A streamable
+    the raw core's identity, so equivalent solves reuse JAX's trace cache. A declared
     axis requires an explicit planner choice; silently using its full extent would turn
-    a streaming declaration into full materialization.
+    a streaming declaration into full materialization. This runs once per program build,
+    before any period dispatch, so the input transfer plan it applies here takes no
+    `cache`: there is no per-period consumer to share a copy with yet.
+
+    With `abstract_inputs=True`, every dynamic leaf must be a shape descriptor
+    carrying its required destination layout. The same read, width and transfer
+    metadata checks run, but no physical transfer is applied. The original source
+    transfer plan remains attached to the resolved program for cost accounting.
+    """
+    return resolve_core_program_candidates(
+        program=program,
+        tile_widths=(tile_widths,),
+        input_transfer_plan=input_transfer_plan,
+        abstract_inputs=abstract_inputs,
+    )[0]
+
+
+def resolve_core_program_candidates(
+    *,
+    program: MaterializedCoreProgram,
+    tile_widths: tuple[Mapping[str, object] | None, ...],
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
+    abstract_inputs: bool = False,
+) -> tuple[ResolvedCoreProgram, ...]:
+    """Validate one program and bind every candidate in the supplied order.
+
+    The declaration, callable signature and abstract-input metadata are shared
+    by every width of this materialized program. Validate them once for this
+    call. Each candidate still checks its widths and exact transfer plan and
+    keeps the original callable identity. A later call validates afresh, so
+    mutable callable signatures and partial bindings remain visible.
     """
     _validate_core_program(program=program)
+    if type(abstract_inputs) is not bool:
+        raise TypeError("abstract_inputs must be a bool.")
+    if abstract_inputs:
+        _validate_abstract_inputs(program=program)
+    return tuple(
+        _resolve_core_program(
+            program=program,
+            tile_widths=widths,
+            input_transfer_plan=input_transfer_plan,
+            abstract_inputs=abstract_inputs,
+        )
+        for widths in tile_widths
+    )
+
+
+def _resolve_core_program(
+    *,
+    program: MaterializedCoreProgram,
+    tile_widths: Mapping[str, object] | None,
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...],
+    abstract_inputs: bool,
+) -> ResolvedCoreProgram:
+    """Bind one candidate of a validated program, preserving width-specific checks."""
     requested_widths = {} if tile_widths is None else dict(tile_widths)
     if program.disposition is CoreExecutionDisposition.PLANNED:
         (
             resolved_input_transfer_plan,
             input_transfer_specialization_key,
-        ) = _resolve_input_transfer_plan(program=program, plan=input_transfer_plan)
+        ) = _resolve_input_transfer_plan(
+            program=program, plan=input_transfer_plan, abstract_inputs=abstract_inputs
+        )
     else:
         if input_transfer_plan:
             msg = (
-                f"CoreProgram {program.name!r} with disposition "
-                f"{program.disposition.value!r} cannot carry a resolved input plan."
+                "A resolved input plan is for planned programs only; CoreProgram "
+                f"{program.name!r} has disposition {program.disposition.value!r}."
             )
             raise ValueError(msg)
         resolved_input_transfer_plan = ()
         input_transfer_specialization_key = ()
-    axes = program.requirements.streamable_axes
+    axes = program.requirements.axes
     axis_names = [axis.name for axis in axes]
 
     unknown_axes = requested_widths.keys() - set(axis_names)
     if unknown_axes:
-        msg = f"Tile widths name an unknown streamable axis: {sorted(unknown_axes)!r}."
+        msg = f"Tile widths name an unknown execution axis: {sorted(unknown_axes)!r}."
         raise ValueError(msg)
     missing_axes = set(axis_names) - requested_widths.keys()
     if missing_axes:
-        msg = f"Tile width is required for streamable axes: {sorted(missing_axes)!r}."
+        msg = f"Tile width is required for execution axes: {sorted(missing_axes)!r}."
         raise ValueError(msg)
 
     resolved_widths: dict[str, int] = {}
@@ -728,14 +1081,20 @@ def resolve_core_program(
                 axis.width_keyword,
                 width,
             )
+            if isinstance(axis, ReducedAxis)
+            else (axis.name, axis.extent, axis.width_keyword, width)
         )
 
     return ResolvedCoreProgram(
         name=program.name,
         function=program.function,
-        arguments=apply_value_transfer_plan(
-            arguments=program.arguments,
-            plan=resolved_input_transfer_plan,
+        arguments=(
+            program.arguments
+            if abstract_inputs
+            else apply_value_transfer_plan(
+                arguments=program.arguments,
+                plan=resolved_input_transfer_plan,
+            )
         ),
         static_kwargs=width_bindings,
         requirements=program.requirements,
@@ -746,11 +1105,16 @@ def resolve_core_program(
         scope=program.scope,
         retained_artifact_keys=program.retained_artifact_keys,
         replaces_program=program.replaces_program,
+        internal_outputs=program.internal_outputs,
+        compiler_options=program.compiler_options,
         tile_widths=resolved_widths,
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(
             "core-program",
             _CORE_PROGRAM_VERSION,
+            # The arithmetic profile decides what the traced code computes, so an
+            # executable built under one x64 setting may not answer for the other.
+            ("jax_enable_x64", bool(jax.config.jax_enable_x64)),
             program.disposition.value,
             program.disposition_reason,
             program.scope.value,
@@ -759,34 +1123,15 @@ def resolve_core_program(
             program.donation_candidates,
             tuple(compilation_axes),
             input_transfer_specialization_key,
+            tuple(
+                sorted(
+                    (name, ref.producer, ref.label)
+                    for name, ref in program.requirements.internal_inputs.items()
+                )
+            ),
+            tuple((spec.label, spec.path) for spec in program.internal_outputs),
         ),
     )
-
-
-def initial_core_tile_widths(
-    *, program: CoreProgram | MaterializedCoreProgram
-) -> MappingProxyType[str, int]:
-    """Choose the shared bounded bootstrap width for every planned product axis."""
-    if program.disposition is not CoreExecutionDisposition.PLANNED:
-        if program.requirements.streamable_axes:
-            msg = (
-                f"CoreProgram {program.name!r} has disposition "
-                f"{program.disposition.value!r} but declares streamable axes."
-            )
-            raise ValueError(msg)
-        return MappingProxyType({})
-    result: dict[str, int] = {}
-    for axis in program.requirements.streamable_axes:
-        _validate_coordinate_declaration(axis=axis)
-        if axis.extent <= 1:
-            msg = (
-                f"Streamable axis {axis.name!r} must have extent greater than one; "
-                "the program must declare a dense disposition otherwise."
-            )
-            raise ValueError(msg)
-        upper_bound = min(_INITIAL_TILE_WIDTH_CAP, axis.extent - 1)
-        result[axis.name] = 1 << (upper_bound.bit_length() - 1)
-    return MappingProxyType(result)
 
 
 def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
@@ -811,18 +1156,19 @@ def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
             "so JAX can use its raw callable as a compilation-cache key."
         )
         raise TypeError(msg)
-    _validate_target_value_accesses(program=program)
+    _validate_value_reads(program=program)
 
-    axes = program.requirements.streamable_axes
+    axes = program.requirements.axes
     if program.disposition is not CoreExecutionDisposition.PLANNED and axes:
         msg = (
-            f"CoreProgram {program.name!r} has disposition "
-            f"{program.disposition.value!r} but declares streamable axes."
+            "Execution axes are for planned programs only; CoreProgram "
+            f"{program.name!r} has disposition {program.disposition.value!r} but "
+            "declares execution axes."
         )
         raise ValueError(msg)
     axis_names = [axis.name for axis in axes]
     if len(axis_names) != len(set(axis_names)):
-        msg = f"Core program has duplicate streamable axis names: {axis_names!r}."
+        msg = f"Core program has duplicate execution axis names: {axis_names!r}."
         raise ValueError(msg)
 
     width_keywords = [axis.width_keyword for axis in axes]
@@ -830,9 +1176,14 @@ def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
         msg = f"Core program has duplicate planner width keywords: {width_keywords!r}."
         raise ValueError(msg)
 
+    signature: inspect.Signature | None = None
     for axis in axes:
-        _validate_streamable_axis(axis=axis, arguments=program.arguments)
-        _validate_width_keyword(function=program.function, axis=axis)
+        _validate_axis_width_keyword(axis=axis, arguments=program.arguments)
+        if isinstance(axis, ReducedAxis):
+            _validate_reduced_axis(axis=axis, arguments=program.arguments)
+        if signature is None:
+            signature = inspect.signature(program.function)
+        _validate_width_keyword(signature=signature, axis=axis)
 
 
 def _validate_materialized_declaration(*, program: MaterializedCoreProgram) -> None:
@@ -872,6 +1223,7 @@ def _resolve_input_transfer_plan(
     *,
     program: MaterializedCoreProgram,
     plan: tuple[ResolvedValueTransfer, ...],
+    abstract_inputs: bool = False,
 ) -> tuple[tuple[ResolvedValueTransfer, ...], tuple[Hashable, ...]]:
     """Match resolved transfers to declarations and derive lowering-only identity."""
     transfers = tuple(plan)
@@ -890,28 +1242,28 @@ def _resolve_input_transfer_plan(
             raise ValueError(msg)
         transfer_by_access[key] = transfer
 
-    access_keys = tuple(
-        (access.target, access.source)
-        for access in program.requirements.target_value_accesses
+    read_keys = tuple(
+        (read.target, read.source) for read in program.requirements.value_reads
     )
-    declared = set(access_keys)
+    declared = set(read_keys)
     planned = set(transfer_by_access)
     if declared != planned:
-        missing = tuple(key for key in access_keys if key not in planned)
+        missing = tuple(key for key in read_keys if key not in planned)
         unexpected = tuple(key for key in transfer_by_access if key not in declared)
         msg = (
-            "Input transfer plan must match every declared target-value access "
+            "Input transfer plan must match every declared value read "
             f"one-to-one; missing={missing!r}, unexpected={unexpected!r}."
         )
         raise ValueError(msg)
 
-    ordered = tuple(transfer_by_access[key] for key in access_keys)
+    ordered = tuple(transfer_by_access[key] for key in read_keys)
     specialization_keys: list[Hashable] = []
-    for access, transfer in zip(
-        program.requirements.target_value_accesses, ordered, strict=True
-    ):
+    for read, transfer in zip(program.requirements.value_reads, ordered, strict=True):
         _validate_transfer_argument_metadata(
-            program=program, access=access, transfer=transfer
+            program=program,
+            read=read,
+            transfer=transfer,
+            abstract_inputs=abstract_inputs,
         )
         try:
             hash(transfer.specialization_key)
@@ -922,81 +1274,78 @@ def _resolve_input_transfer_plan(
     return ordered, tuple(specialization_keys)
 
 
-def _validate_target_value_accesses(*, program: MaterializedCoreProgram) -> None:
+def _validate_value_reads(*, program: MaterializedCoreProgram) -> None:
     """Validate exact core-input locators without constraining artifact fan-out."""
-    locators: set[tuple[object, tuple[str | int, ...]]] = set()
+    locators: set[tuple[object, tuple[str | int, ...], str | None]] = set()
     source_node: tuple[int, str, str] | None = None
-    for access in program.requirements.target_value_accesses:
-        if not isinstance(access, TargetValueAccess):
-            msg = "Core target_value_accesses must contain TargetValueAccess entries."
+    for read in program.requirements.value_reads:
+        if not isinstance(read, ValueRead):
+            msg = "Core value_reads must contain ValueRead entries."
             raise TypeError(msg)
 
         node = (
-            access.source.source_period,
-            access.source.source_regime,
-            access.source.core_key,
+            read.source.source_period,
+            read.source.source_regime,
+            read.source.core_key,
         )
         if source_node is None:
             source_node = node
         elif node != source_node:
             msg = (
-                "All target-value accesses in one CoreProgram must name the same "
+                "All value reads in one CoreProgram must name the same "
                 f"source period/regime/core; got {source_node!r} and {node!r}."
             )
             raise ValueError(msg)
 
-        locator = (access.source.channel, access.source.path)
+        locator = (read.source.channel, read.source.path, read.source.argument)
         if locator in locators:
-            msg = (
-                f"Core program has a duplicate target-value argument path: {locator!r}."
-            )
+            msg = f"Core program has a duplicate value-read locator: {locator!r}."
             raise ValueError(msg)
         locators.add(locator)
-        _target_value_argument_leaf(program=program, access=access)
+        _value_read_argument_leaf(program=program, read=read)
 
 
-def _target_value_argument_leaf(
-    *, program: MaterializedCoreProgram, access: TargetValueAccess
+def _value_read_argument_leaf(
+    *, program: MaterializedCoreProgram, read: ValueRead
 ) -> _TransferArgumentLeaf:
     """Resolve one declared consumer path to an array-like lowering leaf."""
-    channel = access.source.channel.value
-    if channel not in program.arguments:
-        msg = (
-            f"Target-value input channel {channel!r} is missing from program arguments."
-        )
+    root = read.source.argument or read.source.channel.value
+    if root not in program.arguments:
+        msg = f"Value-read argument {root!r} is missing from program arguments."
         raise ValueError(msg)
 
-    value: object = program.arguments[channel]
+    value: object = program.arguments[root]
     traversed: list[str | int] = []
-    for segment in access.source.path:
+    for segment in read.source.path:
         traversed.append(segment)
         if isinstance(value, Mapping):
             if segment not in value:
-                msg = (
-                    f"Target-value argument path {(channel, *traversed)!r} is missing."
-                )
+                msg = f"Value-read argument path {(root, *traversed)!r} is missing."
                 raise ValueError(msg)
             value = value[segment]
             continue
         if isinstance(value, tuple):
             if type(segment) is not int or segment >= len(value):
                 msg = (
-                    f"Target-value argument path {(channel, *traversed)!r} does not "
+                    f"Value-read argument path {(root, *traversed)!r} does not "
                     "select an existing sequence item."
                 )
                 raise ValueError(msg)
             value = value[segment]
             continue
+        if type(segment) is str and hasattr(value, segment):
+            value = getattr(value, segment)
+            continue
         msg = (
-            f"Target-value argument path {(channel, *traversed)!r} traverses a "
+            f"Value-read argument path {(root, *traversed)!r} traverses a "
             "non-container value."
         )
         raise ValueError(msg)
 
     if getattr(value, "shape", None) is None or getattr(value, "dtype", None) is None:
         msg = (
-            f"Target-value argument path {(channel, *access.source.path)!r} must "
-            "resolve to an array-like leaf with shape and dtype."
+            f"Value-read argument path {(root, *read.source.path)!r} must resolve to "
+            "an array-like leaf with shape and dtype."
         )
         raise TypeError(msg)
     return cast("_TransferArgumentLeaf", value)
@@ -1005,15 +1354,16 @@ def _target_value_argument_leaf(
 def _validate_transfer_argument_metadata(
     *,
     program: MaterializedCoreProgram,
-    access: TargetValueAccess,
+    read: ValueRead,
     transfer: ResolvedValueTransfer,
+    abstract_inputs: bool = False,
 ) -> None:
     """Reject a correctly addressed transfer resolved from a stale template."""
-    leaf = _target_value_argument_leaf(program=program, access=access)
+    leaf = _value_read_argument_leaf(program=program, read=read)
     actual_shape = tuple(leaf.shape)
     if actual_shape != transfer.expected_shape:
         msg = (
-            f"Input transfer shape mismatch at {access.source!r}: "
+            f"Input transfer shape mismatch at {read.source!r}: "
             f"argument has {actual_shape}, plan expects {transfer.expected_shape}."
         )
         raise ValueError(msg)
@@ -1021,32 +1371,78 @@ def _validate_transfer_argument_metadata(
     actual_dtype = leaf.dtype
     if actual_dtype != transfer.expected_dtype:
         msg = (
-            f"Input transfer dtype mismatch at {access.source!r}: "
+            f"Input transfer dtype mismatch at {read.source!r}: "
             f"argument has {actual_dtype}, plan expects {transfer.expected_dtype}."
         )
         raise TypeError(msg)
 
     actual_sharding = getattr(leaf, "sharding", None)
-    if actual_sharding != transfer.stored_sharding:
+    expected_sharding = (
+        transfer.source_sharding if abstract_inputs else transfer.stored_sharding
+    )
+    if actual_sharding != expected_sharding:
+        layout_role = "required" if abstract_inputs else "stored"
         msg = (
-            f"Input transfer stored-sharding mismatch at {access.source!r}: "
-            f"argument has {actual_sharding}, plan expects {transfer.stored_sharding}."
+            f"Input transfer {layout_role}-sharding mismatch at {read.source!r}: "
+            f"argument has {actual_sharding}, plan expects {expected_sharding}."
         )
         raise ValueError(msg)
 
 
-def _validate_streamable_axis(
+def _validate_abstract_inputs(*, program: MaterializedCoreProgram) -> None:
+    """Require explicit abstract layouts for all operands, including dead ones."""
+    if any(
+        not isinstance(leaf, jax.ShapeDtypeStruct)
+        or not isinstance(leaf.sharding, jax.sharding.Sharding)
+        for leaf in jax.tree.leaves(program.arguments)
+    ):
+        raise ExecutionPlanningError(
+            "Abstract core inputs require only ShapeDtypeStruct leaves with "
+            "explicit JAX shardings."
+        )
+
+
+def _fail_if_axis_name_invalid(*, name: object) -> None:
+    """Require an exact, non-empty spelling for a planner-visible axis name."""
+    if type(name) is not str or not name:
+        msg = "An execution axis name must be a non-empty string."
+        raise TypeError(msg)
+
+
+def _fail_if_width_policy_invalid(
+    *, name: str, extent: int, minimum_width: object, alignment: object
+) -> None:
+    """Require a width floor and an alignment the axis extent can actually serve.
+
+    A non-positive extent is not this check's business: the planner seam refuses
+    such an axis by itself, and comparing a floor against it would report the floor
+    for a declaration whose extent is what is wrong.
+    """
+    if type(minimum_width) is not int or minimum_width < 1:
+        msg = f"Execution axis {name!r} minimum_width must be a positive int."
+        raise ExecutionPlanningError(msg)
+    if type(alignment) is not int or alignment < 1:
+        msg = f"Execution axis {name!r} alignment must be a positive int."
+        raise ExecutionPlanningError(msg)
+    if extent >= 1 and minimum_width > extent:
+        msg = (
+            f"Execution axis {name!r} minimum_width {minimum_width} exceeds its "
+            f"extent {extent}."
+        )
+        raise ExecutionPlanningError(msg)
+
+
+def _validate_reduced_axis(
     *,
-    axis: StreamableProductAxis,
+    axis: ReducedAxis,
     arguments: Mapping[str, object],
 ) -> None:
     """Fail closed for product declarations outside the supported contract."""
     _validate_coordinate_declaration(axis=axis)
     if axis.canonical_order != "c":
-        msg = f"Streamable axis {axis.name!r} canonical order must be 'c'."
+        msg = f"Reduced axis {axis.name!r} canonical order must be 'c'."
         raise ValueError(msg)
-    _validate_reduction_semantics(axis=axis)
-    _validate_axis_width_keyword(axis=axis, arguments=arguments)
+    _validate_reduction_declaration(axis=axis)
     for coordinate_name, coordinate_extent in zip(
         axis.coordinate_names, axis.coordinate_extents, strict=True
     ):
@@ -1058,17 +1454,17 @@ def _validate_streamable_axis(
         )
 
 
-def _validate_coordinate_declaration(*, axis: StreamableProductAxis) -> None:
+def _validate_coordinate_declaration(*, axis: ReducedAxis) -> None:
     """Validate the names, extents, and global identities of one product."""
     if len(axis.coordinate_names) != len(axis.coordinate_extents):
         msg = (
-            f"Streamable axis {axis.name!r} coordinate names and extents must "
+            f"Reduced axis {axis.name!r} coordinate names and extents must "
             "have the same length."
         )
         raise ValueError(msg)
     if len(axis.coordinate_names) != len(set(axis.coordinate_names)):
         msg = (
-            f"Streamable axis {axis.name!r} has duplicate coordinate names: "
+            f"Reduced axis {axis.name!r} has duplicate coordinate names: "
             f"{axis.coordinate_names!r}."
         )
         raise ValueError(msg)
@@ -1076,50 +1472,50 @@ def _validate_coordinate_declaration(*, axis: StreamableProductAxis) -> None:
         isinstance(extent, bool) or not isinstance(extent, int)
         for extent in axis.coordinate_extents
     ):
-        msg = f"Streamable axis {axis.name!r} coordinate extents must be integers."
+        msg = f"Reduced axis {axis.name!r} coordinate extents must be integers."
         raise TypeError(msg)
     if any(extent <= 0 for extent in axis.coordinate_extents):
-        msg = f"Streamable axis {axis.name!r} coordinate extents must be positive."
+        msg = f"Reduced axis {axis.name!r} coordinate extents must be positive."
         raise ValueError(msg)
     if axis.extent > _INT32_MAX:
         msg = (
-            f"Streamable axis {axis.name!r} exceeds the int32 global action "
+            f"Reduced axis {axis.name!r} exceeds the int32 global action "
             f"identity range: {axis.extent}."
         )
         raise ValueError(msg)
 
 
-def _validate_reduction_semantics(*, axis: StreamableProductAxis) -> None:
-    """Require stable, hashable semantics for the axis reduction."""
-    if not isinstance(axis.reduction, ReductionSemantics):
+def _validate_reduction_declaration(*, axis: ReducedAxis) -> None:
+    """Require a stable, hashable key and a declared exactness for the reduction."""
+    if not isinstance(axis.reduction, ReductionDeclaration):
         msg = (
-            f"Streamable axis {axis.name!r} reduction must expose a stable "
-            "semantic_key."
+            f"Reduced axis {axis.name!r} reduction must expose a stable "
+            "semantic_key and a declared exactness."
         )
         raise TypeError(msg)
     try:
         hash(axis.reduction.semantic_key)
     except TypeError as exc:
-        msg = f"Streamable axis {axis.name!r} reduction semantic_key must be hashable."
+        msg = f"Reduced axis {axis.name!r} reduction semantic_key must be hashable."
         raise TypeError(msg) from exc
 
 
 def _validate_axis_width_keyword(
-    *, axis: StreamableProductAxis, arguments: Mapping[str, object]
+    *, axis: ReducedAxis | TiledOutputAxis, arguments: Mapping[str, object]
 ) -> None:
     """Keep the planner-owned width distinct from dynamic arguments."""
     if not axis.width_keyword:
-        msg = f"Streamable axis {axis.name!r} must declare a width keyword."
+        msg = f"Execution axis {axis.name!r} must declare a width keyword."
         raise ValueError(msg)
     if axis.width_keyword in arguments:
         msg = (
-            f"Streamable axis {axis.name!r} width keyword "
+            f"Execution axis {axis.name!r} width keyword "
             f"{axis.width_keyword!r} is already present in dynamic arguments."
         )
         raise ValueError(msg)
 
 
-def _validate_tile_width(*, axis: StreamableProductAxis, width: object) -> int:
+def _validate_tile_width(*, axis: ReducedAxis | TiledOutputAxis, width: object) -> int:
     """Validate one planner-selected width against its declared product."""
     if isinstance(width, bool) or not isinstance(width, int):
         msg = f"Tile width for axis {axis.name!r} must be an integer."
@@ -1146,7 +1542,7 @@ def _validate_coordinate_argument(
     """Tie one declared coordinate to the exact dynamic lowering grid."""
     if coordinate_name not in arguments:
         msg = (
-            f"Streamable axis {axis_name!r} coordinate {coordinate_name!r} is "
+            f"Reduced axis {axis_name!r} coordinate {coordinate_name!r} is "
             "missing from the program arguments."
         )
         raise ValueError(msg)
@@ -1154,29 +1550,28 @@ def _validate_coordinate_argument(
     shape = getattr(coordinate, "shape", None)
     if shape is None or len(shape) != 1:
         msg = (
-            f"Streamable axis {axis_name!r} coordinate {coordinate_name!r} must "
+            f"Reduced axis {axis_name!r} coordinate {coordinate_name!r} must "
             "be one-dimensional."
         )
         raise ValueError(msg)
     if shape[0] == 0:
         msg = (
-            f"Streamable axis {axis_name!r} coordinate {coordinate_name!r} must "
+            f"Reduced axis {axis_name!r} coordinate {coordinate_name!r} must "
             "be non-empty."
         )
         raise ValueError(msg)
     if shape[0] != coordinate_extent:
         msg = (
-            f"Streamable axis {axis_name!r} coordinate {coordinate_name!r} has "
+            f"Reduced axis {axis_name!r} coordinate {coordinate_name!r} has "
             f"extent {shape[0]}, but the declaration says {coordinate_extent}."
         )
         raise ValueError(msg)
 
 
 def _validate_width_keyword(
-    *, function: Callable[..., object], axis: StreamableProductAxis
+    *, signature: inspect.Signature, axis: ReducedAxis | TiledOutputAxis
 ) -> None:
     """Require the raw core to accept the planner's static width binding."""
-    signature = inspect.signature(function)
     parameter = signature.parameters.get(axis.width_keyword)
     accepts_kwargs = any(
         item.kind is inspect.Parameter.VAR_KEYWORD
@@ -1184,13 +1579,13 @@ def _validate_width_keyword(
     )
     if parameter is None and not accepts_kwargs:
         msg = (
-            f"Streamable axis {axis.name!r} width keyword "
+            f"Execution axis {axis.name!r} width keyword "
             f"{axis.width_keyword!r} is not accepted by the core function."
         )
         raise TypeError(msg)
     if parameter is not None and parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
         msg = (
-            f"Streamable axis {axis.name!r} width keyword "
+            f"Execution axis {axis.name!r} width keyword "
             f"{axis.width_keyword!r} must be accepted as a keyword by the core "
             "function."
         )

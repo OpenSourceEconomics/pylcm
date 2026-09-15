@@ -4,7 +4,7 @@ An age-varying grid is a property of a *state*, so it has to be usable whatever
 solver consumes that state. The EGM solvers read a state grid in two ways, and only
 one of them is age-dependent:
 
-- shape traits — the grid's class, `n_points`, dtype and `batch_size`. These are
+- shape traits — the grid's class, `n_points`, and dtype. These are
   invariant across ages by the `AgeSpecializedGrid` contract, so the representative
   grid answers them exactly.
 - node values — these genuinely differ per age, so anything numerical must read the

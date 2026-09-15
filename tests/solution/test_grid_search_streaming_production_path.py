@@ -177,7 +177,7 @@ def test_eager_singleton_hard_max_never_builds_the_dense_oracle(
 def test_public_collective_solve_does_not_call_streamed_household_reduction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The adverse resource route is an explicit dense native program."""
+    """State tiling keeps the household's canonical dense action reduction."""
 
     def fail_streamed_collective(**_kwargs: Any) -> None:
         raise AssertionError("dense collective route called streamed reduction")
@@ -193,12 +193,12 @@ def test_public_collective_solve_does_not_call_streamed_household_reduction(
     )["main"]
     solution = model.solve(params={"discount_factor": 0.95}, log_level="debug")
 
-    assert program.disposition is CoreExecutionDisposition.DENSE
     assert (
-        program.disposition_reason
-        == "deliberately_dense:collective_resource_regression"
-    )
-    assert jnp.all(jnp.isfinite(solution.values[0]["couple"]))
+        program.disposition,
+        program.disposition_reason,
+        program.requirements.reduced_axes,
+        bool(jnp.all(jnp.isfinite(solution.values[0]["couple"]))),
+    ) == (CoreExecutionDisposition.PLANNED, None, (), True)
 
 
 def test_public_ev1_solve_does_not_call_streamed_branch_reduction(
@@ -227,8 +227,9 @@ def test_public_ev1_solve_does_not_call_streamed_branch_reduction(
         log_level="debug",
     )
 
-    assert program.disposition is CoreExecutionDisposition.DENSE
     assert (
-        program.disposition_reason == "deliberately_dense:ev1_canonical_reduction_order"
-    )
-    assert jnp.all(jnp.isfinite(solution.values[0]["alive"]))
+        program.disposition,
+        program.disposition_reason,
+        program.requirements.reduced_axes,
+        bool(jnp.all(jnp.isfinite(solution.values[0]["alive"]))),
+    ) == (CoreExecutionDisposition.PLANNED, None, (), True)

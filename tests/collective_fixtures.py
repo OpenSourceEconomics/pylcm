@@ -101,9 +101,7 @@ STATELESS_TARGET_V_PERIOD_0 = ((39.5, 0.0), (49.5, 80.0))
 FOLDING_SINGLETON_V_PERIOD_0 = 13.8
 
 
-def make_two_stakeholder_model(
-    *, n_subjects: int | None = None
-) -> tuple[Model, ParamsDict]:
+def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
     """Build a two-stakeholder collective model over one 2-point wage state.
 
     `couple` is active at age 0 and transitions with probability one into
@@ -119,10 +117,6 @@ def make_two_stakeholder_model(
     - Period 0, $Q^s = u^s + 0.95 V'^s$: at wage 8 work wins with $(46, 92)$,
       at wage 40 work wins with $(78, 156)$. The continuation flips the low-wage
       argmax, so a dropped continuation is visible in the value.
-
-    Args:
-        n_subjects: Simulate batch size to compile ahead of time, or `None` to
-            compile at runtime.
 
     Returns:
         Tuple of the model and the params dict that solves it.
@@ -151,14 +145,11 @@ def make_two_stakeholder_model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
-        n_subjects=n_subjects,
     )
     return model, _couple_params()
 
 
-def make_stateless_collective_target_model(
-    *, n_subjects: int | None = None
-) -> tuple[Model, ParamsDict]:
+def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
     """Build a collective model whose only target carries no state.
 
     `couple` is the same two-stakeholder wage regime as in
@@ -177,10 +168,6 @@ def make_stateless_collective_target_model(
     Dropping the continuation entirely would leave the flow payoffs at the same
     argmaxes, $((30, 0), (40, 80))$, which is why the terminal payoff is chosen
     small enough not to move either argmax.
-
-    Args:
-        n_subjects: Simulate batch size to compile ahead of time, or `None` to
-            compile at runtime.
 
     Returns:
         Tuple of the model and the params dict that solves it.
@@ -211,14 +198,11 @@ def make_stateless_collective_target_model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
-        n_subjects=n_subjects,
     )
     return model, _couple_params()
 
 
-def make_folding_singleton_model(
-    *, n_subjects: int | None = None
-) -> tuple[Model, ParamsDict]:
+def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
     """Build a singleton model whose only state is a folded IID shock.
 
     `shocked` declares `wage_shock` as a `NormalIIDProcess(fold=True)` that
@@ -230,10 +214,6 @@ def make_folding_singleton_model(
     $10 + \\varepsilon > 0$ at every node of a $\\sigma = 2$ shock, so work is
     chosen everywhere and the period-0 value is
     $E[10 + \\varepsilon] + 0.95 \\cdot 4 = 13.8$.
-
-    Args:
-        n_subjects: Simulate batch size to compile ahead of time, or `None` to
-            compile at runtime.
 
     Returns:
         Tuple of the model and the params dict that solves it.
@@ -255,7 +235,6 @@ def make_folding_singleton_model(
         regimes={"shocked": shocked, "shocked_terminal": shocked_terminal},
         ages=AGES,
         regime_id_class=ShockRegimeId,
-        n_subjects=n_subjects,
     )
     params: ParamsDict = {
         "shocked": {"koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR}},

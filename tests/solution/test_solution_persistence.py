@@ -25,6 +25,7 @@ from lcm.persistence import load_solution, save_solution
 from lcm.solver_api import (
     EGM_CONTINUATION,
     SOLUTION_SCHEMA_VERSION,
+    SOLVER_API_VERSION,
     ArtifactAuthority,
     ArtifactChannel,
     ArtifactDescriptor,
@@ -1091,6 +1092,23 @@ def test_incompatible_archive_version_is_rejected(
         load_solution(path=path)
 
 
+def test_archive_written_under_solver_api_version_one_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """Refuse an archive stamped with the superseded solver API version 1."""
+    path = save_solution(
+        solution=_make_solution(),
+        path=tmp_path / "solution.lcm",
+    )
+    with h5py.File(path, "r+") as archive:
+        manifest = _read_manifest(archive)
+        manifest["solver_api_version"] = 1
+        _replace_manifest(archive=archive, manifest=manifest)
+
+    with pytest.raises(IncompatibleSolutionError, match="solver_api_version"):
+        load_solution(path=path)
+
+
 def test_incompatible_metadata_pylcm_version_is_rejected(tmp_path: Path) -> None:
     """Require the descriptive package identity to match the archive envelope."""
     path = save_solution(
@@ -1212,7 +1230,7 @@ class _HostileComparisonInt(int):
 @pytest.mark.parametrize(
     ("field_name", "invalid"),
     [
-        ("solver_api_version", True),
+        ("solver_api_version", np.int64(SOLVER_API_VERSION)),
         (
             "solution_schema_version",
             _CompatibilityVersionSubclass(SOLUTION_SCHEMA_VERSION),

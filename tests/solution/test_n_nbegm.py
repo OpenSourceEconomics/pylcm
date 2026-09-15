@@ -13,7 +13,7 @@ from beartype.roar import BeartypeCallHintParamViolation
 
 import _lcm.solution.nnbegm as nnbegm_module
 from _lcm.egm.published_policy import NNBEGMSimPolicy
-from lcm import NormalIIDProcess
+from lcm import ExecutionConfig, NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import SIMULATION_POLICY
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
@@ -254,8 +254,31 @@ def test_three_period_toy_tracks_nested_dcegm_through_published_carries() -> Non
         )
 
 
-@pytest.mark.parametrize("outer_batch_size", [1, 4, 100])
-def test_outer_batch_size_is_value_invariant(outer_batch_size: int) -> None:
+@pytest.mark.parametrize(
+    ("width", "n_steps"),
+    [(None, 1), (1, 7), (2, 4), (3, 3), (7, 1), (100, 1)],
+)
+def test_the_outer_dispatch_width_cuts_the_host_loop_into_steps(
+    *, width: int | None, n_steps: int
+) -> None:
+    """The width is the number of outer nodes one host-loop step dispatches."""
+    assert len(nnbegm_module._dispatch_bounds(n_items=7, width=width)) == n_steps
+
+
+@pytest.mark.parametrize("width", [None, 1, 2, 3, 7, 100])
+def test_every_outer_node_is_dispatched_once_whatever_the_width(
+    *, width: int | None
+) -> None:
+    """The steps cover the nodes in order, none twice and none skipped."""
+    bounds = nnbegm_module._dispatch_bounds(n_items=7, width=width)
+
+    assert [index for start, stop in bounds for index in range(start, stop)] == list(
+        range(7)
+    )
+
+
+@pytest.mark.parametrize("width", [1, 4, 100])
+def test_outer_dispatch_width_is_value_invariant(*, width: int) -> None:
     """Chunking the outer sweep never changes the solved values."""
     reference = (
         toy.build_model(variant="n_nbegm", n_periods=2)
@@ -264,7 +287,9 @@ def test_outer_batch_size_is_value_invariant(outer_batch_size: int) -> None:
     )
     chunked = (
         toy.build_model(
-            variant="n_nbegm", outer_batch_size=outer_batch_size, n_periods=2
+            variant="n_nbegm",
+            n_periods=2,
+            execution_config=ExecutionConfig(axis_widths={"outer_candidate": width}),
         )
         .solve(params=_PARAMS, log_level="debug")
         .values
@@ -293,7 +318,7 @@ def test_finite_outer_grid_does_not_materialize_a_candidate_bank(monkeypatch) ->
     solution = (
         toy.build_model(
             variant="n_nbegm",
-            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID, batch_size=2),
+            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID),
             n_periods=2,
         )
         .solve(params=_PARAMS, log_level="debug")

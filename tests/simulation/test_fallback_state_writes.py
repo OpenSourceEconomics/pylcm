@@ -283,6 +283,7 @@ def _solve_kernel_level(*, carrying_fallback: bool):
         }
     )
     bi_result = solve(
+        model_fingerprint="test_fallback_state_writes",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,

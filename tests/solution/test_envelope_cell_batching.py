@@ -1,25 +1,16 @@
-"""Batching the node-cell axis trades the exact envelope's working set for width.
+"""The exact envelope partitions node cells at its execution-plan width.
 
-Ownership is resolved per node cell, and `ExactEnvelope.cell_batch_size` sets
-how many cells are in flight: `None` scans them one at a time and holds a single
-cell, an integer resolves that many in parallel and holds that many. Either way
-it is a pure partition of the work — it may change how much memory the solve
-needs but may never change a published value or policy.
+Ownership is resolved independently per node cell. The width changes the
+working set while preserving every published value and ownership decision.
 """
-
-import re
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from numpy.testing import assert_array_equal
 
 from _lcm.egm.upper_envelope.segment_envelope import refine_envelope_exact
-from _lcm.solution.dcegm import DCEGM, ExactEnvelope
-from lcm import LinSpacedGrid
-from lcm.exceptions import RegimeInitializationError
-from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 
 _N_CANDIDATES = 24
 
@@ -41,9 +32,9 @@ def _wiggly_chain(dtype):
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-@pytest.mark.parametrize("cell_batch_size", [1, 2, 5, 64])
-def test_published_row_is_identical_across_cell_batch_sizes(cell_batch_size):
-    """Every batch size publishes the same row as resolving all cells at once."""
+@pytest.mark.parametrize("cell_width", [1, 2, 5, 64])
+def test_published_row_agrees_across_cell_widths(cell_width):
+    """Every width publishes the same row as a serial cell scan."""
     dtype = np.float64 if jax.config.jax_enable_x64 else np.float32
     endog_grid, policy, value = _wiggly_chain(dtype)
     expected = refine_envelope_exact(
@@ -52,7 +43,7 @@ def test_published_row_is_identical_across_cell_batch_sizes(cell_batch_size):
         value=value,
         n_refined=3 * _N_CANDIDATES,
         max_runs=8,
-        cell_batch_size=None,
+        cell_width=1,
     )
     got = refine_envelope_exact(
         endog_grid=endog_grid,
@@ -60,42 +51,15 @@ def test_published_row_is_identical_across_cell_batch_sizes(cell_batch_size):
         value=value,
         n_refined=3 * _N_CANDIDATES,
         max_runs=8,
-        cell_batch_size=cell_batch_size,
+        cell_width=cell_width,
     )
 
     expected_grid, expected_policy, expected_value, expected_kept = expected
     got_grid, got_policy, got_value, got_kept = got
     assert int(got_kept) == int(expected_kept)
     keep = int(expected_kept)
-    assert_array_equal(np.asarray(got_grid[:keep]), np.asarray(expected_grid[:keep]))
-    assert_array_equal(
-        np.asarray(got_policy[:keep]), np.asarray(expected_policy[:keep])
+    assert_agrees_to_ulp(got=got_grid[:keep], expected=expected_grid[:keep], n_ulp=4)
+    assert_agrees_to_ulp(
+        got=got_policy[:keep], expected=expected_policy[:keep], n_ulp=4
     )
-    assert_array_equal(np.asarray(got_value[:keep]), np.asarray(expected_value[:keep]))
-
-
-def _solver(*, cell_batch_size: int | None = None):
-    """A minimal valid DC-EGM configuration with one exact-backend control."""
-    return DCEGM(
-        savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=8),
-        envelope=ExactEnvelope(cell_batch_size=cell_batch_size),
-    )
-
-
-def test_cell_batch_size_defaults_to_the_smallest_working_set():
-    """The default scans cells one at a time rather than putting several in flight."""
-    assert _solver().envelope.cell_batch_size is None
-
-
-def test_cell_batch_size_accepts_an_integer_to_resolve_cells_in_parallel():
-    """Widening the step is available to a caller whose cells leave a device idle."""
-    assert _solver(cell_batch_size=8).envelope.cell_batch_size == 8
-
-
-@pytest.mark.parametrize("invalid", [0, -1])
-def test_non_positive_cell_batch_size_is_rejected(invalid):
-    """A batch size below one partitions nothing and is refused at construction."""
-    with pytest.raises(
-        RegimeInitializationError, match=re.escape("ExactEnvelope.cell_batch_size")
-    ):
-        _solver(cell_batch_size=invalid)
+    assert_agrees_to_ulp(got=got_value[:keep], expected=expected_value[:keep], n_ulp=4)

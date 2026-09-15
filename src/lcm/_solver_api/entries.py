@@ -2,12 +2,14 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 import jax
 import numpy as np
 
 from lcm._solver_api.authority import (
     ArtifactAuthority,
+    _ArrayCopier,
     _artifact_authority_template_snapshot,
     _CanonicalArtifactTemplate,
     _canonicalize_artifact_payload_snapshot,
@@ -17,6 +19,15 @@ from lcm._solver_api.authority import (
 from lcm._solver_api.identity import (
     LoadState,
 )
+
+
+@runtime_checkable
+class _ValueMaterializer(Protocol):  # noqa: PYI046 — private store boundary protocol
+    """Call-local trusted value loader; never retained by a public store."""
+
+    def __call__(self, *, entry: object) -> object:
+        """Materialize one explicitly admitted entry with its private ownership."""
+        ...
 
 
 class _LazyEntry(ABC):
@@ -161,10 +172,16 @@ def _canonical_artifact_entry_from_authority(
     )
 
 
-def _copy_solution_value(*, value: object, label: str) -> object:
+def _copy_solution_value(
+    *, value: object, label: str, array_copier: _ArrayCopier | None = None
+) -> object:
     """Copy one numerical value without changing its concrete representation."""
     if isinstance(value, jax.Array):
-        return _copy_artifact_array_leaf(leaf=value, label=label)
+        if array_copier is None:
+            return _copy_artifact_array_leaf(leaf=value, label=label)
+        return _copy_artifact_array_leaf(
+            leaf=value, label=label, array_copier=array_copier
+        )
     if isinstance(value, np.ndarray):
         copied = np.array(value, copy=True, order="K", subok=False)
         if not (
@@ -200,11 +217,34 @@ class _CanonicalValueEntry(_LazyEntry):
     def materialize(self, *, template: object | None = None) -> object:
         """Return an independent numerical value."""
         del template
-        return _copy_solution_value(value=self.value, label="Owned solution value")
+        return self._fresh()
+
+    def _fresh(self, *, array_copier: _ArrayCopier | None = None) -> object:
+        """Copy with an optional call-local allocator, without storing it."""
+        if array_copier is None:
+            return _copy_solution_value(value=self.value, label="Owned solution value")
+        return _copy_solution_value(
+            value=self.value, label="Owned solution value", array_copier=array_copier
+        )
 
 
-def _canonical_value_entry(*, value: object) -> _CanonicalValueEntry:
+def _canonical_value_entry(
+    *, value: object, array_copier: _ArrayCopier | None = None
+) -> _CanonicalValueEntry:
     """Detach one eager value before any lazy result callback may run."""
-    source = value.materialize() if type(value) is _CanonicalValueEntry else value
-    private = _copy_solution_value(value=source, label="Solution value")
+    if type(value) is _CanonicalValueEntry:
+        source = (
+            value.materialize()
+            if array_copier is None
+            else value._fresh(array_copier=array_copier)  # noqa: SLF001
+        )
+    else:
+        source = value
+    private = (
+        _copy_solution_value(value=source, label="Solution value")
+        if array_copier is None
+        else _copy_solution_value(
+            value=source, label="Solution value", array_copier=array_copier
+        )
+    )
     return _CanonicalValueEntry(value=private)

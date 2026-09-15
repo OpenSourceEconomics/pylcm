@@ -1063,14 +1063,15 @@ def nbegm_per_interval_continuation_step_savings(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     coh_grid: Float1D | None = ...,
-    envelope_segment_block_size: int = ...,
+    envelope_segment_width: int = ...,
     extra_savings: FloatND | None = ...,
     extra_cont_value: FloatND | None = ...,
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
     interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = ...,
-    interval_batch_size: int = ...,
+    interval_width: int = ...,
+    interval_indices: Int1D | None = ...,
     return_owner: Literal[False] = ...,
 ) -> tuple[Float1D, Float1D, Float1D]: ...
 
@@ -1088,14 +1089,15 @@ def nbegm_per_interval_continuation_step_savings(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     coh_grid: Float1D | None = ...,
-    envelope_segment_block_size: int = ...,
+    envelope_segment_width: int = ...,
     extra_savings: FloatND | None = ...,
     extra_cont_value: FloatND | None = ...,
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
     interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = ...,
-    interval_batch_size: int = ...,
+    interval_width: int = ...,
+    interval_indices: Int1D | None = ...,
     return_owner: Literal[True],
 ) -> tuple[Float1D, Float1D, Float1D, Int1D]: ...
 
@@ -1113,14 +1115,15 @@ def nbegm_per_interval_continuation_step_savings(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     coh_grid: Float1D | None = ...,
-    envelope_segment_block_size: int = ...,
+    envelope_segment_width: int = ...,
     extra_savings: FloatND | None = ...,
     extra_cont_value: FloatND | None = ...,
     arithmetic: ComparisonArithmetic = ...,
     feasibility_partition: ResolvedAxisPartition | None = ...,
     feasible_interval_mask: BoolND | None = ...,
     interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = ...,
-    interval_batch_size: int = ...,
+    interval_width: int = ...,
+    interval_indices: Int1D | None = ...,
     return_owner: bool,
 ) -> tuple[Float1D, Float1D, Float1D] | tuple[Float1D, Float1D, Float1D, Int1D]: ...
 
@@ -1137,14 +1140,15 @@ def nbegm_per_interval_continuation_step_savings(
     coh_intercepts: Float1D,
     breakpoints: Float1D,
     coh_grid: Float1D | None = None,
-    envelope_segment_block_size: int = 0,
+    envelope_segment_width: int = 0,
     extra_savings: FloatND | None = None,
     extra_cont_value: FloatND | None = None,
     arithmetic: ComparisonArithmetic = "certified",
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
     interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = None,
-    interval_batch_size: int = 0,
+    interval_width: int = 0,
+    interval_indices: Int1D | None = None,
     return_owner: bool = False,
 ) -> tuple[Float1D, Float1D, Float1D] | tuple[Float1D, Float1D, Float1D, Int1D]:
     """Solve a budget whose continuation differs per liquid interval.
@@ -1187,7 +1191,7 @@ def nbegm_per_interval_continuation_step_savings(
             cash-on-hand extrapolate below zero. When `None`, the corners fall back to
             the per-interval affine budget — exact whenever the budget is smooth across
             the whole interval.
-        envelope_segment_block_size: Streams the merged upper envelope over
+        envelope_segment_width: Streams the merged upper envelope over
             candidate-segment blocks of this size instead of materialising the full
             `(n_query, n_segment)` bracket matrix; `0` keeps the one-shot dense
             envelope. The result is identical either way — the knob trades peak
@@ -1196,9 +1200,11 @@ def nbegm_per_interval_continuation_step_savings(
             of global interval indices and returning value/marginal continuation
             rows, plus optional save-to-cliff targets. Each returned block is solved
             and folded before the callback is invoked for the next block.
-        interval_batch_size: Static width of that read-and-fold stream. It must be
+        interval_width: Static width of that read-and-fold stream. It must be
             positive with `interval_block_reader`; `0` selects the full-array
             one-shot route. Padding lanes are dead and cannot seed a winner.
+        interval_indices: The program's declared global interval coordinates.
+            Omission uses the canonical increasing IDs for a direct step call.
         arithmetic: Which arithmetic decides envelope ownership; see
             `envelope_at_query`. `"certified"` delegates to the installed
             exact-affine kernel and orders stored operands by exact affine value,
@@ -1241,7 +1247,8 @@ def nbegm_per_interval_continuation_step_savings(
         streamed = _streamed_interval_continuation_envelope(
             solve_interval=solve_interval,
             interval_block_reader=interval_block_reader,
-            interval_batch_size=interval_batch_size,
+            interval_width=interval_width,
+            interval_indices=interval_indices,
             n_intervals=n_intervals,
             interval_stride=interval_stride,
             liquid_grid=liquid_grid,
@@ -1375,7 +1382,7 @@ def nbegm_per_interval_continuation_step_savings(
             int_segment, s0_segment, smax_segment, node_segment, cliff_parts[4]
         ),
         x_query=liquid_grid,
-        segment_block_size=envelope_segment_block_size,
+        segment_block_size=envelope_segment_width,
         arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
@@ -1576,17 +1583,23 @@ class _StreamedIntervalLayout(NamedTuple):
 
 def _streamed_interval_block_layout(
     *,
-    interval_batch_size: int,
+    interval_width: int,
+    interval_indices: Int1D | None = None,
     n_intervals: int,
     interval_stride: int,
     n_liquid: int,
     n_savings: int,
 ) -> _StreamedIntervalLayout:
     """Schedule the interval axis into fixed-width blocks and place the families."""
-    block_size = min(interval_batch_size, n_intervals)
+    block_size = min(interval_width, n_intervals)
     n_blocks = -(-n_intervals // block_size)
     padded_indices = jnp.arange(n_blocks * block_size, dtype=jnp.int32).reshape(
         n_blocks, block_size
+    )
+    coordinates = (
+        jnp.arange(n_intervals, dtype=jnp.int32)
+        if interval_indices is None
+        else interval_indices
     )
 
     # The branch-label ranges are the one-shot route's, so a streamed solve labels
@@ -1602,7 +1615,7 @@ def _streamed_interval_block_layout(
     s0_offset = n_intervals * n_savings
     smax_offset = s0_offset + corner_family_size
     return _StreamedIntervalLayout(
-        safe_indices=jnp.minimum(padded_indices, n_intervals - 1),
+        safe_indices=coordinates[jnp.minimum(padded_indices, n_intervals - 1)],
         live=padded_indices < n_intervals,
         n_liquid=n_liquid,
         n_savings=n_savings,
@@ -1648,7 +1661,8 @@ def _streamed_interval_continuation_envelope(
     *,
     solve_interval: Callable[..., tuple[Float1D, ...]],
     interval_block_reader: Callable[[IntND], tuple[FloatND, ...]],
-    interval_batch_size: int,
+    interval_width: int,
+    interval_indices: Int1D | None = None,
     n_intervals: int,
     interval_stride: int,
     liquid_grid: Float1D,
@@ -1667,7 +1681,7 @@ def _streamed_interval_continuation_envelope(
     feasibility_partition: ResolvedAxisPartition | None,
     feasible_interval_mask: BoolND | None,
 ) -> tuple[Float1D, Float1D, Float1D, Int1D]:
-    """Read and fold the interval axis in blocks of `interval_batch_size`.
+    """Read and fold the interval axis in blocks of `interval_width`.
 
     Each block solves its own intervals, stacks their candidate families, and
     folds them against the standing winner, which re-enters carrying the global
@@ -1689,9 +1703,9 @@ def _streamed_interval_continuation_envelope(
         consumption policy, and the owner on `liquid_grid`.
 
     """
-    if interval_batch_size <= 0:
+    if interval_width <= 0:
         raise ValueError(
-            "interval_batch_size must be positive when interval_block_reader "
+            "interval_width must be positive when interval_block_reader "
             "streams continuation rows."
         )
     if extra_savings is not None or extra_cont_value is not None:
@@ -1703,7 +1717,8 @@ def _streamed_interval_continuation_envelope(
         )
 
     layout = _streamed_interval_block_layout(
-        interval_batch_size=interval_batch_size,
+        interval_width=interval_width,
+        interval_indices=interval_indices,
         n_intervals=n_intervals,
         interval_stride=interval_stride,
         n_liquid=liquid_grid.shape[0],

@@ -31,6 +31,7 @@ from _lcm.simulation.simulate import simulate
 from _lcm.utils.logging import get_logger
 from lcm.exceptions import InvalidInitialConditionsError
 from tests.regime_building.test_collective_regime_simulate import _solve_dissolution
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
 def _simulate_dissolution_cohort(*, own_stakeholder: str | None):
@@ -50,7 +51,7 @@ def _simulate_dissolution_cohort(*, own_stakeholder: str | None):
     return simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,

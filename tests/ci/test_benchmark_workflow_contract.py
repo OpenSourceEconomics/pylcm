@@ -11,7 +11,11 @@ def test_benchmark_workflow_materializes_main_without_network_credentials() -> N
         Path(".github/workflows/benchmark-pr.yml").read_text(encoding="utf-8")
     )
     steps = workflow["jobs"]["run-benchmarks"]["steps"]
-    checkout = next(step for step in steps if step.get("uses") == "actions/checkout@v7")
+    checkout = next(
+        step
+        for step in steps
+        if step.get("uses", "").partition("@")[0] == "actions/checkout"
+    )
     ensure_main = next(
         step for step in steps if step.get("name") == "Ensure main ref exists"
     )

@@ -33,8 +33,9 @@ inspect `model.pruned_variables`.
 
 `koopmans_aggregator` and `certainty_equivalent` are single broadcast values. Declare
 each at model level or in every non-terminal regime, not a mixture. `fixed_params` binds
-parameters when the model is built. `n_subjects` optionally prepares simulation programs
-for one population shape; parameter shapes and dtypes must remain stable for reuse.
+parameters when the model is built. Simulation takes its population from each call's
+initial conditions; compiled runtime programs are reused when their shapes and other
+compilation inputs match.
 
 Public inspection attributes include:
 

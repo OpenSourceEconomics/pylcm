@@ -56,6 +56,7 @@ project:
         - file: user_guide/choosing_a_solver.md
         - file: user_guide/authoring_specialized_solvers.md
         - file: user_guide/tuning.md
+        - file: user_guide/subject_parallel_simulation.md
         - file: user_guide/debugging.md
     - file: methods/index.md
       title: Concepts & Methods

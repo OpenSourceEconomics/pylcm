@@ -118,7 +118,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"n_points", "batch_size", "distributed", "state_conditioned"}
+        {"n_points", "state_conditioned"}
     )
     """Dataclass field names that are not distribution parameters.
 

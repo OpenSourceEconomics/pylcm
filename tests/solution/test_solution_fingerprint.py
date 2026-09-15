@@ -18,12 +18,13 @@ import jax.scipy as jsp
 import numpy as np
 import pytest
 
-import _lcm.solution.grid_search as grid_search_declarations
+import _lcm.grids.continuous as grid_declarations
 import lcm.model as lcm_model
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
 from _lcm.engine import Regime as EngineRegime
 from _lcm.identity_transition import _IdentityTransition
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.functools import _PositionalAdapter, allow_args
@@ -45,11 +46,10 @@ from lcm.solver_api import (
     AxisDescriptor,
     AxisRole,
     PersistencePolicy,
+    SolverExecutionCapabilities,
     SolverIdentity,
 )
 from lcm.solvers import (
-    FiniteOuterGrid,
-    FUESEnvelope,
     SolutionKernels,
     Solver,
     SolverBuildContext,
@@ -356,6 +356,16 @@ class _EqualitySpoofedMapping(
 
 @dataclass(frozen=True)
 class _ConfiguredFingerprintSolver(Solver):
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
     config: object
 
     @property
@@ -370,6 +380,16 @@ class _ConfiguredFingerprintSolver(Solver):
 
 
 class _StatelessFingerprintSolver(Solver):
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
     @property
     def identity(self) -> SolverIdentity:
         return SolverIdentity(
@@ -780,12 +800,12 @@ _SolverModuleNeighbor.__module__ = "_lcm.solution.nbegm"
 
 
 @dataclass(frozen=True)
-class _GridSearchNominalTwin:
-    action_block_width: int
+class _LinSpacedGridNominalTwin:
+    batch_size: int
 
 
-_GridSearchNominalTwin.__module__ = "_lcm.solution.grid_search"
-_GridSearchNominalTwin.__qualname__ = "GridSearch"
+_LinSpacedGridNominalTwin.__module__ = "_lcm.grids.continuous"
+_LinSpacedGridNominalTwin.__qualname__ = "LinSpacedGrid"
 
 
 class _SlotCallable:
@@ -853,53 +873,34 @@ def test_discrete_grid_protocol_subclass_fails_closed() -> None:
         )
 
 
-def test_grid_execution_policy_does_not_change_semantic_fingerprint() -> None:
-    unbatched = DiscreteGrid(category_class=_LowHigh, batch_size=0)
-    batched = DiscreteGrid(category_class=_LowHigh, batch_size=1)
-
-    assert fingerprints._semantic_fingerprint(
-        unbatched
-    ) == fingerprints._semantic_fingerprint(batched)
-
-
-def test_builtin_execution_fields_are_excluded_only_on_their_owner_types() -> None:
-    assert fingerprints._semantic_fingerprint(
-        FUESEnvelope(scan_unroll=1)
-    ) == fingerprints._semantic_fingerprint(FUESEnvelope(scan_unroll=4))
-
-    mesh = LinSpacedGrid(start=0, stop=1, n_points=3)
-    assert fingerprints._semantic_fingerprint(
-        FiniteOuterGrid(grid=mesh, batch_size=1)
-    ) == fingerprints._semantic_fingerprint(FiniteOuterGrid(grid=mesh, batch_size=2))
-
+def test_a_solver_module_neighbor_keeps_its_semantic_field() -> None:
     assert fingerprints._semantic_fingerprint(
         _SolverModuleNeighbor(batch_size=1)
     ) != fingerprints._semantic_fingerprint(_SolverModuleNeighbor(batch_size=2))
 
 
-def test_execution_field_exclusion_requires_exact_owner_type_identity() -> None:
-    left = fingerprints._semantic_fingerprint(_GridSearchNominalTwin(1))
-    right = fingerprints._semantic_fingerprint(_GridSearchNominalTwin(2))
+def test_nominal_grid_twin_keeps_its_semantic_field() -> None:
+    left = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(1))
+    right = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(2))
 
     assert left != right
 
 
-def test_execution_field_exclusion_ignores_module_rebinding(*, monkeypatch) -> None:
-    original_grid_search_type = grid_search_declarations.GridSearch
+def test_grid_module_rebinding_preserves_semantic_fields(*, monkeypatch) -> None:
+    original_grid_type = grid_declarations.LinSpacedGrid
+    original = original_grid_type(start=0, stop=1, n_points=3)
+    original_fingerprint = fingerprints._semantic_fingerprint(original)
 
     monkeypatch.setattr(
-        grid_search_declarations,
-        "GridSearch",
-        _GridSearchNominalTwin,
+        grid_declarations,
+        "LinSpacedGrid",
+        _LinSpacedGridNominalTwin,
     )
 
-    assert fingerprints._exclude_field(
-        owner=original_grid_search_type(),
-        field_name="action_block_width",
-    )
+    assert fingerprints._semantic_fingerprint(original) == original_fingerprint
 
-    left = fingerprints._semantic_fingerprint(_GridSearchNominalTwin(1))
-    right = fingerprints._semantic_fingerprint(_GridSearchNominalTwin(2))
+    left = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(1))
+    right = fingerprints._semantic_fingerprint(_LinSpacedGridNominalTwin(2))
     assert left != right
 
 
@@ -1606,8 +1607,13 @@ def test_execution_like_field_name_on_user_callable_remains_semantic() -> None:
     )
 
 
-def _fingerprint_space(*, regime_params: object) -> SimpleNamespace:  # noqa: ARG001
+def _fingerprint_space(
+    *,
+    regime_params: object,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> SimpleNamespace:
     """Return one fixed representative space for the focused fingerprint test."""
+    del regime_params, process_grid_resolver
     return SimpleNamespace(
         states={"wealth": np.asarray([1.0, 2.0])},
         discrete_actions={},

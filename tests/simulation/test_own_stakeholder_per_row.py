@@ -26,6 +26,7 @@ from _lcm.simulation.simulate import simulate
 from _lcm.utils.logging import get_logger
 from lcm.exceptions import InvalidInitialConditionsError
 from tests.regime_building.test_collective_regime_simulate import _solve_dissolution
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 # `NO_ROLE` is what a row in a singleton regime carries: it occupies no role in
 # any household.
@@ -51,7 +52,7 @@ def _simulate_cohort(*, own_stakeholder, wages=(1.0, 2.0, 3.0)):
     return simulate(
         flat_params=flat_params,
         initial_conditions=MappingProxyType(initial_conditions),
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,

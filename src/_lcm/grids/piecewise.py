@@ -12,7 +12,6 @@ from _lcm.axis_boundaries import BoundaryOwner, effective_segment_bounds
 from _lcm.beartype_conf import GRID_CONF
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import coordinates as grid_coordinates
-from _lcm.grids.base import _fail_if_continuous_grid_distributed
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import GridInitializationError
@@ -69,8 +68,6 @@ class _PiecewiseGrid(ContinuousGrid):
         stop: float | ScalarFloat,
         breakpoints: tuple[GridBreakpoint, ...],
         points_per_segment: PiecewisePointCounts,
-        batch_size: int = 0,
-        distributed: bool = False,
     ) -> None:
         _init_piecewise_grid(
             grid=self,
@@ -78,8 +75,6 @@ class _PiecewiseGrid(ContinuousGrid):
             stop=stop,
             breakpoints=breakpoints,
             points_per_segment=points_per_segment,
-            batch_size=batch_size,
-            distributed=distributed,
             requires_positive_bounds=isinstance(self, PiecewiseLogSpacedGrid),
         )
 
@@ -169,14 +164,9 @@ def _init_piecewise_grid(
     stop: float | ScalarFloat,
     breakpoints: tuple[GridBreakpoint, ...],
     points_per_segment: PiecewisePointCounts,
-    batch_size: int,
-    distributed: bool,
     requires_positive_bounds: bool,
 ) -> None:
     """Cast, validate, and cache one breakpoint-first grid declaration."""
-    _fail_if_continuous_grid_distributed(
-        grid_kind=type(grid).__name__, distributed=distributed
-    )
     dtype = canonical_float_dtype()
     start_jax = jnp.asarray(start, dtype=dtype)
     stop_jax = jnp.asarray(stop, dtype=dtype)
@@ -219,8 +209,6 @@ def _init_piecewise_grid(
         "points_per_segment",
         tuple(jnp.int32(count) for count in integer_counts),
     )
-    object.__setattr__(grid, "batch_size", batch_size)
-    object.__setattr__(grid, "distributed", distributed)
     object.__setattr__(grid, "_breakpoint_values", breakpoint_values)
     object.__setattr__(
         grid,

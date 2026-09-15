@@ -120,7 +120,7 @@ def test_positive_interval_width_streams_the_read_and_fold_together() -> None:
         path=STEP, name="nbegm_per_interval_continuation_step_savings"
     )
     assert "interval_block_reader" in entry
-    assert "interval_batch_size" in entry
+    assert "interval_width" in entry
     assert entry.index("if interval_block_reader is not None") < entry.index(
         "if cont_value is None or cont_marginal is None"
     )
@@ -142,8 +142,7 @@ def test_positive_interval_width_streams_the_read_and_fold_together() -> None:
     solution = _text(SOLUTION)
     assert "class _NBEGMIntervalContinuation" in solution
     assert (
-        "statics.continuation_reads_liquid and statics.interval_batch_size > 0"
-        in solution
+        "statics.continuation_reads_liquid and statics.interval_width > 0" in solution
     )
     assert "selected_midpoints = midpoints[interval_indices]" in solution
     reader = solution.split("def _bind_cell_interval_reader_for_pool", 1)[1].split(
@@ -153,18 +152,19 @@ def test_positive_interval_width_streams_the_read_and_fold_together() -> None:
     assert "return read" in reader
 
 
-def test_docs_retire_the_transition_and_define_zero_versus_positive_width() -> None:
+def test_docs_retire_the_transition_and_expose_the_planner_width() -> None:
     ledger = _text(LEDGER)
     retired = "NB-EGM's per-interval merge stacks every interval's candidate families"
     assert retired not in ledger
 
     docs = _text(SOLVER_DOCS)
-    assert "`interval_batch_size` streams the continuation read" in docs
+    assert "`interval` (`INTERVAL_AXIS`) streams the continuation read" in docs
     assert "global stored-link index" in docs
     assert "decides ownership by the same total order" in docs
     assert "return_owner=True" in docs
     assert "units in the last place" in docs
-    assert "`interval_batch_size=0`" in docs
+    assert "ExecutionConfig(axis_widths={INTERVAL_AXIS: 2})" in docs
+    assert "Omitting a width lets the planner choose" in docs
 
 
 def test_maintainer_suite_covers_channels_profiles_arithmetics_and_partitions() -> None:
@@ -172,7 +172,7 @@ def test_maintainer_suite_covers_channels_profiles_arithmetics_and_partitions() 
     for token in (
         '"ordinary"',
         '"certified"',
-        "interval_batch_size",
+        "interval_width",
         "cont_value=None",
         "cont_marginal=None",
         "assert_agrees_to_ulp",

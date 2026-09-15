@@ -80,6 +80,7 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
     )
 
     _bi_result = solve(
+        model_fingerprint="test_terminal_collective_solve",
         flat_params=MappingProxyType({"couple": MappingProxyType({})}),
         ages=ages,
         regimes=regimes,

@@ -28,6 +28,7 @@ from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt
 from tests.ci import pytest_policy
+from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
 X64_ENABLED: bool = True
@@ -233,6 +234,20 @@ def assert_agrees_to_ulp(
             f"{err_msg}"
         )
         raise AssertionError(msg)
+
+
+# keyword-only-exempt: library-callback=pytest.hookspec.pytest_ignore_collect
+def pytest_ignore_collect(
+    collection_path: pathlib.Path, config: pytest.Config
+) -> bool | None:
+    """Keep environment-pinned eight-device witnesses out of shared collection."""
+    if ignore_implicit_eight_device_collection(
+        collection_path=collection_path,
+        root=config.rootpath,
+        invocation_args=config.args,
+    ):
+        return True
+    return None
 
 
 # keyword-only-exempt: library-callback=pytest.hookspec.pytest_collection_modifyitems

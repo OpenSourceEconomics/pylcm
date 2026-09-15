@@ -1,42 +1,38 @@
-"""Declaration order of states and actions does not change what a model solves.
+"""State declaration order relabels array axes without changing solved values.
 
-A regime's variables resolve into a canonical order — discrete states, then
-continuous states, then actions — and within each state group by
-`(not distributed, batch_size)`. That order fixes the axes of the published
-value array, so reordering the declarations relabels the result; it must not
-change its content.
-
-Two orderings are covered, because they are not the same claim:
-
-- **declaration order**, which the canonical sort absorbs entirely, so the
-  published array is unchanged;
-- **resolved order**, moved by `batch_size`, which genuinely permutes the axes,
-  so the published array is the transpose.
-
-The axis-order contract for the endogenous-grid solvers, whose kernels work in
-a private role order of their own, lives in
-`tests/solution/test_egm_continuation_axis_order.py`.
+Canonical order keeps discrete states, continuous states, and actions in their
+existing groups. Within a state group, declaration order is stable except for
+explicitly sharded states, which lead. Execution widths never reorder axes.
 """
 
 import numpy as np
 import pytest
 
-from lcm import LinSpacedGrid
-from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.deterministic.ds_pension import get_model, get_params
+from lcm import ExecutionConfig, LinSpacedGrid, Model
+from tests.conftest import assert_agrees_to_ulp
+from tests.test_models.deterministic.ds_pension import RegimeId, get_model, get_params
 
 _N_PERIODS = 5
 _N_BOTH = 8
-
 _PLAIN = LinSpacedGrid(start=0.0, stop=15.0, n_points=_N_BOTH)
-_BATCHED = LinSpacedGrid(start=0.0, stop=15.0, n_points=_N_BOTH, batch_size=1)
 
 
-def _solve(**overrides):
+def _solve(*, reverse_working_states=False, cell_width=1, **overrides):
     model = get_model(
         n_periods=_N_PERIODS, n_liquid=_N_BOTH, n_pension=_N_BOTH, **overrides
     )
-    return model.solve(params=get_params(), log_level="off").values
+    regimes = dict(model.user_regimes)
+    if reverse_working_states:
+        regimes["working"] = regimes["working"].replace(
+            states=dict(reversed(tuple(regimes["working"].states.items())))
+        )
+    reordered = Model(
+        regimes=regimes,
+        ages=model.ages,
+        regime_id_class=RegimeId,
+        execution_config=ExecutionConfig(axis_widths={"cell": cell_width}),
+    )
+    return reordered.solve(params=get_params(), log_level="off").values
 
 
 def _periods_with(*, solution, regime):
@@ -44,11 +40,7 @@ def _periods_with(*, solution, regime):
 
 
 def test_declaring_the_pension_grid_explicitly_changes_nothing():
-    """Passing the shared grid through the override reproduces the default model.
-
-    The negative control for the cases below: an override naming the same grid
-    the model would have built anyway must be invisible.
-    """
+    """An override with the same outcome-space definition preserves the result."""
     default = _solve()
     explicit = _solve(working_pension_grid=_PLAIN)
     periods = _periods_with(solution=default, regime="working")
@@ -60,37 +52,27 @@ def test_declaring_the_pension_grid_explicitly_changes_nothing():
         )
 
 
-def test_a_batched_pension_grid_transposes_the_published_working_value():
-    """`batch_size` moves the pension axis first, and only relabels the result.
-
-    The resolved order is what the value array's axes mean, so a state sorting
-    ahead of another takes the outer axis. The content is the same solve, up to
-    the reduction order a partitioned maximization runs in — the default solver
-    here is `GridSearch`, whose batched path sums and reduces in a different
-    order, so this is a reported quantity and carries the precision's tolerance.
-    The endogenous-grid kernels run one unpartitioned core either way, and their
-    counterpart in `tests/solution/test_egm_continuation_axis_order.py` asserts
-    exact equality.
-    """
+@pytest.mark.parametrize("cell_width", [1, 3])
+def test_reversed_working_state_declarations_transpose_values(cell_width):
+    """The continuous-state declaration order fixes output axes at every width."""
     plain = _solve(working_pension_grid=_PLAIN)
-    batched = _solve(working_pension_grid=_BATCHED)
+    reordered = _solve(reverse_working_states=True, cell_width=cell_width)
     periods = _periods_with(solution=plain, regime="working")
     assert periods
     for period in periods:
-        expected = np.asarray(plain[period]["working"])
-        got = np.asarray(batched[period]["working"])
-        assert got.shape == expected.shape[::-1]
-        np.testing.assert_array_almost_equal(got, expected.T, decimal=DECIMAL_PRECISION)
+        assert_agrees_to_ulp(
+            got=reordered[period]["working"],
+            expected=np.asarray(plain[period]["working"]).T,
+            n_ulp=8,
+        )
 
 
 @pytest.mark.parametrize("regime", ["retired", "dead"])
-def test_a_batched_working_pension_grid_leaves_the_other_regimes_untouched(regime):
-    """Reordering one regime's axes does not disturb the regimes around it."""
-    plain = _solve(working_pension_grid=_PLAIN)
-    batched = _solve(working_pension_grid=_BATCHED)
+def test_reordering_working_states_preserves_other_regimes(regime):
+    """A state-axis permutation stays local to the regime whose order changed."""
+    plain = _solve()
+    reordered = _solve(reverse_working_states=True)
     periods = _periods_with(solution=plain, regime=regime)
     assert periods
     for period in periods:
-        np.testing.assert_array_equal(
-            np.asarray(batched[period][regime]), np.asarray(plain[period][regime])
-        )
+        np.testing.assert_array_equal(reordered[period][regime], plain[period][regime])

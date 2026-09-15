@@ -79,8 +79,6 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
-    ScalarFloat,
-    ScalarInt,
 )
 
 # Suffix under which a target regime's dissolution flag `D` (cast to float) is passed
@@ -235,7 +233,7 @@ def bind_edge_period_context(
     *,
     func: Callable,
     fold_period: int,
-    fold_age: float | ScalarFloat | ScalarInt | None,
+    fold_age: object,
 ) -> dict[str, object]:
     """Bind the target-fold context an edge callable explicitly declares.
 

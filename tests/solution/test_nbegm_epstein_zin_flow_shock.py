@@ -18,6 +18,7 @@ import numpy as np
 from lcm import (
     AgeGrid,
     CESAggregator,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -27,7 +28,7 @@ from lcm import (
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
-from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
+from lcm.solvers import NBEGM, STOCHASTIC_NODE_AXIS, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
@@ -90,7 +91,11 @@ def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, _RegimeId.dead, _RegimeId.alive)
 
 
-def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
+def _build_model(
+    *,
+    solver: OneMarginSolver | GridSearch,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
     alive = ConsumptionSavingsRegime(
         active=lambda age, n=final_age_alive: age <= n,
@@ -126,6 +131,7 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         functions={"utility": _terminal_value},
     )
     return Model(
+        execution_config=execution_config,
         regimes={"alive": alive, "dead": dead},
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=20, stop=20 + (_N_PERIODS - 1) * 5, step="5Y"),
@@ -216,7 +222,7 @@ def test_nbegm_epstein_zin_flow_shock_matches_brute_force() -> None:
 
 
 def test_stochastic_node_batching_matches_the_fused_expectation() -> None:
-    """A positive `stochastic_node_batch_size` reproduces the fused EZ solve.
+    """A positive stochastic-node planner width reproduces the fused EZ solve.
 
     The anchored transform partials are additive across stochastic-node
     blocks: each block reduces to `(a, S~, b, T~)`, blocks combine by
@@ -239,8 +245,8 @@ def test_stochastic_node_batching_matches_the_fused_expectation() -> None:
             solver=NBEGM(
                 savings_grid=_SAVINGS_GRID,
                 envelope_arithmetic="ordinary",
-                stochastic_node_batch_size=2,
-            )
+            ),
+            execution_config=ExecutionConfig(axis_widths={STOCHASTIC_NODE_AXIS: 2}),
         )
         .solve(params=_PARAMS, log_level="debug")
         .values

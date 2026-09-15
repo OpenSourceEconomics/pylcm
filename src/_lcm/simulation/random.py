@@ -2,8 +2,65 @@ import os
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+from jaxtyping import Int, Scalar
 
+from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.typing import PRNGKeyND
+from lcm.exceptions import ExecutionPlanningError
+
+
+def create_simulation_key(
+    *, seed: int, memory: SimulationMemory | None = None
+) -> PRNGKeyND:
+    """Create the initial key under the optional forward workspace budget."""
+    return run_simulation_operation(
+        memory=memory,
+        function=_create_simulation_key,
+        # JAX first converts Python seeds to host int64, including in fp32 mode,
+        # before staging them. Preserve its wrapping of unsigned high-bit seeds.
+        arguments={"seed": seed if memory is None else np.int64(seed)},
+        static_arguments={
+            "impl": jax.config.jax_default_prng_impl,
+            "seed_offset": jax.config.jax_random_seed_offset,
+        },
+    )
+
+
+def _create_simulation_key(
+    *, seed: int | Int[Scalar, ""], impl: str, seed_offset: int
+) -> PRNGKeyND:
+    """Trace the declared PRNG and offset while keeping seed values dynamic.
+
+    JAX exposes the seed offset through public configuration but has no public
+    offset context manager. Verify it at eager/trace entry before the public key
+    operation reads it. The operation cache binds this offset into a fresh
+    callable, so an executable cannot be reused for another declared offset.
+    """
+    if seed_offset != jax.config.jax_random_seed_offset:
+        raise ExecutionPlanningError("Simulation seed offset changed before tracing.")
+    return jax.random.key(seed=seed, impl=impl)
+
+
+def split_simulation_key(
+    *, key: PRNGKeyND, memory: SimulationMemory | None = None
+) -> tuple[PRNGKeyND, PRNGKeyND, PRNGKeyND]:
+    """Admit the period's three random streams before constructing their arrays."""
+    return run_simulation_operation(
+        memory=memory,
+        function=_split_simulation_key,
+        arguments={"key": key},
+        static_arguments={"partitionable": jax.config.jax_threefry_partitionable},
+    )
+
+
+def _split_simulation_key(
+    *, key: PRNGKeyND, partitionable: bool
+) -> tuple[PRNGKeyND, PRNGKeyND, PRNGKeyND]:
+    """Include the three row extractions in the compiled operation's workspace."""
+    with jax.threefry_partitionable(partitionable):
+        next_states_key, next_regime_key, next_key = jax.random.split(key=key, num=3)
+    return next_states_key, next_regime_key, next_key
 
 
 def generate_simulation_keys(
@@ -13,6 +70,7 @@ def generate_simulation_keys(
     n_initial_states: int,
     subject_slice: slice | None = None,
     original_n_subjects: int | None = None,
+    memory: SimulationMemory | None = None,
 ) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
     """Generate pseudo-random number generator keys (PRNG keys) for simulation.
 
@@ -56,22 +114,110 @@ def generate_simulation_keys(
           `n_initial_states`, then sliced to `subject_slice` when given).
 
     """
+    if memory is not None and subject_slice is not None:
+        start, width = _validated_chunk_window(
+            subject_slice=subject_slice, n_initial_states=n_initial_states
+        )
+        return memory.run(
+            function=_generate_windowed_simulation_keys,
+            arguments={"key": key, "start": np.int32(start)},
+            static_arguments={
+                "names": tuple(names),
+                "n_initial_states": n_initial_states,
+                "original_n_subjects": original_n_subjects,
+                "partitionable": jax.config.jax_threefry_partitionable,
+                "width": width,
+            },
+        )
+    return run_simulation_operation(
+        memory=memory,
+        function=_generate_simulation_keys,
+        arguments={"key": key},
+        static_arguments={
+            "names": tuple(names),
+            "n_initial_states": n_initial_states,
+            "original_n_subjects": original_n_subjects,
+            "partitionable": jax.config.jax_threefry_partitionable,
+            "subject_window": (
+                None
+                if subject_slice is None
+                else (subject_slice.start, subject_slice.stop, subject_slice.step)
+            ),
+        },
+    )
+
+
+def _validated_chunk_window(
+    *, subject_slice: slice, n_initial_states: int
+) -> tuple[int, int]:
+    """Refuse invalid dynamic-slice bounds before an allocation can clamp them."""
+    start = 0 if subject_slice.start is None else subject_slice.start
+    stop = n_initial_states if subject_slice.stop is None else subject_slice.stop
+    if (
+        type(start) is not int
+        or type(stop) is not int
+        or subject_slice.step not in (None, 1)
+        or not 0 <= start < stop <= n_initial_states <= np.iinfo(np.int32).max
+    ):
+        raise ExecutionPlanningError(
+            "A budgeted RNG chunk window needs in-range increasing bounds "
+            "and unit step."
+        )
+    return start, stop - start
+
+
+def _generate_windowed_simulation_keys(
+    *,
+    key: PRNGKeyND,
+    start: Int[Scalar, ""],
+    names: tuple[str, ...],
+    n_initial_states: int,
+    original_n_subjects: int | None,
+    partitionable: bool,
+    width: int,
+) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
+    """Select a dynamic start from the identical full split and duplicate-last pad."""
+    next_key, full_keys = _generate_simulation_keys(
+        key=key,
+        names=names,
+        n_initial_states=n_initial_states,
+        original_n_subjects=original_n_subjects,
+        partitionable=partitionable,
+        subject_window=None,
+    )
+    return next_key, {
+        name: jax.lax.dynamic_slice_in_dim(keys, start, width, axis=0)
+        for name, keys in full_keys.items()
+    }
+
+
+def _generate_simulation_keys(
+    *,
+    key: PRNGKeyND,
+    names: tuple[str, ...],
+    n_initial_states: int,
+    original_n_subjects: int | None,
+    partitionable: bool,
+    subject_window: tuple[int | None, int | None, int | None] | None,
+) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
+    """Form the existing full-population stream and select its declared window."""
     if original_n_subjects is None:
         original_n_subjects = n_initial_states
     pad = n_initial_states - original_n_subjects
     simulation_keys = {}
     next_key = key
-    for name in names:
-        keys = jax.random.split(key=next_key, num=original_n_subjects + 1)
-        next_key = keys[0]
-        per_subject_keys = keys[1:]
-        if pad > 0:
-            per_subject_keys = jnp.concatenate(
-                [per_subject_keys, jnp.repeat(per_subject_keys[-1:], pad, axis=0)]
-            )
-        if subject_slice is not None:
-            per_subject_keys = per_subject_keys[subject_slice]
-        simulation_keys[f"key_{name}"] = per_subject_keys
+    with jax.threefry_partitionable(partitionable):
+        for name in names:
+            keys = jax.random.split(key=next_key, num=original_n_subjects + 1)
+            next_key = keys[0]
+            per_subject_keys = keys[1:]
+            if pad > 0:
+                per_subject_keys = jnp.concatenate(
+                    [per_subject_keys, jnp.repeat(per_subject_keys[-1:], pad, axis=0)]
+                )
+            if subject_window is not None:
+                per_subject_keys = per_subject_keys[slice(*subject_window)]
+            simulation_keys[f"key_{name}"] = per_subject_keys
     return next_key, simulation_keys
 
 

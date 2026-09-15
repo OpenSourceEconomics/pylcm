@@ -165,7 +165,7 @@ def build_model(
     savings_max: float = 28.0,
     jump_read: str = "bridged",
     envelope_arithmetic: str = "certified",
-    branch_batch_size: int = 0,
+    execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Create the (alive, dead) ride-along toy with several discrete choices.
 
@@ -197,9 +197,9 @@ def build_model(
         savings_grid=lcm.LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         jump_read=jump_read,
         envelope_arithmetic=envelope_arithmetic,
-        branch_batch_size=branch_batch_size,
     )
     return make_alive_dead_model(
+        execution_config=execution_config,
         n_periods=n_periods,
         n_liquid=n_liquid,
         liquid_max=liquid_max,

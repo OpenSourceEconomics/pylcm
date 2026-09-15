@@ -8,6 +8,7 @@ from numpy.testing import assert_allclose, assert_array_almost_equal
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -259,9 +260,7 @@ def _make_minimal_stochastic_model(
     working_regime = UserRegime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
-            "draw": DiscreteGrid(
-                category_class=ShockStatus, batch_size=draw_batch_size
-            ),
+            "draw": DiscreteGrid(category_class=ShockStatus),
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         state_transitions={
@@ -281,6 +280,9 @@ def _make_minimal_stochastic_model(
         regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=ShockRegimeId,
+        execution_config=ExecutionConfig(
+            axis_widths={"cell": draw_batch_size} if draw_batch_size else {}
+        ),
     )
 
 

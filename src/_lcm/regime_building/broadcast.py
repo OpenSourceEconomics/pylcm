@@ -27,7 +27,6 @@ from typing import Literal, cast, no_type_check
 
 from dags import get_ancestors
 
-from _lcm.grids import Grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
@@ -118,16 +117,6 @@ def merge_model_slots(
                     model_slot=model_slot,
                 )
             )
-            if slot_name == "states":
-                # Sharding is a cross-regime device-layout property; one
-                # model-level declaration keeps every regime consistent.
-                errors.extend(
-                    f"states['{name}'] in regime '{regime_name}' has "
-                    f"`distributed=True` — sharding is declared at the model "
-                    f"level (`Model(states=...)`)."
-                    for name, grid in regime_slot.items()
-                    if isinstance(grid, Grid) and grid.distributed
-                )
             if slot_name in ("states", "actions"):
                 variable_names |= model_slot.keys() & regime_slot.keys()
             replacements[slot_name] = {**model_slot, **regime_slot}
@@ -197,10 +186,6 @@ def prune_broadcast_variables(
     Returns:
         Tuple of the pruned regimes and, per regime, the pruned names.
 
-    Raises:
-        ModelInitializationError: If a `distributed=True` model-level state is
-            pruned from a non-terminal regime.
-
     """
     specs = {
         regime_name: normalize_regime_phases(user_regime)
@@ -230,18 +215,12 @@ def prune_broadcast_variables(
 
     pruned_regimes: dict[RegimeName, UserRegime] = {}
     pruned_variables: dict[RegimeName, frozenset[StateOrActionName]] = {}
-    errors: list[str] = []
     for regime_name, user_regime in user_regimes.items():
         pruned = broadcast_variables[regime_name] - kept[regime_name]
         pruned_variables[regime_name] = frozenset(pruned)
         if not pruned:
             pruned_regimes[regime_name] = user_regime
             continue
-        errors.extend(
-            _sharded_pruned_errors(
-                user_regime=user_regime, regime_name=regime_name, pruned=pruned
-            )
-        )
         pruned_regimes[regime_name] = user_regime.replace(
             states={
                 name: grid
@@ -259,9 +238,6 @@ def prune_broadcast_variables(
                 if name not in pruned
             },
         )
-
-    if errors:
-        raise ModelInitializationError(format_messages(errors))
 
     return MappingProxyType(pruned_regimes), MappingProxyType(pruned_variables)
 
@@ -743,25 +719,6 @@ def _law_roots(
                     "UserFunction", law
                 )
     return roots
-
-
-def _sharded_pruned_errors(
-    *,
-    user_regime: UserRegime,
-    regime_name: RegimeName,
-    pruned: frozenset[StateOrActionName],
-) -> list[str]:
-    """Reject pruning a `distributed=True` state from a non-terminal regime."""
-    if user_regime.terminal:
-        return []
-    return [
-        f"Sharded state '{name}' is pruned from non-terminal regime "
-        f"'{regime_name}' — its DAG never reads the state, so the sharded "
-        f"V-array axis would disappear there. Remove `distributed=True` "
-        f"from the model-level declaration, or make the regime use the state."
-        for name in sorted(pruned)
-        if isinstance(grid := user_regime.states.get(name), Grid) and grid.distributed
-    ]
 
 
 def _merge_one_slot(

@@ -1,0 +1,68 @@
+{
+  "contract_version": "1",
+  "target": "Eight-way continuous-state GridSearch solve sharding",
+  "interpretation": "One user-selected execution design element; source analysis and concrete strategy, not completed runtime certification. Existing semantics and runtime-sensitive admission must be preserved.",
+  "environment": {
+    "hardware": "Keep each evidence series separate: historical Marvin A40/fp32, current self-hosted ASV series, CPU planning replay, IAME V100/fp32 or fp64.",
+    "backend": "Source lock and executed receipts; JAX/JAXLIB0.11.1 in reported series, do not infer executed precision from a default.",
+    "dtype": "Both supported fp32/fp64; never compare across precision/hardware as causal evidence."
+  },
+  "metric_definitions": {
+    "warm_seconds": "Synchronized completed public solve, supplied simulation, or automatic solve+simulate separately. State retention, diagnostic level, seeds and instrument overhead.",
+    "compile_seconds": "Directly instrumented lowering/backend/orchestration boundaries separately; never infer compile by cold-minus-warm.",
+    "peak_device_bytes": "Per-selected-device allocator live high-water mark, not reserved pool or nvidia-smi process total. Compiler reservation and BFC ceiling are different quantities.",
+    "numerical_agreement": "Existing source-pinned behavioral contracts: exact identities, decision/mask/RNG contracts and documented per-test continuous tolerances/ULP bounds. Same-SHA controls required; no new post-hoc tolerance.",
+    "progress_off_ratio": "Matched medians of progress/off host timing for the named test; published bound1.5. No threshold relaxation from a single sample.",
+    "completion": "Only returned synchronized cold/warm calls count; killed processes and cleanup exit0 do not."
+  },
+  "measurement_protocol": {
+    "comparison": "Same harness, economic inputs/parameters/grids, device/precision/toolchain, allocator/cache, retention and seeds. Separate parent->head, handoff->head, main->head.",
+    "repetitions": "Recommend one fresh cold plus >=3 synchronized warm observations, two fresh same-SHA controls where affordable; disclose lesser evidence.",
+    "timing": "Defer HLO formatting, observer census and output I/O; measure unavoidable guards separately. Keep internal planner work inside public-call timings. Do not subtract observer costs without evidence.",
+    "isolation": "Owned existing3A40 production allocation remains unchanged. New measurements require fresh exact-pin owner requests; use intelsr_short CPU resources and mlgpu_short8h GPU ceiling with watchdog margin.",
+    "partial_failure": "Flush phase, actual selected widths and provenance before expensive dispatch. Distinguish timeout, cancellation, OOM, semantic refusal and harness defect.",
+    "review_environment": "Pro may perform bounded CPU/static checks if compatible dependencies exist. No GPU/Slurm work; no forced compatibility transform. Report unexecuted checks explicitly."
+  },
+  "profiles": {
+    "balanced": {
+      "applicability": "required",
+      "intended_use": "Existing default/explicit execution policy, unchanged economic problem; supported solve and ordinary simulation routes.",
+      "numerical": {
+        "structural_semantics": "unchanged; no arbitrary tolerance for ownership/feasibility/branch decisions",
+        "published_values": "Existing repository contracts, not blanket cross-device bit identity",
+        "process_replay": "Preserve supported eager rounding and parameter binding; validate exact admitted dataflow before executing stages",
+        "rng": "Fixed-seed subject/regime/taste-shock identity invariant across tiling, chunks and empty regimes",
+        "oracle": "Grid-conditional or independent eager/source behavior for unchanged execution transformations; state which oracle is used.",
+        "candidate_set_error": {
+          "assessed_by": "refinement_oracle",
+          "configuration": "No economic-grid/candidate-set changes are in scope; if a proposed execution repair changes candidates, it needs an explicit independent oracle before acceptance.",
+          "on_unavailable": "block"
+        }
+      },
+      "resource": {
+        "device_budget": "Explicit measured per-device ceiling and admitted represented storage, with qualified runtime/allocator limits; not an unconditional physical fit guarantee.",
+        "warm_backend_compilation_requests": 0,
+        "existing_progress_off_ratio_limit": 1.5,
+        "hard_absolute_runtime": "No newly invented universal SLA. Existing CI/job/test bounds apply to their exact workload; current warm regression still requires explanation and remediation/explicit tradeoff.",
+        "review_only_cpu_witness_seconds": 180,
+        "review_only_total_cpu_seconds": 600,
+        "production_launches_in_this_review": 0
+      },
+      "on_budget_exhaustion": "Preserve supported pre-dispatch refusal; propose fresh bounded tuning without classifying it as automatic recovery.",
+      "on_unresolved_certification": "State unsupported/unknown claim and smallest exact next gate; deliver the steering plan."
+    }
+  },
+  "repair_review_triggers": {
+    "max_warm_runtime_regression_pct": 5,
+    "max_compile_regression_pct": 10,
+    "max_peak_memory_regression_pct": 10,
+    "comparison": "Same-control parent->head and separately main->head, outside observed noise. These are review triggers, not universal acceptance limits or permission for numerical changes."
+  },
+  "scope_exclusions": [
+    "unrelated numerical methods",
+    "adaptive NNBEGM replay",
+    "runtime autotuning",
+    "whole-repository audit",
+    "Pro-side production execution"
+  ]
+}

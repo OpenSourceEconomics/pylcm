@@ -94,7 +94,9 @@ from _lcm.regime_building.gated_edges import (
     edge_may_fold_at_period,
 )
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
+from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.transitions import _advance_states_for_subjects
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import _evaluate_edge_fold, _states_for_period
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, StatesPerRegime
 from lcm.typing import (
@@ -104,7 +106,247 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     Int1D,
+    ScalarFloat,
+    ScalarInt,
 )
+
+
+def simulation_gate_fold(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    regimes: Mapping[RegimeName, Regime],
+    period: int,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
+    target_states_by_target: Mapping[
+        RegimeName, Mapping[str, ContinuousState | DiscreteState]
+    ]
+    | None = None,
+    edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
+    edge_flags: Mapping[RegimeName, BoolND],
+    flat_params: FlatParams,
+    fold_age: object = None,
+    subject_devices: tuple[jax.Device, ...] = (),
+    on_derived: Callable[[object], None] | None = None,
+) -> MappingProxyType[RegimeName, FloatND]:
+    """Fold raw, already-acquired V and Boolean D at their declared paths.
+
+    The fold's float interpolation mapping is temporary. An optional call-local
+    observer receives replacement snapshots of derived residency, then only the
+    substituted values once the fold is ready. Without that observer the usual
+    whole-unit commit barrier owns readiness, preserving asynchronous dispatch.
+    """
+    landing_values = {
+        reference: array
+        for references in edge_values.values()
+        for reference, array in references.items()
+    }
+    substituted, mappings = substitute_gated_edge_continuations(
+        regime=regime,
+        regime_name=regime_name,
+        regimes=regimes,
+        period=period,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        base_state_action_spaces=base_state_action_spaces,
+        target_states_by_target=target_states_by_target,
+        period_to_regime_to_V_arr={period + 1: landing_values},
+        period_to_regime_to_dissolution_flags={period + 1: edge_flags},
+        flat_params=flat_params,
+        fold_age=cast("float | ScalarFloat | ScalarInt | None", fold_age),
+        subject_devices=subject_devices,
+        on_derived=on_derived,
+    )
+    if on_derived is not None:
+        jax.block_until_ready(substituted)
+        del mappings
+        on_derived({"next_values": substituted})
+    return substituted
+
+
+def simulation_gate_route(
+    *,
+    regime: Regime,
+    fold_period: int,
+    edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
+    edge_flags: Mapping[RegimeName, BoolND],
+    next_states: StatesPerRegime,
+    regime_names_to_ids: RegimeNamesToIds,
+    new_subject_regime_ids: Int1D,
+    subjects_in_regime: Bool1D,
+    flat_params: FlatParams,
+    own_stakeholder: Int1D,
+    new_own_stakeholder: Int1D,
+    fold_age: object = None,
+    subject_devices: tuple[jax.Device, ...] = (),
+    subject_width: int | None = None,
+    on_derived: Callable[[object], None] | None = None,
+) -> tuple[StatesPerRegime, Int1D, Int1D]:
+    """Preserve the three-result routing adapter contract."""
+    states, regime_ids, roles, _closed_masks = _simulation_gate_route_with_closed_masks(
+        regime=regime,
+        fold_period=fold_period,
+        edge_values=edge_values,
+        edge_flags=edge_flags,
+        next_states=next_states,
+        regime_names_to_ids=regime_names_to_ids,
+        new_subject_regime_ids=new_subject_regime_ids,
+        subjects_in_regime=subjects_in_regime,
+        flat_params=flat_params,
+        own_stakeholder=own_stakeholder,
+        new_own_stakeholder=new_own_stakeholder,
+        fold_age=fold_age,
+        subject_devices=subject_devices,
+        subject_width=subject_width,
+        on_derived=on_derived,
+    )
+    return states, regime_ids, roles
+
+
+def _simulation_gate_route_with_closed_masks(
+    *,
+    regime: Regime,
+    fold_period: int,
+    edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
+    edge_flags: Mapping[RegimeName, BoolND],
+    next_states: StatesPerRegime,
+    regime_names_to_ids: RegimeNamesToIds,
+    new_subject_regime_ids: Int1D,
+    subjects_in_regime: Bool1D,
+    flat_params: FlatParams,
+    own_stakeholder: Int1D,
+    new_own_stakeholder: Int1D,
+    fold_age: object = None,
+    subject_devices: tuple[jax.Device, ...] = (),
+    subject_width: int | None = None,
+    on_derived: Callable[[object], None] | None = None,
+) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
+    """Route from raw V and Boolean D, reusing their owned destination copies.
+
+    This adapter performs its own D-to-float conversion, so the fold mapping
+    need not stay resident throughout the unit. The extra cast is intentional.
+    The observer sees replacement mapping snapshots, then an empty snapshot
+    after all route outputs are ready; no callback or mapping is cached here.
+    """
+    mappings: dict[RegimeName, MappingProxyType[RegimeName, FloatND]] = {}
+    for target, edge in regime.gated_edges.items():
+        if target not in edge_values:
+            continue
+        mappings[target] = build_same_period_mapping_for_fold(
+            edge=edge,
+            period_solution=edge_values[target],
+            period_dissolution_flags=edge_flags,
+        )
+        if on_derived is not None:
+            on_derived({"same_period_mappings": MappingProxyType(dict(mappings))})
+    outputs = _route_gated_edges_with_closed_masks(
+        regime=regime,
+        fold_period=fold_period,
+        same_period_mappings=mappings,
+        next_states=next_states,
+        regime_names_to_ids=regime_names_to_ids,
+        new_subject_regime_ids=new_subject_regime_ids,
+        subjects_in_regime=subjects_in_regime,
+        flat_params=flat_params,
+        own_stakeholder=own_stakeholder,
+        new_own_stakeholder=new_own_stakeholder,
+        fold_age=cast("float | ScalarFloat | ScalarInt | None", fold_age),
+        subject_devices=subject_devices,
+        subject_width=subject_width,
+    )
+    if on_derived is not None:
+        jax.block_until_ready(outputs)
+        mappings.clear()
+        on_derived({})
+    return outputs
+
+
+def gated_route_candidates(
+    *, regime: Regime, next_states: Mapping[RegimeName, Mapping[str, object]]
+) -> MappingProxyType[RegimeName, Mapping[str, object]]:
+    """Retain only target candidates and fallback carriers read by gated routing."""
+    names = {
+        name
+        for target, edge in regime.gated_edges.items()
+        for name in (target, *(leg.realized_fallback.regime for leg in edge.legs))
+    }
+    return MappingProxyType({name: next_states[name] for name in names})
+
+
+def simulation_gate_route_delta(
+    *,
+    regime: Regime,
+    fold_period: int,
+    edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
+    edge_flags: Mapping[RegimeName, BoolND],
+    candidate_states: StatesPerRegime,
+    regime_names_to_ids: RegimeNamesToIds,
+    new_subject_regime_ids: Int1D,
+    subjects_in_regime: Bool1D,
+    flat_params: FlatParams,
+    own_stakeholder: Int1D,
+    new_own_stakeholder: Int1D,
+    fold_age: object = None,
+    subject_width: int | None = None,
+) -> tuple[MappingProxyType[str, Mapping[str, object]], Int1D, Int1D]:
+    """Publish fixed-shape route deltas instead of a duplicate state carrier."""
+    routed, routed_ids, routed_roles, closed_masks = (
+        _simulation_gate_route_with_closed_masks(
+            regime=regime,
+            fold_period=fold_period,
+            edge_values=edge_values,
+            edge_flags=edge_flags,
+            next_states=candidate_states,
+            regime_names_to_ids=regime_names_to_ids,
+            new_subject_regime_ids=new_subject_regime_ids,
+            subjects_in_regime=subjects_in_regime,
+            flat_params=flat_params,
+            own_stakeholder=own_stakeholder,
+            new_own_stakeholder=new_own_stakeholder,
+            fold_age=fold_age,
+            subject_width=subject_width,
+        )
+    )
+    delta = {}
+    for target, edge in regime.gated_edges.items():
+        if target not in edge_values:
+            continue
+        delta[target] = MappingProxyType(
+            {
+                "closed": closed_masks[target],
+                "projected": MappingProxyType(
+                    {
+                        leg.realized_fallback.regime: routed[
+                            leg.realized_fallback.regime
+                        ]
+                        for leg in edge.legs
+                    }
+                ),
+            }
+        )
+    return MappingProxyType(delta), routed_ids, routed_roles
+
+
+def commit_gated_route_delta(
+    *,
+    delta: Mapping[str, Mapping[str, object]],
+    next_states: StatesPerRegime,
+) -> StatesPerRegime:
+    """Merge every profiled fallback projection into the existing carrier."""
+    result = {name: dict(states) for name, states in next_states.items()}
+    for edge_delta in delta.values():
+        closed = cast("jax.Array", edge_delta["closed"])
+        projected_rows = cast(
+            "Mapping[str, Mapping[str, jax.Array]]", edge_delta["projected"]
+        )
+        for fallback, projected in projected_rows.items():
+            result[fallback] = {
+                state: jnp.where(closed, projected[state], old)
+                for state, old in result[fallback].items()
+            }
+    return MappingProxyType(
+        {name: MappingProxyType(states) for name, states in result.items()}
+    )
 
 
 def substitute_gated_edge_continuations(
@@ -115,10 +357,16 @@ def substitute_gated_edge_continuations(
     period: int,
     next_regime_to_V_arr: Mapping[RegimeName, FloatND],
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
+    target_states_by_target: Mapping[
+        RegimeName, Mapping[str, ContinuousState | DiscreteState]
+    ]
+    | None = None,
     period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
     period_to_regime_to_dissolution_flags: Mapping[int, Mapping[RegimeName, BoolND]],
     flat_params: FlatParams,
-    fold_age: float | None = None,
+    fold_age: object = None,
+    subject_devices: tuple[jax.Device, ...] = (),
+    on_derived: Callable[[object], None] | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]],
@@ -219,6 +467,17 @@ def substitute_gated_edge_continuations(
             period_solution=next_period_V,
             period_dissolution_flags=next_period_D,
         )
+        # Publish the float mapping before the fold can consume it.
+        same_period_mappings[target_name] = same_period_mapping
+        if on_derived is not None:
+            on_derived(
+                {
+                    "same_period_mappings": MappingProxyType(
+                        dict(same_period_mappings)
+                    ),
+                    "next_values": MappingProxyType(dict(substituted)),
+                }
+            )
         wbar = _evaluate_edge_fold(
             # The fold compiled for `period + 1` — the period whose arrays it
             # folds, one ahead of the source standing at `period`. The gate
@@ -227,10 +486,12 @@ def substitute_gated_edge_continuations(
             # moves without changing their shape.
             fold=edge.fold_at(period=period + 1),
             fold_period=period + 1,
-            fold_age=fold_age,
+            fold_age=cast("float | ScalarFloat | ScalarInt | None", fold_age),
             target_states=cast(
                 "Mapping[str, ContinuousState | DiscreteState]",
-                _states_for_period(
+                target_states_by_target[target_name]
+                if target_states_by_target is not None
+                else _states_for_period(
                     regime=regimes[target_name],
                     state_action_space=base_state_action_spaces[target_name],
                     period=period + 1,
@@ -241,12 +502,30 @@ def substitute_gated_edge_continuations(
             reference_flat_params=build_reference_params_mapping_for_fold(
                 edge=edge, flat_params=flat_params
             ),
+            shared_sharding=(
+                simulation_value_sharding(
+                    stored_sharding=jax.sharding.SingleDeviceSharding(
+                        subject_devices[0]
+                    ),
+                    devices=subject_devices,
+                )
+                if subject_devices
+                else None
+            ),
         )
         substituted[target_name] = wbar
         # The fold's own boolean `gate` output is deliberately not captured:
         # `route_gated_edges` recomputes the gate itself from this SAME
         # same-period mapping, at the realized candidate state.
-        same_period_mappings[target_name] = same_period_mapping
+        if on_derived is not None:
+            on_derived(
+                {
+                    "same_period_mappings": MappingProxyType(
+                        dict(same_period_mappings)
+                    ),
+                    "next_values": MappingProxyType(dict(substituted)),
+                }
+            )
     return MappingProxyType(substituted), MappingProxyType(same_period_mappings)
 
 
@@ -262,8 +541,45 @@ def route_gated_edges(
     flat_params: FlatParams,
     own_stakeholder: Int1D,
     new_own_stakeholder: Int1D,
-    fold_age: float | None = None,
+    fold_age: object = None,
+    subject_devices: tuple[jax.Device, ...] = (),
+    subject_width: int | None = None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D]:
+    """Preserve the three-result routing adapter contract."""
+    states, regime_ids, roles, _closed_masks = _route_gated_edges_with_closed_masks(
+        regime=regime,
+        fold_period=fold_period,
+        same_period_mappings=same_period_mappings,
+        next_states=next_states,
+        regime_names_to_ids=regime_names_to_ids,
+        new_subject_regime_ids=new_subject_regime_ids,
+        subjects_in_regime=subjects_in_regime,
+        flat_params=flat_params,
+        own_stakeholder=own_stakeholder,
+        new_own_stakeholder=new_own_stakeholder,
+        fold_age=fold_age,
+        subject_devices=subject_devices,
+        subject_width=subject_width,
+    )
+    return states, regime_ids, roles
+
+
+def _route_gated_edges_with_closed_masks(
+    *,
+    regime: Regime,
+    fold_period: int,
+    same_period_mappings: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
+    next_states: StatesPerRegime,
+    regime_names_to_ids: RegimeNamesToIds,
+    new_subject_regime_ids: Int1D,
+    subjects_in_regime: Bool1D,
+    flat_params: FlatParams,
+    own_stakeholder: Int1D,
+    new_own_stakeholder: Int1D,
+    fold_age: object = None,
+    subject_devices: tuple[jax.Device, ...] = (),
+    subject_width: int | None = None,
+) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
     """Route each subject through its regime's declared gated edges.
 
     A no-op (returns the inputs unchanged) when `regime` declares no
@@ -329,11 +645,16 @@ def route_gated_edges(
             earlier one's rows.
 
     Returns:
-        Tuple of the routed states, the routed regime ids, and the role each
-        subject carries onward.
+        Routed states, regime IDs, roles, and the actual closed-branch mask
+        for each evaluated edge. Regime-ID equality does not identify a branch.
     """
     if not regime.gated_edges:
-        return next_states, new_subject_regime_ids, new_own_stakeholder
+        return (
+            next_states,
+            new_subject_regime_ids,
+            new_own_stakeholder,
+            MappingProxyType({}),
+        )
 
     # An IMMUTABLE snapshot of the ordinary (gate-blind) draw, taken
     # BEFORE the edge loop below ever writes into `routed_ids`. Each edge's
@@ -343,6 +664,7 @@ def route_gated_edges(
     # declaration-order-independent (see the routing-mask comment below).
     ordinary_draw_ids = new_subject_regime_ids
 
+    closed_masks: dict[RegimeName, Bool1D] = {}
     states = next_states
     routed_ids = new_subject_regime_ids
     routed_roles = new_own_stakeholder
@@ -398,7 +720,9 @@ def route_gated_edges(
                     **bind_edge_period_context(
                         func=simulate_gate_evaluator,
                         fold_period=fold_period,
-                        fold_age=fold_age,
+                        fold_age=cast(
+                            "float | ScalarFloat | ScalarInt | None", fold_age
+                        ),
                     ),
                     SAME_PERIOD_V_ARG: same_period_mappings[target_name],
                     SAME_PERIOD_PARAMS_ARG: reference_params,
@@ -406,6 +730,8 @@ def route_gated_edges(
                 # A stateless target leaves `batched_kwargs` empty; `vmap`
                 # cannot infer a batch size from nothing.
                 axis_size=int(subjects_in_regime.shape[0]),
+                subject_devices=subject_devices,
+                subject_width=subject_width,
             )
         )
 
@@ -444,6 +770,7 @@ def route_gated_edges(
         # that invariant local, rather than resting on a later regime-draw
         # overwrite that never reaches the state slots.
         dissolving_mask = edge_mask & jnp.logical_not(gate_bool)
+        closed_masks[target_name] = dissolving_mask
 
         for leg in legs:
             projector = leg.fallback_state_projector
@@ -478,10 +805,13 @@ def route_gated_edges(
                         **bind_edge_period_context(
                             func=projector,
                             fold_period=fold_period,
-                            fold_age=fold_age,
+                            fold_age=cast(
+                                "float | ScalarFloat | ScalarInt | None", fold_age
+                            ),
                         ),
                     },
                     axis_size=int(subjects_in_regime.shape[0]),
+                    subject_devices=subject_devices,
                 ),
             )
             states = _advance_states_for_subjects(
@@ -496,7 +826,7 @@ def route_gated_edges(
                 subject_indices=dissolving_mask,
             )
 
-    return states, routed_ids, routed_roles
+    return states, routed_ids, routed_roles, MappingProxyType(closed_masks)
 
 
 def _per_row_leg_outcomes(
@@ -601,6 +931,8 @@ def _call_vmapped_with_accepted_kwargs(
     batched_kwargs: Mapping[str, object],
     static_kwargs: Mapping[str, object],
     axis_size: int,
+    subject_devices: tuple[jax.Device, ...] = (),
+    subject_width: int | None = None,
 ) -> object:
     """Call a per-subject-scalar `func` over a whole population via `vmap`.
 
@@ -638,7 +970,30 @@ def _call_vmapped_with_accepted_kwargs(
     batched, static = split_population_call_args(
         func=func, batched_kwargs=batched_kwargs, static_kwargs=static_kwargs
     )
-    return population_call(func=func, axis_size=axis_size)(batched, static)
+    if subject_devices:
+        placed = place_simulation_arguments(
+            arguments={
+                **batched,
+                **{
+                    name: value
+                    for name, value in static.items()
+                    if name != SAME_PERIOD_V_ARG
+                },
+            },
+            subject_arg_names=tuple(batched),
+            value_reads=(),
+            devices=subject_devices,
+        )
+        # Value arrays were acquired by the period owner; preserve those exact
+        # copies even when their mesh has a different named-axis structure.
+        batched = {name: placed[name] for name in batched}
+        static = {
+            name: value if name == SAME_PERIOD_V_ARG else placed[name]
+            for name, value in static.items()
+        }
+    return population_call(func=func, axis_size=axis_size, subject_width=subject_width)(
+        batched, static
+    )
 
 
 def split_population_call_args(
@@ -665,22 +1020,24 @@ def split_population_call_args(
     return batched, static
 
 
-def install_population_call(*, func: Callable, axis_size: int, call: Callable) -> None:
+def install_population_call(
+    *, func: Callable, axis_size: int, call: Callable, subject_width: int | None = None
+) -> None:
     """Install `call` as the population call `func` is invoked through.
 
     Ahead-of-time compilation lowers and compiles a gate evaluator before
     `simulate()` runs and installs the compiled program here, so the router's
     first call dispatches it instead of tracing and compiling on the spot.
     """
-    _POPULATION_CALLS.setdefault(func, {})[axis_size] = call
+    _POPULATION_CALLS.setdefault(func, {})[(axis_size, subject_width)] = call
 
 
 # What each edge callable was built once and for all with. Weakly keyed, so a
 # model's compiled artifacts are released together with the model.
 _ACCEPTED_ARG_NAMES: WeakKeyDictionary[Callable, frozenset[str]] = WeakKeyDictionary()
-_POPULATION_CALLS: WeakKeyDictionary[Callable, dict[int, Callable]] = (
-    WeakKeyDictionary()
-)
+_POPULATION_CALLS: WeakKeyDictionary[
+    Callable, dict[tuple[int, int | None], Callable]
+] = WeakKeyDictionary()
 
 
 def _accepted_arg_names(func: Callable) -> frozenset[str]:
@@ -701,10 +1058,12 @@ def _role_code(*, name: str | None, role_ids: Mapping[str, int]) -> int:
     return NO_ROLE if name is None else role_ids[name]
 
 
-def population_call(*, func: Callable, axis_size: int) -> Callable:
+def population_call(
+    *, func: Callable, axis_size: int, subject_width: int | None = None
+) -> Callable:
     """Return `func` mapped over a population of `axis_size` subjects, compiled.
 
-    Built ONCE per `(func, axis_size)` and reused for every later call.
+    Built ONCE per `(func, axis_size, subject_width)` and reused for every later call.
     Rebuilding it per call would leave the compiled executable unreachable —
     `jax.jit` keys its cache on the wrapped function object, so a fresh
     closure each time recompiles each time — and every period and every
@@ -725,17 +1084,61 @@ def population_call(*, func: Callable, axis_size: int) -> Callable:
     model rather than of the period or chunk, so the compilation is paid once.
     """
     per_axis_size = _POPULATION_CALLS.setdefault(func, {})
-    call = per_axis_size.get(axis_size)
+    key = (axis_size, subject_width)
+    call = per_axis_size.get(key)
     if call is None:
-        call = jax.jit(
-            jax.vmap(
+        if subject_width is None:
+            mapped = jax.vmap(
                 partial(_call_one_subject, func=func),
                 in_axes=(0, None),
                 axis_size=axis_size,
             )
-        )
-        per_axis_size[axis_size] = call
+        else:
+            mapped = partial(
+                _map_subject_tiles,
+                func=func,
+                subject_width=subject_width,
+                axis_size=axis_size,
+            )
+        call = jax.jit(mapped)
+        per_axis_size[key] = call
     return call
+
+
+# keyword-only-exempt: library-callback=jax.jit
+def _map_subject_tiles(
+    batched_kwargs: Mapping[str, object],
+    shared_kwargs: Mapping[str, object],
+    *,
+    func: Callable,
+    subject_width: int,
+    axis_size: int,
+) -> object:
+    """Tile stateful rows and preserve explicit extent for stateless rows."""
+    if not jax.tree.leaves(batched_kwargs):
+        # No mapped input carries N. This is a broadcast of shared/scalar work,
+        # not a subject-sized expensive branch hidden behind a mask.
+        return jax.vmap(
+            partial(_call_one_subject, func=func),
+            in_axes=(0, None),
+            axis_size=axis_size,
+        )(batched_kwargs, shared_kwargs)
+    return jax.lax.map(
+        partial(_call_one_subject_with_shared, func=func, shared=shared_kwargs),
+        batched_kwargs,
+        batch_size=subject_width,
+    )
+
+
+# keyword-only-exempt: library-callback=jax.lax.map
+def _call_one_subject_with_shared(
+    one_subject_kwargs: Mapping[str, object],
+    *,
+    func: Callable,
+    shared: Mapping[str, object],
+) -> object:
+    """Invoke one gate evaluator or projector with shared dynamic operands."""
+    return func(**one_subject_kwargs, **shared)
 
 
 # keyword-only-exempt: library-callback=jax.vmap

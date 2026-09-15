@@ -8,6 +8,8 @@ boundary it carries the canonical dtype unchanged through the simulate
 stack; downstream code does not re-cast.
 """
 
+from typing import Protocol, runtime_checkable
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,6 +19,17 @@ from lcm.typing import FloatND, IntND
 _INT32_MIN = int(np.iinfo(np.int32).min)
 _INT32_MAX = int(np.iinfo(np.int32).max)
 _FLOAT32_MAX = float(np.finfo(np.float32).max)
+
+
+@runtime_checkable
+class CanonicalArrayWriter(Protocol):
+    """Allocate an already validated numeric leaf at an explicit destination."""
+
+    def __call__(
+        self, *, value: np.ndarray | jax.Array, dtype: np.dtype, name: str
+    ) -> jax.Array:
+        """Write one canonical leaf without changing its preceding validation."""
+        ...
 
 
 def canonical_float_dtype() -> type:
@@ -31,7 +44,9 @@ def canonical_float_dtype() -> type:
     return jnp.float64 if jax.config.read("jax_enable_x64") else jnp.float32
 
 
-def safe_to_int_dtype(*, value: object, name: str) -> IntND:
+def safe_to_int_dtype(
+    *, value: object, name: str, array_writer: CanonicalArrayWriter | None = None
+) -> IntND:
     """Cast a scalar, sequence, or array to `jnp.int32`, checking int32 range.
 
     Args:
@@ -39,6 +54,8 @@ def safe_to_int_dtype(*, value: object, name: str) -> IntND:
             integer values.
         name: Qualified name of the leaf — surfaced in the error message
             so the user can locate the offending input.
+        array_writer: Optional allocation owner called after host range validation.
+            Without it, retain the normal JAX constructor and default placement.
 
     Returns:
         A `jnp.int32` array (0-d if `value` was a scalar).
@@ -58,10 +75,14 @@ def safe_to_int_dtype(*, value: object, name: str) -> IntND:
                 f"exceeds [{_INT32_MIN}, {_INT32_MAX}]."
             )
             raise ValueError(msg)
+    if array_writer is not None:
+        return array_writer(value=np_value, dtype=np.dtype(np.int32), name=name)
     return jnp.asarray(np_value, dtype=jnp.int32)
 
 
-def safe_to_float_dtype(*, value: object, name: str) -> FloatND:
+def safe_to_float_dtype(
+    *, value: object, name: str, array_writer: CanonicalArrayWriter | None = None
+) -> FloatND:
     """Cast a scalar, sequence, or array to the canonical float dtype.
 
     Range check fires only on a down-cast:
@@ -76,6 +97,8 @@ def safe_to_float_dtype(*, value: object, name: str) -> FloatND:
     Args:
         value: A Python float, numpy/JAX scalar, or array-like.
         name: Qualified name of the leaf — surfaced in the error message.
+        array_writer: Optional allocation owner called after host range validation.
+            Without it, retain the normal JAX constructor and default placement.
 
     Returns:
         A JAX array at `canonical_float_dtype()` (0-d if `value` was a
@@ -96,4 +119,6 @@ def safe_to_float_dtype(*, value: object, name: str) -> FloatND:
                 f"exceeds float32 max {_FLOAT32_MAX:g}."
             )
             raise OverflowError(msg)
+    if array_writer is not None:
+        return array_writer(value=np_value, dtype=np.dtype(target_dtype), name=name)
     return jnp.asarray(np_value, dtype=target_dtype)

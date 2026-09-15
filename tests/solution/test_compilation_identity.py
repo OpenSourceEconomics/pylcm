@@ -1,0 +1,504 @@
+"""Executables are keyed by what a program computes, not by which object computes it.
+
+A compiled solve program is identified by the model it belongs to, the regime and
+core it serves, the engine's grouping of its period, and the solver's own grouping
+of that period. None of those is a `id()` of a Python callable, so the key two
+constructions of one model produce is the same key, and two periods a solver built
+from identical inputs reach one executable.
+"""
+
+from collections.abc import Callable, Hashable
+from typing import Any
+
+import pytest
+
+from _lcm.solution import backward_induction
+from _lcm.solution.backward_induction import _lowering_key, _program_identity
+from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm.exceptions import ExecutionPlanningError
+from lcm.solvers import GridSearch
+from lcm.typing import RegimeName
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.solution.test_dcegm_age_specialized_function import _twin
+from tests.test_models import n_nbegm_toy, nbegm_ride_along_toy
+from tests.test_models.dcegm_paper_twin import get_params as twin_params
+from tests.test_models.deterministic.regression import (
+    START_AGE,
+    LaborSupply,
+    RegimeId,
+    dead,
+    get_params,
+    working_life,
+)
+
+_N_PERIODS = 3
+_IDENTITY = ("program", "fingerprint", "working_life", "main", ("signature",), None)
+_NNBEGM_PARAMS = {"discount_factor": 0.95}
+
+
+def _negm_model() -> Model:
+    """The two-asset toy solved by `NEGM`."""
+    return n_nbegm_toy.build_model(variant="negm", n_periods=_N_PERIODS)
+
+
+def _nnbegm_model() -> Model:
+    """The two-asset toy solved by `NNBEGM` over an `NBEGM` inner margin."""
+    return n_nbegm_toy.build_model(variant="n_nbegm", n_periods=_N_PERIODS)
+
+
+def _nbegm_model() -> Model:
+    """The ride-along tax toy solved by `NBEGM`, at its smallest grids."""
+    return nbegm_ride_along_toy.build_model(
+        variant="nbegm",
+        n_periods=_N_PERIODS,
+        n_liquid=12,
+        n_savings=12,
+        n_consumption=12,
+    )
+
+
+def _dcegm_model() -> Model:
+    """The DC-EGM paper twin, with no age specialization."""
+    return _twin(solver_kind="dcegm", age_specialized=False)
+
+
+# One case per solver that publishes a group key, so every publisher is
+# exercised rather than only the one that happened to be reachable.
+_GROUPING_SOLVER_CASES = [
+    pytest.param(_negm_model, "alive", id="negm"),
+    pytest.param(_nnbegm_model, "alive", id="n_nbegm"),
+    pytest.param(_nbegm_model, "alive", id="nbegm"),
+    pytest.param(
+        _dcegm_model,
+        "working_life",
+        marks=pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
+        id="dcegm",
+    ),
+]
+
+
+def _model(
+    *,
+    n_wealth_points: int = 3,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
+    """A two-regime grid-search toy whose wealth grid size is a build input."""
+    final_age_alive = START_AGE + _N_PERIODS - 2
+    return Model(
+        regimes={
+            "working_life": working_life.replace(
+                active=lambda age: age <= final_age_alive,
+                states={
+                    "wealth": LinSpacedGrid(start=1, stop=3, n_points=n_wealth_points)
+                },
+                actions={
+                    "labor_supply": DiscreteGrid(category_class=LaborSupply),
+                    "consumption": LinSpacedGrid(start=1, stop=3, n_points=3),
+                },
+                solver=GridSearch(),
+            ),
+            "dead": dead,
+        },
+        ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
+        regime_id_class=RegimeId,
+        execution_config=execution_config,
+    )
+
+
+def _capture_lowering_keys(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> list[dict[Hashable, Hashable]]:
+    """Collect the lowering keys of every solve run while the spy is installed."""
+    captured: list[dict[Hashable, Hashable]] = []
+    original = backward_induction._resolve_output_layouts_and_lowering_keys
+
+    # `Any` rather than `object`: the spy forwards its keywords untouched to a
+    # strictly typed function, so narrowing them here would be a claim it does
+    # not make.
+    def _spy(**kwargs: Any) -> tuple:
+        result = original(**kwargs)
+        captured.append(dict(result[1]))
+        return result
+
+    monkeypatch.setattr(
+        backward_induction, "_resolve_output_layouts_and_lowering_keys", _spy
+    )
+    return captured
+
+
+def test_candidate_frontier_describes_dynamic_arguments_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Static width alternatives share one dynamic argument description per core."""
+    frontier_count = 0
+    candidate_count = 0
+    argument_key_count = 0
+    captured: list[tuple[tuple, dict[str, Any]]] = []
+    original_frontier = backward_induction.resolve_core_program_candidates
+    original_argument_key = backward_induction._abstract_arguments_key
+    original_planning = backward_induction._resolve_output_layouts_and_lowering_keys
+
+    def count_frontier(**kwargs: Any) -> tuple:
+        nonlocal frontier_count, candidate_count
+        widths = kwargs["tile_widths"]
+        frontier_count += 1
+        candidate_count += len(widths)
+        return original_frontier(**kwargs)
+
+    def count_argument_key(**kwargs: Any) -> Hashable:
+        nonlocal argument_key_count
+        argument_key_count += 1
+        return original_argument_key(**kwargs)
+
+    class PlanningObservedError(Exception):
+        """Stop before lowering or compiling the resolved candidate frontier."""
+
+    def observe_planning(**kwargs: Any) -> tuple:
+        result = original_planning(**kwargs)
+        captured.append((result, kwargs))
+        raise PlanningObservedError
+
+    monkeypatch.setattr(
+        backward_induction, "resolve_core_program_candidates", count_frontier
+    )
+    monkeypatch.setattr(
+        backward_induction, "_abstract_arguments_key", count_argument_key
+    )
+    monkeypatch.setattr(
+        backward_induction,
+        "_resolve_output_layouts_and_lowering_keys",
+        observe_planning,
+    )
+
+    with pytest.raises(PlanningObservedError):
+        _model(execution_config=ExecutionConfig(device_memory_bytes=2**32)).solve(
+            params=get_params(n_periods=_N_PERIODS),
+            log_level="off",
+        )
+
+    monkeypatch.setattr(
+        backward_induction, "_abstract_arguments_key", original_argument_key
+    )
+    result, planning_kwargs = captured[0]
+    layouts, lowering_keys, programs, templates, _, donations, _ = result
+    regimes = planning_kwargs["regimes"]
+    expected = {}
+    for candidate, program in programs.items():
+        regime_name, period, core_name = candidate[0]
+        regime = regimes[regime_name]
+        expected[candidate] = _lowering_key(
+            program_identity=_program_identity(
+                model_fingerprint=planning_kwargs["model_fingerprint"],
+                regime_name=regime_name,
+                core_name=core_name,
+                period_signature=regime.solution.period_signatures[period],
+                solver_group_key=regime.solution.solver_period_group_keys.get(period),
+            ),
+            layout_key=layouts[candidate[0]].compilation_key,
+            arguments={**program.arguments, **templates[candidate]},
+            specialization_key=program.specialization_key,
+            output_roles=program.output_roles,
+            donated_arguments=backward_induction._donated_arguments(
+                donations=donations[candidate]
+            ),
+            placement_key=regime.solution.submesh_device_ids,
+            compiler_options=program.compiler_options,
+        )
+    assert (
+        candidate_count > frontier_count > 0,
+        argument_key_count,
+        lowering_keys,
+    ) == (
+        True,
+        frontier_count,
+        expected,
+    )
+
+
+def test_lowering_key_ignores_callable_identity() -> None:
+    """One program identity yields one key, whatever object carries the program."""
+    first = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        arguments=None,
+        specialization_key=("specialization",),
+        output_roles=None,
+    )
+    second = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        arguments=None,
+        specialization_key=("specialization",),
+        output_roles=None,
+    )
+    assert first == second
+
+
+def test_lowering_key_separates_distinct_program_identities() -> None:
+    """Two programs of different identity never share one key."""
+    other = ("program", "fingerprint", "working_life", "main", ("other",), None)
+    first = _lowering_key(program_identity=_IDENTITY, layout_key=("layout",))
+    second = _lowering_key(program_identity=other, layout_key=("layout",))
+
+    assert first != second
+
+
+def test_lowering_key_carries_compiler_options() -> None:
+    """A compiler option distinguishes otherwise identical lowerings."""
+    plain = _lowering_key(program_identity=_IDENTITY, layout_key=("layout",))
+    configured = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        compiler_options=(("scan_unroll", 1),),
+    )
+    assert plain != configured
+
+
+def test_program_identity_separates_distinct_solver_group_keys() -> None:
+    """A solver grouping finer than the engine's splits the identity."""
+    common = {
+        "model_fingerprint": "fingerprint",
+        "regime_name": "working_life",
+        "core_name": "main",
+        "period_signature": ("period-signature", 1),
+    }
+    first = _program_identity(**common, solver_group_key=("egm", 0))
+    second = _program_identity(**common, solver_group_key=("egm", 1))
+
+    assert first != second
+
+
+def test_program_identity_separates_distinct_model_fingerprints() -> None:
+    """Two models never share a program identity, however alike their regimes."""
+    common = {
+        "regime_name": "working_life",
+        "core_name": "main",
+        "period_signature": ("period-signature", 1),
+        "solver_group_key": None,
+    }
+    first = _program_identity(**common, model_fingerprint="first")
+    second = _program_identity(**common, model_fingerprint="second")
+
+    assert first != second
+
+
+def test_two_constructions_of_one_model_produce_equal_compilation_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rebuilding a model reproduces every compilation key it had before."""
+    captured = _capture_lowering_keys(monkeypatch=monkeypatch)
+    params = get_params(n_periods=_N_PERIODS)
+    _model().solve(params=params, log_level="off")
+    _model().solve(params=params, log_level="off")
+
+    first, second = captured
+    assert first == second
+
+
+def test_models_differing_in_a_grid_size_share_no_compilation_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model built from different inputs gets its own executables."""
+    captured = _capture_lowering_keys(monkeypatch=monkeypatch)
+    params = get_params(n_periods=_N_PERIODS)
+    _model().solve(params=params, log_level="off")
+    _model(n_wealth_points=4).solve(params=params, log_level="off")
+
+    first, second = captured
+    assert not set(first.values()) & set(second.values())
+
+
+def test_equal_keys_over_different_callables_are_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A program identity coarser than the solver's specialization is a defect."""
+    model = _twin(solver_kind="brute_force", age_specialized=True)
+    monkeypatch.setattr(
+        backward_induction,
+        "_program_identity",
+        lambda **_kwargs: ("program", "constant"),
+    )
+    with pytest.raises(ExecutionPlanningError) as refusal:
+        model.solve(params=twin_params(), log_level="off")
+
+    # Both colliding addresses are named, so a reader can see which two
+    # programs the identity failed to tell apart.
+    message = str(refusal.value)
+    assert message.count("regime 'working_life', core 'main', period ") == 2
+
+
+def test_the_key_refusal_names_the_equivalent_callable_case(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal states that a per-period equivalent callable also reaches it.
+
+    A solver whose group key is right but which builds a fresh, equivalent closure
+    per period is refused by the same guard, so the message names that possibility
+    beside a group key that is too coarse.
+    """
+    model = _twin(solver_kind="brute_force", age_specialized=True)
+    monkeypatch.setattr(
+        backward_induction,
+        "_program_identity",
+        lambda **_kwargs: ("program", "constant"),
+    )
+    with pytest.raises(ExecutionPlanningError) as refusal:
+        model.solve(params=twin_params(), log_level="off")
+
+    assert "equivalent" in str(refusal.value)
+
+
+@pytest.mark.parametrize(("build_model", "regime_name"), _GROUPING_SOLVER_CASES)
+def test_a_grouping_solver_publishes_one_group_key_per_active_period(
+    *, build_model: Callable[[], Model], regime_name: RegimeName
+) -> None:
+    """An EGM-family regime reports the group key it built each period under."""
+    regime = build_model()._regimes[regime_name]
+
+    assert set(regime.solution.solver_period_group_keys) == set(regime.active_periods)
+
+
+def test_two_constructions_of_a_grouped_model_produce_equal_compilation_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A solver-grouped model's compilation keys survive being rebuilt.
+
+    The grid-search companion above cannot see this: its regime publishes no
+    solver group key, so nothing of the solver's own grouping — and none of the
+    constraint-plan digest inside it — reaches the compilation key there.
+    """
+    captured = _capture_lowering_keys(monkeypatch=monkeypatch)
+    _nnbegm_model().solve(params=_NNBEGM_PARAMS, log_level="off")
+    _nnbegm_model().solve(params=_NNBEGM_PARAMS, log_level="off")
+
+    first, second = captured
+    assert first == second
+
+
+def test_two_constructions_publish_equal_solver_period_group_keys() -> None:
+    """A solver's own per-period grouping is reproduced when the model is rebuilt.
+
+    Non-empty is asserted alongside equality: two empty mappings are equal, and
+    a key the solver never published would make the claim vacuous.
+    """
+    first = _nnbegm_model()._regimes["alive"]
+    second = _nnbegm_model()._regimes["alive"]
+
+    assert (
+        dict(first.solution.solver_period_group_keys)
+        == dict(second.solution.solver_period_group_keys)
+        != {}
+    )
+
+
+def test_grid_search_publishes_no_solver_period_group_key() -> None:
+    """A solver whose periods are grouped by the engine alone reports nothing."""
+    regime = _model()._regimes["working_life"]
+
+    assert dict(regime.solution.solver_period_group_keys) == {}
+
+
+def test_lowering_key_separates_distinct_donation_sets() -> None:
+    """Donation enters the key: an executable that donates is not one that keeps."""
+    first = _lowering_key(program_identity=_IDENTITY, layout_key=("layout",))
+    second = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        donated_arguments=("next_value",),
+    )
+
+    assert first != second
+
+
+def test_lowering_key_separates_distinct_placements() -> None:
+    """Placement enters the key: a node on three devices is not one on four."""
+    first = _lowering_key(
+        program_identity=_IDENTITY, layout_key=("layout",), placement_key=(0, 1, 2)
+    )
+    second = _lowering_key(
+        program_identity=_IDENTITY, layout_key=("layout",), placement_key=(0, 1, 2, 3)
+    )
+
+    assert first != second
+
+
+def _n_executables(*, lowering_keys: tuple[Hashable, ...]) -> int:
+    """Count the executables a compilation wave lowers for these candidates.
+
+    A wave lowers one executable per distinct lowering key and hands every
+    further candidate carrying that key the same executable, so the number of
+    distinct keys among a wave's candidates is what it compiles.
+    """
+    new_lowerings: dict[Hashable, int] = {}
+    for position, lowering_key in enumerate(lowering_keys):
+        new_lowerings.setdefault(lowering_key, position)
+    return len(new_lowerings)
+
+
+def test_two_units_differing_only_in_their_donation_set_compile_two_executables() -> (
+    None
+):
+    """An executable that donates its argument is not the one that keeps it."""
+    keeping = _lowering_key(program_identity=_IDENTITY, layout_key=("layout",))
+    donating = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        donated_arguments=("next_value",),
+    )
+
+    assert _n_executables(lowering_keys=(keeping, donating)) == 2
+
+
+def test_two_units_differing_only_in_their_placement_compile_two_executables() -> None:
+    """An executable lowered for a three-device block is not one for four."""
+    on_three = _lowering_key(
+        program_identity=_IDENTITY, layout_key=("layout",), placement_key=(0, 1, 2)
+    )
+    on_four = _lowering_key(
+        program_identity=_IDENTITY, layout_key=("layout",), placement_key=(0, 1, 2, 3)
+    )
+
+    assert _n_executables(lowering_keys=(on_three, on_four)) == 2
+
+
+def test_two_units_donating_and_placed_alike_share_one_executable() -> None:
+    """Candidates agreeing on every key component are lowered once between them."""
+    first = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        donated_arguments=("next_value",),
+        placement_key=(0, 1, 2),
+    )
+    second = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        donated_arguments=("next_value",),
+        placement_key=(0, 1, 2),
+    )
+
+    assert _n_executables(lowering_keys=(first, second)) == 1
+
+
+def test_execution_metadata_is_derived_once_per_program_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One derivation covers the representative programs and one the selected ones.
+
+    The liveness ledger and the resident-bytes walk read the same representative
+    facts, so a budgeted solve derives them once rather than once per consumer.
+    """
+    calls: list[int] = []
+    original = backward_induction._execution_metadata
+
+    # `Any` rather than `object`: the counter forwards its keywords untouched to
+    # a strictly typed function, so narrowing them here would be a claim it does
+    # not make.
+    def _counting(**kwargs: Any) -> Any:
+        calls.append(1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(backward_induction, "_execution_metadata", _counting)
+    model = _model(execution_config=ExecutionConfig(device_memory_bytes=2**32))
+    model.solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+
+    assert len(calls) == 2

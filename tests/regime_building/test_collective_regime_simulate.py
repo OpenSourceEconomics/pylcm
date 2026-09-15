@@ -78,6 +78,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import build_prepared_structure
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
 @categorical(ordered=True)
@@ -206,6 +207,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -229,7 +231,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
@@ -277,6 +279,7 @@ def test_couple_simulate_with_runtime_validation_enabled():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -299,7 +302,7 @@ def test_couple_simulate_with_runtime_validation_enabled():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
@@ -433,6 +436,7 @@ def _solve_consent():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -467,7 +471,7 @@ def test_consent_routing_simulate_matches_gate_exactly():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
@@ -515,7 +519,7 @@ def test_consent_routing_never_populates_the_non_routed_target():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
@@ -705,6 +709,7 @@ def _solve_dissolution():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -747,7 +752,7 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
@@ -834,7 +839,7 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
@@ -873,7 +878,7 @@ def test_gate_reading_d_target_without_dissolution_flags_raises_clearly():
         simulate(
             flat_params=flat_params,
             initial_conditions=initial_conditions,
-            regimes=regimes,
+            regimes=bind_eager_simulation(regimes=regimes),
             regime_names_to_ids=regime_names_to_ids,
             logger=get_logger(log_level="debug"),
             period_to_regime_to_V_arr=solution,
@@ -1022,6 +1027,7 @@ def _solve_consent_discrete_axis():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -1065,7 +1071,7 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
@@ -1345,7 +1351,7 @@ def test_to_dataframe_splits_collective_value_into_per_stakeholder_columns():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
@@ -1443,6 +1449,7 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -1462,7 +1469,7 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,
@@ -1610,6 +1617,7 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
     # `_roll_gated_edges` guard predates this fix); this is the control that
     # isolates the bug to the SIMULATE path below.
     _bi_result = solve(
+        model_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -1633,7 +1641,7 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=regimes,
+        regimes=bind_eager_simulation(regimes=regimes),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="debug"),
         period_to_regime_to_V_arr=solution,

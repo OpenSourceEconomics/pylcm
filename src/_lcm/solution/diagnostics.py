@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -166,6 +167,7 @@ def _emit_post_loop_diagnostics(
     diagnostic_min: list[FloatND] | None,
     diagnostic_max: list[FloatND] | None,
     diagnostic_mean: list[FloatND] | None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Flush async diagnostics: raise on NaN, warn on Inf, log debug stats.
 
@@ -179,6 +181,7 @@ def _emit_post_loop_diagnostics(
             solution=solution,
             regimes=regimes,
             flat_params=flat_params,
+            process_grid_resolver=process_grid_resolver,
         )
     if running_any_inf.item():
         _warn_inf_rows(
@@ -202,6 +205,7 @@ def _raise_first_nan_row(
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Find the first NaN-bearing (regime, period) and raise.
 
@@ -215,6 +219,7 @@ def _raise_first_nan_row(
                 solution=solution,
                 regimes=regimes,
                 flat_params=flat_params,
+                process_grid_resolver=process_grid_resolver,
             )
 
 
@@ -224,6 +229,7 @@ def _raise_at(
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Run the enriched NaN diagnostic on a single offending row and raise."""
     regime = regimes[row.regime_name]
@@ -237,7 +243,9 @@ def _raise_at(
     effective_regime_params = MappingProxyType(
         {**regime.resolved_fixed_params, **regime_params}
     )
-    state_action_space = regime.solution.state_action_space(regime_params=regime_params)
+    state_action_space = regime.solution.state_action_space(
+        regime_params=regime_params, process_grid_resolver=process_grid_resolver
+    )
     # The live solve tabulated period t on period t's grid, so the diagnostic has to as
     # well — otherwise a moving current-state grid reports U/F/E/Q fractions on state
     # values the failing solve never saw.
@@ -258,6 +266,7 @@ def _raise_at(
         regimes=regimes,
         flat_params=flat_params,
         solution=solution,
+        process_grid_resolver=process_grid_resolver,
     )
     # The intermediates closure mirrors the brute-force Q evaluation; for a
     # regime solved from interpolated continuations it cannot reproduce the
@@ -312,6 +321,7 @@ def _reconstruct_next_regime_to_V_arr(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> MappingProxyType[RegimeName, FloatND]:
     """Recreate the rolling `next_regime_to_V_arr` that was used at `period`.
 
@@ -328,6 +338,7 @@ def _reconstruct_next_regime_to_V_arr(
     regime_V_topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
         flat_params=flat_params,
+        process_grid_resolver=process_grid_resolver,
     )
     later_periods = sorted(p for p in solution if p > period)
     result: dict[RegimeName, FloatND] = {}

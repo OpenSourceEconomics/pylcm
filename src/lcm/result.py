@@ -74,9 +74,9 @@ class SimulationResult:
     ]:
         """Raw simulation results by regime and period.
 
-        Leaves are `jax.Array`. When `simulate` ran with `subject_batch_size` set,
-        they are host-resident (CPU-backed), since each chunk is offloaded to host
-        as it completes; otherwise they live on the compute device.
+        Leaves are `jax.Array`. When simulation uses multiple outer chunks, they
+        are host-resident (CPU-backed), since each completed chunk is offloaded
+        to host; a single outer chunk stays on the compute device.
         """
         return self._raw_results
 
@@ -154,9 +154,9 @@ class SimulationResult:
                 - "all": Compute all available targets (see `available_targets`)
                 Targets can be any function defined in a regime. Each target is
                 computed for the regimes where it exists; rows from regimes without
-                that target will have NaN. When `simulate` ran with
-                `subject_batch_size` set, target evaluation is chunked over subjects
-                with that batch size (bounding device memory; values are unchanged).
+                that target will have NaN. The result's saved outer chunk extent
+                also bounds the number of subject-period rows evaluated together
+                for these deferred targets.
             use_labels: If True (default), discrete variables (states, actions, and
                 regime) are returned as pandas Categorical dtype with string labels.
                 If False, discrete variables are returned as integer codes.

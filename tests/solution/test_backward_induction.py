@@ -1,30 +1,48 @@
 import dataclasses
 from types import MappingProxyType, SimpleNamespace
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from _lcm.engine import Regime, StateActionSpace
+from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    ResolvedCoreProgram,
 )
+from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.output_layout import VALUE
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+    ValueTransferKind,
+)
 from _lcm.grids import Grid
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import EdgeStatus, PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
-from _lcm.solution.backward_induction import _drain_V_arr_shards, solve
+from _lcm.solution.backward_induction import (
+    _drain_V_arr_shards,
+    _mark_reused_transfers,
+    solve,
+)
 from _lcm.solution.contract import PeriodKernel
 from _lcm.solution.grid_search import (
     _GridSearchArgumentBuilder,
     _GridSearchPeriodKernel,
 )
-from _lcm.typing import MaxQOverAFunction, StateOrActionName
+from _lcm.typing import FlatRegimeParams, MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
+from lcm.exceptions import ExecutionPlanningError
 
 
 @dataclasses.dataclass(frozen=True)
@@ -41,6 +59,8 @@ class MockSolutionPhase:
     `StateActionSpace` this mock hands out — a mock that claims axes the space
     does not carry makes the V topology and the rank rule disagree.
     """
+    sharded_state_names: frozenset[StateOrActionName] = frozenset()
+    """These dense fixture state axes have no declared device sharding."""
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
     artifact_authorities: MappingProxyType = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
@@ -54,8 +74,32 @@ class MockSolutionPhase:
         default_factory=lambda: _single_regime_reachability(n_periods=2)
     )
     """The solve-phase regime graph; one regime, reachable from itself."""
+    submesh_device_ids: tuple[int, ...] = ()
+    """No placement, so the mock regime's nodes run on every visible device."""
 
-    def state_action_space(self, regime_params):  # noqa: ARG002
+    def placed_devices(self) -> tuple[jax.Device, ...]:
+        """Return the devices this mock regime's nodes run on."""
+        return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
+
+    @property
+    def period_signatures(self) -> MappingProxyType[int, object]:
+        """One signature per period: the mock builds a kernel per period."""
+        return MappingProxyType(
+            {period: ("mock", period) for period in self.period_kernels}
+        )
+
+    @property
+    def solver_period_group_keys(self) -> MappingProxyType[int, object]:
+        """No solver-side grouping; the per-period signature decides alone."""
+        return MappingProxyType({})
+
+    def state_action_space(
+        self,
+        *,
+        regime_params: FlatRegimeParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
+    ) -> StateActionSpace:
+        del regime_params, process_grid_resolver
         return self._base_state_action_space
 
 
@@ -128,6 +172,25 @@ class MockRegime(Regime):
             self,
             "simulation",
             SimpleNamespace(egm_policy_read=None, external_replay_route=None),
+        )
+
+
+def test_memory_budget_requires_jit_before_backward_induction() -> None:
+    """A device-memory budget needs compiler reports, which eager execution lacks."""
+    with pytest.raises(ExecutionPlanningError, match="requires JIT compilation"):
+        solve(
+            model_fingerprint="test_backward_induction",
+            flat_params=MappingProxyType({}),
+            ages=AgeGrid(start=0, stop=1, step="Y"),
+            regimes=MappingProxyType({}),
+            logger=get_logger(log_level="off"),
+            enable_jit=False,
+            execution=ResolvedExecution(
+                device_ids=(0,),
+                sharded_states=frozenset(),
+                axis_widths=MappingProxyType({}),
+                device_memory_bytes=1,
+            ),
         )
 
 
@@ -245,6 +308,7 @@ def test_backward_induction():
     )
 
     solution = solve(
+        model_fingerprint="test_backward_induction",
         flat_params=MappingProxyType({"default": flat_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
@@ -310,6 +374,7 @@ def test_backward_induction_single_period_Qc_arr():
     )
 
     got = solve(
+        model_fingerprint="test_backward_induction",
         flat_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
@@ -319,3 +384,82 @@ def test_backward_induction_single_period_Qc_arr():
 
     # `value_functions` is keyed by period, then by regime name.
     aaae(got.value_functions[0]["default"], expected)
+
+
+def _aligned_transfer() -> ResolvedValueTransfer:
+    """One next-period regime-value read already in its required layout."""
+    stored = jnp.arange(8, dtype=jnp.float32)
+    assert jnp.isfinite(stored).all()
+    return ResolvedValueTransfer(
+        target=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=4, regime="retired"
+        ),
+        source=ValueConsumerAddress(
+            source_period=3,
+            source_regime="working",
+            core_key="main",
+            channel=ValueInputChannel.NEXT_REGIME_VALUE,
+            path=("retired",),
+        ),
+        kind=ValueTransferKind.ALIGNED_LOCAL,
+        stored_sharding=stored.sharding,
+        source_sharding=stored.sharding,
+        expected_shape=stored.shape,
+        expected_dtype=stored.dtype,
+    )
+
+
+def _program(*, transfer: ResolvedValueTransfer) -> ResolvedCoreProgram:
+    """One planned program whose single input is `transfer`."""
+    return ResolvedCoreProgram(
+        name="main",
+        function=lambda: None,
+        arguments={},
+        static_kwargs={},
+        requirements=CoreExecutionRequirements(),
+        output_roles=None,
+        disposition=CoreExecutionDisposition.PLANNED,
+        donation_candidates=(),
+        tile_widths={},
+        specialization_key=("k",),
+        input_transfer_plan=(transfer,),
+    )
+
+
+def _marks(*, marked: dict) -> list[bool]:
+    """The reuse mark of every transfer in a marked program set, in plan order."""
+    return [
+        transfer.reused_by_several_consumers
+        for resolved in marked.values()
+        for transfer in resolved.input_transfer_plan
+    ]
+
+
+def test_two_width_candidates_of_one_core_are_one_consumer() -> None:
+    """Alternative widths of one core read a transfer once, not twice."""
+    program = _program(transfer=_aligned_transfer())
+    triple = ("working", 3, "main")
+
+    marked = _mark_reused_transfers(
+        resolved_programs={
+            (triple, (("consumption", 1),)): program,
+            (triple, (("consumption", 2),)): program,
+        }
+    )
+
+    assert _marks(marked=marked) == [False, False]
+
+
+def test_two_source_cores_of_one_period_share_one_transfer() -> None:
+    """Two source cores of one period reading one value share the result."""
+    program = _program(transfer=_aligned_transfer())
+    widths = (("consumption", 1),)
+
+    marked = _mark_reused_transfers(
+        resolved_programs={
+            (("working", 3, "main"), widths): program,
+            (("working_b", 3, "main"), widths): program,
+        }
+    )
+
+    assert _marks(marked=marked) == [True, True]

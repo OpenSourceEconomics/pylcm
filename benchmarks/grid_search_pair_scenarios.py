@@ -36,6 +36,7 @@ class ScenarioSpec:
     expected_distributed: bool = False
     expected_head_disposition: Literal["planned", "dense"] = "planned"
     expected_head_disposition_reason: str | None = None
+    expected_head_streamed: bool = True
     expected_taste_shocks: bool = False
     expected_gs_vd: bool = False
     aca_assets_n_points: int | None = None
@@ -53,10 +54,7 @@ SCENARIOS = MappingProxyType(
             name="singleton-ev1",
             description="Consumption-retirement singleton EV1 expected maximum.",
             topology="selected-backend",
-            expected_head_disposition="dense",
-            expected_head_disposition_reason=(
-                "deliberately_dense:ev1_canonical_reduction_order"
-            ),
+            expected_head_streamed=False,
             expected_taste_shocks=True,
         ),
         "collective-gs-vd": ScenarioSpec(
@@ -66,10 +64,7 @@ SCENARIOS = MappingProxyType(
             ),
             topology="selected-backend",
             expected_collective=True,
-            expected_head_disposition="dense",
-            expected_head_disposition_reason=(
-                "deliberately_dense:collective_resource_regression"
-            ),
+            expected_head_streamed=False,
             expected_gs_vd=True,
         ),
         "distributed-co-map": ScenarioSpec(
@@ -199,6 +194,7 @@ def _build_collective_gs_vd() -> tuple[Any, dict[str, Any]]:
 def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     import jax.numpy as jnp
 
+    import lcm
     from lcm import (
         AgeGrid,
         DiscreteGrid,
@@ -239,6 +235,16 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
 
     wealth = LinSpacedGrid(start=1.0, stop=100.0, n_points=500)
     consumption = LinSpacedGrid(start=0.1, stop=100.0, n_points=500)
+    execution_kwargs: dict[str, Any] = {}
+    type_grid_kwargs: dict[str, Any] = {"category_class": PermanentType}
+    if hasattr(lcm, "ExecutionConfig"):
+        execution_kwargs["execution_config"] = lcm.ExecutionConfig(
+            sharded_states=("permanent_type",)
+        )
+    else:
+        # The external harness also builds the historical pre-ExecutionConfig base.
+        type_grid_kwargs["distributed"] = True
+    permanent_type = DiscreteGrid(**type_grid_kwargs)
     model = Model(
         regimes={
             "working": Regime(
@@ -259,13 +265,9 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
         },
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
-        states={
-            "permanent_type": DiscreteGrid(
-                category_class=PermanentType,
-                distributed=True,
-            )
-        },
+        states={"permanent_type": permanent_type},
         state_transitions={"permanent_type": fixed_transition("permanent_type")},
+        **execution_kwargs,
     )
     return model, {"discount_factor": 0.95}
 

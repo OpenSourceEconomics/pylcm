@@ -5,7 +5,7 @@ These maintainer-owned tests use the project runtime and the built exact-affine
 payload to check that the production step publishes the same envelope for one-shot
 and streamed interval layouts at every representative partition width.
 
-`interval_batch_size` partitions a computation it does not change: the same
+`interval_width` partitions a computation it does not change: the same
 candidates are compared under the same total order, and the standing winner
 re-enters each block under its global stored-link index. What a partition does
 change is the vmap width each block is compiled for, so the two routes can name the
@@ -110,7 +110,7 @@ def _one_shot(
         cont_value=cont_value,
         cont_marginal=cont_marginal,
         arithmetic=arithmetic,
-        interval_batch_size=0,
+        interval_width=0,
         return_owner=True,
     )
 
@@ -120,7 +120,7 @@ def _streamed(
     cont_value: FloatND,
     cont_marginal: FloatND,
     arithmetic: ComparisonArithmetic,
-    interval_batch_size: int,
+    interval_width: int,
 ) -> tuple[FloatND, ...]:
 
     def read(interval_indices: IntND) -> tuple[FloatND, FloatND]:
@@ -132,16 +132,16 @@ def _streamed(
         cont_marginal=None,
         arithmetic=arithmetic,
         interval_block_reader=read,
-        interval_batch_size=interval_batch_size,
+        interval_width=interval_width,
         return_owner=True,
     )
 
 
 def _solver(
-    *, arithmetic: ComparisonArithmetic, interval_batch_size: int
+    *, arithmetic: ComparisonArithmetic, interval_width: int
 ) -> Callable[..., tuple[FloatND, ...]]:
     """The jitted step for one route: the one-shot at width 0, else streamed."""
-    if interval_batch_size == 0:
+    if interval_width == 0:
         return jax.jit(
             lambda value, marginal: _one_shot(
                 cont_value=value, cont_marginal=marginal, arithmetic=arithmetic
@@ -152,18 +152,18 @@ def _solver(
             cont_value=value,
             cont_marginal=marginal,
             arithmetic=arithmetic,
-            interval_batch_size=interval_batch_size,
+            interval_width=interval_width,
         )
     )
 
 
 @cache
 def _published(
-    *, arithmetic: ComparisonArithmetic, interval_batch_size: int
+    *, arithmetic: ComparisonArithmetic, interval_width: int
 ) -> tuple[np.ndarray, ...]:
     """Publish the three channels and the owner once per (arithmetic, width)."""
     cont_value, cont_marginal = _continuation()
-    solve = _solver(arithmetic=arithmetic, interval_batch_size=interval_batch_size)
+    solve = _solver(arithmetic=arithmetic, interval_width=interval_width)
     return tuple(np.asarray(channel) for channel in solve(cont_value, cont_marginal))
 
 
@@ -173,16 +173,14 @@ def _skip_without_payload(arithmetic: ComparisonArithmetic) -> None:
 
 
 @pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
-@pytest.mark.parametrize("interval_batch_size", _WIDTHS)
+@pytest.mark.parametrize("interval_width", _WIDTHS)
 def test_streamed_step_publishes_the_one_shot_feasible_set(
-    *, arithmetic: ComparisonArithmetic, interval_batch_size: int
+    *, arithmetic: ComparisonArithmetic, interval_width: int
 ) -> None:
     """Singleton, divisor, non-divisor, and full-width partitions own the same nodes."""
     _skip_without_payload(arithmetic)
-    reference = _published(arithmetic=arithmetic, interval_batch_size=0)
-    candidate = _published(
-        arithmetic=arithmetic, interval_batch_size=interval_batch_size
-    )
+    reference = _published(arithmetic=arithmetic, interval_width=0)
+    candidate = _published(arithmetic=arithmetic, interval_width=interval_width)
 
     np.testing.assert_array_equal(
         [np.isfinite(channel) for channel in candidate[:3]],
@@ -655,7 +653,7 @@ _FOLDS: dict[str, Callable[..., EnvelopeWinner] | None] = {
 def _route(
     *,
     arithmetic: ComparisonArithmetic,
-    interval_batch_size: int,
+    interval_width: int,
     fold: str = "production",
 ) -> _Route:
     """Run one route instrumented and bind what it folded to what it published."""
@@ -663,15 +661,15 @@ def _route(
     cont_value, cont_marginal = _continuation()
     with pytest.MonkeyPatch.context() as patch:
         _instrument(trace=trace, patch=patch, fold=_FOLDS[fold])
-        solve = _solver(arithmetic=arithmetic, interval_batch_size=interval_batch_size)
+        solve = _solver(arithmetic=arithmetic, interval_width=interval_width)
         published = tuple(np.asarray(c) for c in solve(cont_value, cont_marginal))
-    if interval_batch_size == 0:
+    if interval_width == 0:
         return _one_shot_route(trace=trace, published=published, arithmetic=arithmetic)
     return _streamed_route(
         trace=trace,
         published=published,
         arithmetic=arithmetic,
-        n_candidates=_route(arithmetic=arithmetic, interval_batch_size=0).n_candidates,
+        n_candidates=_route(arithmetic=arithmetic, interval_width=0).n_candidates,
     )
 
 
@@ -868,9 +866,9 @@ def _compare_routes(*, one_shot: _Route, streamed: _Route) -> tuple[_Difference,
 
 
 @pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
-@pytest.mark.parametrize("interval_batch_size", [0, *_WIDTHS])
+@pytest.mark.parametrize("interval_width", [0, *_WIDTHS])
 def test_each_route_publishes_the_maximum_of_the_records_it_folded(
-    *, arithmetic: ComparisonArithmetic, interval_batch_size: int
+    *, arithmetic: ComparisonArithmetic, interval_width: int
 ) -> None:
     """On its own records, a route's owner is the documented order's maximum.
 
@@ -883,41 +881,37 @@ def test_each_route_publishes_the_maximum_of_the_records_it_folded(
     ordinary contract.
     """
     _skip_without_payload(arithmetic)
-    _certify_selection(
-        _route(arithmetic=arithmetic, interval_batch_size=interval_batch_size)
-    )
+    _certify_selection(_route(arithmetic=arithmetic, interval_width=interval_width))
 
 
 @pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
-@pytest.mark.parametrize("interval_batch_size", [0, *_WIDTHS])
+@pytest.mark.parametrize("interval_width", [0, *_WIDTHS])
 def test_each_route_reads_its_channels_from_the_owner_it_publishes(
-    *, arithmetic: ComparisonArithmetic, interval_batch_size: int
+    *, arithmetic: ComparisonArithmetic, interval_width: int
 ) -> None:
     """Value, policy and marginal at a node are read from the published owner."""
     _skip_without_payload(arithmetic)
-    _certify_readout(
-        _route(arithmetic=arithmetic, interval_batch_size=interval_batch_size)
-    )
+    _certify_readout(_route(arithmetic=arithmetic, interval_width=interval_width))
 
 
 @pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
-@pytest.mark.parametrize("interval_batch_size", _WIDTHS)
+@pytest.mark.parametrize("interval_width", _WIDTHS)
 def test_identical_records_give_identical_owners_across_routes(
-    *, arithmetic: ComparisonArithmetic, interval_batch_size: int
+    *, arithmetic: ComparisonArithmetic, interval_width: int
 ) -> None:
     """A partition admits the one-shot links and, on identical records, its owners."""
     _skip_without_payload(arithmetic)
     _compare_routes(
-        one_shot=_route(arithmetic=arithmetic, interval_batch_size=0),
-        streamed=_route(arithmetic=arithmetic, interval_batch_size=interval_batch_size),
+        one_shot=_route(arithmetic=arithmetic, interval_width=0),
+        streamed=_route(arithmetic=arithmetic, interval_width=interval_width),
     )
 
 
 @pytest.mark.parametrize("field", _RECORD_FIELDS)
 @pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
-@pytest.mark.parametrize("interval_batch_size", _WIDTHS)
+@pytest.mark.parametrize("interval_width", _WIDTHS)
 def test_the_streamed_blocks_produce_the_one_shot_records_to_the_format_spacing(
-    *, arithmetic: ComparisonArithmetic, interval_batch_size: int, field: str
+    *, arithmetic: ComparisonArithmetic, interval_width: int, field: str
 ) -> None:
     """Every live streamed candidate is the one-shot candidate at its position.
 
@@ -930,8 +924,8 @@ def test_the_streamed_blocks_produce_the_one_shot_records_to_the_format_spacing(
     consumption at the cash-on-hand's spacing.
     """
     _skip_without_payload(arithmetic)
-    one_shot = _route(arithmetic=arithmetic, interval_batch_size=0)
-    streamed = _route(arithmetic=arithmetic, interval_batch_size=interval_batch_size)
+    one_shot = _route(arithmetic=arithmetic, interval_width=0)
+    streamed = _route(arithmetic=arithmetic, interval_width=interval_width)
     positions = sorted(streamed.candidates)
     assert positions == sorted(one_shot.candidates)
     got = np.asarray(
@@ -962,7 +956,7 @@ def _savings_node_of(*, position: int) -> float | None:
     and carries no cancellation.
     """
     layout = nbegm_step._streamed_interval_block_layout(
-        interval_batch_size=1,
+        interval_width=1,
         n_intervals=_N_INTERVALS,
         interval_stride=4 * (_N_SAVINGS + _N_LIQUID),
         n_liquid=_N_LIQUID,
@@ -1015,43 +1009,41 @@ def test_the_one_shot_owner_names_several_candidates(
 ) -> None:
     """The owner comparison ranges over distinct identities, not a constant."""
     _skip_without_payload(arithmetic)
-    owner = _published(arithmetic=arithmetic, interval_batch_size=0)[3]
+    owner = _published(arithmetic=arithmetic, interval_width=0)[3]
     assert np.unique(owner[owner != NO_OWNER]).size > 1
 
 
 @pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
-@pytest.mark.parametrize("interval_batch_size", [0, *_WIDTHS])
+@pytest.mark.parametrize("interval_width", [0, *_WIDTHS])
 def test_an_owner_is_published_exactly_where_a_level_is(
-    *, arithmetic: ComparisonArithmetic, interval_batch_size: int
+    *, arithmetic: ComparisonArithmetic, interval_width: int
 ) -> None:
     """A node carries an owner if and only if it carries a finite value."""
     _skip_without_payload(arithmetic)
     value, _, _, owner = _published(
-        arithmetic=arithmetic, interval_batch_size=interval_batch_size
+        arithmetic=arithmetic, interval_width=interval_width
     )
     np.testing.assert_array_equal(owner != NO_OWNER, np.isfinite(value))
 
 
 @pytest.mark.parametrize("channel", range(len(_CHANNELS)), ids=_CHANNELS)
 @pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
-@pytest.mark.parametrize("interval_batch_size", _WIDTHS)
+@pytest.mark.parametrize("interval_width", _WIDTHS)
 def test_streamed_step_agrees_with_the_one_shot_merge_to_the_format_spacing(
     *,
     arithmetic: ComparisonArithmetic,
-    interval_batch_size: int,
+    interval_width: int,
     channel: int,
 ) -> None:
     """Every partition names the one-shot level in each published channel."""
     _skip_without_payload(arithmetic)
     assert_agrees_to_ulp(
-        got=_published(arithmetic=arithmetic, interval_batch_size=interval_batch_size)[
-            channel
-        ],
-        expected=_published(arithmetic=arithmetic, interval_batch_size=0)[channel],
+        got=_published(arithmetic=arithmetic, interval_width=interval_width)[channel],
+        expected=_published(arithmetic=arithmetic, interval_width=0)[channel],
         n_ulp=_PARTITION_ULP,
         err_msg=(
             f"channel={_CHANNELS[channel]}, arithmetic={arithmetic}, "
-            f"interval_batch_size={interval_batch_size}"
+            f"interval_width={interval_width}"
         ),
     )
 
@@ -1060,7 +1052,7 @@ def test_the_certificate_rejects_a_fold_that_relabels_identities() -> None:
     """A fold naming candidates by block-local slot publishes owners no record has."""
     with pytest.raises(AssertionError):
         _certify_selection(
-            _route(arithmetic="ordinary", interval_batch_size=2, fold="relabelled")
+            _route(arithmetic="ordinary", interval_width=2, fold="relabelled")
         )
 
 
@@ -1069,10 +1061,10 @@ def test_the_level_assertions_do_not_see_a_fold_that_relabels_identities(
     *, channel: int
 ) -> None:
     """Relabelled identities leave every level within the spacing budget."""
-    relabelled = _route(arithmetic="ordinary", interval_batch_size=2, fold="relabelled")
+    relabelled = _route(arithmetic="ordinary", interval_width=2, fold="relabelled")
     assert_agrees_to_ulp(
         got=relabelled.published[channel],
-        expected=_published(arithmetic="ordinary", interval_batch_size=0)[channel],
+        expected=_published(arithmetic="ordinary", interval_width=0)[channel],
         n_ulp=_PARTITION_ULP,
     )
 
@@ -1085,7 +1077,7 @@ def test_the_certificate_rejects_a_fold_that_selects_an_inferior_bracketing_reco
     _skip_without_payload(arithmetic)
     with pytest.raises(AssertionError, match="not the maximum"):
         _certify_selection(
-            _route(arithmetic=arithmetic, interval_batch_size=2, fold="inferior")
+            _route(arithmetic=arithmetic, interval_width=2, fold="inferior")
         )
 
 
@@ -1341,7 +1333,7 @@ def test_the_certificate_rejects_an_owner_that_names_no_admitted_record(
 
 def test_the_agreement_bound_rejects_a_fold_that_publishes_another_owner() -> None:
     """The level instrument fires on a finite ownership gap, in this run."""
-    reference = _published(arithmetic="ordinary", interval_batch_size=0)[0]
+    reference = _published(arithmetic="ordinary", interval_width=0)[0]
     # A fold that hands a query to the wrong candidate moves its level by a finite
     # amount. The smallest gap between two distinct published levels stands in for
     # that, and it is orders of magnitude above the spacing budget above.
@@ -1372,7 +1364,7 @@ def test_streaming_reader_is_called_with_fixed_width_blocks() -> None:
             cont_marginal=None,
             arithmetic="ordinary",
             interval_block_reader=read,
-            interval_batch_size=2,
+            interval_width=2,
         )
     assert seen_shapes
     assert set(seen_shapes) == {(2,)}
