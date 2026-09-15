@@ -182,6 +182,45 @@ def simulation_gate_route(
     subject_width: int | None = None,
     on_derived: Callable[[object], None] | None = None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D]:
+    """Preserve the three-result routing adapter contract."""
+    states, regime_ids, roles, _closed_masks = _simulation_gate_route_with_closed_masks(
+        regime=regime,
+        fold_period=fold_period,
+        edge_values=edge_values,
+        edge_flags=edge_flags,
+        next_states=next_states,
+        regime_names_to_ids=regime_names_to_ids,
+        new_subject_regime_ids=new_subject_regime_ids,
+        subjects_in_regime=subjects_in_regime,
+        flat_params=flat_params,
+        own_stakeholder=own_stakeholder,
+        new_own_stakeholder=new_own_stakeholder,
+        fold_age=fold_age,
+        subject_devices=subject_devices,
+        subject_width=subject_width,
+        on_derived=on_derived,
+    )
+    return states, regime_ids, roles
+
+
+def _simulation_gate_route_with_closed_masks(
+    *,
+    regime: Regime,
+    fold_period: int,
+    edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
+    edge_flags: Mapping[RegimeName, BoolND],
+    next_states: StatesPerRegime,
+    regime_names_to_ids: RegimeNamesToIds,
+    new_subject_regime_ids: Int1D,
+    subjects_in_regime: Bool1D,
+    flat_params: FlatParams,
+    own_stakeholder: Int1D,
+    new_own_stakeholder: Int1D,
+    fold_age: object = None,
+    subject_devices: tuple[jax.Device, ...] = (),
+    subject_width: int | None = None,
+    on_derived: Callable[[object], None] | None = None,
+) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
     """Route from raw V and Boolean D, reusing their owned destination copies.
 
     This adapter performs its own D-to-float conversion, so the fold mapping
@@ -200,7 +239,7 @@ def simulation_gate_route(
         )
         if on_derived is not None:
             on_derived({"same_period_mappings": MappingProxyType(dict(mappings))})
-    outputs = route_gated_edges(
+    outputs = _route_gated_edges_with_closed_masks(
         regime=regime,
         fold_period=fold_period,
         same_period_mappings=mappings,
@@ -251,31 +290,30 @@ def simulation_gate_route_delta(
     subject_width: int | None = None,
 ) -> tuple[MappingProxyType[str, Mapping[str, object]], Int1D, Int1D]:
     """Publish fixed-shape route deltas instead of a duplicate state carrier."""
-    routed, routed_ids, routed_roles = simulation_gate_route(
-        regime=regime,
-        fold_period=fold_period,
-        edge_values=edge_values,
-        edge_flags=edge_flags,
-        next_states=candidate_states,
-        regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=new_subject_regime_ids,
-        subjects_in_regime=subjects_in_regime,
-        flat_params=flat_params,
-        own_stakeholder=own_stakeholder,
-        new_own_stakeholder=new_own_stakeholder,
-        fold_age=fold_age,
-        subject_width=subject_width,
+    routed, routed_ids, routed_roles, closed_masks = (
+        _simulation_gate_route_with_closed_masks(
+            regime=regime,
+            fold_period=fold_period,
+            edge_values=edge_values,
+            edge_flags=edge_flags,
+            next_states=candidate_states,
+            regime_names_to_ids=regime_names_to_ids,
+            new_subject_regime_ids=new_subject_regime_ids,
+            subjects_in_regime=subjects_in_regime,
+            flat_params=flat_params,
+            own_stakeholder=own_stakeholder,
+            new_own_stakeholder=new_own_stakeholder,
+            fold_age=fold_age,
+            subject_width=subject_width,
+        )
     )
     delta = {}
     for target, edge in regime.gated_edges.items():
         if target not in edge_values:
             continue
-        handled = subjects_in_regime & (
-            new_subject_regime_ids == regime_names_to_ids[target]
-        )
         delta[target] = MappingProxyType(
             {
-                "closed": handled & (routed_ids != regime_names_to_ids[target]),
+                "closed": closed_masks[target],
                 "projected": MappingProxyType(
                     {
                         leg.realized_fallback.regime: routed[
@@ -507,6 +545,41 @@ def route_gated_edges(
     subject_devices: tuple[jax.Device, ...] = (),
     subject_width: int | None = None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D]:
+    """Preserve the three-result routing adapter contract."""
+    states, regime_ids, roles, _closed_masks = _route_gated_edges_with_closed_masks(
+        regime=regime,
+        fold_period=fold_period,
+        same_period_mappings=same_period_mappings,
+        next_states=next_states,
+        regime_names_to_ids=regime_names_to_ids,
+        new_subject_regime_ids=new_subject_regime_ids,
+        subjects_in_regime=subjects_in_regime,
+        flat_params=flat_params,
+        own_stakeholder=own_stakeholder,
+        new_own_stakeholder=new_own_stakeholder,
+        fold_age=fold_age,
+        subject_devices=subject_devices,
+        subject_width=subject_width,
+    )
+    return states, regime_ids, roles
+
+
+def _route_gated_edges_with_closed_masks(
+    *,
+    regime: Regime,
+    fold_period: int,
+    same_period_mappings: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
+    next_states: StatesPerRegime,
+    regime_names_to_ids: RegimeNamesToIds,
+    new_subject_regime_ids: Int1D,
+    subjects_in_regime: Bool1D,
+    flat_params: FlatParams,
+    own_stakeholder: Int1D,
+    new_own_stakeholder: Int1D,
+    fold_age: object = None,
+    subject_devices: tuple[jax.Device, ...] = (),
+    subject_width: int | None = None,
+) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
     """Route each subject through its regime's declared gated edges.
 
     A no-op (returns the inputs unchanged) when `regime` declares no
@@ -572,11 +645,16 @@ def route_gated_edges(
             earlier one's rows.
 
     Returns:
-        Tuple of the routed states, the routed regime ids, and the role each
-        subject carries onward.
+        Routed states, regime IDs, roles, and the actual closed-branch mask
+        for each evaluated edge. Regime-ID equality does not identify a branch.
     """
     if not regime.gated_edges:
-        return next_states, new_subject_regime_ids, new_own_stakeholder
+        return (
+            next_states,
+            new_subject_regime_ids,
+            new_own_stakeholder,
+            MappingProxyType({}),
+        )
 
     # An IMMUTABLE snapshot of the ordinary (gate-blind) draw, taken
     # BEFORE the edge loop below ever writes into `routed_ids`. Each edge's
@@ -586,6 +664,7 @@ def route_gated_edges(
     # declaration-order-independent (see the routing-mask comment below).
     ordinary_draw_ids = new_subject_regime_ids
 
+    closed_masks: dict[RegimeName, Bool1D] = {}
     states = next_states
     routed_ids = new_subject_regime_ids
     routed_roles = new_own_stakeholder
@@ -691,6 +770,7 @@ def route_gated_edges(
         # that invariant local, rather than resting on a later regime-draw
         # overwrite that never reaches the state slots.
         dissolving_mask = edge_mask & jnp.logical_not(gate_bool)
+        closed_masks[target_name] = dissolving_mask
 
         for leg in legs:
             projector = leg.fallback_state_projector
@@ -746,7 +826,7 @@ def route_gated_edges(
                 subject_indices=dissolving_mask,
             )
 
-    return states, routed_ids, routed_roles
+    return states, routed_ids, routed_roles, MappingProxyType(closed_masks)
 
 
 def _per_row_leg_outcomes(
@@ -983,7 +1063,7 @@ def population_call(
 ) -> Callable:
     """Return `func` mapped over a population of `axis_size` subjects, compiled.
 
-    Built ONCE per `(func, axis_size)` and reused for every later call.
+    Built ONCE per `(func, axis_size, subject_width)` and reused for every later call.
     Rebuilding it per call would leave the compiled executable unreachable —
     `jax.jit` keys its cache on the wrapped function object, so a fresh
     closure each time recompiles each time — and every period and every
@@ -1014,7 +1094,12 @@ def population_call(
                 axis_size=axis_size,
             )
         else:
-            mapped = partial(_map_subject_tiles, func=func, subject_width=subject_width)
+            mapped = partial(
+                _map_subject_tiles,
+                func=func,
+                subject_width=subject_width,
+                axis_size=axis_size,
+            )
         call = jax.jit(mapped)
         per_axis_size[key] = call
     return call
@@ -1027,8 +1112,17 @@ def _map_subject_tiles(
     *,
     func: Callable,
     subject_width: int,
+    axis_size: int,
 ) -> object:
-    """Evaluate a population in fixed inner tiles while retaining full outputs."""
+    """Tile stateful rows and preserve explicit extent for stateless rows."""
+    if not jax.tree.leaves(batched_kwargs):
+        # No mapped input carries N. This is a broadcast of shared/scalar work,
+        # not a subject-sized expensive branch hidden behind a mask.
+        return jax.vmap(
+            partial(_call_one_subject, func=func),
+            in_axes=(0, None),
+            axis_size=axis_size,
+        )(batched_kwargs, shared_kwargs)
     return jax.lax.map(
         partial(_call_one_subject_with_shared, func=func, shared=shared_kwargs),
         batched_kwargs,

@@ -96,52 +96,86 @@ def _selector(
     return profiler, profiles
 
 
-@pytest.mark.parametrize("larger_fits", [False, True])
-def test_independent_freezes_full_map_and_reuses_anchor(
-    *, monkeypatch: pytest.MonkeyPatch, larger_fits: bool
+def test_independent_admits_a_fitting_largest_candidate_with_one_profile(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A fitting whole-population candidate is the only profile taken."""
     profiler, profiles = _selector(
-        monkeypatch=monkeypatch,
-        costs={(2, 8): 30, (4, 8): 40 if larger_fits else 90, (6, 8): 45},
+        monkeypatch=monkeypatch, costs={(2, 8): 30, (4, 8): 40, (6, 8): 45}
     )
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
-    assert selected.profile is profiles[2 if larger_fits else 0]
+    assert selected.profile is profiles[0]
     assert [dict(p.axis_widths) for p in profiles] == [
         {"subject": 2, "action_product": 8}
-    ] * (3 if larger_fits else 2)
+    ]
     receipt = selected.receipt
     assert receipt is not None
-    assert receipt.profile_count == (3 if larger_fits else 2)
-    assert receipt.anchor_map_reason == "bootstrap skipped after full anchor admitted"
-    assert [attempt.admitted for attempt in receipt.attempts] == (
-        [True, True, True] if larger_fits else [True, False]
+    assert receipt.profile_count == 1
+    assert receipt.anchor_map_reason == (
+        "preferred anchor-derived map admitted at largest candidate"
     )
-    assert receipt.frontier_version == 2
+    assert [attempt.admitted for attempt in receipt.attempts] == [True]
+    assert receipt.frontier_version == 3
     assert receipt.unique_backend_compile_requests is None
-    assert receipt.attempts[0].devices[0].required_bytes == 50
+    assert receipt.attempts[0].devices[0].required_bytes == 65
+
+
+@pytest.mark.parametrize("larger_fits", [False, True])
+def test_independent_freezes_full_map_and_descends_after_top_refusal(
+    *, monkeypatch: pytest.MonkeyPatch, larger_fits: bool
+) -> None:
+    """After a top refusal the full anchor map is frozen and sizes descend."""
+    profiler, profiles = _selector(
+        monkeypatch=monkeypatch,
+        costs={(2, 8): 30, (4, 8): 40 if larger_fits else 90, (6, 8): 90},
+    )
+    selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
+    assert selected.profile is profiles[2 if larger_fits else 1]
+    assert [dict(p.axis_widths) for p in profiles] == [
+        {"subject": 2, "action_product": 8}
+    ] * 3
+    receipt = selected.receipt
+    assert receipt is not None
+    assert receipt.profile_count == 3
+    assert receipt.anchor_map_reason == "bootstrap skipped after full anchor admitted"
+    assert [attempt.admitted for attempt in receipt.attempts] == [
+        False,
+        True,
+        larger_fits,
+    ]
+    assert [attempt.n_subjects for attempt in receipt.attempts] == [6, 2, 4]
+    assert receipt.stopping_reason == (
+        "first fitting descending candidate admitted"
+        if larger_fits
+        else "descending candidates rejected; admitted anchor retained"
+    )
+    assert receipt.frontier_version == 3
+    assert receipt.attempts[0].devices[0].required_bytes == 110
 
 
 def test_independent_bootstrap_anchor_is_frozen_for_larger_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     profiler, profiles = _selector(
-        monkeypatch=monkeypatch, costs={(2, 8): 90, (2, 4): 30, (4, 4): 40, (6, 4): 90}
+        monkeypatch=monkeypatch,
+        costs={(6, 8): 90, (2, 8): 90, (2, 4): 30, (6, 4): 90, (4, 4): 40},
     )
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
     assert [(p.n_subjects, p.axis_widths["action_product"]) for p in profiles] == [
+        (6, 8),
         (2, 8),
         (2, 4),
-        (4, 4),
         (6, 4),
+        (4, 4),
     ]
-    assert selected.profile is profiles[2]
+    assert selected.profile is profiles[4]
     assert selected.receipt is not None
-    assert selected.receipt.profile_count == 4
+    assert selected.receipt.profile_count == 5
 
 
-@pytest.mark.parametrize(("population", "expected_profiles"), [(2, 1), (4, 2), (6, 3)])
-def test_independent_pins_and_duplicate_frontiers(
-    *, monkeypatch: pytest.MonkeyPatch, population: int, expected_profiles: int
+@pytest.mark.parametrize("population", [2, 4, 6])
+def test_independent_pins_admit_the_largest_candidate_with_one_profile(
+    *, monkeypatch: pytest.MonkeyPatch, population: int
 ) -> None:
     profiler, profiles = _selector(
         monkeypatch=monkeypatch,
@@ -150,24 +184,40 @@ def test_independent_pins_and_duplicate_frontiers(
         population=population,
     )
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
-    assert len(profiles) == expected_profiles
+    assert [p.n_subjects for p in profiles] == [population]
     assert all(p.axis_widths == {"subject": 2, "action_product": 3} for p in profiles)
     assert selected.receipt is not None
-    assert "duplicate suppressed" in selected.receipt.anchor_map_reason
+    assert selected.receipt.selected_subjects == population
+
+
+def test_independent_pinned_singleton_frontier_refuses_after_one_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pinned map on a collapsed frontier has nothing left to try once refused."""
+    profiler, profiles = _selector(
+        monkeypatch=monkeypatch, costs={(2, 3): 90}, pinned_action=3, population=2
+    )
+    with pytest.raises(ExecutionPlanningError, match="duplicate suppressed") as error:
+        admission._plan_independent_chunks(profiler=profiler, alignment=1)
+    assert len(profiles) == 1
+    assert "1 complete profiles" in str(error.value)
 
 
 def test_independent_bounded_refusal_does_not_probe_larger_or_intermediate_maps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     profiler, profiles = _selector(
-        monkeypatch=monkeypatch, costs={(2, 8): 90, (2, 4): 100}
+        monkeypatch=monkeypatch, costs={(6, 8): 90, (2, 8): 90, (2, 4): 100}
     )
     with pytest.raises(
-        ExecutionPlanningError,
-        match="no candidate in the bounded independent frontier fits",
+        ExecutionPlanningError, match="no anchor map fits after top-first admission"
     ) as error:
         admission._plan_independent_chunks(profiler=profiler, alignment=1)
-    assert len(profiles) == 2
+    assert [(p.n_subjects, p.axis_widths["action_product"]) for p in profiles] == [
+        (6, 8),
+        (2, 8),
+        (2, 4),
+    ]
     assert "rejected attempts" in str(error.value)
     assert "required_bytes=110" in str(error.value)
 
@@ -175,12 +225,10 @@ def test_independent_bounded_refusal_does_not_probe_larger_or_intermediate_maps(
 def test_independent_invalid_larger_metadata_propagates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    profiler, profiles = _selector(
-        monkeypatch=monkeypatch, costs={(2, 8): 30, (4, 8): -1}
-    )
+    profiler, profiles = _selector(monkeypatch=monkeypatch, costs={(6, 8): -1})
     with pytest.raises(ExecutionPlanningError, match="nonnegative integer"):
         admission._plan_independent_chunks(profiler=profiler, alignment=1)
-    assert len(profiles) == 1
+    assert len(profiles) == 0
 
 
 def test_selected_plan_does_not_retain_transient_profiler(
@@ -195,7 +243,7 @@ def test_selected_plan_does_not_retain_transient_profiler(
     gc.collect()
     assert transient() is None
     assert selected.receipt is not None
-    assert selected.receipt.profile_count == 3
+    assert selected.receipt.profile_count == 1
 
 
 def test_singleton_anchor_retains_subject_pin_without_manufacturing_axis() -> None:
@@ -222,7 +270,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
     operations = ProfiledSimulationOperations()
     bank_bytes = 2 * originals.size * grid.dtype.itemsize
     profiles = {}
-    for width in (64, 128):
+    for width in (64, 128, 256):
         prepared = operations.prepare_abstract(
             function=_lookup_values_from_indices,
             arguments={
@@ -265,7 +313,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
         ]
         for width, profile in profiles.items()
     }
-    assert totals[128] > totals[64]
+    assert totals[256] > totals[128] > totals[64]
     profiler = object.__new__(admission._ChunkProfiler)
     for name, value in {
         "runtime": SimpleNamespace(
@@ -292,7 +340,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
 
     monkeypatch.setattr(admission._ChunkProfiler, "profile_widths", profile_widths)
     plan = admission._plan_independent_chunks(profiler=profiler, alignment=1)
-    assert requested == [64, 128]
+    assert requested == [256, 64, 128]
     assert plan.profile is profiles[64]
     assert plan.required_bytes[device] == totals[64]
     memory = SimulationMemory(
@@ -352,21 +400,21 @@ def test_independent_frontier_aligns_every_candidate_to_the_device_count() -> No
 def test_independent_retains_the_last_admitted_extent_before_a_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The planner walks the frontier in order and stops at the first refusal."""
+    """After a top refusal the first fitting descending candidate is selected."""
     profiler, profiles = _selector(
         monkeypatch=monkeypatch, costs={(2, 8): 30, (4, 8): 40, (6, 8): 90}
     )
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
-    assert selected.profile is profiles[1]
+    assert selected.profile is profiles[2]
     assert selected.receipt is not None
     assert selected.receipt.profile_count == 3
     assert selected.receipt.selected_subjects == 4
     assert selected.receipt.stopping_reason == (
-        "larger candidate rejected; last admitted extent retained"
+        "first fitting descending candidate admitted"
     )
 
 
-def test_independent_reports_frontier_exhaustion_when_everyone_fits(
+def test_independent_reports_skipped_smaller_profiles_when_the_top_fits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     profiler, _ = _selector(
@@ -376,5 +424,5 @@ def test_independent_reports_frontier_exhaustion_when_everyone_fits(
     assert selected.receipt is not None
     assert selected.receipt.selected_subjects == 6
     assert selected.receipt.stopping_reason == (
-        "bounded frontier exhausted; largest candidate admitted"
+        "largest candidate admitted; smaller profiles skipped"
     )

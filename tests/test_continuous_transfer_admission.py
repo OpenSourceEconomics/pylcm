@@ -246,16 +246,21 @@ def test_pruned_full_replicas_and_scratch_have_an_exact_admission_threshold(
     dispatches = []
     apply = value_transfer.apply_value_transfer
     call = jax.stages.Compiled.__call__
+    snapshots = {
+        "first": case.source_snapshot,
+        "second": case.source_snapshot - 1,
+    }
 
     def observe_copy(**kwargs: Any) -> jax.Array:
         copied = apply(**kwargs)
-        assert kwargs["transfer"].kind is ValueTransferKind.ALL_GATHER
+        transfer = kwargs["transfer"]
+        assert transfer.kind is ValueTransferKind.ALL_GATHER
         assert copied.is_fully_replicated
         assert len(copied.addressable_shards) == 8
         assert all(
             shard.data.shape == case.source.shape for shard in copied.addressable_shards
         )
-        np.testing.assert_array_equal(copied, case.source_snapshot)
+        np.testing.assert_array_equal(copied, snapshots[transfer.source.path[0]])
         copies.append(copied)
         return copied
 
@@ -293,12 +298,16 @@ def test_pruned_full_replicas_and_scratch_have_an_exact_admission_threshold(
     assert dispatches == []
     owner = PendingSolveWork()
     try:
+        # Each consumer reads its own owner: a backend is free to back two
+        # replicas of one source with a single physical allocation, which the
+        # byte oracle then unions into one charge by construction.
         result = _core(case=case, owner=owner, shared=shared)(
-            values={"first": case.source, "second": case.source}
+            values={"first": case.source, "second": case.extra}
         )
         jax.block_until_ready((result, copies))
         assert dispatches == [True]
         assert len(copies) == (1 if shared else 2)
+        assert shared or not shares_a_buffer(first=copies[0], second=copies[1])
         full_bytes = case.source.size * case.source.dtype.itemsize
         assert dict(concrete_device_bytes(tree=copies)) == dict.fromkeys(
             range(8), len(copies) * full_bytes

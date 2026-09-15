@@ -192,29 +192,43 @@ set `simulation_chunk_policy="independent"` together with a positive
 `device_memory_bytes` budget and an explicit `axis_widths["subject"]`. Both are
 required; unsupported budgeted replay routes still refuse execution.
 
-Independent mode builds a geometric outer-size frontier from the inner subject width:
-one, two, four, eight, and further powers of two times that width, ending with a
-candidate that covers the population. Each size is clamped to the population before
-rounding up to the subject-device count; duplicate aligned sizes are suppressed. It
-first tries full unpinned inner axes at the smallest outer size, then their conservative
-bootstrap widths if necessary. Once a complete inner-width map fits, that entire map
-stays fixed for all larger candidates. The search walks the frontier in order, stops at
-the first refusal, and retains the last admitted profile. If neither anchor map fits, it
-refuses execution. This tests an ordered prefix, not every feasible size: an untested
-larger configuration may still fit, and the selected size is not a measured speed
-optimum.
+Independent mode constructs device-aligned outer sizes by repeatedly doubling the
+configured subject width, clamping to the population, and suppressing duplicates. The
+largest size covers the population. It derives the preferred full inner-width map from
+the smallest size's axis declarations, without compiling or admitting that size first.
+It then profiles the largest size. If that complete profile fits, it returns
+immediately: one whole-chunk profile, no smaller-shape sweep, and no predicted memory
+verdict.
 
-With K distinct outer sizes, the search uses at most K + 1 complete profiles. The extra
-profile is needed only when the full anchor map is rejected and a distinct bootstrap map
-is tried. Each profile covers the complete simulation; fixing inner widths does not
-remove shape-specific compilation or repeated profiling work.
+After a largest-size refusal, it selects the original full/bootstrap map at the smallest
+size. The full map is tried first; a distinct conservative bootstrap map is tried only
+if the full anchor fails. That complete admitted map then stays frozen while the
+remaining outer sizes are tried largest first. The first fitting descending candidate
+wins; otherwise the admitted anchor is retained. An already rejected extent/map pair is
+not repeated. If fallback changes the map, the largest size must receive its own new
+profile. If neither anchor map fits, the search refuses; unsearched configurations may
+still fit. There is no outer-by-inner width sweep or assumption of monotone memory use.
 
-For example, 226,848 subjects with an inner width of 2,048 on three devices offer outer
-sizes 2,049, 4,098, 8,193, 16,386, 32,769, 65,538, 131,073, and 226,848. If all sizes
-are admitted, the final choice processes the population in one outer cohort. The search
-can require eight profiles, or nine with the bootstrap retry. Every size is checked
-against its own retained storage, padding, and compiler requirements. Measure planning,
-cold and warm runtime, and memory before treating fewer cohort traversals as a speedup.
+For K distinct sizes, a fitting preferred full-population candidate uses one complete
+profile. If the full map remains selected, the worst case is K profiles. A distinct
+bootstrap fallback uses at most K + 2 profiles (two for a singleton frontier). This
+trade-off favors populations that fit whole; models fitting only small cohorts can pay
+more planning cost than an ascending search. Compiler exceptions are not caught as
+memory refusals. Compilation and its host-memory cost are not bounded by the simulated
+payload's device budget.
+
+For example, 226,848 subjects, inner width 2,048 and eight subject devices give the
+geometric sizes 2,048, 4,096, 8,192, 16,384, 32,768, 65,536, 131,072 and 226,848. The
+last size is profiled first. Success selects one cohort immediately, with the inner map
+still fixed. Every attempted size uses its own compiled requirements, retained owners,
+padding, and output/assembly reservations. Different outer shapes are not
+interchangeable executables. Selection is largest-first feasibility, not a measured
+speed optimum.
+
+Receipts use frontier_version=3. Their candidates remain in ascending geometric order;
+attempts record actual profile order, including refusals and map fallback. profile_count
+counts complete profiles, not backend compilations. Current inputs and resident owners
+are checked on each call, and live admission is still checked before chunk execution.
 
 With a device-memory budget and no fixed subject width, simulation selects the widest
 outer candidate whose complete retained storage and compiled stages fit. It tries the
