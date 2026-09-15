@@ -85,3 +85,59 @@ print(json.dumps({
     assert receipt["repository_package_imported"] is False
     assert receipt["jax_imported"] is False
     assert receipt["lcm_imported"] is False
+
+
+def test_fresh_asv_worker_resolves_simulation_dispatch_sibling_imports(
+    tmp_path: Path,
+) -> None:
+    """`bench_simulation_dispatch`'s in-function imports must be package-relative.
+
+    Regression: an absolute `from benchmarks.asv._compile_counters import ...`
+    resolves fine under pytest (repo root on `sys.path`) but raises
+    `ModuleNotFoundError: No module named 'benchmarks'` in a real ASV worker,
+    which never has the `benchmarks` top-level package importable -- caught
+    live on benchmark-pr, not by any test that imports this module the
+    pytest way.
+    """
+    code = """
+import inspect
+import sys
+from asv_runner.discovery import get_benchmark_from_name
+
+root, name = sys.argv[1:]
+get_benchmark_from_name(root, name)  # imports bench_simulation_dispatch as asv.*
+module = sys.modules["asv.bench_simulation_dispatch"]
+
+# Extract _measure_combination's own import lines (in their real source
+# order) and execute exactly those -- not a hand-written stand-in -- so this
+# fails if the file itself regresses to an absolute `benchmarks.asv.*` import.
+source = inspect.getsource(module._measure_combination)
+import_lines = "\\n".join(
+    line.strip() for line in source.splitlines() if line.strip().startswith("from ")
+)
+namespace = {"__name__": module.__name__, "__package__": module.__package__}
+exec(import_lines, namespace)
+print("OK")
+"""
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "ASV_PYTHONPATH"}
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            code,
+            str(_BENCHMARK_ROOT),
+            "bench_simulation_dispatch.SimulationDispatch.track_second_call_compiles",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "OK"
