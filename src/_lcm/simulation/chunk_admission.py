@@ -321,13 +321,21 @@ class _ChunkProfiler:
 def _independent_outer_candidates(
     *, population: int, alignment: int, subject_width: int
 ) -> tuple[int, ...]:
-    """Return the two-scale integer frontier, deduplicated in anchor-first order."""
-    return tuple(
-        dict.fromkeys(
-            -(-min(scale * subject_width, population) // alignment) * alignment
-            for scale in (1, 2)
-        )
-    )
+    """Return the doubling integer frontier, deduplicated in anchor-first order.
+
+    The anchor is the inner subject width; each further candidate doubles the
+    previous one until a candidate covers the whole population, and every
+    candidate is rounded up to the device alignment. The frontier is finite and
+    ordered, so admission can walk it and stop at the first refusal.
+    """
+    candidates: dict[int, None] = {}
+    scale = 1
+    while True:
+        extent = min(scale * subject_width, population)
+        candidates[-(-extent // alignment) * alignment] = None
+        if extent >= population:
+            return tuple(candidates)
+        scale *= 2
 
 
 def _independent_anchor_widths(
@@ -357,7 +365,11 @@ def _independent_anchor_widths(
 def _plan_independent_chunks(
     *, profiler: _ChunkProfiler, alignment: int
 ) -> SimulationChunkPlan:
-    """Admit an anchor then one larger extent with its entire inner map frozen."""
+    """Admit an anchor, then ever larger extents with its entire inner map frozen.
+
+    Larger candidates are profiled in frontier order; the walk stops at the
+    first refusal and the last admitted extent is retained.
+    """
     started = perf_counter()
     budget = profiler.runtime.execution.device_memory_bytes
     if budget is None:
@@ -391,17 +403,18 @@ def _plan_independent_chunks(
             f"{map_reason}); rejected attempts: " + repr(tuple(attempts))
         )
     reason = "duplicate outer extent; anchor retained"
-    if len(candidates) > 1:
+    for extent in candidates[1:]:
         larger = _profile_independent_candidate(
             profiler=profiler,
-            n_subjects=candidates[1],
+            n_subjects=extent,
             widths=selected.profile.axis_widths,
             attempts=attempts,
         )
-        reason = "larger candidate rejected; admitted anchor retained"
-        if larger is not None:
-            selected = larger
-            reason = "larger candidate admitted; bounded frontier exhausted"
+        if larger is None:
+            reason = "larger candidate rejected; last admitted extent retained"
+            break
+        selected = larger
+        reason = "bounded frontier exhausted; largest candidate admitted"
     return replace(
         selected,
         receipt=IndependentChunkReceipt(
@@ -416,6 +429,7 @@ def _plan_independent_chunks(
             stopping_reason=reason,
             anchor_map_reason=map_reason,
             planning_seconds=perf_counter() - started,
+            frontier_version=2,
         ),
     )
 

@@ -275,7 +275,7 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
         results.append(result)
         extent = chunks[0][0].stop
         entry_count = -(-count // device_count) * device_count
-        candidate = min(width if arm == 0 else 2 * width, entry_count)
+        candidate = min(width, entry_count) if arm == 0 else entry_count
         expected_extent = -(-candidate // device_count) * device_count
         assert extent == expected_extent
         padded = -(-count // extent) * extent
@@ -309,7 +309,7 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
 def test_scalar_anchor_preserves_subject_pin_for_larger_outer_candidate(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A scalar anchor must retain the pin needed by the two-row candidate."""
+    """A scalar anchor must retain the pin needed by every larger candidate."""
     if jax.default_backend() != "cpu":
         pytest.skip("Requires an actual CPU device")
     model = _model(devices=(0,), width=1)
@@ -339,17 +339,17 @@ def test_scalar_anchor_preserves_subject_pin_for_larger_outer_candidate(
     )
     assert len(receipts) == 1
     receipt = receipts[0]
-    assert receipt.candidates == (1, 2)
-    assert receipt.selected_subjects == 2
+    assert receipt.candidates == (1, 2, 3)
+    assert receipt.selected_subjects == 3
     assert dict(receipt.axis_widths)["subject"] == 1
-    assert [attempt.n_subjects for attempt in receipt.attempts] == [1, 2]
+    assert [attempt.n_subjects for attempt in receipt.attempts] == [1, 2, 3]
     assert all(
         dict(attempt.axis_widths)["subject"] == 1 for attempt in receipt.attempts
     )
     assert profiles
     assert any("subject" in widths for widths in profiles)
     assert all(widths["subject"] == 1 for widths in profiles if "subject" in widths)
-    assert chunks == [(slice(0, 2), 4, 3), (slice(2, 4), 4, 3)]
+    assert chunks == [(slice(0, 3), 3, 3)]
     assert result.n_subjects == 3
     np.testing.assert_array_equal(
         result.raw_results["working"][0].states["wealth"], [20.0, 21.0, 22.0]
@@ -359,7 +359,7 @@ def test_scalar_anchor_preserves_subject_pin_for_larger_outer_candidate(
 def test_independent_frontier_preserves_2048_inner_width_on_three_devices() -> None:
     assert chunk_admission._independent_outer_candidates(
         population=226848, alignment=3, subject_width=2048
-    ) == (2049, 4098)
+    ) == (2049, 4098, 8193, 16386, 32769, 65538, 131073, 226848)
 
 
 @pytest.mark.parametrize("partitionable", [False, True])
@@ -516,6 +516,6 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
     assert observed == {
         (name, extent)
         for name in ("simulate_policy_prepare", "simulate_policy_rank")
-        for extent in (1, 2)
+        for extent in (1, 3)
     }
     _assert_raw_equal(actual=results[1], expected=results[0])
