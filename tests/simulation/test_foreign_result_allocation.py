@@ -28,21 +28,32 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.solution_copies import copy_solution_leaf
 from _lcm.solution.result_snapshot import snapshot_artifact_store
-from lcm import AgeGrid, ExecutionConfig, Model
+from lcm import ExecutionConfig, Model
 from lcm._solver_api import authority as authority_module
 from lcm._solver_api import entries
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.persistence import load_solution
 from lcm.solver_api import ArtifactRef, ArtifactStore, ValueStore
-from tests.regime_building.test_collective_regime_simulate import (
-    _DISSOLUTION_PARAMS,
-    DissolutionRegimeId,
-    _make_dissolution_regimes,
-)
+from tests.conformance_solver import ReferenceSolver
 from tests.solution.test_solution_result import _small_grid_search_inputs
 from tests.solution.test_solution_result_snapshot import (
     _array_authority,
     _replace_first_value_with_counter,
+)
+from tests.test_external_solver_conformance import (
+    _PARAMS as _CONFORMANCE_PARAMS,
+)
+from tests.test_external_solver_conformance import (
+    _initial_conditions as _conformance_initial_conditions,
+)
+from tests.test_external_solver_conformance import (
+    _model as _conformance_model,
+)
+from tests.test_external_solver_conformance import (
+    _RegimeId as _ConformanceRegimeId,
+)
+from tests.test_external_solver_conformance import (
+    _solve as _solve_conformance,
 )
 
 
@@ -456,22 +467,24 @@ def test_mixed_backend_foreign_copy_refuses_before_allocation() -> None:
 def test_artifact_route_refuses_before_the_foreign_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A valid artifact-bearing result cannot start unprofiled authority copies."""
+    """A solver-owned artifact authority cannot start unprofiled authority copies.
+
+    The dissolution flag is the one authority a budgeted foreign route admits,
+    so the refusal is exercised through a solver that publishes artifacts of
+    its own.
+    """
+    source = _conformance_model(solver=ReferenceSolver())
+    assert any(
+        regime.solution.artifact_authorities for regime in source._regimes.values()
+    )
     model = Model(
-        regimes=_make_dissolution_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
-        regime_id_class=DissolutionRegimeId,
+        regimes=dict(source.user_regimes),
+        ages=source.ages,
+        regime_id_class=_ConformanceRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**28),
     )
-    owned = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
-    foreign = replace(owned)
+    foreign = replace(_solve_conformance(model=source))
     assert foreign.replay_artifacts
-    initial = {
-        "wage": np.array([1.0, 2.0, 3.0]),
-        "age": np.zeros(3),
-        "regime_id": np.full(3, int(model.regime_names_to_ids["married"])),
-        "own_stakeholder": np.full(3, model.stakeholder_names_to_ids["f"]),
-    }
 
     def forbidden(**kwargs: object) -> object:
         del kwargs
@@ -480,8 +493,8 @@ def test_artifact_route_refuses_before_the_foreign_snapshot(
     monkeypatch.setattr(Model, "_snapshot_solution_envelope", staticmethod(forbidden))
     with pytest.raises(ExecutionPlanningError, match="unprofiled artifact authority"):
         model.simulate(
-            params=_DISSOLUTION_PARAMS,
-            initial_conditions=initial,
+            params=_CONFORMANCE_PARAMS,
+            initial_conditions=_conformance_initial_conditions(),
             solution=foreign,
             log_level="off",
         )

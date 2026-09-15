@@ -106,16 +106,16 @@ def test_route_program_declares_the_subject_axis_only() -> None:
     assert program.requirements.axis_names == (SUBJECT_AXIS,)
 
 
-def test_gated_route_program_is_host_driven() -> None:
-    """A gated regime cedes its routing width to the host loop that drives it."""
+def test_gated_route_program_is_planned() -> None:
+    """A gated regime leaves its routing width to the engine, like any other."""
     program = _program(witness=_COLLECTIVE[0], regime=_COLLECTIVE[1], family="route")
-    assert program.disposition is CoreExecutionDisposition.HOST_DRIVEN
+    assert program.disposition is CoreExecutionDisposition.PLANNED
 
 
-def test_gated_route_program_declares_no_execution_axis() -> None:
-    """A host-driven route names no axis, because it cedes every width."""
+def test_gated_route_program_declares_the_subject_axis_only() -> None:
+    """A gated routing draw tiles subjects and reduces no axis."""
     program = _program(witness=_COLLECTIVE[0], regime=_COLLECTIVE[1], family="route")
-    assert program.requirements.axis_names == ()
+    assert program.requirements.axis_names == (SUBJECT_AXIS,)
 
 
 def test_terminal_regime_declares_no_route_program() -> None:

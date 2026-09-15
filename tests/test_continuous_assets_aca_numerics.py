@@ -5,6 +5,9 @@ Python, without using engine interpolation or reduction functions. Its value
 bound is 32 working-format epsilons relative to the scalar reference, separately
 in each precision. Discrete policies, feasibility and seeded streams are exact.
 This is structural acceptance of a tiny fixture, not production ACA equality.
+
+Run alone in a fresh eight-CPU-device process; this module never sets device
+topology, so its eight-device witnesses skip in an ordinary battery.
 """
 
 from bisect import bisect_right
@@ -125,6 +128,11 @@ def _assert_shards(value: Any) -> None:
     assert sorted(intervals) == [(start, start + 3) for start in range(0, 24, 3)]
 
 
+def _require_eight() -> None:
+    if jax.default_backend() != "cpu" or jax.device_count() != 8:
+        pytest.skip("Requires a fresh eight-device CPU process")
+
+
 @pytest.mark.parametrize("widths", [(1, 1), (3, 24)])
 def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: C901
     *,
@@ -133,7 +141,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
     record_property: Any,
 ) -> None:
     """Eight assets shards preserve two-coordinate values and carried subject paths."""
-    assert jax.device_count() == 8, "Run this witness in a fresh eight-device process"
+    _require_eight()
 
     model = _model(widths=widths)
     control_model = _model(sharded=False, widths=widths)
@@ -266,7 +274,7 @@ def test_multidimensional_replica_budget_refuses_before_transfer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A full continuation replica remains a lower bound at small action widths."""
-    assert jax.device_count() == 8
+    _require_eight()
 
     model = _model(budget=1)
 

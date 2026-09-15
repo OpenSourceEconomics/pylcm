@@ -137,6 +137,12 @@ def test_unit_profile_uses_real_merged_carrier_descriptors() -> None:
     columns = merge.executable.out_info["alive"]
     assert columns["wealth"].dtype == jnp.float32
     flat_params = model._process_params(params)
+    base_spaces = MappingProxyType(
+        {
+            name: each.solution.state_action_space(regime_params=flat_params[name])
+            for name, each in regimes.items()
+        }
+    )
     unit = getattr(
         importlib.import_module("_lcm.simulation.forward_program_profiles"),
         "profile_forward_unit",
@@ -145,16 +151,18 @@ def test_unit_profile_uses_real_merged_carrier_descriptors() -> None:
     assert callable(unit), (
         "Forward metadata needs a unit boundary consuming the actual current carrier"
     )
+    engine_view = cast("OwnedSolutionView", solution._engine_view)
     profiles = unit(
         runtime=runtime,
+        regimes=regimes,
         regime=regimes["alive"],
         name="alive",
         period=0,
         flat_params=flat_params,
-        base=regimes["alive"].solution.state_action_space(
-            regime_params=flat_params["alive"]
-        ),
-        values=cast("OwnedSolutionView", solution._engine_view).values,
+        base=base_spaces["alive"],
+        base_spaces=base_spaces,
+        values=engine_view.values,
+        flags=engine_view.dissolution_flags,
         ages=model.ages,
         n_subjects=2,
         widths={"subject": 2},

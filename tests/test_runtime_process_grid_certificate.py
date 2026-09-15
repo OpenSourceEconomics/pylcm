@@ -192,9 +192,15 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
     attached = ast.unparse(
         _definition(tree=tree, name="_validate_attached_process_value")
     )
+    attached_schema = (
+        "(getattr(observed, 'shape', None), "
+        "str(getattr(observed, 'dtype', None)), "
+        "bool(getattr(observed, 'weak_type', False))) != _aval_schema(variable)"
+    )
     if (
         "isinstance(value, jax.Array)" not in attached
-        or "_aval_schema(observed.invars[0]) != _aval_schema(variable)" not in attached
+        or "observed = jax.typeof(value)" not in attached
+        or attached_schema not in attached
     ):
         errors.append("attached values must match host and abstract input contracts")
 
@@ -441,8 +447,14 @@ def test_runtime_process_admission_contract_is_complete() -> None:
         ),
         (
             "_validate_attached_process_value",
-            "_aval_schema(observed.invars[0]) != _aval_schema(variable)",
-            "False",
+            "observed = jax.typeof(value)",
+            "observed = variable.aval",
+            "attached values must match host and abstract input contracts",
+        ),
+        (
+            "_validate_attached_process_value",
+            'bool(getattr(observed, "weak_type", False)),',
+            "_aval_schema(variable)[2],",
             "attached values must match host and abstract input contracts",
         ),
         (

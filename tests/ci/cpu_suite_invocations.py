@@ -53,6 +53,7 @@ EIGHT_DEVICE_TEST_FILES = (
     "tests/simulation/test_independent_outer_cohorts.py",
     "tests/test_continuous_assets_sharding.py",
     "tests/test_continuous_transfer_admission.py",
+    "tests/test_continuous_assets_aca_numerics.py",
 )
 
 

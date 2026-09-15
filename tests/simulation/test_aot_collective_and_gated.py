@@ -122,7 +122,7 @@ def test_gated_edge_model_simulates_under_the_runtime_program(
 def test_gate_evaluators_reuse_compilation_for_a_repeated_population(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second forward call reuses the gate programs exercised by the first."""
+    """A second forward call reuses the gate programs the first one built."""
     model = _make_consent_model()
     params = {"discount_factor": _DISCOUNT_FACTOR}
     initial_conditions = {
@@ -134,8 +134,10 @@ def test_gate_evaluators_reuse_compilation_for_a_repeated_population(
     calls: list[Callable] = []
     original = gated_routing.population_call
 
-    def observe(*, func: Callable, axis_size: int) -> Callable:
-        call = original(func=func, axis_size=axis_size)
+    def observe(
+        *, func: Callable, axis_size: int, subject_width: int | None = None
+    ) -> Callable:
+        call = original(func=func, axis_size=axis_size, subject_width=subject_width)
         calls.append(call)
         return call
 
@@ -146,8 +148,7 @@ def test_gate_evaluators_reuse_compilation_for_a_repeated_population(
         solution=solution,
         log_level="debug",
     )
-    first_calls = tuple(calls)
-    assert first_calls, "The positive control must exercise the gate evaluators."
+    assert calls, "The positive control must exercise the gate evaluators."
     calls.clear()
     with count_compile_requests() as counts:
         result = model.simulate(
@@ -159,7 +160,7 @@ def test_gate_evaluators_reuse_compilation_for_a_repeated_population(
         for periods in result.raw_results.values():
             for period in periods.values():
                 jax.block_until_ready(period.V_arr)
-    assert tuple(calls) == first_calls
+    assert not calls, "The repeated population rebuilt a gate evaluator."
     assert (
         counts.trace_requests,
         counts.lowering_requests,

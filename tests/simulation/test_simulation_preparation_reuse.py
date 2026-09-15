@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.simulation import chunk_profile_inventory, operand_placement, process_grids
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
 from lcm import Model
@@ -226,7 +227,7 @@ def test_attached_values_are_checked_without_identity_retracing(
 
 @pytest.mark.parametrize("shape", [(), (0,), (1,), (3,), (2, 3), (0, 4)])
 @pytest.mark.parametrize(
-    "kind", ["float64", "int32", "bool", "threefry2x32", "rbg", "unsafe_rbg"]
+    "kind", ["float", "int32", "bool", "threefry2x32", "rbg", "unsafe_rbg"]
 )
 def test_payload_storage_matches_materialized_shards(
     *,
@@ -241,7 +242,8 @@ def test_payload_storage_matches_materialized_shards(
         value = jax.random.split(jax.random.key(71, impl=kind), shape)
         before = np.asarray(jax.random.key_data(value)).tobytes()
     else:
-        value = jnp.zeros(shape, dtype=kind)
+        dtype = canonical_float_dtype() if kind == "float" else kind
+        value = jnp.zeros(shape, dtype=dtype)
         before = np.asarray(value).tobytes()
     value = jax.device_put(value, sharding)
     metadata = jax.ShapeDtypeStruct(value.shape, value.dtype, sharding=sharding)
@@ -316,7 +318,7 @@ def test_operand_bytes_match_actual_canonical_conversion(
 @pytest.mark.parametrize("change", ["shape", "dtype", "weak", "host-owner"])
 def test_attached_contract_checks_each_new_value(change: str) -> None:
     """A previous valid attachment never authorizes a mismatched next one."""
-    value = np.asarray(1.0, dtype=np.float64)
+    value = np.asarray(1.0, dtype=canonical_float_dtype())
     variable = jax.make_jaxpr(lambda array: array)(value).jaxpr.invars[0]
     process_grids._validate_attached_process_value(
         value=value,
@@ -324,8 +326,10 @@ def test_attached_contract_checks_each_new_value(change: str) -> None:
         host_constant=True,
     )
     changed = {
-        "shape": np.asarray([1.0], dtype=np.float64),
-        "dtype": np.asarray(1.0, dtype=np.float32),
+        "shape": np.asarray([1.0], dtype=canonical_float_dtype()),
+        # An integer dtype contrasts with the float binder in either precision;
+        # a narrower float would be canonicalized back onto it at float32.
+        "dtype": np.asarray(1, dtype=np.int32),
         "weak": 1.0,
         "host-owner": jnp.asarray(value),
     }[change]
@@ -406,7 +410,7 @@ def test_operand_admission_rechecks_growing_live_inventory(
 def test_operand_admission_exact_boundary_and_occurrences(delta: int) -> None:
     """Destination plus scratch charges both future occurrences of a host leaf."""
     device = jax.devices()[0]
-    value = np.arange(3, dtype=np.float64)
+    value = np.arange(3, dtype=canonical_float_dtype())
     required = 4 * value.nbytes  # two copies, each destination plus scratch
     kwargs = {
         "arguments": {"a": value, "b": value},
@@ -441,7 +445,7 @@ def test_metadata_paths_under_jit_vmap_and_scan() -> None:
             ]
         )
 
-    value = jnp.arange(12, dtype=jnp.float64).reshape(3, 4)
+    value = jnp.arange(12, dtype=canonical_float_dtype()).reshape(3, 4)
     total = np.asarray(value).nbytes
     row = np.asarray(value[0]).nbytes
     np.testing.assert_array_equal(costs(value), [total, total])
@@ -485,7 +489,10 @@ def test_public_shape_seed_and_state_mutations(
     current = first.raw_results["alive"][0]
     assert set(current.states) == {"income"}
     assert set(current.actions) == {"saving"}
-    expected = np.asarray([float(income) + 1.0 for income in changed["income"]])
+    expected = np.asarray(
+        [float(income) + 1.0 for income in changed["income"]],
+        dtype=canonical_float_dtype(),
+    )
     np.testing.assert_array_equal(current.V_arr, expected)
     np.testing.assert_array_equal(current.actions["saving"], np.ones(subjects))
     np.testing.assert_array_equal(current.in_regime, np.ones(subjects, dtype=bool))

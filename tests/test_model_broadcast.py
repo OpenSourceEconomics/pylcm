@@ -326,7 +326,12 @@ def test_sharded_state_must_be_declared_at_model_level() -> None:
 )
 def test_unsupported_sharded_state_combinations_are_refused(*, grid) -> None:
     """Unsupported and runtime grids are refused with the offending state name."""
-    with pytest.raises(ExecutionPlanningError, match=r"skill.*concrete DiscreteGrid"):
+    with pytest.raises(
+        ExecutionPlanningError,
+        match=(
+            r"sharded_states \['skill'\].*sole sharded state, retained in every regime"
+        ),
+    ):
         _build_model(
             states={"skill": grid},
             state_transitions={"skill": fixed_transition("skill")},
