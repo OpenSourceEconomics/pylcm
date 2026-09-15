@@ -194,7 +194,7 @@
           },
           {
             "path": "src/_lcm/simulation/chunk_profile_inventory.py",
-            "sha256": "530f4ff6cb61120d052d1993e0b0265799f5b81f4c4a8a21b473137c593cedb3"
+            "sha256": "b167c937969c9799c847f59c9936f8bc82c38270224d688f57d2d05a2e2f99ac"
           },
           {
             "path": "src/_lcm/simulation/chunk_profiles.py",
@@ -242,7 +242,7 @@
           },
           {
             "path": "src/_lcm/simulation/operand_placement.py",
-            "sha256": "4c0333036fd861ace225a0a38c925fa2a694433e3eddcc47d9fe1c0eea2ee9f8"
+            "sha256": "2ce75e19ad32c0af645ed1c52bef183d96571eece76336371587b53d15bb4aa6"
           },
           {
             "path": "src/_lcm/simulation/period_inputs.py",
@@ -262,7 +262,7 @@
           },
           {
             "path": "src/_lcm/simulation/process_grids.py",
-            "sha256": "94b0440e23e17e4e9b2e97ee8d02a303f785f132e5a06eec3606a49e93784ec4"
+            "sha256": "f44ebb06b56453a5d0b4e78cf8c4fad6c070f57c1e23ce9bd3352fdb5d563363"
           },
           {
             "path": "src/_lcm/simulation/program_arguments.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "f4e16bb35e23e03a8c6b5cdbbc426327f5f2adfab11928fccdac92b69d51363f"
+        "source_inventory_sha256": "598231a78c6bff944209b6879390e7b7e2d776941c237eeb46cbb79294cc77c1"
       },
       "fast": {
         "candidate_sources": [
@@ -664,7 +664,7 @@
           },
           {
             "path": "src/_lcm/simulation/chunk_profile_inventory.py",
-            "sha256": "530f4ff6cb61120d052d1993e0b0265799f5b81f4c4a8a21b473137c593cedb3"
+            "sha256": "b167c937969c9799c847f59c9936f8bc82c38270224d688f57d2d05a2e2f99ac"
           },
           {
             "path": "src/_lcm/simulation/chunk_profiles.py",
@@ -712,7 +712,7 @@
           },
           {
             "path": "src/_lcm/simulation/operand_placement.py",
-            "sha256": "4c0333036fd861ace225a0a38c925fa2a694433e3eddcc47d9fe1c0eea2ee9f8"
+            "sha256": "2ce75e19ad32c0af645ed1c52bef183d96571eece76336371587b53d15bb4aa6"
           },
           {
             "path": "src/_lcm/simulation/period_inputs.py",
@@ -732,7 +732,7 @@
           },
           {
             "path": "src/_lcm/simulation/process_grids.py",
-            "sha256": "94b0440e23e17e4e9b2e97ee8d02a303f785f132e5a06eec3606a49e93784ec4"
+            "sha256": "f44ebb06b56453a5d0b4e78cf8c4fad6c070f57c1e23ce9bd3352fdb5d563363"
           },
           {
             "path": "src/_lcm/simulation/program_arguments.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "f4e16bb35e23e03a8c6b5cdbbc426327f5f2adfab11928fccdac92b69d51363f"
+        "source_inventory_sha256": "598231a78c6bff944209b6879390e7b7e2d776941c237eeb46cbb79294cc77c1"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "f4e16bb35e23e03a8c6b5cdbbc426327f5f2adfab11928fccdac92b69d51363f",
+  "source_inventory_sha256": "598231a78c6bff944209b6879390e7b7e2d776941c237eeb46cbb79294cc77c1",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1138,7 +1138,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_profile_inventory.py",
-      "sha256": "530f4ff6cb61120d052d1993e0b0265799f5b81f4c4a8a21b473137c593cedb3"
+      "sha256": "b167c937969c9799c847f59c9936f8bc82c38270224d688f57d2d05a2e2f99ac"
     },
     {
       "path": "src/_lcm/simulation/chunk_profiles.py",
@@ -1186,7 +1186,7 @@
     },
     {
       "path": "src/_lcm/simulation/operand_placement.py",
-      "sha256": "4c0333036fd861ace225a0a38c925fa2a694433e3eddcc47d9fe1c0eea2ee9f8"
+      "sha256": "2ce75e19ad32c0af645ed1c52bef183d96571eece76336371587b53d15bb4aa6"
     },
     {
       "path": "src/_lcm/simulation/period_inputs.py",
@@ -1206,7 +1206,7 @@
     },
     {
       "path": "src/_lcm/simulation/process_grids.py",
-      "sha256": "94b0440e23e17e4e9b2e97ee8d02a303f785f132e5a06eec3606a49e93784ec4"
+      "sha256": "f44ebb06b56453a5d0b4e78cf8c4fad6c070f57c1e23ce9bd3352fdb5d563363"
     },
     {
       "path": "src/_lcm/simulation/program_arguments.py",

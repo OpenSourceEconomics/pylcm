@@ -44,13 +44,9 @@ def payload_bytes(*, tree: object) -> dict[jax.Device, int]:
             raise ExecutionPlanningError(
                 "A future payload requires placed abstract metadata."
             )
-        if jax.dtypes.issubdtype(leaf.dtype, jax.dtypes.prng_key):
-            raw = jax.eval_shape(
-                jax.random.key_data, jax.ShapeDtypeStruct((), leaf.dtype)
-            )
-            item_bytes = math.prod(raw.shape) * raw.dtype.itemsize
-        else:
-            item_bytes = leaf.dtype.itemsize
+        # Extended key dtypes already expose the complete raw-key item size.
+        # Reading it avoids retracing key_data for every declared owner slot.
+        item_bytes = leaf.dtype.itemsize
         per_device = math.prod(leaf.sharding.shard_shape(leaf.shape)) * item_bytes
         for device in leaf.sharding.device_set:
             result[device] = result.get(device, 0) + per_device

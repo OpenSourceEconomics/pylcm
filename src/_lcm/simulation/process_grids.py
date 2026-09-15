@@ -653,22 +653,17 @@ def _validate_attached_process_value(
         raise ExecutionPlanningError(
             "Process support captured a non-host numerical constant."
         )
-    observed = jax.make_jaxpr(_process_value_identity)(value)
+    # Re-read this concrete value's contract at every attachment. An identity
+    # graph adds no information beyond its existing JAX abstract value.
+    observed = jax.typeof(value)
     if (
-        observed.constvars
-        or len(observed.invars) != 1
-        or observed.eqns
-        or len(observed.outvars) != 1
-        or _aval_schema(observed.invars[0]) != _aval_schema(variable)
-    ):
+        getattr(observed, "shape", None),
+        str(getattr(observed, "dtype", None)),
+        bool(getattr(observed, "weak_type", False)),
+    ) != _aval_schema(variable):
         raise ExecutionPlanningError(
             "A process support value does not match its traced input contract."
         )
-
-
-def _process_value_identity(value: object) -> object:
-    """Expose one public JAX abstract-value check without computation."""
-    return value
 
 
 def _validated_process_operand(

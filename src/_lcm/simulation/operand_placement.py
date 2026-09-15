@@ -7,7 +7,6 @@ from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from _lcm.execution.core_program import ValueRead
@@ -166,7 +165,9 @@ def _required_operand_bytes(*, leaf: object, sharding: jax.sharding.Sharding) ->
         # nbytes also sizes extended PRNG-key dtypes, which are not NumPy dtypes.
         item_bytes = leaf.nbytes // count if count else 0
     else:
-        abstract = jax.eval_shape(jnp.asarray, leaf)
+        # JAX applies the current dtype rules without tracing a conversion
+        # or retaining the concrete operand between calls.
+        abstract = jax.typeof(leaf)
         shape = tuple(abstract.shape)
         item_bytes = abstract.dtype.itemsize
     return layout_footprint(
