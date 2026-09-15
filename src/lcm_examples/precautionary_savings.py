@@ -26,6 +26,7 @@ from lcm import (
     TauchenAR1Process,
     categorical,
 )
+from lcm.execution import ExecutionConfig
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -82,8 +83,7 @@ class RegimeId:
     dead: ScalarInt
 
 
-@functools.cache
-def get_model(
+def create_model(
     *,
     n_periods: int,
     shock_type: ShockType,
@@ -93,6 +93,7 @@ def get_model(
     wealth_n_points: int = 7,
     consumption_n_points: int = 7,
     income_n_points: int = 5,
+    execution_config: ExecutionConfig | None = None,
 ) -> Model:
     """Create the precautionary savings model.
 
@@ -105,6 +106,7 @@ def get_model(
         wealth_n_points: Number of wealth grid points.
         consumption_n_points: Number of consumption grid points.
         income_n_points: Number of income grid points.
+        execution_config: Optional hardware-local execution controls.
 
     Returns:
         A configured Model instance.
@@ -163,6 +165,34 @@ def get_model(
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        execution_config=(
+            ExecutionConfig() if execution_config is None else execution_config
+        ),
+    )
+
+
+@functools.cache
+def get_model(
+    *,
+    n_periods: int,
+    shock_type: ShockType,
+    wealth_grid_type: WealthGridType = "lin",
+    wealth_start: float = 1.0,
+    wealth_stop: float = 20.0,
+    wealth_n_points: int = 7,
+    consumption_n_points: int = 7,
+    income_n_points: int = 5,
+) -> Model:
+    """Create and cache a precautionary-savings model with default execution."""
+    return create_model(
+        n_periods=n_periods,
+        shock_type=shock_type,
+        wealth_grid_type=wealth_grid_type,
+        wealth_start=wealth_start,
+        wealth_stop=wealth_stop,
+        wealth_n_points=wealth_n_points,
+        consumption_n_points=consumption_n_points,
+        income_n_points=income_n_points,
     )
 
 
