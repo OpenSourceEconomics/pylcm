@@ -454,6 +454,21 @@ def test_gpu_peak_is_captured_before_warm_calls(
     assert bench_mahler_yum.MahlerYumBudgetedGpu.version == "4"
 
 
+def test_teardown_accepts_the_cache_asv_passes_once_setup_cache_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`Benchmark._build_params` prepends the cache once `setup_cache` exists,
+    so ASV's real `do_teardown` calls `teardown(cache)`, not `teardown()`."""
+    cleared: list[str] = []
+    monkeypatch.setattr("jax.clear_caches", lambda: cleared.append("jax.clear_caches"))
+    monkeypatch.setattr("gc.collect", lambda: cleared.append("gc.collect"))
+
+    instance = bench_mahler_yum.MahlerYumBudgetedGpu()
+    instance.teardown({"compilation_time": 1.0})  # ASV's real call shape
+
+    assert cleared == ["jax.clear_caches", "gc.collect"]
+
+
 class _FakeMahlerSolution:
     def __init__(self) -> None:
         self.saved_paths: list[Path] = []

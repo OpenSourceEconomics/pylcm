@@ -167,6 +167,13 @@ class MahlerYumBudgetedGpu(_MahlerYum):
     def setup(self, cache: dict[str, float | list[float]]) -> None:
         self._measurements = cache
 
+    def teardown(self, cache: dict[str, float | list[float]] | None = None) -> None:
+        # ASV passes setup_cache's result to every teardown once a benchmark
+        # has a setup_cache (see `Benchmark._build_params`); the inherited
+        # `_MahlerYum.teardown` predates `setup_cache` and takes no cache.
+        del cache
+        super().teardown()
+
     def track_execution_time(
         self, cache: dict[str, float | list[float]] | None = None
     ) -> float:
