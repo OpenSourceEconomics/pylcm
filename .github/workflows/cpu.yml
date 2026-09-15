@@ -358,7 +358,8 @@ jobs:
             reports/junit-cpu-fp64-continuous-assets-aca-numerics.xml no-skips \
           && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
           XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
-            pixi run -e tests-cpu pytest tests/simulation/test_subject_parallel.py \
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_subject_parallel.py \
             --precision=64 -p no:randomly --policy-child \
             --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v -n 0 \
@@ -368,7 +369,8 @@ jobs:
             reports/junit-cpu-fp64-subject-parallel.xml no-skips \
           && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
           XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
-            pixi run -e tests-cpu pytest tests/simulation/test_subject_parallel_runtime.py \
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_subject_parallel_runtime.py \
             --precision=64 -p no:randomly --policy-child \
             --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v -n 0 \
@@ -378,7 +380,8 @@ jobs:
             reports/junit-cpu-fp64-subject-parallel-runtime.xml no-skips \
           && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
           XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
-            pixi run -e tests-cpu pytest tests/simulation/test_subject_parallel_model.py \
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_subject_parallel_model.py \
             --precision=64 -p no:randomly --policy-child \
             --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v -n 0 \
@@ -711,7 +714,8 @@ jobs:
             reports/junit-cpu-fp32-continuous-assets-aca-numerics.xml no-skips \
           && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
           XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
-            pixi run -e tests-cpu pytest tests/simulation/test_subject_parallel.py \
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_subject_parallel.py \
             --precision=32 -p no:randomly --policy-child \
             --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v -n 0 \
@@ -720,7 +724,8 @@ jobs:
             reports/junit-cpu-fp32-subject-parallel.xml no-skips \
           && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
           XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
-            pixi run -e tests-cpu pytest tests/simulation/test_subject_parallel_runtime.py \
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_subject_parallel_runtime.py \
             --precision=32 -p no:randomly --policy-child \
             --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v -n 0 \
@@ -729,7 +734,8 @@ jobs:
             reports/junit-cpu-fp32-subject-parallel-runtime.xml no-skips \
           && JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
           XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
-            pixi run -e tests-cpu pytest tests/simulation/test_subject_parallel_model.py \
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_subject_parallel_model.py \
             --precision=32 -p no:randomly --policy-child \
             --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v -n 0 \
