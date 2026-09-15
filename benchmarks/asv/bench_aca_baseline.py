@@ -25,13 +25,21 @@ shipped in aca-model — no aca-data pipeline run required.
 
 ASV wiring notes:
 
-- Each class's `setup_cache` retains the combined cold/warm timing and CPU-memory
-  measurement, then launches the exact GPU-memory profile. That profile runs
-  automatic solve+simulate, ALL_PERSISTABLE solve+save, and load+supplied-solution
-  simulate sequentially in three fresh isolated processes. Six cheap `track_*`
-  methods read the shared results. No reported phase peak is summed or subtracted.
-- `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives
-  the debug configuration a separate combined subprocess.
+- `AcaBaseline` and `AcaBaselineDebugLog` keep the combined cold/warm timing and
+  CPU-memory measurement (`_gpu_mem.measure_combined`): one isolated subprocess
+  builds once, runs one cold simulate (compilation time + CPU peak) and one warm
+  simulate, and three cheap `track_*` methods read the shared result.
+- `AcaBaselineGpuPeakMem` and `AcaBaselineDebugLogGpuPeakMem` are separate ASV
+  classes wired to `_gpu_mem.GpuPeakMemProfile`. They run the exact three-phase
+  GPU-memory profile (automatic solve+simulate, ALL_PERSISTABLE solve+save,
+  load+supplied-solution simulate) sequentially in three fresh isolated
+  processes, in a producer independent of the timing subprocess: selecting only
+  timing no longer pays for the memory profile, and selecting only the memory
+  profile no longer pays for the timing subprocess. No reported phase peak is
+  summed or subtracted.
+- `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives the
+  debug configuration a separate combined subprocess; `AcaBaselineDebugLogGpuPeakMem`
+  likewise gets its own three-phase profile.
 - XLA autotuning is disabled and preallocation is off in the measurement
   subprocess, preserving the previous GPU-memory benchmark semantics.
 """
@@ -79,21 +87,6 @@ def _make_log_dir() -> str:
     path = tempfile.mkdtemp(prefix=_LOG_DIR_PREFIX)
     atexit.register(shutil.rmtree, path, ignore_errors=True)
     return path
-
-
-def _measure_all(*, bench_class: str) -> dict[str, float]:
-    """Collect stable timing series plus the exact three-phase GPU profile."""
-    measurements = _gpu_mem.measure_combined(
-        bench_module="benchmarks.asv.bench_aca_baseline",
-        bench_class=bench_class,
-    )
-    profile = _gpu_mem.measure_gpu_memory_profile(
-        bench_module="benchmarks.asv.bench_aca_baseline",
-        bench_class=bench_class,
-    )
-    if measurements.keys() & profile.keys():
-        raise RuntimeError("ACA measurement protocols returned overlapping labels.")
-    return {**measurements, **profile}
 
 
 def _build() -> tuple[object, object, object]:
@@ -148,7 +141,10 @@ class AcaBaseline:
     log_path: str | None = None
 
     def setup_cache(self) -> dict[str, float]:
-        return _measure_all(bench_class="AcaBaseline")
+        return _gpu_mem.measure_combined(
+            bench_module="benchmarks.asv.bench_aca_baseline",
+            bench_class="AcaBaseline",
+        )
 
     def setup(self, cache: dict[str, float]) -> None:
         self._measurements = cache
@@ -214,31 +210,19 @@ class AcaBaseline:
 
     track_peak_cpu_mem.unit = "bytes"
 
-    def track_peak_gpu_mem_automatic_solve_simulate(
-        self, cache: dict[str, float] | None = None
-    ) -> float:
-        return self._measurements[_gpu_mem.AUTOMATIC_SOLVE_SIMULATE]
-
-    track_peak_gpu_mem_automatic_solve_simulate.unit = "bytes"
-
-    def track_peak_gpu_mem_solve_save_all_persistable(
-        self, cache: dict[str, float] | None = None
-    ) -> float:
-        return self._measurements[_gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE]
-
-    track_peak_gpu_mem_solve_save_all_persistable.unit = "bytes"
-
-    def track_peak_gpu_mem_load_supplied_solution_simulate(
-        self, cache: dict[str, float] | None = None
-    ) -> float:
-        return self._measurements[_gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE]
-
-    track_peak_gpu_mem_load_supplied_solution_simulate.unit = "bytes"
-
     def track_compilation_time(self, cache: dict[str, float] | None = None) -> float:
         return self._measurements["compilation_time"]
 
     track_compilation_time.unit = "seconds"
+
+
+class AcaBaselineGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
+    """Three-phase solve/persistence/simulate GPU-memory profile for `AcaBaseline`."""
+
+    version = "2"
+    timeout = 14400
+    bench_module = "benchmarks.asv.bench_aca_baseline"
+    bench_class = "AcaBaseline"
 
 
 class AcaBaselineDebugLog(AcaBaseline):
@@ -253,7 +237,10 @@ class AcaBaselineDebugLog(AcaBaseline):
     log_level = "debug"
 
     def setup_cache(self) -> dict[str, float]:
-        return _measure_all(bench_class="AcaBaselineDebugLog")
+        return _gpu_mem.measure_combined(
+            bench_module="benchmarks.asv.bench_aca_baseline",
+            bench_class="AcaBaselineDebugLog",
+        )
 
     def setup_for_gpu_measurement(self) -> None:
         # Mirror `setup`'s log_path setup so the measurement subprocess
@@ -261,3 +248,12 @@ class AcaBaselineDebugLog(AcaBaseline):
         # cleanup rides on `atexit` inside `_make_log_dir` instead.
         self.log_path = _make_log_dir()
         super().setup_for_gpu_measurement()
+
+
+class AcaBaselineDebugLogGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
+    """Three-phase GPU-memory profile for `AcaBaselineDebugLog`."""
+
+    version = "2"
+    timeout = 14400
+    bench_module = "benchmarks.asv.bench_aca_baseline"
+    bench_class = "AcaBaselineDebugLog"

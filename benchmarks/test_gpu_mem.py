@@ -386,6 +386,7 @@ def test_mahler_yum_gpu_memory_phases_dispatch_exact_workloads(
     assert model.simulate_calls[-1] == {
         "params": benchmark.model_params,
         "initial_conditions": benchmark.initial_conditions,
+        "seed": 0,
         "log_level": "off",
     }
 
@@ -411,6 +412,7 @@ def test_mahler_yum_gpu_memory_phases_dispatch_exact_workloads(
         "params": benchmark.model_params,
         "initial_conditions": benchmark.initial_conditions,
         "solution": loaded,
+        "seed": 0,
         "log_level": "off",
     }
 
