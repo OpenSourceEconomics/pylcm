@@ -43,6 +43,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
+from _lcm.simulation.subject_devices import simulation_subject_devices
 from _lcm.transition_checks import (
     _SerialValidationRequired,
     _validate_transition_sequence,
@@ -723,11 +724,10 @@ def subject_array_sharding(
     Subjects propagate across regime transitions inside the simulate loop, so
     every regime's per-subject arrays must carry the same device sharding —
     otherwise an AOT-compiled program lowered with one regime's sharding rejects
-    the inputs it receives from another. When any grid in any regime is
-    distributed, the `n_subjects` subjects are scattered across every device the
-    model uses along a single mesh axis. When none is, they are committed to the
-    first of them, so a model that names a subset of the devices JAX reports
-    never simulates on one it excluded.
+    the inputs it receives from another. Bound calls use the forward runtime's
+    devices, including explicit subject sharding without distributed solve grids.
+    Unbound callers retain solve-derived legacy placement. A model never simulates
+    on a device outside its selected set.
 
     Args:
         regimes: Immutable mapping of regime names to internal regime instances.
@@ -737,14 +737,12 @@ def subject_array_sharding(
             device JAX reports.
 
     Returns:
-        The `NamedSharding` over the device mesh when a grid is distributed, and
-        a single-device sharding on the model's first device otherwise.
+        The common subject `NamedSharding` for distributed forward execution,
+        or the selected single-device sharding for a non-distributed call.
 
     """
-    devices = placed_devices_for_ids(
-        submesh_device_ids=(), visible_device_ids=device_ids
-    )
-    distributes_any = any(
+    devices = simulation_subject_devices(regimes=regimes, device_ids=device_ids)
+    distributes_any = len(devices) > 1 or any(
         regime.solution.sharded_state_names for regime in regimes.values()
     )
     if not distributes_any:
@@ -755,7 +753,7 @@ def subject_array_sharding(
         # dispatch divides evenly. A non-multiple count signals direct/internal
         # misuse.
         raise PyLCMError(
-            "When using distributed grids, the number of subjects per simulate "
+            "When distributing subjects, the number of subjects per simulate "
             "dispatch must be a multiple of the available devices. "
             f"Subjects: {n_subjects} Available Devices: {len(devices)}"
         )

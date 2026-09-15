@@ -7,10 +7,11 @@ from typing import cast
 
 import jax
 
-from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
+from _lcm.engine import Regime, StateActionSpace
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.operand_placement import place_simulation_arguments
+from _lcm.simulation.subject_devices import simulation_subject_devices
 from _lcm.typing import FlatParams, RegimeName, StateOrActionName
 from lcm.typing import Float1D, Int1D, IntND
 
@@ -49,11 +50,7 @@ def prepare_simulation_call_inputs(
     remains the existing eager entry boundary; its outputs are charged immediately,
     without claiming those computations were pre-admitted by a compiler profile.
     """
-    devices = placed_devices_for_ids(
-        submesh_device_ids=(), visible_device_ids=device_ids
-    )
-    if not any(regime.solution.sharded_state_names for regime in regimes.values()):
-        devices = devices[:1]
+    devices = simulation_subject_devices(regimes=regimes, device_ids=device_ids)
     shared = place_simulation_arguments(
         arguments={"params": flat_params},
         subject_arg_names=(),

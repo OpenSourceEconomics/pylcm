@@ -49,6 +49,7 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
+from _lcm.simulation.subject_parallel import SubjectShardable, shard_subject_function
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_tree,
     _func_dedup_key,
@@ -370,6 +371,8 @@ class SimulationRuntime:
                 n_subjects,
                 tuple(widths.items()),
                 self.enable_jit,
+                self.execution.simulation_sharding,
+                tuple((device.platform, device.id) for device in self.subject_devices),
             ),
             output_roles=program.output_roles,
             layout_key=program.disposition,
@@ -393,6 +396,7 @@ class SimulationRuntime:
                 enable_jit=self.enable_jit,
                 abstract_inputs=abstract_inputs,
                 subject_devices=self.subject_devices,
+                shard_subjects=self.execution.simulation_sharding == "subjects",
                 subject_width=min(
                     self.execution.axis_widths.get(SUBJECT_AXIS, n_subjects),
                     n_subjects,
@@ -567,8 +571,23 @@ class _SimulationCandidateCompiler:
     abstract_inputs: bool = False
     """Whether the prepared operands describe required layouts without arrays."""
 
+    shard_subjects: bool = False
+    """Place the independent subject loop inside the selected device partitions."""
+
     def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
         """Return the executable for exactly these proposed static widths."""
+        if (
+            self.shard_subjects
+            and len(self.subject_devices) > 1
+            and (
+                not self.enable_jit
+                or self.program.disposition is CoreExecutionDisposition.HOST_DRIVEN
+            )
+        ):
+            raise ExecutionPlanningError(
+                "Subject sharding requires compiled, subject-local programs; "
+                "host-driven or eager simulation is not supported by this mode."
+            )
         if self.program.disposition is CoreExecutionDisposition.HOST_DRIVEN:
             function = self.program.function
             arguments = self.program.arguments
@@ -598,6 +617,24 @@ class _SimulationCandidateCompiler:
             arguments = resolved.arguments
             static_kwargs = dict(resolved.static_kwargs)
             static_kwargs.setdefault(SUBJECT_WIDTH_KEYWORD, self.subject_width)
+        if self.shard_subjects and len(self.subject_devices) > 1:
+            if not isinstance(function, SubjectShardable):
+                raise ExecutionPlanningError(
+                    f"Simulation program {self.program.name!r} does not declare "
+                    "independent leading-axis subject outputs."
+                )
+            if function.subject_shard_arg_names:
+                function = shard_subject_function(
+                    function=function,
+                    subject_arg_names=function.subject_shard_arg_names,
+                    arguments=arguments,
+                    static_kwargs=static_kwargs,
+                    devices=self.subject_devices,
+                    subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+                )
+                # The wrapper binds only widths and immutable layout metadata;
+                # caller arrays remain dynamic inputs of the existing executable.
+                static_kwargs = {}
         if not self.enable_jit:
             return CompiledSimulationProgram(
                 executable=function, static_kwargs=MappingProxyType(static_kwargs)

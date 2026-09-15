@@ -612,6 +612,11 @@ class _SubjectTiled:
     subject_arg_names: tuple[str, ...]
     """Arguments carrying the per-subject leading axis this splits into tiles."""
 
+    @property
+    def subject_shard_arg_names(self) -> tuple[str, ...]:
+        """Certify that every output has the same independent leading subject axis."""
+        return self.subject_arg_names
+
     def __call__(self, **kwargs: Any) -> object:  # noqa: ANN401
         """Return the body's output for every subject, evaluated in tiles."""
         width = cast("int", kwargs.pop(SUBJECT_WIDTH_KEYWORD))

@@ -2595,8 +2595,8 @@ class Model:
         return compile_batch_size
 
     def _distributes_subjects(self) -> bool:
-        """Return whether any state in any regime carries a device axis."""
-        return any(
+        """Resolve population alignment independently of the solve-state axes."""
+        return self._execution.simulation_sharding == "subjects" or any(
             regime.solution.sharded_state_names for regime in self._regimes.values()
         )
 
