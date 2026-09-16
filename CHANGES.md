@@ -111,9 +111,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   width. Execution policy does not enter the durable model fingerprint.
 - With a budget, solve planning compiles candidates along a deterministic widest-first
   frontier and selects the first whose compiler peak plus accounted residency fits.
-  Without a budget, streamed solve axes use their bootstrap widths, capped at 64,
-  unless an explicit width is supplied. An omitted width requests planning, and zero
-  is not a full-width sentinel in `axis_widths`.
+  Without a budget, streamed solve axes use their bootstrap widths unless an explicit
+  width is supplied: a reduced axis, whose block is purely temporary, is capped at 64;
+  a tiled output axis, whose tiles concatenate into a full-size resident result, is
+  capped at up to 512, the cap shrinking so the product of an unbudgeted candidate's
+  widths stays bounded regardless of model size. An omitted width requests planning,
+  and zero is not a full-width sentinel in `axis_widths`.
 - Budgeted solves wait for earlier compiled work before dispatching another core
   whose execution or transfer devices overlap. Completion retains auxiliary outputs
   and copy witnesses through validation and error cleanup, and runs before eligible
@@ -125,8 +128,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   the outer chunk extent while preserving the requested inner width. With a budget
   and no fixed subject width, complete chunk profiles include retained results,
   numerical programs, RNG, diagnostics, padding and assembly. Chunk boundaries
-  preserve each original subject's random stream. `Model(n_subjects=...)` remains a
-  prewarm hint.
+  preserve each original subject's random stream. The constructor `n_subjects` hint
+  and its duplicate concrete-template prewarm route are removed; call-shape runtime
+  executors are cached instead, keyed on subject shape, so the first `simulate()` call
+  at a given shape compiles it and later calls at that shape reuse it.
 - Solve candidate preparation uses shape and layout descriptors instead of allocating
   transfer copies for each width. Budgeted foreign eager solution values use compiled
   copy admission and retain intermediate copies through validation. Native archive
