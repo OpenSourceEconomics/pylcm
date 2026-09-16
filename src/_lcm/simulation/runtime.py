@@ -29,6 +29,7 @@ from _lcm.execution.workspace_planning import (
     plan_workspace,
     workspace_width_candidates,
 )
+from _lcm.simulation.chunk_profile_cache import ProfileCacheToken
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
     _abstract_operand,
@@ -151,6 +152,24 @@ class SimulationRuntime:
 
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock, repr=False)
     """Protect cache ownership and publication while compilation runs outside it."""
+
+    profile_cache_token: ProfileCacheToken = dataclasses.field(
+        default_factory=ProfileCacheToken, repr=False
+    )
+    """Private identity distinguishing this runtime's abstract chunk profiles.
+
+    A bare marker object, never a caller array or closure; it lets the
+    process-wide `ChunkProfileCacheRegistry` (see `chunk_profile_cache.py`)
+    share one bounded LRU across every model runtime while keeping entries
+    from different runtimes (different execution configs, devices or JIT
+    dispositions) from colliding. Its lifetime is this runtime's: the token is
+    reachable only from here, so once this runtime is dropped the registry
+    observes the token's death and releases every profile keyed under it,
+    rather than holding compiled executables until LRU eviction. Each rebuild
+    of `Model._simulate_runtime_regimes` (a fresh compile-batch shape, or a
+    fresh runtime after unpickling) constructs a new `SimulationRuntime` and
+    therefore a new token.
+    """
 
     def dispatch(
         self,

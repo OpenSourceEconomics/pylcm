@@ -8,6 +8,7 @@ candidate uses the same actual completed grids and retained solution owners.
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from functools import partial
 from time import perf_counter
 from types import MappingProxyType
 
@@ -29,6 +30,7 @@ from _lcm.simulation.chunk_planning import (
     SimulationChunkProfile,
     _required_bytes,
 )
+from _lcm.simulation.chunk_profile_cache import profile_cache_registry
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.programs import gated_simulation_programs_ready
@@ -40,6 +42,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
 from lcm.ages import AgeGrid
@@ -214,6 +217,105 @@ def prepare_simulation_chunks(
     )
 
 
+def _simulation_chunk_profile_key(
+    *,
+    runtime: SimulationRuntime,
+    regimes: Mapping[str, Regime],
+    call_inputs: SimulationCallInputs,
+    values: Mapping[int, Mapping[str, jax.Array]],
+    flags: Mapping[int, Mapping[str, jax.Array]],
+    policies: Mapping[int, Mapping[str, object]] | None,
+    ages: AgeGrid,
+    initial_conditions: Mapping[str, jax.Array],
+    regime_names_to_ids: RegimeNamesToIds,
+    n_subjects: int,
+    population: int,
+    original_population: int,
+    widths: Mapping[str, int],
+    independent_taste: bool,
+    log_level: LogLevel,
+) -> tuple[object, ...]:
+    """Return the canonical, versioned cache key for `profile_simulation_chunk`.
+
+    Every component is either immutable static identity or an abstract
+    (shape/dtype/weak-type/sharding) description of a dynamic leaf — never a
+    concrete value. Two calls whose dynamic parameters, initial states,
+    solution/replay arrays or process probabilities differ only in value (not
+    shape/dtype/sharding) hash to the same key and share the cached profile;
+    the caller's admission formula still re-runs against current owners.
+
+    Conservative, documented limitations:
+    - `policies` is keyed by `_abstract_value_key`, exactly like every other
+      dynamic argument: its period/regime/leaf-name structure plus each
+      leaf's shape, dtype, weak type and sharding. Two policy mappings that
+      agree on all of that share a cached profile even when their numerical
+      contents differ, which is the intended behaviour (the profile depends
+      only on abstract metadata). What this does *not* distinguish is a
+      policy's internal wiring: if two policy payloads present identical
+      abstract leaves but route them through different callables, the key
+      cannot tell them apart.
+    - The regime read/transfer graph is not walked
+      independently; it is approximated by the regime/base-space identity and
+      shape metadata already covered below. A change to the transfer graph
+      that leaves every covered shape untouched (extremely unlikely given how
+      regimes are constructed) would not be distinguished by this key.
+    """
+    version = 1  # bump when any component below changes meaning
+    key_version = ("chunk-profile-key", version)
+    program_identity = (
+        tuple(sorted(regimes)),
+        tuple(
+            (name, tuple(sorted(regime.active_periods)))
+            for name, regime in regimes.items()
+        ),
+        _hashable_metadata(regime_names_to_ids),
+        ages.n_periods,
+    )
+    axes_and_widths = tuple(sorted(widths.items()))
+    argument_metadata = (
+        _abstract_value_key(value=call_inputs.flat_params),
+        _abstract_value_key(
+            value=tuple(
+                (space.states, space.actions)
+                for space in call_inputs.base_state_action_spaces.values()
+            )
+        ),
+        _abstract_value_key(value=values),
+        _abstract_value_key(value=flags),
+        _abstract_value_key(value=initial_conditions),
+        _abstract_value_key(value=ages.values),
+    )
+    population_metadata = (n_subjects, population, original_population)
+    devices_and_backend = (
+        tuple((device.platform, device.id) for device in runtime.subject_devices),
+        runtime.enable_jit,
+        runtime.execution.simulation_sharding,
+        runtime.execution.device_ids,
+        runtime.execution.device_memory_bytes,
+    )
+    diagnostics_and_precision = (
+        log_level,
+        independent_taste,
+        jax.config.jax_default_prng_impl,
+        jax.config.jax_enable_x64,
+    )
+    # Policies are rebuilt per solve, so their Python identity is never stable
+    # across calls even for numerically identical content; key their abstract
+    # (type/shape-only, never value) structure instead, exactly like every
+    # other dynamic argument above.
+    policy_identity = None if policies is None else _abstract_value_key(value=policies)
+    return (
+        key_version,
+        program_identity,
+        axes_and_widths,
+        argument_metadata,
+        population_metadata,
+        devices_and_backend,
+        diagnostics_and_precision,
+        policy_identity,
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _ChunkProfiler:
     """Transient search inputs, released after selecting one immutable profile."""
@@ -267,24 +369,48 @@ class _ChunkProfiler:
     def profile_widths(
         self, *, n_subjects: int, widths: Mapping[str, int]
     ) -> SimulationChunkProfile:
-        """Profile exactly one whole inner map without reopening its search."""
-        return profile_simulation_chunk(
-            runtime=self.runtime,
-            regimes=self.regimes,
-            flat_params=self.call_inputs.flat_params,
-            base_spaces=self.call_inputs.base_state_action_spaces,
-            values=self.values,
-            flags=self.flags,
-            policies=self.policies,
-            ages=self.ages,
-            initial_conditions=self.initial_conditions,
-            regime_names_to_ids=self.regime_names_to_ids,
-            n_subjects=n_subjects,
-            population=self.population,
-            original_population=self.original_population,
-            widths=widths,
-            independent_taste=self.independent_taste,
-            log_level=self.log_level,
+        """Profile exactly one whole inner map without reopening its search.
+
+        A hit reuses the immutable multi-stage profile (compiled executables
+        and byte counts) built for an identical abstract key; it never skips
+        the caller's admission formula, which always re-runs against the
+        returned profile and this call's own resident-bytes ledger.
+
+        The builder is a `functools.partial` over the module-level
+        `profile_simulation_chunk`, never a nested `def`: a nested `def` here
+        would be re-wrapped by the beartype claw on every call and would close
+        over `self`, keeping this call's arrays and compiled executables
+        reachable from the retained wrapper (see `_lcm/utils/functools.py` and
+        the module-level callbacks in `chunk_profile_inventory.py`). The
+        partial itself is dropped as soon as `get_or_build` returns.
+        """
+        arguments = {
+            "runtime": self.runtime,
+            "regimes": self.regimes,
+            "values": self.values,
+            "flags": self.flags,
+            "policies": self.policies,
+            "ages": self.ages,
+            "initial_conditions": self.initial_conditions,
+            "regime_names_to_ids": self.regime_names_to_ids,
+            "n_subjects": n_subjects,
+            "population": self.population,
+            "original_population": self.original_population,
+            "widths": widths,
+            "independent_taste": self.independent_taste,
+            "log_level": self.log_level,
+        }
+        return profile_cache_registry().get_or_build(
+            runtime_token=self.runtime.profile_cache_token,
+            key=_simulation_chunk_profile_key(
+                call_inputs=self.call_inputs, **arguments
+            ),
+            build=partial(
+                profile_simulation_chunk,
+                flat_params=self.call_inputs.flat_params,
+                base_spaces=self.call_inputs.base_state_action_spaces,
+                **arguments,
+            ),
         )
 
 
