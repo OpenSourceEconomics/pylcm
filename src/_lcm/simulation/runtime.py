@@ -27,6 +27,7 @@ from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     compiler_memory_reservation,
     plan_workspace,
+    workspace_width_candidates,
 )
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
@@ -169,10 +170,42 @@ class SimulationRuntime:
             n_subjects=n_subjects,
             residency=residency,
         )
+        if self.execution.device_memory_bytes is None:
+            prepared = self._prepared_dispatch(
+                program=materialized, n_subjects=n_subjects
+            )
+            if prepared is not None:
+                return prepared(**materialized.arguments)
         compiled = self._prepare_materialized(
             program=materialized, n_subjects=n_subjects, residency=residency
         )
         return compiled(**materialized.arguments)
+
+    def _prepared_dispatch(
+        self, *, program: MaterializedCoreProgram, n_subjects: int
+    ) -> CompiledSimulationProgram | None:
+        """Return an already-cached executable for an exact unbudgeted signature.
+
+        Eligible only when no device-memory budget is configured (see `dispatch`).
+        Recomputes the same widths and the same full compiler-identity key that
+        `compile_candidate` would build, then looks the entry up directly instead
+        of re-running `plan_workspace`/`_prepare_materialized`. A miss — new
+        shape, dtype, layout, period program, parameters, devices or an
+        unsupported disposition — falls back to the existing materialization and
+        candidate-selection route, which populates this same cache entry.
+        """
+        widths = workspace_width_candidates(
+            axes=program.requirements.axes,
+            fixed_widths=_dispatch_widths(
+                program=program, configured=self.execution.axis_widths, residency=None
+            ),
+            budget_bytes=None,
+        )[0]
+        key = _simulation_lowering_key(
+            runtime=self, program=program, n_subjects=n_subjects, widths=widths
+        )
+        with self.lock:
+            return self.cache.get(key)
 
     def prepare(
         self,
@@ -369,20 +402,8 @@ class SimulationRuntime:
         abstract_inputs: bool = False,
     ) -> CompiledSimulationProgram:
         """Own one compilation per concrete width without retaining live arguments."""
-        key = _lowering_key(
-            program_identity=_func_dedup_key(func=program.function),
-            arguments=jax.tree.map(_abstract_operand, program.arguments),
-            specialization_key=(
-                n_subjects,
-                tuple(widths.items()),
-                self.enable_jit,
-                self.execution.simulation_sharding,
-                tuple((device.platform, device.id) for device in self.subject_devices),
-            ),
-            output_roles=program.output_roles,
-            layout_key=program.disposition,
-            placement_key=self.execution.device_ids,
-            compiler_options=program.compiler_options,
+        key = _simulation_lowering_key(
+            runtime=self, program=program, n_subjects=n_subjects, widths=widths
         )
         with self.lock:
             cached = self.cache.get(key)
@@ -429,6 +450,39 @@ class SimulationRuntime:
             del self.in_flight[key]
             future.set_result(compiled)
         return compiled
+
+
+def _simulation_lowering_key(
+    *,
+    runtime: SimulationRuntime,
+    program: MaterializedCoreProgram,
+    n_subjects: int,
+    widths: Mapping[str, int],
+) -> Hashable:
+    """Return the full compiler-identity key shared by compilation and dispatch.
+
+    This is the single source of the exact-signature key: program/function
+    identity, resolved argument PyTree structure and leaf shape/dtype/weak
+    type/sharding, output roles, disposition, device placement and compiler
+    options. Reused unchanged by `compile_candidate` (populating the cache) and
+    by `_prepared_dispatch` (a warm unbudgeted hit reading it), so the two can
+    never diverge.
+    """
+    return _lowering_key(
+        program_identity=_func_dedup_key(func=program.function),
+        arguments=jax.tree.map(_abstract_operand, program.arguments),
+        specialization_key=(
+            n_subjects,
+            tuple(widths.items()),
+            runtime.enable_jit,
+            runtime.execution.simulation_sharding,
+            tuple((device.platform, device.id) for device in runtime.subject_devices),
+        ),
+        output_roles=program.output_roles,
+        layout_key=program.disposition,
+        placement_key=runtime.execution.device_ids,
+        compiler_options=program.compiler_options,
+    )
 
 
 def _dispatch_widths(

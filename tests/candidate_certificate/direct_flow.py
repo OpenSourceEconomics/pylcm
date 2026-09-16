@@ -393,7 +393,7 @@ _SOURCE_SEALS = {
     WORKSPACE_PLANNING_SOURCE: "6d42fb80e7d5f2084fe35bd406f77405cc3ffcc7c7a4911fcc63bef262fcdc88",
     SIMULATION_PROGRAMS_SOURCE: "b75ec55e48f7abf37a5d0401681f54ce92f4f7c7bddd7ab45407c0551ed8ed07",
     SIMULATION_PROGRAM_TYPES_SOURCE: "222cb4d5053a26f333b0c2f97393badc50182b0ae8d90f2fccc6b8faa4eb6169",
-    SIMULATION_RUNTIME_SOURCE: "bac3645a16c8efa7e180d86f707872617448f55406e8f3307cb0fed698ee6861",
+    SIMULATION_RUNTIME_SOURCE: "f5f953caecc5cbe69767a7a11ac42d666129885bbd7683c0f548795d683fe5ef",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
@@ -3120,10 +3120,11 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_RUNTIME_SOURCE: (
-            "4aab7ef23c192f870b438b9f71ae3a64883f5bf3c9b32ec53245645cb35180d7",
+            "54fa0113191f4893a5078d90737f254f78676ba7e236f58e68f45a22dc5b281b",
             {
                 "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
-                "SimulationRuntime.dispatch": "b936af2fdda53d89102dc39ee6846e1c53072222a216aeeca3e69f34df201165",
+                "SimulationRuntime.dispatch": "0eb4aa7e14fbb6614d6f63d3993d620ad1ad3b946d22b119879d81b330fd30e5",
+                "SimulationRuntime._prepared_dispatch": "5f2564d8e5583e60d0d53900ebc8d42c773773be074b272624757b2a9548b087",
                 "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
                 "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
                 "SimulationRuntime._prepare_materialized": "81f08f68234a734a0d5a4ac0cf45d5cad6bcae7426a6291f61e9d7b1635d0cc2",
@@ -3133,10 +3134,11 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
                 "_build_context": "d2de03c66739cd53f5c9e1f95f9fd0ab4c57334ca853e7a5e8f0422cf733852d",
                 "SimulationRuntime._materialize": "ad4bea86c85d6fb3ac6e72f164a852c42f677fc3fab5e321ec34805f8c351aaf",
                 "SimulationRuntime._require_budget_context": "6818040f38e55d623ae48f58b61ab3f1858d7ecd79df5b3f68321c364bfa6910",
-                "SimulationRuntime.compile_candidate": "5250b38cc24129e7a20005bec505bdf1b8e1e3e67d76d2d84439b22cd5805ac8",
+                "SimulationRuntime.compile_candidate": "d41ac350bd07b93aa9d16f1e932da64e8e61824fc8d55f213a2ff5a3ab4584fa",
                 "_CachedSimulationCandidateCompiler.__call__": "28dcd8f5efac82c89e21143112cf45402a5dde3585423bd912f4c7b455e62107",
                 "_simulation_memory": "f27db66a13a6dd01dbe8acea8f3fc1348257b55eebb8e4f45ed8c7f8ca3607ca",
                 "_SimulationResidentBytes.__call__": "1de7cce7b963299d2803cc325d95389fe99fad8282a3b9a707bdddbb3dccd450",
+                "_simulation_lowering_key": "707adbce53fb0fbb1c5d30dbed7d058357cd007ccd5a507952d64e17b8c0d63a",
             },
         ),
         SIMULATION_COMPILE_SOURCE: (
@@ -4292,7 +4294,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/runtime.py": (
-        "4aab7ef23c192f870b438b9f71ae3a64883f5bf3c9b32ec53245645cb35180d7",
+        "54fa0113191f4893a5078d90737f254f78676ba7e236f58e68f45a22dc5b281b",
         {
             "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
             "SimulationRuntime.prepare_abstract": "842dba8c1e48637eba99548bebb2858a25116785451901451be656ad3ab55a76",
@@ -9400,8 +9402,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_RUNTIME_SOURCE,
                 "source": replace_once(
                     source=simulation_runtime_source,
-                    old="            program_identity=_func_dedup_key(func=program.function),",
-                    new="            program_identity=0,",
+                    old="        program_identity=_func_dedup_key(func=program.function),",
+                    new="        program_identity=0,",
                     label="body_cache_identity_dropped",
                 ),
             },
@@ -9409,8 +9411,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_RUNTIME_SOURCE,
                 "source": replace_once(
                     source=simulation_runtime_source,
-                    old="            compiler_options=program.compiler_options,",
-                    new="            compiler_options=(),",
+                    old="        compiler_options=program.compiler_options,",
+                    new="        compiler_options=(),",
                     label="compiler_options_dropped",
                 ),
             },
