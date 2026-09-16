@@ -58,3 +58,20 @@ Full API examples belong in the topic files, and full plans remain in their
 authoritative location. For the next bounded task, use the templates linked from
 [workflow.md](agent-guide/workflow.md), one stage at a time. Do not grow this entry
 point with incident narratives. Update the relevant module or verified tool instead.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues of `OpenSourceEconomics/pylcm`, driven through the `gh`
+CLI; pull requests are not a request surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage labels are used verbatim (`needs-triage`, `needs-info`,
+`ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `CONTEXT.md` and `docs/adr/` at the repository root, created
+lazily. See `docs/agents/domain.md`.
