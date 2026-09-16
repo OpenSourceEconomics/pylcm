@@ -17,6 +17,7 @@ from lcm.exceptions import FunctionDispatchError
 from lcm.typing import BoolND, FloatND, IntND
 
 _MAX_FLAT_CELL_INDEX = 2**31 - 1
+_MAX_WHOLE_PRODUCT_COORDINATES = 2
 
 FunctionWithArrayReturn = TypeVar(
     "FunctionWithArrayReturn",
@@ -376,6 +377,13 @@ class _TiledProductMap:
                 if name not in self.variables
             }
         )
+        if width >= n_cells and len(self.variables) <= _MAX_WHOLE_PRODUCT_COORDINATES:
+            return _map_whole_product(
+                func=self.func,
+                variables=self.variables,
+                coordinates=coordinates,
+                arguments=arguments,
+            )
         if len(self.variables) > 1 and width // min(width, shape[-1]) > 1:
             return _map_grouped_product(
                 func=self.func,
@@ -416,13 +424,14 @@ def _map_grouped_product(
     """
     inner_width = min(width, shape[-1])
     outer_width = max(1, width // inner_width)
+    tiled_final = _MapOverFinalCoordinate(
+        func=func,
+        variable=variables[-1],
+        coordinate=coordinates[-1],
+        width=inner_width,
+    )
     evaluate = _EvaluateTiledCell(
-        func=_MapOverFinalCoordinate(
-            func=func,
-            variable=variables[-1],
-            coordinate=coordinates[-1],
-            width=inner_width,
-        ),
+        func=_final_mapper(mapper=tiled_final, extent=shape[-1]),
         variables=variables[:-1],
         coordinates=coordinates[:-1],
         strides=tuple(
@@ -465,6 +474,62 @@ class _MapOverFinalCoordinate:
             func=evaluate,
             xs=jnp.arange(self.coordinate.shape[0], dtype=jnp.int32),
             batch_size=self.width,
+        )
+
+
+def _map_whole_product(
+    *,
+    func: Callable[..., Any],
+    variables: tuple[str, ...],
+    coordinates: tuple[jax.Array, ...],
+    arguments: MappingProxyType[str, Any],
+) -> Any:  # noqa: ANN401
+    """Map coordinates whose windows cover them, without decoding a flat index.
+
+    Enumerating a grid by index and gathering every element back out of it is an
+    identity, but it replaces a compiled program's grid argument by a computed
+    operand, which changes how the backend fuses the consumers that read it. A
+    window covering the grid therefore maps the grid itself. The scalar cell sees
+    the same values either way, so results are unchanged.
+
+    Only a product of at most `_MAX_WHOLE_PRODUCT_COORDINATES` coordinates takes
+    this route: a longer prefix is what the flat decode keeps on one batch axis.
+    """
+    mapped = productmap(
+        func=func, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
+    )
+    named = dict(zip(variables, coordinates, strict=True))
+    return mapped(**arguments, **named)
+
+
+def _final_mapper(
+    *, mapper: _MapOverFinalCoordinate, extent: int
+) -> Callable[..., Any]:
+    """Drop the final coordinate's flat decode once its window covers the grid."""
+    if mapper.width < extent:
+        return mapper
+    return _MapWholeCoordinate(
+        func=mapper.func, variable=mapper.variable, coordinate=mapper.coordinate
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _MapWholeCoordinate:
+    """Evaluate the final coordinate over its whole grid for one prefix cell."""
+
+    func: Callable[..., Any]
+    """Unchanged scalar cell function."""
+    variable: str
+    """Name of the final Cartesian coordinate."""
+    coordinate: jax.Array
+    """Separate final-coordinate grid, mapped in full."""
+
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        return _map_whole_product(
+            func=self.func,
+            variables=(self.variable,),
+            coordinates=(self.coordinate,),
+            arguments=MappingProxyType(kwargs),
         )
 
 

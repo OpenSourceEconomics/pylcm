@@ -335,3 +335,98 @@ def test_untiled_outer_axes_restore_exact_flag_order(
         offset=jnp.asarray(5.0),
     )
     assert_array_equal(flags, np.asarray([[False, False, False], [True, False, False]]))
+
+
+def _primitive_count(*, graph: Any, name: str) -> int:
+    """Count one primitive across nested mapping and reduction bodies."""
+    if not hasattr(graph, "eqns"):
+        if hasattr(graph, "jaxpr"):
+            return _primitive_count(graph=graph.jaxpr, name=name)
+        return 0
+    total = 0
+    for equation in graph.eqns:
+        total += equation.primitive.name == name
+        for parameter in equation.params.values():
+            children = (
+                parameter if isinstance(parameter, tuple | list) else (parameter,)
+            )
+            total += sum(_primitive_count(graph=child, name=name) for child in children)
+    return total
+
+
+@pytest.mark.parametrize(
+    ("variables", "width", "expected_gathers"),
+    [
+        # One coordinate, one tile: the whole grid is the window.
+        (("first",), 2, 0),
+        # Two coordinates, one tile: a single-grid prefix and a whole final axis.
+        (("first", "second"), 6, 0),
+        # A window narrower than the final grid still decodes a flat index.
+        (("first", "second"), 2, 2),
+        # Three coordinates: the two-grid prefix keeps its flat decode.
+        (("first", "second", "last"), 30, 2),
+    ],
+)
+def test_whole_coordinate_windows_read_their_grid_without_an_index_gather(
+    *, variables: tuple[str, ...], width: int, expected_gathers: int
+) -> None:
+    """A window covering a grid maps that grid, instead of gathering from it.
+
+    A gather of every element of a period-invariant grid is an identity that the
+    compiler cannot see through: it hides the grid behind a computed operand and
+    changes how the backend partitions the consuming fusions. A window that covers
+    the grid therefore vectorizes over the grid itself.
+    """
+    grids = {
+        "first": jnp.asarray([1.0, 2.0]),
+        "second": jnp.asarray([1.0, 2.0, 3.0]),
+        "last": jnp.asarray([0.0, 0.125, 0.25, 0.375, 0.5]),
+    }
+    arguments = {
+        name: grid if name in variables else jnp.asarray(0.5)
+        for name, grid in grids.items()
+    }
+    mapped = functools.partial(
+        cast(
+            "Callable[..., Any]",
+            dispatchers.tiled_productmap(
+                func=_evaluate_grouped_cell,
+                variables=variables,
+                width_keyword="cell_width",
+            ),
+        ),
+        cell_width=width,
+    )
+    traced = jax.make_jaxpr(mapped)(**arguments)
+    assert _primitive_count(graph=traced, name="gather") == expected_gathers
+
+
+@pytest.mark.parametrize("variables", [("first", "second"), ("second", "first")])
+@pytest.mark.parametrize("width", [1, 2, 3, 6, 12])
+def test_whole_coordinate_windows_do_not_move_a_single_bit(
+    *, variables: tuple[str, ...], width: int
+) -> None:
+    """Every tile width returns exactly the untiled product, bit for bit."""
+    arguments = {
+        "first": jnp.asarray([1.0, 2.0]),
+        "second": jnp.asarray([1.0, 2.0, 3.0]),
+        "last": jnp.asarray([0.25]),
+    }
+    mapped = cast(
+        "Callable[..., Any]",
+        dispatchers.tiled_productmap(
+            func=_evaluate_grouped_cell,
+            variables=variables,
+            width_keyword="cell_width",
+        ),
+    )
+    untiled = cast(
+        "Callable[..., Any]",
+        dispatchers.productmap(
+            func=_evaluate_grouped_cell,
+            variables=variables,
+            batch_sizes=dict.fromkeys(variables, 0),
+        ),
+    )
+    got = mapped(**arguments, cell_width=width)
+    assert_array_equal(np.asarray(got), np.asarray(untiled(**arguments)))

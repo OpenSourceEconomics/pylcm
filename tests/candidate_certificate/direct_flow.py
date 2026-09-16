@@ -408,7 +408,7 @@ _SOURCE_SEALS = {
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
-    DISPATCHERS_SOURCE: "5f75190406d80c6e99aabd06000b8c690d32d343cc01b6fb653768fa6906a776",
+    DISPATCHERS_SOURCE: "4144bc4228022769bc340cc2acae5614ab2551871462241a435db3a17718d894",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "0838079e35ba498009d8af7e6ed717f870a96a2fdc628d25e80310cd630174a9",
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
@@ -6481,12 +6481,15 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
 
 _GROUPED_MAPPER_CONTRACTS = {
     "src/_lcm/utils/dispatchers.py": (
-        "25b1ce052a4d1be8b7d0a851e92c47f1b354932b3e24cc2e657ba2a6c5c0a467",
+        "e07b714ea45ff89b63fc4eb979fbb78b6847383694a19796af7e4e08091ab547",
         {
             "tiled_productmap": "5c90e484842166ba0eeee513fb39051c154d2f4c835f2b49bf53fa1bc6845222",
-            "_TiledProductMap.__call__": "045b36c13628348873fdaa040ae02b84359d381ee0d93082b1ab3a64fc365da2",
-            "_map_grouped_product": "81bc7b2858fe526feaf9f5f5cff0e458ec94e028784a31aedbe092ac26e4838b",
+            "_TiledProductMap.__call__": "b398eff34df6867799a9dd877766bd16a6e784263e8de139ba6c136e20bb75de",
+            "_map_grouped_product": "5aa01e79393201769fc79d10a00ee264b9083ad40a0a23462e4170327e25bc20",
             "_MapOverFinalCoordinate.__call__": "d4934af255cab7f3583631ee376e18eabc6bb6f7742ff945f1e95a260fdf3ece",
+            "_map_whole_product": "14c2d1b0508346f247a30494b0b4983bca7046216f467318eeaf0ade75bb5f4b",
+            "_final_mapper": "c7fb439e2c51e205d7dfbfdc785b7a89e96fee7906312564fef5b4021f4c1dee",
+            "_MapWholeCoordinate.__call__": "1f0d033c579a54294d8c3397abf8b3ae2e5be27c7921f6a444e453960252d506",
             "_EvaluateTiledCell.__call__": "6836bd1b2ab970e74485a818ace01e603a3e25d9b49337e0a11e39efe88e770a",
             "_restore_product_axes": "aefd91d6e6d5c1d49f1451435c80b04c616fc010784907adcf8e377508f087c2",
             "map_over_leading_axis": "2e4707b27863a6d373660a18404ad5373d00cf89037276dc17e44095ab5fa9d2",
