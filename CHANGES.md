@@ -125,7 +125,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   Without a budget, streamed solve axes use their bootstrap widths unless an explicit
   width is supplied: a reduced axis, whose block is purely temporary, is capped at 64;
   a tiled output axis, whose tiles concatenate into a full-size resident result, is
-  capped at up to 512, the cap shrinking so the product of an unbudgeted candidate's
+  capped at up to 1024, the cap shrinking so the product of an unbudgeted candidate's
   widths stays bounded regardless of model size. An omitted width requests planning,
   and zero is not a full-width sentinel in `axis_widths`.
 - Budgeted solves wait for earlier compiled work before dispatching another core

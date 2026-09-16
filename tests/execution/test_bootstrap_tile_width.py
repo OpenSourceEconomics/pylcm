@@ -72,7 +72,7 @@ def _tiled(
 
 
 def test_the_precautionary_core_no_longer_tiles_its_cells_in_blocks_of_64() -> None:
-    """An unbudgeted solve of the ASV precautionary shapes tiles cells 512 wide."""
+    """An unbudgeted solve of the ASV precautionary shapes tiles cells 1024 wide."""
     (candidate,) = workspace_width_candidates(
         axes=(
             _reduced(extent=_PRECAUTIONARY_ACTION_EXTENT),
@@ -80,17 +80,27 @@ def test_the_precautionary_core_no_longer_tiles_its_cells_in_blocks_of_64() -> N
         )
     )
 
-    assert candidate == {"action_product": 64, "cell": 512}
+    assert candidate == {"action_product": 64, "cell": 1024}
 
 
 @pytest.mark.parametrize(
     ("extent", "expected"),
-    [(2, 1), (3, 2), (6, 4), (64, 32), (65, 64), (512, 256), (513, 512), (5000, 512)],
+    [
+        (2, 1),
+        (3, 2),
+        (6, 4),
+        (64, 32),
+        (65, 64),
+        (512, 256),
+        (513, 512),
+        (1025, 1024),
+        (5000, 1024),
+    ],
 )
-def test_a_tiled_axis_bootstraps_at_the_largest_power_of_two_below_512(
+def test_a_tiled_axis_bootstraps_at_the_largest_power_of_two_below_1024(
     *, extent: int, expected: int
 ) -> None:
-    """A tiled output axis streams below its extent, capped at 512 rather than 64."""
+    """A tiled output axis streams below its extent, capped at 1024 rather than 64."""
     (candidate,) = workspace_width_candidates(axes=(_tiled(extent=extent),))
 
     assert candidate == {"cell": expected}
@@ -113,7 +123,7 @@ def test_the_bootstrap_block_stays_within_the_block_cap() -> None:
         )
     )
 
-    assert candidate == {"cell": 512, "savings_point": 64, "euler_point": 64}
+    assert candidate == {"cell": 1024, "savings_point": 64, "euler_point": 64}
 
 
 def test_no_tiled_axis_bootstraps_narrower_than_the_reduced_cap() -> None:
@@ -160,8 +170,8 @@ def test_a_tiled_bootstrap_respects_alignment_and_the_axis_minimum() -> None:
         axes=(_tiled(extent=5000, minimum_width=600),)
     )
 
-    assert aligned == {"cell": 500}
-    assert lifted == {"cell": 600}
+    assert aligned == {"cell": 1000}
+    assert lifted == {"cell": 1024}
 
 
 def test_the_tile_cap_stays_above_the_reduced_cap() -> None:

@@ -94,7 +94,7 @@ An unknown state, an unknown axis name, or an invisible device id raises
 
 Without a budget (the default), every streamed axis is lowered at its bootstrap width —
 the largest power of two below the axis extent, capped at 64 for a reduced axis (whose
-block is purely temporary) and at up to 512 for a tiled output axis (whose tiles
+block is purely temporary) and at up to 1024 for a tiled output axis (whose tiles
 concatenate into a full-size resident result) — or at the width
 `ExecutionConfig(axis_widths={...})` fixes for that axis name, and compiler memory
 reports are not consulted. The whole axis is lowered only when a budget shows it fits or

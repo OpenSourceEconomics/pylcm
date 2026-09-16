@@ -31,7 +31,7 @@ BOOTSTRAP_WIDTH_CAP = 64
 # concatenates its tiles into a result resident at the full extent whatever the
 # width, so only its temporaries grow with it, while a reduced axis block is
 # pure temporary.
-BOOTSTRAP_TILE_WIDTH_CAP = 512
+BOOTSTRAP_TILE_WIDTH_CAP = 1024
 
 # Largest product of unbudgeted widths a candidate aims for, so the live block
 # stays bounded by a fixed number of cells on every backend.
