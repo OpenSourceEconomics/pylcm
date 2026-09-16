@@ -29,6 +29,7 @@ from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt
 from tests.ci import pytest_policy
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
+from tests.ci.receipt_plugin import maybe_register as maybe_register_receipt_plugin
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
 X64_ENABLED: bool = True
@@ -159,6 +160,7 @@ def pytest_configure(config):
     config.stash[_EXACT_KERNEL_SKIPS_STASH_KEY] = []
     if getattr(config, "workerinput", None) is None:
         _CONTROLLER_EXACT_KERNEL_SKIPS.clear()
+    maybe_register_receipt_plugin(config)
     pytest_policy.configure(config)
 
 

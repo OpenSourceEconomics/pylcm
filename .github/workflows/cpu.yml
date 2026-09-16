@@ -128,6 +128,13 @@ jobs:
           exit "$rc"
       - name: Run pytest
         shell: bash {0}
+        env:
+          # Opt-in invocation receipt writer (tests/ci/receipt_plugin.py). A
+          # directory, not a file: each invocation's own --junitxml basename
+          # names its receipt, so one export covers every chained command
+          # below. Purely additive -- it records what pytest already decided,
+          # never changes selection.
+          PYLCM_CI_RECEIPT: reports/ci-receipts
         # Wall-time witnesses run after the parallel workers have exited.
         run: >-
           mkdir -p reports &&
@@ -150,6 +157,9 @@ jobs:
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}
+        env:
+          # See the "Run pytest" step above: opt-in receipt directory, additive.
+          PYLCM_CI_RECEIPT: reports/ci-receipts
         # The long `tests/solution -m slow` battery runs in the sharded matrix
         # below. This base leg keeps the fast suite, slow non-solution tests, and
         # the two certified-envelope cases. Certified runs in its own process
@@ -413,6 +423,7 @@ jobs:
           path: |
             reports/junit-cpu-*.xml
             reports/simulation-timings/*.json
+            reports/ci-receipts/*.json
           if-no-files-found: warn
       - name: Upload exact-kernel capability diagnostics
         # Kept out of the JUnit artifact above on purpose. The matrix's `broken`
@@ -545,6 +556,9 @@ jobs:
         # and keep only the inert `--policy-child --hardware-profile=cpu`.
         env:
           XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
+          # See "Run pytest and collect coverage" in the `tests` job: opt-in
+          # receipt directory, additive.
+          PYLCM_CI_RECEIPT: reports/ci-receipts
         run: |
           mkdir -p reports
           check_population() {
@@ -765,6 +779,7 @@ jobs:
           path: |
             reports/junit-cpu-*.xml
             reports/simulation-timings/*.json
+            reports/ci-receipts/*.json
           if-no-files-found: warn
       - name: Upload exact-kernel capability diagnostics
         # Separate from the JUnit artifact for the same reason as the fp64 leg:
@@ -821,6 +836,8 @@ jobs:
       XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
       PYLCM_CI_PRECISION: ${{ matrix.precision }}
       PYLCM_CI_SHARD: ${{ matrix.shard }}
+      # Opt-in receipt directory (tests/ci/receipt_plugin.py); additive.
+      PYLCM_CI_RECEIPT: reports/ci-receipts
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: prefix-dev/setup-pixi@v0.10.2
@@ -894,6 +911,7 @@ jobs:
           path: |
             reports/junit-*.xml
             reports/solution-shard-files.txt
+            reports/ci-receipts/*.json
           if-no-files-found: warn
       - name: Upload coverage report
         if: matrix.precision == 64
