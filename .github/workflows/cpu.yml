@@ -136,7 +136,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp64-$RUNNER_OS-general-$PYLCM_SHARD.xml\
-            -n 4 "${coverage_args[@]}"
+            -n 4 ${coverage_args[@]+"${coverage_args[@]}"}
       - name: Upload JUnit reports and receipts
         # `always()` so a failing run still publishes its report: the XML is how
         # a run's counts are read back, and a run that failed is exactly when
@@ -468,7 +468,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp$PYLCM_CI_PRECISION-rest-slow.xml \
-            -n 2 "${coverage_args[@]}"
+            -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
       - name: Upload JUnit reports and receipts
         # `always()` so a failing run still publishes its report: the XML is how
         # a run's counts are read back, and a run that failed is exactly when
@@ -727,7 +727,7 @@ jobs:
             --precision="$PYLCM_CI_PRECISION" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v -n 0 \
-            --junitxml="$pylcm_junit_report" "${coverage_args[@]}"
+            --junitxml="$pylcm_junit_report" ${coverage_args[@]+"${coverage_args[@]}"}
           pixi run -e tests-cpu python -m tests.ci.check_simulation_timing_report \
             "$pylcm_junit_report"
       - name: Upload JUnit reports and receipts
@@ -874,7 +874,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/execution/test_transfer_catalogue.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -916,7 +916,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_placement.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -958,7 +958,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_lifetime.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1000,7 +1000,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_template_placement.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1042,7 +1042,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_simulation_values.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1084,7 +1084,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_simulation_value_reads.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1126,7 +1126,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_solve_readiness.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1168,7 +1168,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_eager_weak_inputs.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1210,7 +1210,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_constant_simulation.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1252,7 +1252,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/simulation/test_operand_placement.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1294,7 +1294,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/simulation/test_host_operations.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1336,7 +1336,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_taste_stream.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1378,7 +1378,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Run tests/test_distributed_entry_allocations.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1420,7 +1420,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit"
       - name: Write this lane family's coverage XML
         if: always() && matrix.precision == 64
@@ -1571,7 +1571,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit" no-skips
       - name: Run tests/simulation/test_independent_outer_cohorts.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1615,7 +1615,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit" no-skips
       - name: Run tests/test_continuous_assets_sharding.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1659,7 +1659,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit" no-skips
       - name: Run tests/test_continuous_transfer_admission.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1703,7 +1703,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit" no-skips
       - name: Run tests/test_continuous_assets_aca_numerics.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1747,7 +1747,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit" no-skips
       - name: Run tests/simulation/test_subject_parallel.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1791,7 +1791,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit" no-skips
       - name: Run tests/simulation/test_subject_parallel_runtime.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1835,7 +1835,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit" no-skips
       - name: Run tests/simulation/test_subject_parallel_model.py
         # Unchained: its own step, its own fresh pytest process, its own JUnit
@@ -1879,7 +1879,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml="$pylcm_junit" \
-            "${coverage_args[@]}"
+            ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit" no-skips
       - name: Write this lane family's coverage XML
         if: always() && matrix.precision == 64
@@ -2136,7 +2136,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 \
             --junitxml="$pylcm_junit_report" \
-            -n 2 "${coverage_args[@]}"
+            -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
       - name: Upload JUnit report and shard manifest
         if: always()
         uses: actions/upload-artifact@v7.0.1
