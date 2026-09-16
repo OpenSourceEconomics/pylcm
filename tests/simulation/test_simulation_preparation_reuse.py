@@ -169,7 +169,10 @@ def test_public_supplied_simulation_does_not_retrace_metadata(
             seed=19,
         )
     assert _snapshot(actual) == _snapshot(expected)
-    assert counts["payload_reads"] > 1
+    # The warm call serves its chunk profile from the runtime-owned registry, so
+    # the declared payload metadata is not re-read; admission still measures the
+    # operands it places on every call.
+    assert counts["payload_reads"] == 0
     assert counts["operand_reads"] > 1
     assert counts["producer_graphs"] == 0  # This fixture uses explicit normal stages.
     assert {
