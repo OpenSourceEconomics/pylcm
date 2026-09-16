@@ -433,6 +433,7 @@ rules.unused-awaitable = "error"
 rules.unused-ignore-comment = "error"
 
 [tool.pytest]
+ini_options.testpaths = [ "tests" ]
 ini_options.norecursedirs = [ "docs" ]
 ini_options.addopts = [
   "--pdbcls=pdbp:Pdb",
