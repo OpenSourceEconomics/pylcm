@@ -9,6 +9,7 @@ import functools
 from types import MappingProxyType
 from typing import Any
 
+import numpy as np
 import pytest
 
 from _lcm.solution import backward_induction
@@ -123,11 +124,15 @@ def test_a_per_regime_width_preserves_the_solved_values() -> None:
     assert set(pinned_values) == set(planned_values)
     for period, by_regime in planned_values.items():
         for regime_name, expected in by_regime.items():
+            # Values near zero are born by cancellation between the flow utility and
+            # the discounted continuation, so the gap is measured at the spacing of
+            # those operands rather than at the compared element's own magnitude.
             assert_agrees_to_ulp(
                 got=pinned_values[period][regime_name],
                 expected=expected,
                 n_ulp=8,
                 err_msg=f"{regime_name} period {period}",
+                operand_magnitude=float(np.abs(np.asarray(expected)).max()),
             )
 
 
