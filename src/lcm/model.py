@@ -30,6 +30,7 @@ from _lcm.execution.core_program import CoreProgram, core_program_graph
 from _lcm.execution.execution_plan import (
     ResolvedExecution,
     fail_if_axis_widths_name_undeclared_axes,
+    fail_if_per_regime_widths_name_non_solve_axes,
     resolve_execution_config,
     visible_device_ids,
 )
@@ -625,6 +626,7 @@ class Model:
             | frozenset(
                 name for regime in self.user_regimes.values() for name in regime.states
             ),
+            regime_names=frozenset(self.user_regimes),
         )
         _fail_if_a_sharded_state_is_pruned(
             user_regimes=self.user_regimes,
@@ -659,11 +661,15 @@ class Model:
         # this is the first point at which the declaration can be checked at all.
         # Each phase contributes one collection of programs.
         fail_if_axis_widths_name_undeclared_axes(
-            axis_widths=self._execution.axis_widths,
+            axis_widths=execution_config.axis_widths,
             program_collections=(
                 _solve_programs(regimes=self._regimes),
                 _simulation_programs(regimes=self._regimes),
             ),
+        )
+        fail_if_per_regime_widths_name_non_solve_axes(
+            axis_widths_by_regime=self._execution.axis_widths_by_regime,
+            solve_programs=_solve_programs(regimes=self._regimes),
         )
         self.stakeholder_names_to_ids = next(
             (regime.stakeholder_names_to_ids for regime in self._regimes.values()),

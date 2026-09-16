@@ -5,6 +5,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Execution widths per regime
+
+- `ExecutionConfig(axis_widths=...)` accepts a width per regime. A bare integer under an
+  axis name fixes that axis in every regime declaring it; a mapping from
+  regime name to width — `axis_widths={"cell": {"cheap": 512, "heavy": 8}}` — fixes it
+  only in the regimes it names and leaves the planner free in every other one, so a
+  width one regime's shape demands no longer chunks an unrelated regime. The two forms
+  may be mixed across axes. A regime name the model does not declare, and a per-regime
+  width for an axis only simulation programs declare, are refused at model build with an
+  `ExecutionPlanningError` naming the declaration.
+
 ### Common taste shocks across counterfactuals
 
 - `Model.simulate(taste_shock_seed=...)` selects an independent Threefry stream for

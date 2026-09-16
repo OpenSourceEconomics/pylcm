@@ -69,6 +69,24 @@ arrays, retained candidate banks, compilation memory, or total device memory.
 Which axis names exist depends on which solver a regime uses; each solver's section in
 [Solvers and capabilities](../reference/solvers.md) names the axes it declares.
 
+### Fix it in one regime only
+
+A bare integer applies to every regime declaring the axis, which is the wrong instrument
+when two regimes have opposite shapes: a width that keeps a 16-cell, 2048-action regime
+inside memory takes a 4096-cell, two-action regime from eight chunks to 512. Give the
+axis a mapping from regime name to width instead, and only the regimes it names are
+fixed:
+
+```python
+ExecutionConfig(axis_widths={"cell": {"heavy": 8}})
+```
+
+Regimes the mapping does not name keep the width the planner chooses for them, per
+regime and per period. The two forms may be mixed across axes. Because only the solve
+phase plans per regime, an axis that only simulation programs declare — `subject`, for
+one — takes the bare-integer form; a per-regime width for it is refused at model build,
+as is one naming a regime the model does not declare.
+
 | axis              | declared by                                                                                          |
 | ----------------- | ---------------------------------------------------------------------------------------------------- |
 | `action_product`  | the flattened Cartesian action product of a streamed `GridSearch` core                               |

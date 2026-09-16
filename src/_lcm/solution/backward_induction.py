@@ -3305,7 +3305,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
         budget_bytes=execution.device_memory_bytes,
-        fixed_widths=execution.axis_widths,
+        execution_widths=execution,
         enable_jit=enable_jit,
         continuous_sharded_state=execution.continuous_sharded_state,
         donate_buffers=execution.donate_buffers,
@@ -3627,7 +3627,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         try:
             plan = plan_workspace(
                 axes=representative.requirements.axes,
-                fixed_widths=execution.axis_widths,
+                fixed_widths=execution.widths_for(regime_name=triple[0]),
                 compile_candidate=_CompiledCandidateLookup(
                     compiled_by_width=compiled_by_width
                 ),
@@ -3943,7 +3943,7 @@ def _resolve_output_layouts_and_lowering_keys(
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     budget_bytes: int | None,
-    fixed_widths: Mapping[str, int],
+    execution_widths: ResolvedExecution,
     enable_jit: bool,
     continuous_sharded_state: str | None = None,
     donate_buffers: bool = True,
@@ -4037,7 +4037,7 @@ def _resolve_output_layouts_and_lowering_keys(
         )
         width_candidates = workspace_width_candidates(
             axes=materialized.requirements.axes,
-            fixed_widths=fixed_widths,
+            fixed_widths=execution_widths.widths_for(regime_name=regime_name),
             budget_bytes=budget_bytes,
         )
         state_order = tuple(

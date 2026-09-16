@@ -5,7 +5,11 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
-from lcm.typing import StateName
+from lcm.typing import RegimeName, StateName
+
+# The declared width of one execution axis: one width for every regime, or one
+# width per named regime.
+type AxisWidth = int | Mapping[RegimeName, int]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -38,8 +42,22 @@ class ExecutionConfig:
     lists what a rejected model violates.
     """
 
-    axis_widths: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
-    """Planner axis name to the block width it is compiled at; empty means planned."""
+    axis_widths: Mapping[str, AxisWidth] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Planner axis name to the block width it is compiled at; empty means planned.
+
+    A width takes one of two forms, and the two may be mixed across axes:
+
+    - A bare integer fixes that axis in every regime declaring it.
+    - A mapping from regime name to width fixes it only in the regimes it
+      names; every other regime keeps the width the planner chooses for it.
+
+    The per-regime form serves the solve phase, where a regime's shape drives
+    the choice: two regimes of opposite shape no longer share the width one of
+    them needs. Simulation plans without a regime in hand, so an axis only its
+    programs declare takes the bare-integer form.
+    """
 
     devices: tuple[int, ...] | None = None
     """Device ids the model may use, or `None` for every device JAX reports."""
@@ -65,8 +83,7 @@ class ExecutionConfig:
             raise ValueError(
                 "ExecutionConfig.simulation_sharding must be legacy or subjects."
             )
-        widths = dict(self.axis_widths)
-        _fail_if_axis_widths_invalid(axis_widths=widths)
+        widths = _normalized_axis_widths(axis_widths=self.axis_widths)
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))
         sharded = tuple(self.sharded_states)
         _fail_if_sharded_states_invalid(sharded_states=sharded)
@@ -87,18 +104,70 @@ def _fail_if_budget_invalid(*, device_memory_bytes: int | None) -> None:
         raise ValueError("ExecutionConfig.device_memory_bytes must be positive.")
 
 
-def _fail_if_axis_widths_invalid(*, axis_widths: Mapping[str, int]) -> None:
-    """Require every axis name to be non-empty and every width a positive int."""
+def _normalized_axis_widths(
+    *, axis_widths: Mapping[str, AxisWidth]
+) -> dict[str, AxisWidth]:
+    """Validate both declaration forms and freeze the per-regime mappings.
+
+    Args:
+        axis_widths: The widths the caller declared, by axis name.
+
+    Returns:
+        The same declaration with every per-regime mapping copied into a
+        read-only mapping, so a later mutation of the caller's dict cannot
+        reach the configuration.
+
+    Raises:
+        TypeError: An axis name, regime name or width has the wrong type.
+        ValueError: A width is not positive, or a mapping names no regime.
+
+    """
+    normalized: dict[str, AxisWidth] = {}
     for name, width in axis_widths.items():
         if type(name) is not str or not name:
             msg = "ExecutionConfig.axis_widths keys must be non-empty axis names."
             raise TypeError(msg)
-        if type(width) is not int:
-            msg = f"ExecutionConfig.axis_widths[{name!r}] must be an exact int."
+        if isinstance(width, Mapping):
+            normalized[name] = MappingProxyType(
+                _validated_per_regime_widths(axis_name=name, widths=width)
+            )
+        else:
+            _fail_if_width_invalid(label=f"axis_widths[{name!r}]", width=width)
+            normalized[name] = width
+    return normalized
+
+
+def _validated_per_regime_widths(
+    *, axis_name: str, widths: Mapping[RegimeName, int]
+) -> dict[RegimeName, int]:
+    """Require at least one regime, each named once with a positive exact width."""
+    if not widths:
+        msg = (
+            f"ExecutionConfig.axis_widths[{axis_name!r}] names no regime; give a "
+            "bare integer to fix the axis in every regime."
+        )
+        raise ValueError(msg)
+    validated: dict[RegimeName, int] = {}
+    for regime_name, width in widths.items():
+        if type(regime_name) is not str or not regime_name:
+            msg = (
+                f"ExecutionConfig.axis_widths[{axis_name!r}] keys must be non-empty "
+                "regime names."
+            )
             raise TypeError(msg)
-        if width <= 0:
-            msg = f"ExecutionConfig.axis_widths[{name!r}] must be positive."
-            raise ValueError(msg)
+        _fail_if_width_invalid(
+            label=f"axis_widths[{axis_name!r}][{regime_name!r}]", width=width
+        )
+        validated[regime_name] = width
+    return validated
+
+
+def _fail_if_width_invalid(*, label: str, width: object) -> None:
+    """Require a positive exact integer, naming the declaration that carries it."""
+    if type(width) is not int:
+        raise TypeError(f"ExecutionConfig.{label} must be an exact int.")
+    if width <= 0:
+        raise ValueError(f"ExecutionConfig.{label} must be positive.")
 
 
 def _fail_if_sharded_states_invalid(*, sharded_states: tuple[StateName, ...]) -> None:

@@ -703,6 +703,7 @@ def process_regimes(
         ages=ages,
         all_grids=all_grids,
         axis_widths=resolved_execution.axis_widths,
+        axis_widths_by_regime=resolved_execution.axis_widths_by_regime,
         egm_continuation_targets=egm_continuation_targets,
         enable_jit=enable_jit,
         fold_only_regimes=fold_only_regimes,
@@ -863,6 +864,9 @@ class _CanonicalRegimeBuilder:
     axis_widths: MappingProxyType[str, int]
     """Model-resolved widths, including host loops built by a solver."""
 
+    axis_widths_by_regime: MappingProxyType[RegimeName, MappingProxyType[str, int]]
+    """Widths overriding the model-resolved ones, by regime name then axis name."""
+
     egm_continuation_targets: frozenset[RegimeName]
     """Regimes an EGM source carries into, which owe an engine-produced carry."""
 
@@ -932,6 +936,21 @@ class _CanonicalRegimeBuilder:
 
     state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]]
     """Immutable mapping of regime names to the grids of their states only."""
+
+    def _widths_for(self, *, regime_name: RegimeName) -> MappingProxyType[str, int]:
+        """Return the fixed axis widths one regime's solver build is planned at.
+
+        Args:
+            regime_name: The regime whose canonical form is being built.
+
+        Returns:
+            The model-resolved widths, with this regime's overrides applied.
+
+        """
+        override = self.axis_widths_by_regime.get(regime_name)
+        if not override:
+            return self.axis_widths
+        return MappingProxyType({**self.axis_widths, **override})
 
     def __call__(
         self,
@@ -1047,7 +1066,7 @@ class _CanonicalRegimeBuilder:
                 grid_schedule=self.grid_schedule,
                 state_action_space=self.state_action_spaces[regime_name],
                 submesh_device_ids=self.placement.devices_for(regime_name=regime_name),
-                axis_widths=self.axis_widths,
+                axis_widths=self._widths_for(regime_name=regime_name),
                 sharded_state_names=self.sharded_state_names_by_regime[regime_name],
                 ages=self.ages,
                 enable_jit=self.enable_jit,
