@@ -11,7 +11,7 @@ import struct
 import threading
 from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import Future
-from functools import partial
+from functools import cache, partial
 from types import FunctionType, MappingProxyType
 
 import jax
@@ -284,16 +284,19 @@ def _abstract_operand(value: object) -> object:
     return value
 
 
-def _validated_static_arguments(
-    *,
+@cache
+def _validated_operation_function(
     function: Callable[..., object],
-    arguments: Mapping[str, object],
-    static_arguments: Mapping[str, object],
-    subject_outputs: bool,
-) -> Mapping[str, object]:
-    """Use one pure-function and immutable-binding contract for both entry paths."""
-    if type(subject_outputs) is not bool:
-        raise ExecutionPlanningError("Subject-output metadata must be a bool.")
+) -> Callable[..., object]:
+    """Validate a profiled operation's function identity once at registration.
+
+    `inspect.unwrap`, the module-level/closure/qualname checks and the default
+    values below depend only on the function object, never on a call's current
+    arguments; they cannot change between calls with the same `function`. Cache
+    them per function so a warm dispatch does no re-inspection, while every
+    value-dependent check in `_validated_static_arguments` stays on the per-call
+    path below.
+    """
     original = inspect.unwrap(function)
     if (
         not isinstance(original, FunctionType)
@@ -308,6 +311,20 @@ def _validated_static_arguments(
         *tuple((original.__kwdefaults__ or {}).values()),
     ):
         _static_identity(default)
+    return function
+
+
+def _validated_static_arguments(
+    *,
+    function: Callable[..., object],
+    arguments: Mapping[str, object],
+    static_arguments: Mapping[str, object],
+    subject_outputs: bool,
+) -> Mapping[str, object]:
+    """Use one pure-function and immutable-binding contract for both entry paths."""
+    if type(subject_outputs) is not bool:
+        raise ExecutionPlanningError("Subject-output metadata must be a bool.")
+    _validated_operation_function(function)
     if any(type(name) is not str for name in (*arguments, *static_arguments)):
         raise ExecutionPlanningError("Operation argument names must be strings.")
     static = MappingProxyType(dict(sorted(static_arguments.items())))

@@ -517,24 +517,32 @@ def _stochastic_keys(
     return {f"key_{name}": key for name in names}
 
 
+# keyword-only-exempt: library-callback=jax.tree.map
+def _shared_leaf(
+    leaf: object, *, devices: tuple[jax.Device, ...]
+) -> jax.ShapeDtypeStruct:
+    """Project one retained leaf to the same shared destination layout.
+
+    Module-level so the beartype claw decorates it once at import instead of on
+    every `_shared_tree` call; see `_lcm/utils/functools.py`.
+    """
+    if not isinstance(leaf, jax.Array | jax.ShapeDtypeStruct):
+        raise ExecutionPlanningError(
+            "Forward retained inputs must be canonical JAX array metadata."
+        )
+    return _placed_abstract(
+        leaf=leaf,
+        sharding=simulation_value_sharding(
+            stored_sharding=leaf.sharding, devices=devices
+        ),
+    )
+
+
 def _shared_tree(
     *, tree: Mapping[str, object], devices: tuple[jax.Device, ...]
 ) -> Mapping[str, object]:
     """Project actual retained metadata to the same shared destination layout."""
-
-    def abstract(leaf: object) -> jax.ShapeDtypeStruct:
-        if not isinstance(leaf, jax.Array | jax.ShapeDtypeStruct):
-            raise ExecutionPlanningError(
-                "Forward retained inputs must be canonical JAX array metadata."
-            )
-        return _placed_abstract(
-            leaf=leaf,
-            sharding=simulation_value_sharding(
-                stored_sharding=leaf.sharding, devices=devices
-            ),
-        )
-
-    return jax.tree.map(abstract, tree)
+    return jax.tree.map(partial(_shared_leaf, devices=devices), tree)
 
 
 def _placed_abstract(

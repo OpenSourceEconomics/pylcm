@@ -9,6 +9,7 @@ input bytes and retained originals. This is a conservative admission bound.
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from types import MappingProxyType
 
 import jax
@@ -22,19 +23,26 @@ from _lcm.simulation.value_placement import simulation_value_sharding
 from lcm.exceptions import ExecutionPlanningError
 
 
+# keyword-only-exempt: library-callback=jax.tree.map
+def _abstract_leaf(
+    leaf: object, *, sharding: jax.sharding.Sharding
+) -> jax.ShapeDtypeStruct:
+    """Copy one leaf's shape/dtype metadata onto the required ordered layout.
+
+    Module-level so the beartype claw decorates it once at import instead of on
+    every `abstract_tree` call; see `_lcm/utils/functools.py` for why a nested
+    `def` here would be re-wrapped and memoized per call.
+    """
+    if not isinstance(leaf, jax.Array | jax.ShapeDtypeStruct):
+        raise ExecutionPlanningError("Chunk profiles need canonical array metadata.")
+    return jax.ShapeDtypeStruct(
+        leaf.shape, leaf.dtype, weak_type=leaf.weak_type, sharding=sharding
+    )
+
+
 def abstract_tree(*, tree: object, sharding: jax.sharding.Sharding) -> object:
     """Copy only shape/dtype metadata onto the required ordered layout."""
-
-    def abstract(leaf: object) -> jax.ShapeDtypeStruct:
-        if not isinstance(leaf, jax.Array | jax.ShapeDtypeStruct):
-            raise ExecutionPlanningError(
-                "Chunk profiles need canonical array metadata."
-            )
-        return jax.ShapeDtypeStruct(
-            leaf.shape, leaf.dtype, weak_type=leaf.weak_type, sharding=sharding
-        )
-
-    return jax.tree.map(abstract, tree)
+    return jax.tree.map(partial(_abstract_leaf, sharding=sharding), tree)
 
 
 def payload_bytes(*, tree: object) -> dict[jax.Device, int]:

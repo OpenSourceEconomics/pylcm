@@ -8,6 +8,7 @@ bindings, temporary arrays, and grids never enter the code cache.
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -535,6 +536,23 @@ def _staged_parameter_is_weak(value: object) -> bool:
     return type(value) in (bool, int, float) or bool(getattr(value, "weak_type", False))
 
 
+def _process_grid_call(
+    *values: object,
+    spec: _ContinuousStochasticProcess,
+    parameter_names: tuple[str, ...],
+) -> Float1D:
+    """Rebind positional trace values to their declared parameter names.
+
+    Module-level so the beartype claw decorates it once at import instead of on
+    every `_trace_process_jaxpr` call; see `_lcm/utils/functools.py`.
+    """
+    arguments = cast(
+        "dict[str, ScalarFloat | ScalarInt]",
+        dict(zip(parameter_names, values, strict=True)),
+    )
+    return spec.compute_gridpoints(**arguments)
+
+
 def _trace_process_jaxpr(
     *,
     spec: _ContinuousStochasticProcess,
@@ -542,15 +560,8 @@ def _trace_process_jaxpr(
     parameter_values: tuple[object, ...],
 ) -> Jaxpr:
     """Trace an explicit positional binding for deterministic input ordering."""
-
-    def process_grid(*values: object) -> Float1D:
-        arguments = cast(
-            "dict[str, ScalarFloat | ScalarInt]",
-            dict(zip(parameter_names, values, strict=True)),
-        )
-        return spec.compute_gridpoints(**arguments)
-
-    return jax.make_jaxpr(process_grid)(*parameter_values)
+    bound = partial(_process_grid_call, spec=spec, parameter_names=parameter_names)
+    return jax.make_jaxpr(bound)(*parameter_values)
 
 
 def _validated_process_recipe(  # noqa: C901
