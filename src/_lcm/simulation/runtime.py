@@ -54,7 +54,10 @@ from _lcm.simulation.residency import (
     resident_bytes_by_device,
     union_buffer_footprints,
 )
-from _lcm.simulation.subject_parallel import SubjectShardable, shard_subject_function
+from _lcm.simulation.subject_parallel import (
+    declared_subject_shard_arg_names,
+    shard_subject_function,
+)
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_tree,
     _func_dedup_key,
@@ -780,15 +783,21 @@ class _SimulationCandidateCompiler:
             static_kwargs = dict(resolved.static_kwargs)
             static_kwargs.setdefault(SUBJECT_WIDTH_KEYWORD, self.subject_width)
         if self.shard_subjects and len(self.subject_devices) > 1:
-            if not isinstance(function, SubjectShardable):
+            # Read the declaration through any keyword binding the model layer
+            # wrapped around the body -- a regime's fixed params arrive as a
+            # `functools.partial`, which proxies no attribute -- and shard the
+            # bound callable itself, so its binding identity stays the one the
+            # dedup and lowering keys were taken from.
+            subject_arg_names = declared_subject_shard_arg_names(function=function)
+            if subject_arg_names is None:
                 raise ExecutionPlanningError(
                     f"Simulation program {self.program.name!r} does not declare "
                     "independent leading-axis subject outputs."
                 )
-            if function.subject_shard_arg_names:
+            if subject_arg_names:
                 function = shard_subject_function(
                     function=function,
-                    subject_arg_names=function.subject_shard_arg_names,
+                    subject_arg_names=subject_arg_names,
                     arguments=arguments,
                     static_kwargs=static_kwargs,
                     devices=self.subject_devices,

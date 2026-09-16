@@ -31,6 +31,34 @@ class SubjectShardable(Protocol):
         ...
 
 
+def declared_subject_shard_arg_names(
+    *, function: Callable[..., object]
+) -> tuple[str, ...] | None:
+    """Return the subject arguments a callable declares, seen through partials.
+
+    The capability belongs to the body that was built, not to the keyword
+    bindings the model layer later wraps around it: a regime with fixed params
+    reaches the runtime as ``functools.partial(body, **fixed)``, and a partial
+    proxies no attribute of the callable it wraps. Read the declaration off the
+    innermost callable and drop every name a binding has already consumed, so
+    only arguments still supplied per dispatch are offered for partitioning.
+    A positional binding is refused: it renames nothing and would shift the
+    keyword contract this declaration is written in.
+
+    Returns ``None`` when no callable in the chain declares the capability.
+    """
+    bound: set[str] = set()
+    inner: object = function
+    while isinstance(inner, partial):
+        if inner.args:
+            return None
+        bound.update(inner.keywords)
+        inner = inner.func
+    if not isinstance(inner, SubjectShardable):
+        return None
+    return tuple(name for name in inner.subject_shard_arg_names if name not in bound)
+
+
 def shard_subject_function(
     *,
     function: Callable[..., object],

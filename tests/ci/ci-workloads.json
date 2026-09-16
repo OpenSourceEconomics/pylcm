@@ -3935,7 +3935,8 @@
    "deselect": [],
    "junit": "junit-cpu-fp64-subject-parallel-model.xml",
    "files": [
-    "tests/simulation/test_subject_parallel_model.py"
+    "tests/simulation/test_subject_parallel_model.py",
+    "tests/simulation/test_subject_shard_fixed_params.py"
    ],
    "no_skips_required": true,
    "predicted_payload_minutes": 0.26,
@@ -4151,7 +4152,8 @@
    "deselect": [],
    "junit": "junit-cpu-fp32-subject-parallel-model.xml",
    "files": [
-    "tests/simulation/test_subject_parallel_model.py"
+    "tests/simulation/test_subject_parallel_model.py",
+    "tests/simulation/test_subject_shard_fixed_params.py"
    ],
    "no_skips_required": true,
    "predicted_payload_minutes": 0.18,
@@ -13556,6 +13558,7 @@
   "tests/simulation/test_host_preparation_lifetime.py",
   "tests/simulation/test_prepared_unbudgeted_dispatch.py",
   "tests/simulation/test_residency_owner_epochs.py",
+  "tests/simulation/test_subject_shard_fixed_params.py",
   "tests/simulation/test_unbudgeted_subject_width.py",
   "tests/test_source_certificate_portability.py"
  ],
