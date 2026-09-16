@@ -64,14 +64,14 @@ point with incident narratives. Update the relevant module or verified tool inst
 ### Issue tracker
 
 Issues live in GitHub Issues of `OpenSourceEconomics/pylcm`, driven through the `gh`
-CLI; pull requests are not a request surface. See `docs/agents/issue-tracker.md`.
+CLI; pull requests are not a request surface. See `.agents/issue-tracker.md`.
 
 ### Triage labels
 
 The five canonical triage labels are used verbatim (`needs-triage`, `needs-info`,
-`ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+`ready-for-agent`, `ready-for-human`, `wontfix`). See `.agents/triage-labels.md`.
 
 ### Domain docs
 
 Single-context layout: one `CONTEXT.md` and `docs/adr/` at the repository root, created
-lazily. See `docs/agents/domain.md`.
+lazily. See `.agents/domain.md`.
