@@ -56,7 +56,9 @@ class _Profiler:
             pins["action_product"] = pinned_action
         self.runtime = SimpleNamespace(
             execution=SimpleNamespace(
-                device_memory_bytes=budget, axis_widths=MappingProxyType(pins)
+                device_memory_bytes=budget,
+                axis_widths=MappingProxyType(pins),
+                device_memory_cap_note=lambda: "",
             )
         )
         self.regimes: MappingProxyType[str, object] = MappingProxyType({})
