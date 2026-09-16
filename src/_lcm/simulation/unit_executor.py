@@ -42,13 +42,31 @@ class SimulationUnitExecutor:
         default_factory=list, init=False, repr=False
     )
     _closed: bool = dataclasses.field(default=False, init=False, repr=False)
+    _union: tuple[DeviceBufferFootprint, int, DeviceBufferFootprint] | None = (
+        dataclasses.field(default=None, init=False, repr=False)
+    )
+    """Last merged answer, with the caller footprint and count that produced it."""
 
     def _live(self) -> DeviceBufferFootprint:
+        """Merge this unit's published outputs into the caller's current inventory.
+
+        The caller returns the identical footprint object while its ownership epoch
+        is unchanged, so an unchanged unit re-merges nothing. Metadata only; the
+        actual outputs stay owned by `_owned_outputs` until the whole-unit commit.
+        """
         if self._closed:
             raise ExecutionPlanningError("This simulation unit is closed.")
-        return union_buffer_footprints(
-            footprints=(self.live_footprint(), *self._outputs)
-        )
+        caller = self.live_footprint()
+        cached = self._union
+        if (
+            cached is not None
+            and cached[0] is caller
+            and cached[1] == len(self._outputs)
+        ):
+            return cached[2]
+        merged = union_buffer_footprints(footprints=(caller, *self._outputs))
+        self._union = (caller, len(self._outputs), merged)
+        return merged
 
     def dispatch(
         self,
@@ -89,4 +107,5 @@ class SimulationUnitExecutor:
         """End intermediate ownership after the caller's whole-unit commit barrier."""
         self._outputs.clear()
         self._owned_outputs.clear()
+        self._union = None
         self._closed = True

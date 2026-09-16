@@ -113,7 +113,9 @@ def test_budget_snapshot_interval_work_excludes_unselected_history(
     monkeypatch.setattr(residency, "_merge_spans", merge)
     for _ in range(3):
         assert scope.budget_snapshot().spans == live.spans
-    assert sum(len(call.kwargs["spans"]) for call in merge.call_args_list) == 3
+    # Projection still excludes the unselected CPU history, and the owner ledger
+    # now merges the one selected interval once for the whole unchanged epoch.
+    assert sum(len(call.kwargs["spans"]) for call in merge.call_args_list) == 1
     assert len(scope.outputs.spans[cpu]) == history
 
 

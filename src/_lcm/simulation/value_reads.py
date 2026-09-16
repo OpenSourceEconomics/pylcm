@@ -97,6 +97,9 @@ class PeriodSimulationReads:
             _CopyKey, PlannedInputLiveness[RegimeName, _CopyKey]
         ] = {}
         self._inputs_by_unit: dict[RegimeName, list[jax.Array]] = {}
+        # Advances on every ownership mutation below so that a call-local
+        # residency ledger can reuse this owner's measured spans.
+        self.generation = 0
         self._pending_outputs: list[jax.Array] = []
 
     def read(
@@ -153,6 +156,7 @@ class PeriodSimulationReads:
             reused_by_several_consumers=len(self._units_by_key[key]) > 1,
         )
         self._source_values[read.target] = value
+        self.generation += 1
         self._registry.declare_not_produced(tree=value)
         copied = cache.get(transfer=transfer)
         if copied is None:
@@ -164,6 +168,7 @@ class PeriodSimulationReads:
             copied = apply_value_transfer(value=value, transfer=transfer)
             cache.put(transfer=transfer, array=copied, stored=value)
             self._copied_values[key] = copied
+            self.generation += 1
         self._inputs_by_unit.setdefault(unit, []).append(copied)
         return copied
 
@@ -196,10 +201,15 @@ class PeriodSimulationReads:
                     )
         self._pending_units.remove(unit)
         self._inputs_by_unit.pop(unit, None)
+        self.generation += 1
 
     @property
     def live_values(self) -> tuple[jax.Array, ...]:
         """Return a transient view of undeleted sources, copies and pending outputs.
+
+        `generation` advances on every materialized read, completed transfer,
+        publication, donation and release below, so a residency accountant can tell
+        that this owner's live set is unchanged without walking it again.
 
         Identity deduplication removes repeated wrappers, leaving physical shard
         overlap to the residency accountant. No snapshot is cached here; callers
@@ -226,6 +236,7 @@ class PeriodSimulationReads:
         cleanup never manually deletes an uncommitted input or eager alias.
         """
         self._finished = True
+        self.generation += 1
         try:
             jax.block_until_ready(tuple(self._pending_outputs))
             if self._pending_units:
@@ -279,6 +290,7 @@ class PeriodSimulationReads:
             self._host_ledgers[key] = ledger
             self._copied_values[key] = copied
         self._source_values[read.target] = value
+        self.generation += 1
         self._inputs_by_unit.setdefault(unit, []).append(copied)
         return copied
 

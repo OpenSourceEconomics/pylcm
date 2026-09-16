@@ -15,10 +15,15 @@ Compiler-retained executable arguments are subtracted only from these external
 resident bytes, under the convention that compiler peaks already include their
 payload. Eliminated arguments stay resident while their callers own them. The
 compiler argument-byte convention must be verified for the execution backend.
+
+A call-local `OwnerLedger` records each live binding once, at its placement, and
+reuses the merged union only while its ownership epoch is unchanged. It is metadata,
+not an owner: the existing owner managers keep the arrays alive for their declared
+lifetime, and no pointer survives the call that measured it.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 import jax
@@ -224,3 +229,81 @@ def _uncovered_bytes(*, live: _Spans, arguments: _Spans) -> int:
         else:
             argument_index += 1
     return remaining
+
+
+@dataclass(kw_only=True, eq=False)
+class OwnerLedger:
+    """Call-local metadata for owners measured once at a known ownership epoch.
+
+    A ledger records the address spans of bindings an external owner manager keeps
+    alive; it never retains an array and never outlives its call. Every bind,
+    rebind and release advances `epoch` and discards the cached unions, so a union
+    can be reused only while the recorded ownership is provably unchanged.
+
+    A stale binding can only over-charge: spans are unioned, so an address recycled
+    by a live owner is counted once, which is that owner's own charge. Admission can
+    therefore never become more permissive than a full re-measure would be.
+    """
+
+    epoch: int = 0
+    """Advances on every ownership mutation; a cached union is valid for one value."""
+
+    _bindings: dict[str, DeviceBufferFootprint] = field(default_factory=dict)
+    """Measured spans per owner name, in binding order."""
+
+    _unions: dict[tuple[jax.Device, ...] | None, DeviceBufferFootprint] = field(
+        default_factory=dict
+    )
+    """Merged projections of the current epoch, one per requested device set."""
+
+    def bind(self, *, owner: str, footprint: DeviceBufferFootprint) -> None:
+        """Record already-measured spans for one owner, replacing any earlier one."""
+        self._bindings[owner] = footprint
+        self._invalidate()
+
+    def measure(self, *, owner: str, tree: object) -> None:
+        """Await and measure one owner tree exactly once, at its placement.
+
+        The readiness barrier moves to the binding instead of repeating on every
+        later snapshot. It is never removed and never deferred, so the completion
+        boundary each admission check relied on is preserved.
+        """
+        jax.block_until_ready(tree)
+        self.bind(owner=owner, footprint=measure_buffer_footprint(tree=tree))
+
+    def release(self, *, owner: str) -> None:
+        """Drop one owner binding, whether or not it was ever recorded."""
+        self._bindings.pop(owner, None)
+        self._invalidate()
+
+    def release_prefix(self, *, prefix: str) -> None:
+        """Drop every binding of one owner family, such as a unit's temporaries."""
+        for owner in [name for name in self._bindings if name.startswith(prefix)]:
+            del self._bindings[owner]
+        self._invalidate()
+
+    def clear(self) -> None:
+        """Drop every binding at the end of the owning scope."""
+        self._bindings.clear()
+        self._invalidate()
+
+    def bump(self) -> None:
+        """Invalidate for an ownership change this ledger does not itself record."""
+        self._invalidate()
+
+    def union(
+        self, *, devices: tuple[jax.Device, ...] | None = None
+    ) -> DeviceBufferFootprint:
+        """Merge the current epoch's spans once per requested device projection."""
+        cached = self._unions.get(devices)
+        if cached is None:
+            cached = union_buffer_footprints(
+                footprints=tuple(self._bindings.values()), devices=devices
+            )
+            self._unions[devices] = cached
+        return cached
+
+    def _invalidate(self) -> None:
+        """Make every cached union unusable before any owner can disappear."""
+        self.epoch += 1
+        self._unions.clear()

@@ -238,11 +238,11 @@
           },
           {
             "path": "src/_lcm/simulation/memory.py",
-            "sha256": "4f88f115d8901c5277ab2a61387bc846fc9ba89f85f09612477ed2aaa9745899"
+            "sha256": "f7f83e9d1c577f50722d7ee95e2aad37cc0a800510ce297a142c5c0129fe14a0"
           },
           {
             "path": "src/_lcm/simulation/operand_placement.py",
-            "sha256": "2ce75e19ad32c0af645ed1c52bef183d96571eece76336371587b53d15bb4aa6"
+            "sha256": "4de307370dd3a2d95885f3d25d97c96481a3cbeeb597edd755fd7b381fcf7c00"
           },
           {
             "path": "src/_lcm/simulation/period_inputs.py",
@@ -286,7 +286,7 @@
           },
           {
             "path": "src/_lcm/simulation/residency.py",
-            "sha256": "45e5daaa712c1f63b9d97726e271f9fb0d75bfc6e78f377904000f70659603c0"
+            "sha256": "04adc631f781d938d856075a9601c5c82829731a725f339b29775f3f4c54f549"
           },
           {
             "path": "src/_lcm/simulation/result_dataframe.py",
@@ -318,7 +318,7 @@
           },
           {
             "path": "src/_lcm/simulation/unit_executor.py",
-            "sha256": "40e5914f402a4d22b0273758d8f9fcb2a17a5bc87447e2f05b54bd32118b2590"
+            "sha256": "aa8b1c83d4de223ae1ea1cc0d9f95e08b8db54d7c41fde8e82754ffe2f7944df"
           },
           {
             "path": "src/_lcm/simulation/value_placement.py",
@@ -326,7 +326,7 @@
           },
           {
             "path": "src/_lcm/simulation/value_reads.py",
-            "sha256": "b00b335634970802bc240962c6c7eeba99598924a00b4c0059b87663d4e928e4"
+            "sha256": "57ba782f6538e3d9e9f57f904b940d5812e529570c36336a143a042a30086f7b"
           },
           {
             "path": "src/_lcm/solution/action_reduction.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "8aa772122240321c99d3f06a83ff1c5ec639455fb6db16d70ea4938453ccfd31"
+        "source_inventory_sha256": "2d85d537a383db78773007ed9455d5996e13ce879ac69920483e37d2752f5c26"
       },
       "fast": {
         "candidate_sources": [
@@ -708,11 +708,11 @@
           },
           {
             "path": "src/_lcm/simulation/memory.py",
-            "sha256": "4f88f115d8901c5277ab2a61387bc846fc9ba89f85f09612477ed2aaa9745899"
+            "sha256": "f7f83e9d1c577f50722d7ee95e2aad37cc0a800510ce297a142c5c0129fe14a0"
           },
           {
             "path": "src/_lcm/simulation/operand_placement.py",
-            "sha256": "2ce75e19ad32c0af645ed1c52bef183d96571eece76336371587b53d15bb4aa6"
+            "sha256": "4de307370dd3a2d95885f3d25d97c96481a3cbeeb597edd755fd7b381fcf7c00"
           },
           {
             "path": "src/_lcm/simulation/period_inputs.py",
@@ -756,7 +756,7 @@
           },
           {
             "path": "src/_lcm/simulation/residency.py",
-            "sha256": "45e5daaa712c1f63b9d97726e271f9fb0d75bfc6e78f377904000f70659603c0"
+            "sha256": "04adc631f781d938d856075a9601c5c82829731a725f339b29775f3f4c54f549"
           },
           {
             "path": "src/_lcm/simulation/result_dataframe.py",
@@ -788,7 +788,7 @@
           },
           {
             "path": "src/_lcm/simulation/unit_executor.py",
-            "sha256": "40e5914f402a4d22b0273758d8f9fcb2a17a5bc87447e2f05b54bd32118b2590"
+            "sha256": "aa8b1c83d4de223ae1ea1cc0d9f95e08b8db54d7c41fde8e82754ffe2f7944df"
           },
           {
             "path": "src/_lcm/simulation/value_placement.py",
@@ -796,7 +796,7 @@
           },
           {
             "path": "src/_lcm/simulation/value_reads.py",
-            "sha256": "b00b335634970802bc240962c6c7eeba99598924a00b4c0059b87663d4e928e4"
+            "sha256": "57ba782f6538e3d9e9f57f904b940d5812e529570c36336a143a042a30086f7b"
           },
           {
             "path": "src/_lcm/solution/action_reduction.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "8aa772122240321c99d3f06a83ff1c5ec639455fb6db16d70ea4938453ccfd31"
+        "source_inventory_sha256": "2d85d537a383db78773007ed9455d5996e13ce879ac69920483e37d2752f5c26"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "8aa772122240321c99d3f06a83ff1c5ec639455fb6db16d70ea4938453ccfd31",
+  "source_inventory_sha256": "2d85d537a383db78773007ed9455d5996e13ce879ac69920483e37d2752f5c26",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1182,11 +1182,11 @@
     },
     {
       "path": "src/_lcm/simulation/memory.py",
-      "sha256": "4f88f115d8901c5277ab2a61387bc846fc9ba89f85f09612477ed2aaa9745899"
+      "sha256": "f7f83e9d1c577f50722d7ee95e2aad37cc0a800510ce297a142c5c0129fe14a0"
     },
     {
       "path": "src/_lcm/simulation/operand_placement.py",
-      "sha256": "2ce75e19ad32c0af645ed1c52bef183d96571eece76336371587b53d15bb4aa6"
+      "sha256": "4de307370dd3a2d95885f3d25d97c96481a3cbeeb597edd755fd7b381fcf7c00"
     },
     {
       "path": "src/_lcm/simulation/period_inputs.py",
@@ -1230,7 +1230,7 @@
     },
     {
       "path": "src/_lcm/simulation/residency.py",
-      "sha256": "45e5daaa712c1f63b9d97726e271f9fb0d75bfc6e78f377904000f70659603c0"
+      "sha256": "04adc631f781d938d856075a9601c5c82829731a725f339b29775f3f4c54f549"
     },
     {
       "path": "src/_lcm/simulation/result_dataframe.py",
@@ -1262,7 +1262,7 @@
     },
     {
       "path": "src/_lcm/simulation/unit_executor.py",
-      "sha256": "40e5914f402a4d22b0273758d8f9fcb2a17a5bc87447e2f05b54bd32118b2590"
+      "sha256": "aa8b1c83d4de223ae1ea1cc0d9f95e08b8db54d7c41fde8e82754ffe2f7944df"
     },
     {
       "path": "src/_lcm/simulation/value_placement.py",
@@ -1270,7 +1270,7 @@
     },
     {
       "path": "src/_lcm/simulation/value_reads.py",
-      "sha256": "b00b335634970802bc240962c6c7eeba99598924a00b4c0059b87663d4e928e4"
+      "sha256": "57ba782f6538e3d9e9f57f904b940d5812e529570c36336a143a042a30086f7b"
     },
     {
       "path": "src/_lcm/solution/action_reduction.py",

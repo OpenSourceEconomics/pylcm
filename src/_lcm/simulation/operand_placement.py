@@ -67,8 +67,11 @@ def place_simulation_arguments(
             shared_sharding=shared_sharding,
             protected=protected,
             budget_bytes=budget_bytes,
+            # Only the budgeted devices are read below, and projection precedes
+            # normalization, so retained history elsewhere costs a key lookup.
             live=union_buffer_footprints(
-                footprints=(live_footprint, measure_buffer_footprint(tree=arguments))
+                footprints=(live_footprint, measure_buffer_footprint(tree=arguments)),
+                devices=budget_devices,
             ),
             budget_devices=budget_devices,
         )
