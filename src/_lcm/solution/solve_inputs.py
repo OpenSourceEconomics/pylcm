@@ -25,7 +25,12 @@ type EdgeKey = tuple[RegimeName, RegimeName]
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SolveInputMappings:
-    """The three rolling input mappings the period loop threads."""
+    """The three rolling input mappings the period loop threads.
+
+    A release or a donation replaces all three mappings rather than editing
+    them, so an instance must be built where it is used and never held across
+    one.
+    """
 
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
     """Next-period value per regime; the template for regimes not yet solved."""

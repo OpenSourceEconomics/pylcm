@@ -4557,6 +4557,7 @@
     "tests/solution/test_certified_sign_derived_distance.py",
     "tests/solution/test_dcegm_age_specialized_function.py",
     "tests/solution/test_dcegm_stochastic_node_axis.py",
+    "tests/solution/test_donation_two_active_regimes.py",
     "tests/solution/test_ds_housing_keeper.py",
     "tests/solution/test_egm_interp.py",
     "tests/solution/test_egm_passive_asset_row.py",
@@ -5044,6 +5045,7 @@
     "tests/solution/test_compilation_identity.py",
     "tests/solution/test_dcegm_age_specialized_function.py",
     "tests/solution/test_declared_law.py",
+    "tests/solution/test_donation_two_active_regimes.py",
     "tests/solution/test_egm_assets_law_terms.py",
     "tests/solution/test_egm_cell_axis.py",
     "tests/solution/test_egm_degenerate_inversion.py",
@@ -13081,10 +13083,11 @@
   "fp32-solution": {
    "junit_source": "run 35078533997 job logs sol-fp32-shard{1,2,3}; the three fp32 solution shards were cancelled at 99 % and wrote no JUnit",
    "measurement": "per-worker wall seconds between result lines in the job log",
-   "imputed_note": "43 files had not started when the run was cancelled. They are not zeroed: each carries its fp64-solution seconds scaled by 0.9894, the observed fp32/fp64 ratio over the 323 files that did run. Their combined share is 4.5 % of the leg.",
+   "imputed_note": "44 files had not started when the run was cancelled. They are not zeroed: each carries its fp64-solution seconds scaled by 0.9894, the observed fp32/fp64 ratio over the 323 files that did run. Their combined share is 4.5 % of the leg.",
    "imputed_files": [
     "tests/solution/test_app2_branch_aware_vfi.py",
     "tests/solution/test_brute_child_carry_producer.py",
+    "tests/solution/test_donation_two_active_regimes.py",
     "tests/solution/test_egm_app2_housing_fues.py",
     "tests/solution/test_egm_continuation_grid_provenance.py",
     "tests/solution/test_egm_cross_regime_target_params.py",
@@ -13173,6 +13176,7 @@
     "tests/solution/test_donation_read_multiplicity.py": 27.597,
     "tests/solution/test_donation_retention.py": 25.875,
     "tests/solution/test_donation_solve.py": 4.754,
+    "tests/solution/test_donation_two_active_regimes.py": 0.0,
     "tests/solution/test_double_double.py": 5.609,
     "tests/solution/test_dropped_results_release_arrays.py": 5.645,
     "tests/solution/test_ds_housing_keeper.py": 0.546,
@@ -13832,6 +13836,7 @@
   "tests/simulation/test_residency_owner_epochs.py",
   "tests/simulation/test_subject_shard_fixed_params.py",
   "tests/simulation/test_unbudgeted_subject_width.py",
+  "tests/solution/test_donation_two_active_regimes.py",
   "tests/test_source_certificate_portability.py"
  ],
  "excluded_files": {
