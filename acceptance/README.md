@@ -6,7 +6,10 @@ not certify production capacity or performance.
 - `inventory_aca.py` constructs the frozen ACA factory from the original sealed
   eleven-file input packet. Run in a fresh fp32 process with eight visible devices,
   candidate engine/caller imports and the frozen ACA model. It does not solve.
-- `aca-phase-inventory.json` is the native factory receipt from job 27535505.
+- `aca-phase-inventory.json` is the native factory receipt from job 27535505. Its
+  machine-specific absolute paths (Marvin job/scratch directories, HPC account name) are
+  replaced with `<job-root>`/`<scratch-checkout>`/`<hpc-account>` placeholders before
+  commit; every other field is byte-identical to the native output.
 - `aca-inventory-provenance.json` identifies executed source bytes and later
   source/schema changes; the native receipt is not silently relabelled as current.
 - `aca-capacity.json` derives necessary lower bounds from that inventory. Compiler,

@@ -1,10 +1,10 @@
 {
   "argv": [
-    "/tmp/aca-sharding-green.I4Rtqy/green/pylcm/acceptance/inventory_aca.py",
+    "<scratch-checkout>/green/pylcm/acceptance/inventory_aca.py",
     "--packet-root",
-    "/home/hmg308_hpc/aca-residency-projection-01-620813df/preflight",
+    "<job-root>/preflight",
     "--output-dir",
-    "/home/hmg308_hpc/aca-sharding-implementation-cpu-20260914/green-dtypes-results/inventory"
+    "<job-root>/green-dtypes-results/inventory"
   ],
   "devices": [
     {
@@ -69,9 +69,9 @@
   },
   "hardware_acceptance": false,
   "imports": {
-    "aca_model": "/tmp/aca-sharding-green.I4Rtqy/green/aca-model/src/aca_model/__init__.py",
-    "aca_slurm": "/tmp/aca-sharding-green.I4Rtqy/green/aca-slurm/src/aca_slurm/__init__.py",
-    "lcm": "/tmp/aca-sharding-green.I4Rtqy/green/pylcm/src/lcm/__init__.py"
+    "aca_model": "<scratch-checkout>/green/aca-model/src/aca_model/__init__.py",
+    "aca_slurm": "<scratch-checkout>/green/aca-slurm/src/aca_slurm/__init__.py",
+    "lcm": "<scratch-checkout>/green/pylcm/src/lcm/__init__.py"
   },
   "initial_hash": "5c3aa7fe90244b6671b6c026fc2989fbd451c7cfc0f640bfcf71a9c4659961c2",
   "initial_population": 226848,
@@ -11392,7 +11392,7 @@
         "src/aca_model/simulation.py": "5bea13a7c05fdd18a3317cb140405d1558c234cf6856d51c6965ca594eab0d3a"
       },
       "python_tree_sha256": "e52486a6b64cbb13cb1f8450904f1848744aa2b2749e403f07ae9aac71dc0861",
-      "root": "/tmp/aca-sharding-green.I4Rtqy/green/aca-model"
+      "root": "<scratch-checkout>/green/aca-model"
     },
     "aca-slurm": {
       "environment_files_sha256": {
@@ -11469,7 +11469,7 @@
         "src/aca_slurm/task_simulate_baseline.py": "d0f2100d2bfac0f6c2dd1beb554503b9c2efd4a3ee9dde33c344e01b28a94891"
       },
       "python_tree_sha256": "38f03a2cc01b77324506603262ce6daf6f06cb64b2e01c59142e2d74773c83b0",
-      "root": "/tmp/aca-sharding-green.I4Rtqy/green/aca-slurm"
+      "root": "<scratch-checkout>/green/aca-slurm"
     },
     "pylcm": {
       "environment_files_sha256": {
@@ -11783,7 +11783,7 @@
         "src/lcm_examples/tiny.py": "6a5e379755aad3bcf3c5e9c3c154c38567c734e1fd33b16392c153f9c63579d3"
       },
       "python_tree_sha256": "d895a32934b8a34251304931bf5e908e68e5d21742f7f78edbabcdb539c38d07",
-      "root": "/tmp/aca-sharding-green.I4Rtqy/green/pylcm"
+      "root": "<scratch-checkout>/green/pylcm"
     }
   },
   "status": "native-construction-verified",

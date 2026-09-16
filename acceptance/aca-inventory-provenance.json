@@ -16,7 +16,7 @@
   "numerical_dispatch": false,
   "precision": "fp32",
   "promoted_exact_bytes_sha256": {
-    "aca-phase-inventory.json": "54d5a3ec94ba67a6d786b059f2881cb183cbf3bd3c24901b862abafcee42cc86"
+    "aca-phase-inventory.json": "94c5484112c23e58e0fae1254760551588cd758e4a295567561b1e2c8fd33140"
   },
   "resource_admission": false,
   "source_evidence_directory": "/tmp/aca-production-implementation-20260914/verification/green-dtypes-results/inventory",
@@ -25,5 +25,9 @@
     "aca-slurm": "38f03a2cc01b77324506603262ce6daf6f06cb64b2e01c59142e2d74773c83b0",
     "pylcm": "d895a32934b8a34251304931bf5e908e68e5d21742f7f78edbabcdb539c38d07"
   },
-  "status": "native-construction-only"
+  "status": "native-construction-only",
+  "sanitization": {
+    "note": "Absolute Marvin paths and the HPC account name replaced by <job-root>, <scratch-checkout> and <hpc-account> placeholders on 2026-09-16 (review comment C2 on #440); every other byte unchanged.",
+    "original_promoted_sha256": "54d5a3ec94ba67a6d786b059f2881cb183cbf3bd3c24901b862abafcee42cc86"
+  }
 }
