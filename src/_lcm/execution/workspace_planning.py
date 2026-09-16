@@ -20,8 +20,19 @@ from lcm.exceptions import ExecutionPlanningError
 
 _MISSING = object()
 
-# Largest width an unbudgeted streamed axis is lowered at.
+# Largest width an unbudgeted reduced axis is lowered at, and the floor no
+# unbudgeted axis is lowered below.
 BOOTSTRAP_WIDTH_CAP = 64
+
+# Largest width an unbudgeted tiled output axis is lowered at.  A tiled axis
+# concatenates its tiles into a result resident at the full extent whatever the
+# width, so only its temporaries grow with it, while a reduced axis block is
+# pure temporary.
+BOOTSTRAP_TILE_WIDTH_CAP = 512
+
+# Largest product of unbudgeted widths a candidate aims for, so the live block
+# stays bounded by a fixed number of cells on every backend.
+BOOTSTRAP_BLOCK_CAP = BOOTSTRAP_WIDTH_CAP * BOOTSTRAP_TILE_WIDTH_CAP
 
 
 class _MemoryAnalyzable(Protocol):
@@ -131,7 +142,7 @@ def workspace_width_candidates(
 
     Without a budget the sequence holds one candidate: each axis at its fixed width
     when `fixed_widths` names it, else at its bootstrap width (see
-    `bootstrap_width`).  With a budget it holds the Cartesian product of the
+    `bootstrap_widths`).  With a budget it holds the Cartesian product of the
     per-axis frontiers, widest first: descending width product, ties broken toward
     the lexicographically greatest width tuple in axis declaration order.  A fixed
     axis contributes one width.  Every width an axis contributes satisfies the
@@ -355,19 +366,71 @@ def _validate_resident_bytes(*, resident_bytes: int) -> int:
     return resident_bytes
 
 
-def bootstrap_width(*, extent: int) -> int:
+def bootstrap_width(*, extent: int, cap: int = BOOTSTRAP_WIDTH_CAP) -> int:
     """Return the width an axis streams at when no device-memory budget is declared.
 
     The width is the largest power of two strictly below the extent, capped at
-    `BOOTSTRAP_WIDTH_CAP`, so an unbudgeted solve never lowers a whole action
-    product and its working set stays bounded on every backend.  The full extent is
-    reached only through a budget that shows it fits or through a fixed width.
+    `cap` — `BOOTSTRAP_WIDTH_CAP` for a reduced axis, so an unbudgeted solve never
+    lowers a whole action product, and a cap `bootstrap_widths` derives for a tiled
+    output axis.  The full extent is reached only through a budget that shows it
+    fits or through a fixed width.
     """
     if type(extent) is not int or extent <= 1:
         msg = f"An execution axis needs an exact int extent above one, got {extent!r}."
         raise ValueError(msg)
-    upper_bound = min(BOOTSTRAP_WIDTH_CAP, extent - 1)
+    if type(cap) is not int or cap < 1:
+        msg = f"A bootstrap width cap must be an exact int above zero, got {cap!r}."
+        raise ValueError(msg)
+    upper_bound = min(cap, extent - 1)
     return 1 << (upper_bound.bit_length() - 1)
+
+
+def _tiled_bootstrap_cap(*, block: int) -> int:
+    """Return the cap a tiled output axis bootstraps under, given the live block.
+
+    The cap spends what `BOOTSTRAP_BLOCK_CAP` leaves after the widths already
+    fixed for this candidate — reduced axes are declared first, so their blocks
+    are counted before any tile widens — never exceeding
+    `BOOTSTRAP_TILE_WIDTH_CAP` and never falling below `BOOTSTRAP_WIDTH_CAP`, so
+    no axis is lowered narrower than the reduced rule alone would have lowered it.
+    """
+    return min(
+        max(BOOTSTRAP_BLOCK_CAP // block, BOOTSTRAP_WIDTH_CAP),
+        BOOTSTRAP_TILE_WIDTH_CAP,
+    )
+
+
+def bootstrap_widths(
+    *,
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int] = MappingProxyType({}),
+) -> MappingProxyType[str, int]:
+    """Return the one width map an unbudgeted plan lowers, in declaration order.
+
+    A named axis takes its fixed width.  A reduced axis takes `bootstrap_width`
+    under `BOOTSTRAP_WIDTH_CAP`.  A tiled output axis takes it under the cap
+    `_tiled_bootstrap_cap` derives from the widths already fixed, so the product of
+    the map stays near `BOOTSTRAP_BLOCK_CAP` and the live block stays bounded by a
+    fixed number of cells whatever the model.  Every width is the one the axis
+    admits nearest the proposal, so alignment and `minimum_width` still hold.
+    """
+    widths: dict[str, int] = {}
+    block = 1
+    for axis in axes:
+        if axis.name in fixed_widths:
+            width = _fixed_width(axis=axis, fixed_widths=fixed_widths)
+        else:
+            cap = (
+                _tiled_bootstrap_cap(block=block)
+                if isinstance(axis, TiledOutputAxis)
+                else BOOTSTRAP_WIDTH_CAP
+            )
+            width = _admissible_width(
+                axis=axis, width=bootstrap_width(extent=axis.extent, cap=cap)
+            )
+        widths[axis.name] = width
+        block *= width
+    return MappingProxyType(widths)
 
 
 def _workspace_width_candidates(
@@ -378,13 +441,7 @@ def _workspace_width_candidates(
 ) -> tuple[MappingProxyType[str, int], ...]:
     """Enumerate one bootstrap width map or the budgeted frontier, widest first."""
     if budget_bytes is None:
-        values = tuple(
-            _fixed_width(axis=axis, fixed_widths=fixed_widths)
-            if axis.name in fixed_widths
-            else _admissible_width(axis=axis, width=bootstrap_width(extent=axis.extent))
-            for axis in axes
-        )
-        return (_width_mapping(axes=axes, values=values),)
+        return (bootstrap_widths(axes=axes, fixed_widths=fixed_widths),)
 
     frontiers = tuple(
         _axis_frontier(axis=axis, fixed_widths=fixed_widths) for axis in axes

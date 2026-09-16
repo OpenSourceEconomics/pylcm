@@ -17,7 +17,7 @@ import cloudpickle
 import numpy as np
 import pytest
 
-from _lcm.execution.workspace_planning import bootstrap_width
+from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay
 from lcm import AgeGrid, Model
 from lcm.persistence import replay_period
@@ -268,10 +268,13 @@ def test_a_capture_records_the_tile_widths_the_solve_dispatched(
     )
     action_extent = math.prod(space.actions_grid_shapes)
     cell_extent = math.prod(nodes.size for nodes in space.states.values())
+    action_width = bootstrap_width(extent=action_extent)
     assert payload["core_tile_widths"] == {
         "main": {
-            "action_product": bootstrap_width(extent=action_extent),
-            "cell": bootstrap_width(extent=cell_extent),
+            "action_product": action_width,
+            "cell": bootstrap_width(
+                extent=cell_extent, cap=_tiled_bootstrap_cap(block=action_width)
+            ),
         }
     }
 
