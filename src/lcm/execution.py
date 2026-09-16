@@ -27,7 +27,16 @@ class ExecutionConfig:
     """
 
     sharded_states: tuple[StateName, ...] = ()
-    """States whose grid axis is spread over the regime's devices."""
+    """States whose grid axis is spread over the regime's devices.
+
+    A discrete state always qualifies. A continuous state qualifies only on a
+    narrow route: it must be the sole sharded state, a model-level
+    `LinSpacedGrid` retained in every regime, solved everywhere with
+    `GridSearch` under a singleton hard-max, and the regimes must carry no
+    stakeholders, gated edges, value constraints, same-period references or
+    taste shocks. Model construction checks every requirement and the error
+    lists what a rejected model violates.
+    """
 
     axis_widths: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     """Planner axis name to the block width it is compiled at; empty means planned."""
