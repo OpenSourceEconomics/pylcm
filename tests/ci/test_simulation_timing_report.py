@@ -117,16 +117,13 @@ def test_all_six_successful_timing_cases_are_accepted(tmp_path: Path) -> None:
     check_report(path=path)
 
 
-def test_a_case_skipped_because_the_host_was_not_steady_is_accepted(
+def test_a_case_skipped_because_the_host_was_not_steady_is_unresolved(
     tmp_path: Path,
 ) -> None:
-    """One row that declined to measure does not condemn the run.
+    """A declined measurement is not evidence that its own timing bar passed.
 
-    The bar itself is untouched: a batch taken while the control leg was not
-    delivering steady wall time is no measurement of the code, so the row says
-    so in its skip reason instead of reporting a ratio as a verdict. The other
-    five rows still carry the bar, which is why an all-skipped report is
-    refused above.
+    Preserve the control-only steadiness precondition in the measurement. The
+    aggregate gate must still refuse to certify an unmeasured required row.
     """
     report = _report()
     suite = report.find("testsuite")
@@ -138,7 +135,8 @@ def test_a_case_skipped_because_the_host_was_not_steady_is_accepted(
     path = tmp_path / "timing.xml"
     ET.ElementTree(report).write(path)
 
-    check_report(path=path)
+    with pytest.raises(ValueError, match="exactly six successful timing cases"):
+        check_report(path=path)
 
 
 def test_a_suite_skip_count_above_the_marked_cases_is_refused(tmp_path: Path) -> None:

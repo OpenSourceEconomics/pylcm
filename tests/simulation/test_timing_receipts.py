@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import jax.monitoring
 import pytest
+from _pytest.outcomes import Failed
 
 from benchmarks.asv._compile_counters import (
     COMPILE_EVENT,
@@ -279,7 +280,8 @@ def test_a_steady_batch_is_kept_and_no_further_batch_is_taken(
     taken, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
 
     assert taken == 1
-    assert chosen.host_is_steady
+    assert chosen.measurement.host_is_steady
+    assert chosen.attempted_relative_iqrs == (0.0,)
 
 
 def test_the_steadiest_attempt_is_reported_when_no_attempt_is_steady(
@@ -290,13 +292,48 @@ def test_the_steadiest_attempt_is_reported_when_no_attempt_is_steady(
     taken, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
 
     assert taken == timing_tests.HOST_TIME_ATTEMPTS
-    assert chosen.off_relative_iqr == pytest.approx(0.2)
-    assert not chosen.host_is_steady
+    assert chosen.measurement.off_relative_iqr == pytest.approx(0.2)
+    assert not chosen.measurement.host_is_steady
+    assert len(chosen.attempted_relative_iqrs) == timing_tests.HOST_TIME_ATTEMPTS
+    assert chosen.attempted_relative_iqrs[0] == pytest.approx(0.2)
+
+
+def test_an_exhausted_retry_fails_the_row_and_reports_every_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No attempt found a steady host, so the row is unmeasured, not skipped.
+
+    A skip would be published as a marked declined row and the aggregate gate
+    refuses those, so the row says it outright: the obligation was not
+    discharged, and the control-leg spread of every attempt is in the message
+    so a reader can tell a stalled runner from a real instrument problem.
+    """
+    spreads = (0.4,) * timing_tests.HOST_TIME_ATTEMPTS
+    _, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+
+    with pytest.raises(Failed) as excinfo:
+        timing_tests._require_a_steady_host(batch=chosen, receipt="RECEIPT")
+
+    message = str(excinfo.value)
+    assert timing_tests.UNSTABLE_HOST_MARKER in message
+    assert f"in {timing_tests.HOST_TIME_ATTEMPTS} attempts" in message
+    assert "[" + ", ".join(["0.200"] * timing_tests.HOST_TIME_ATTEMPTS) + "]" in message
+    assert "RECEIPT" in message
+
+
+def test_a_steady_batch_passes_the_precondition_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The precondition itself is unchanged: a readable batch is simply read."""
+    spreads = (0.0, *(1.0,) * (timing_tests.HOST_TIME_ATTEMPTS - 1))
+    _, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+
+    timing_tests._require_a_steady_host(batch=chosen, receipt="RECEIPT")
 
 
 def _run_retry_loop(
     *, monkeypatch: pytest.MonkeyPatch, spreads: tuple[float, ...]
-) -> tuple[int, TimingMeasurement]:
+) -> tuple[int, timing_tests.SteadyBatch]:
     """Return how many batches the retry loop took and the batch it settled on."""
     remaining = list(spreads)
 

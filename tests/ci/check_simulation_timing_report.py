@@ -40,7 +40,7 @@ def _declined_to_measure(case: ET.Element) -> bool:
 
 
 def check_report(*, path: Path) -> None:
-    """Require six timing cases, none failed and at least one actually measured."""
+    """Require six successfully measured timing cases; a declined row is unresolved."""
     # The workflow supplies the JUnit file written by its own pytest process.
     report = ET.parse(path).getroot()  # noqa: S314
     cases = tuple(report.iter("testcase"))
@@ -59,8 +59,8 @@ def check_report(*, path: Path) -> None:
         int(suite.get("skipped", "0")) > len(declined)
         for suite in report.iter("testsuite")
     )
-    vacuous = len(declined) == len(EXPECTED_CASES)
-    if actual != EXPECTED_CASES or broken or lost or unaccounted or vacuous:
+    incomplete = bool(declined)
+    if actual != EXPECTED_CASES or broken or lost or unaccounted or incomplete:
         raise ValueError(
             f"Expected exactly six successful timing cases in {path}; "
             f"found {dict(actual)!r}, broken={broken}, lost={lost}, "

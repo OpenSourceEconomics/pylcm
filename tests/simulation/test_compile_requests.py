@@ -14,6 +14,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 
 import jax
 import jax._src.monitoring
@@ -54,8 +55,13 @@ HOST_TIME_REPEATS = 9
 # Batches taken before the row gives up on finding a steady host. A GitHub
 # macOS runner is a three-core shared VM, and a batch taken while it was being
 # descheduled says nothing about pylcm; retrying costs a few seconds and
-# recovers a usable measurement most of the time.
-HOST_TIME_ATTEMPTS = 4
+# recovers a usable measurement most of the time. Each attempt takes a whole
+# fresh batch, control leg included, so the retry never reuses the contaminated
+# `off` calls that condemned the previous one. Eight attempts rather than four
+# because the macOS lane exhausted four on four of its six rows; the ceiling
+# every attempt must clear is unchanged, so more attempts buy only more chances
+# to observe a quiet machine, never a wider tolerance on a noisy one.
+HOST_TIME_ATTEMPTS = 8
 
 # The coordinator `Model.simulate` runs before the period loop. The recording
 # stub must observe it, or the measurement no longer isolates the loop.
@@ -249,17 +255,32 @@ def test_repeating_a_subject_width_at_debug_compiles_nothing(*, witness: str) ->
     assert counts.compile_requests == 0
 
 
+@dataclass(frozen=True)
+class SteadyBatch:
+    """The batch a row settled on, and what every attempt behind it cost."""
+
+    measurement: TimingMeasurement
+    """The batch to report: the first steady one, or the steadiest attempted."""
+
+    attempted_relative_iqrs: tuple[float, ...]
+    """Control-leg spread of every attempt taken, in the order they were taken."""
+
+
 def _steady_median_host_times(
     *, witness: str, log_level: LogLevel, repeats: int, stub_preflight: bool
-) -> TimingMeasurement:
+) -> SteadyBatch:
     """Return the first steady batch, or the steadiest of `HOST_TIME_ATTEMPTS`.
 
     Steadiness is read off the `off` leg, which carries no runtime validation,
     so the retry never selects on the ratio under test: a batch is kept or
     discarded on how evenly the machine served the control calls, whatever
-    ratio it happens to show.
+    ratio it happens to show. Every attempt is a complete fresh batch, so a
+    later attempt never inherits the control calls that condemned an earlier
+    one. The spread of each attempt is carried out with the batch, because an
+    exhausted retry has to say what it saw rather than merely that it gave up.
     """
     steadiest: TimingMeasurement | None = None
+    attempted: list[float] = []
     for _ in range(HOST_TIME_ATTEMPTS):
         measurement = _median_host_times(
             witness=witness,
@@ -267,31 +288,40 @@ def _steady_median_host_times(
             repeats=repeats,
             stub_preflight=stub_preflight,
         )
+        attempted.append(measurement.off_relative_iqr)
         if steadiest is None or measurement.off_relative_iqr < (
             steadiest.off_relative_iqr
         ):
             steadiest = measurement
         if measurement.host_is_steady:
-            return measurement
+            return SteadyBatch(
+                measurement=measurement, attempted_relative_iqrs=tuple(attempted)
+            )
     assert steadiest is not None
-    return steadiest
+    return SteadyBatch(measurement=steadiest, attempted_relative_iqrs=tuple(attempted))
 
 
-def _require_a_steady_host(*, measurement: TimingMeasurement, receipt: str) -> None:
-    """Decline to report a ratio taken while the machine was not steady.
+def _require_a_steady_host(*, batch: SteadyBatch, receipt: str) -> None:
+    """Fail the row when no attempt found a machine steady enough to read.
 
-    This is not room given to the bar. `HOST_TIME_BAR` is unchanged and still
-    decides every batch the control leg certifies as readable, on every
-    platform. What it refuses is the other outcome: calling a contaminated
-    batch a regression because the runner stalled in the middle of it.
+    This is not room given to the bar, and it is not room taken from it either.
+    `HOST_TIME_BAR` is unchanged and still decides every batch the control leg
+    certifies as readable, on every platform; `HOST_TIME_MAX_RELATIVE_IQR` is
+    unchanged and still refuses to call a contaminated batch a regression. What
+    changed is the outcome once `HOST_TIME_ATTEMPTS` fresh batches have all
+    been refused: an exhausted retry is an obligation this run did not
+    discharge, so it is a failure carrying every attempt's reading, never a
+    skip that the aggregate gate would have to treat as a measurement.
     """
-    if not measurement.host_is_steady:
-        pytest.skip(
-            f"{UNSTABLE_HOST_MARKER}: the `off` leg spread over "
-            f"{measurement.off_relative_iqr:.3f} of its median across "
-            f"{HOST_TIME_ATTEMPTS} batches, above the "
+    if not batch.measurement.host_is_steady:
+        readings = ", ".join(f"{value:.3f}" for value in batch.attempted_relative_iqrs)
+        pytest.fail(
+            f"{UNSTABLE_HOST_MARKER}: no batch found a steady host in "
+            f"{len(batch.attempted_relative_iqrs)} attempts; the `off` leg "
+            f"spread over [{readings}] of its own median, every one above the "
             f"{HOST_TIME_MAX_RELATIVE_IQR} ceiling, so this host timed nothing "
-            f"the bar can read; TIMING_RECEIPT={receipt}"
+            f"the bar can read and the row is unmeasured, not passed; "
+            f"TIMING_RECEIPT={receipt}"
         )
 
 
@@ -318,19 +348,20 @@ def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
     cost rather than a measurement of it in isolation. The two medians are
     recorded alongside the ratio so a reader can see how much room there is.
     """
-    measurement = _steady_median_host_times(
+    batch = _steady_median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
         stub_preflight=True,
     )
+    measurement = batch.measurement
     receipt = measurement.write_receipt(
         directory=request.config.rootpath / "reports" / "simulation-timings",
         nodeid=request.node.nodeid,
         witness=witness,
         stub_preflight=True,
     )
-    _require_a_steady_host(measurement=measurement, receipt=receipt)
+    _require_a_steady_host(batch=batch, receipt=receipt)
     off_seconds, progress_seconds = (
         measurement.off_seconds,
         measurement.progress_seconds,
@@ -354,19 +385,20 @@ def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
     Same estimator as the loop row above, with nothing stubbed, so the ratio
     covers the complete `validate_simulation_inputs` preflight and period loop.
     """
-    measurement = _steady_median_host_times(
+    batch = _steady_median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
         stub_preflight=False,
     )
+    measurement = batch.measurement
     receipt = measurement.write_receipt(
         directory=request.config.rootpath / "reports" / "simulation-timings",
         nodeid=request.node.nodeid,
         witness=witness,
         stub_preflight=False,
     )
-    _require_a_steady_host(measurement=measurement, receipt=receipt)
+    _require_a_steady_host(batch=batch, receipt=receipt)
     off_seconds, progress_seconds = (
         measurement.off_seconds,
         measurement.progress_seconds,
