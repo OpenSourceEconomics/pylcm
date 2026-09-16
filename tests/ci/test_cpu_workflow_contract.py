@@ -430,3 +430,60 @@ def test_eight_device_registry_excludes_only_implicit_collection(
         root=_REPO_ROOT,
         invocation_args=("tests",),
     )
+
+
+def _general_shard_counts() -> dict[str, int]:
+    """Return the shard count `cpu.yml` runs for each general leg."""
+    jobs = _workflow()["jobs"]
+    counts = {
+        entry["leg"]: int(entry["shards"])
+        for entry in jobs["tests"]["strategy"]["matrix"]["include"]
+    }
+    fp32 = jobs["tests-fp32"]
+    counts[fp32["env"]["PYLCM_CI_GENERAL_LEG"]] = int(
+        fp32["env"]["PYLCM_CI_GENERAL_SHARDS"]
+    )
+    return counts
+
+
+def test_the_workflow_runs_exactly_the_shard_counts_the_manifest_records():
+    """`cpu.yml`'s matrices and the manifest's `shard_layout` agree.
+
+    The two halves are written apart: the manifest decides which files a shard
+    of a leg selects, and the workflow decides how many shards of that leg get
+    a runner. A leg whose workflow count is lower than its manifest count
+    silently drops every file the missing shards own -- each remaining job
+    still passes, and only the count reveals the gap -- while a higher one
+    schedules a job whose shard index the sharder rejects.
+    """
+    layout = ci_workloads.shard_layout()
+    assert _general_shard_counts() == {
+        leg: cfg["shards"] for leg, cfg in layout["general"].items()
+    }
+
+    solution = {
+        (int(entry["precision"]), int(entry["shard"])): int(entry["shards"])
+        for entry in _workflow()["jobs"]["tests-slow-solution"]["strategy"]["matrix"][
+            "include"
+        ]
+    }
+    for leg, cfg in layout["solution"].items():
+        precision = 64 if "64" in leg else 32
+        assert {shard for prec, shard in solution if prec == precision} == set(
+            range(1, cfg["shards"] + 1)
+        ), leg
+        assert {
+            count for (prec, _), count in solution.items() if prec == precision
+        } == {cfg["shards"]}, leg
+
+
+def test_every_general_leg_matrix_entry_declares_its_own_shard_count():
+    """No general matrix entry inherits a shard count from another leg.
+
+    The legs no longer share one count -- Windows takes more shards than macOS
+    for the same universe because its payload and its setup are both larger --
+    so `shards` has to travel with the entry that uses it, not with the job.
+    """
+    for entry in _workflow()["jobs"]["tests"]["strategy"]["matrix"]["include"]:
+        assert {"os", "leg", "shard", "shards"} <= set(entry), entry
+        assert 1 <= int(entry["shard"]) <= int(entry["shards"])

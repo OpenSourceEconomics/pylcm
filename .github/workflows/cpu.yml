@@ -28,35 +28,69 @@ jobs:
   tests:
     name: >-
       Run general tests for ${{ matrix.os }} on ${{ matrix.python-version }}
-      (shard ${{ matrix.shard }}/3)
+      (shard ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ${{ matrix.os }}
     permissions:
       actions: write
       contents: read
     strategy:
       fail-fast: false
+      # Shard counts differ per leg because the legs cost different amounts and
+      # carry different setup. Measured on run 35078533997: 141 worker-minutes
+      # of payload on fp64 Linux, 117 on macOS, 232 on Windows, against roughly
+      # 2, 3 and 8 minutes of per-job checkout and pixi install respectively.
+      # At four workers that is 11.7, 14.6 and 14.5 payload minutes per job.
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-        python-version:
-          - '3.14'
-        shard:
-          - 1
-          - 2
-          - 3
         include:
           - os: ubuntu-latest
+            python-version: '3.14'
             leg: fp64-linux
+            shard: 1
+            shards: 3
+          - os: ubuntu-latest
+            python-version: '3.14'
+            leg: fp64-linux
+            shard: 2
+            shards: 3
+          - os: ubuntu-latest
+            python-version: '3.14'
+            leg: fp64-linux
+            shard: 3
+            shards: 3
           - os: macos-latest
+            python-version: '3.14'
             leg: fp64-macos
+            shard: 1
+            shards: 2
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 2
+            shards: 2
           - os: windows-latest
+            python-version: '3.14'
             leg: fp64-windows
+            shard: 1
+            shards: 4
+          - os: windows-latest
+            python-version: '3.14'
+            leg: fp64-windows
+            shard: 2
+            shards: 4
+          - os: windows-latest
+            python-version: '3.14'
+            leg: fp64-windows
+            shard: 3
+            shards: 4
+          - os: windows-latest
+            python-version: '3.14'
+            leg: fp64-windows
+            shard: 4
+            shards: 4
     env:
       PYLCM_CI_RECEIPT: reports/ci-receipts
       PYLCM_CI_GENERAL_LEG: ${{ matrix.leg }}
-      PYLCM_CI_GENERAL_SHARDS: '3'
+      PYLCM_CI_GENERAL_SHARDS: ${{ matrix.shards }}
       PYLCM_CI_GENERAL_SHARD: ${{ matrix.shard }}
       PYLCM_SHARD: ${{ matrix.shard }}
       PYLCM_CACHE_KEY: jax-gen-${{ matrix.os }}-s${{ matrix.shard }}
@@ -177,9 +211,10 @@ jobs:
   # fp32 is otherwise only exercised on `gpu32`, behind the contended GPU
   # runners. A dtype regression is not GPU-specific, so catch it here first.
   # Two duration-weighted shards: the fp32 general payload is less than half the
-  # fp64 one, so a third shard would buy nothing but another runner's setup.
+  # fp64 one. Three shards: the leg measured 190 worker-minutes on run
+  # 35078533997, which two four-worker jobs cannot carry inside the guardrail.
   tests-fp32:
-    name: Run general fp32 tests on ubuntu-latest (shard ${{ matrix.shard }}/2)
+    name: Run general fp32 tests on ubuntu-latest (shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -190,10 +225,11 @@ jobs:
         shard:
           - 1
           - 2
+          - 3
     env:
       PYLCM_CI_RECEIPT: reports/ci-receipts
       PYLCM_CI_GENERAL_LEG: fp32-linux
-      PYLCM_CI_GENERAL_SHARDS: '2'
+      PYLCM_CI_GENERAL_SHARDS: '3'
       PYLCM_CI_GENERAL_SHARD: ${{ matrix.shard }}
       PYLCM_SHARD: ${{ matrix.shard }}
       PYLCM_CACHE_KEY: jax-gen32-s${{ matrix.shard }}
@@ -455,6 +491,15 @@ jobs:
             ${{env.PYLCM_CACHE_KEY}}-
       - name: Run the non-solution slow tests
         shell: bash {0}
+        # `--dist loadfile` is repeated here rather than left to the project's
+        # addopts because this lane now depends on it for memory, not only for
+        # compile reuse: `tests/simulation/test_outer_endpoint_admission.py`
+        # peaks at 7.3 GB RSS in its adaptive case, and loadfile is what keeps
+        # the whole module on one of the two workers, so only one such case is
+        # ever resident and roughly 8 GB of the 16 GB runner stays free for the
+        # other worker. That module was OOM-killed twice as a silent xdist
+        # "node down" on the Windows general shard at four workers, which is why
+        # it is marked `slow` and lands here.
         run: |
           set -euo pipefail
           mkdir -p reports
@@ -468,7 +513,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp$PYLCM_CI_PRECISION-rest-slow.xml \
-            -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
+            --dist loadfile -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
       - name: Upload JUnit reports and receipts
         # `always()` so a failing run still publishes its report: the XML is how
         # a run's counts are read back, and a run that failed is exactly when
@@ -2019,11 +2064,14 @@ jobs:
   # The slow solution phase dominates both CPU precisions. Whole files are
   # assigned by decreasing observed per-precision weight into the lightest bin
   # (`shard_test_files.py --weights-leg`), preserving module-local compile reuse
-  # while balancing real cost rather than a hash. fp64 takes five shards and
-  # fp32 three: the fp64 worker sum alone is 196.29 minutes, so three two-worker
-  # jobs have a 32.72-minute compute lower bound -- over the guardrail before
-  # any setup. Each job keeps two xdist workers: increasing that inside a 16 GB
-  # runner has exhausted memory, whereas separate runners provide real capacity.
+  # while balancing real cost rather than a hash. Both precisions take seven
+  # shards. Run 35078533997 measured 288.5 worker-minutes at fp64 and 285.4 at
+  # fp32, so a two-worker job carries 20.6 and 20.4 payload minutes at seven
+  # shards; fewer shards break the 24-minute payload guardrail and more buy
+  # nothing, because the heaviest indivisible file already costs 21.1 minutes at
+  # fp64 and 22.1 at fp32 and `--dist loadfile` cannot split it. Each job keeps
+  # two xdist workers: increasing that inside a 16 GB runner has exhausted
+  # memory, whereas separate runners provide real capacity.
   tests-slow-solution:
     name: >-
       Run slow solution tests on ubuntu-latest at fp${{ matrix.precision }}
@@ -2039,28 +2087,46 @@ jobs:
         include:
           - precision: 64
             shard: 1
-            shards: 5
+            shards: 7
           - precision: 64
             shard: 2
-            shards: 5
+            shards: 7
           - precision: 64
             shard: 3
-            shards: 5
+            shards: 7
           - precision: 64
             shard: 4
-            shards: 5
+            shards: 7
           - precision: 64
             shard: 5
-            shards: 5
+            shards: 7
+          - precision: 64
+            shard: 6
+            shards: 7
+          - precision: 64
+            shard: 7
+            shards: 7
           - precision: 32
             shard: 1
-            shards: 3
+            shards: 7
           - precision: 32
             shard: 2
-            shards: 3
+            shards: 7
           - precision: 32
             shard: 3
-            shards: 3
+            shards: 7
+          - precision: 32
+            shard: 4
+            shards: 7
+          - precision: 32
+            shard: 5
+            shards: 7
+          - precision: 32
+            shard: 6
+            shards: 7
+          - precision: 32
+            shard: 7
+            shards: 7
     env:
       XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
       PYLCM_CI_PRECISION: ${{ matrix.precision }}

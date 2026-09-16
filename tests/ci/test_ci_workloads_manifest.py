@@ -199,23 +199,30 @@ def test_the_two_source_only_modules_run_only_on_the_source_contract_lane():
 def test_leg_weights_are_recorded_per_leg_not_as_a_cross_leg_sum():
     """A per-job budget must never be computed from the cross-leg CSV totals.
 
-    `file_weights` sums the four general legs; the program certificate's entry
-    there is 37 minutes of Windows and 27 of Linux fp64 added together. Sharding
-    against that number would over-provision Linux and under-provision Windows,
-    so the layout reads `leg_weights` instead. This test pins the distinction.
+    `file_weights` sums the four general legs; the split-workflow parity module
+    costs 13 minutes of Windows and 9 of Linux fp64, and its cross-leg entry is
+    those and the other two added together. Sharding against that number would
+    over-provision the cheap platform and under-provision the expensive one, so
+    the layout reads `leg_weights` instead. This test pins the distinction.
+
+    The exemplar has to be a file the general legs still run: a module that has
+    moved to a single-leg lane -- as the source-only certificates did -- keeps
+    a cross-leg entry but stops accruing per-leg seconds, so it would report
+    this contract as broken when only its lane changed.
     """
     manifest = ci_workloads.load_manifest()
     legs = set(ci_workloads.leg_names())
     assert {"fp64-linux", "fp64-macos", "fp64-windows", "fp32-linux"} <= legs
-    program = "tests/test_simulation_candidate_program_certificate.py"
+    parity = "tests/simulation/test_nnbegm_split_workflow_parity.py"
+    assert parity in set(ci_workloads.general_shard_universe())
     legs_checked = ("fp64-linux", "fp64-macos", "fp64-windows", "fp32-linux")
     per_leg: dict[str, float] = {}
     for leg in legs_checked:
-        seconds = ci_workloads.leg_weights(leg=leg).get(program)
-        assert seconds is not None, f"{program} has no recorded weight on {leg}"
+        seconds = ci_workloads.leg_weights(leg=leg).get(parity)
+        assert seconds is not None, f"{parity} has no recorded weight on {leg}"
         per_leg[leg] = seconds
     assert len(set(per_leg.values())) > 1, "per-leg weights collapsed to one value"
-    cross_leg = float(manifest["file_weights"][program]["seconds"])
+    cross_leg = float(manifest["file_weights"][parity]["seconds"])
     assert cross_leg > max(per_leg.values())
 
 
