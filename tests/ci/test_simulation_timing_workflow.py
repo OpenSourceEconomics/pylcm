@@ -101,16 +101,22 @@ def test_the_timing_job_covers_every_route_the_general_lanes_do() -> None:
     """Each (OS, precision) route that runs general work also runs the bars.
 
     Dropping a route here would silently stop measuring that platform's timing
-    while its general lane kept passing.
+    while its general lane kept passing. macOS is the one deliberate exception:
+    the hosted macOS runners never met the measurement's steadiness
+    precondition (control-leg relative IQR 0.17 to 0.54 over eight fresh
+    batches against a 0.15 ceiling), and a declined row is a failure, so the
+    lane could only ever be red. The six timing obligations are measured on
+    the three remaining routes; a macOS route may return once a steady runner
+    exists, and this test must then be widened, not the bar.
     """
     include = _workflow()["jobs"][_TIMING_JOB]["strategy"]["matrix"]["include"]
     routes = {(entry["os"], entry["precision"]) for entry in include}
     assert routes == {
         ("ubuntu-latest", 64),
-        ("macos-latest", 64),
         ("windows-latest", 64),
         ("ubuntu-latest", 32),
     }
+    assert ("macos-latest", 64) not in routes
 
 
 def test_the_timing_job_runs_no_other_payload() -> None:

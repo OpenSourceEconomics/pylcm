@@ -691,10 +691,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # macOS is deliberately absent. The hosted macOS runners never satisfy
+        # the steadiness precondition of the measurement (the control leg's
+        # relative IQR sat between 0.17 and 0.54 over eight fresh batches
+        # against a 0.15 ceiling on 2026-09-16), and since a declined row is a
+        # failure rather than a skip, the lane could only ever be red. Each of
+        # the six timing obligations is measured on Linux fp64, Linux fp32 and
+        # Windows fp64 instead; that is a maintainer scope decision, not a
+        # loosened bar.
         include:
           - os: ubuntu-latest
-            precision: 64
-          - os: macos-latest
             precision: 64
           - os: windows-latest
             precision: 64
