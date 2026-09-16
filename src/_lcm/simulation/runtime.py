@@ -12,7 +12,9 @@ import jax
 
 from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.execution.core_program import (
+    CoreArgumentBuilder,
     CoreExecutionDisposition,
+    CoreExecutionRequirements,
     CoreProgram,
     MaterializedCoreProgram,
     TiledOutputAxis,
@@ -30,7 +32,6 @@ from _lcm.execution.workspace_planning import (
     _admissible_width,
     compiler_memory_reservation,
     plan_workspace,
-    workspace_width_candidates,
 )
 from _lcm.simulation.chunk_profile_cache import ProfileCacheToken
 from _lcm.simulation.host_operations import (
@@ -168,6 +169,22 @@ class SimulationRuntime:
     )
     """Selected executable for each period and declared program identity."""
 
+    routes: dict[Hashable, _PreparedRoute] = dataclasses.field(
+        default_factory=dict, repr=False
+    )
+    """Static preparation an exact repeat of one abstract signature reuses.
+
+    Keyed by the complete abstract signature of the *caller's* arguments, so the
+    probe can precede materialization; see `_prepared_route_key`. Entries hold
+    immutable abstract description and compiled code only — never a caller
+    array, never an admission or validation verdict. The runtime's own
+    configuration (`execution`, `enable_jit`, `subject_devices`) is immutable for
+    the life of one `SimulationRuntime` and therefore constant across this dict,
+    so it is deliberately absent from the key: a different execution config,
+    device order, explicit width or JIT disposition is a different runtime with
+    its own empty `routes`.
+    """
+
     in_flight: dict[Hashable, Future[CompiledSimulationProgram]] = dataclasses.field(
         default_factory=dict, repr=False
     )
@@ -203,8 +220,34 @@ class SimulationRuntime:
         n_subjects: int,
         residency: SimulationDispatchContext | None = None,
     ) -> object:
-        """Invoke the selected executable with this call's dynamic arguments."""
+        """Invoke the selected executable with this call's dynamic arguments.
+
+        An unbudgeted repeat of an exact abstract signature takes the prepared
+        route: the record is probed *before* anything is materialized, and a hit
+        binds this call's own leaves onto the cached static preparation (see
+        `_bind_prepared_route`). Every other call — budgeted, first-seen, or one
+        whose freshly bound operands no longer match the record — takes the full
+        validated materialize/plan route below, which then publishes the record
+        an exact repeat may reuse.
+        """
         self._require_budget_context(program=program, residency=residency)
+        route_key = (
+            _prepared_route_key(
+                program=program,
+                arguments=arguments,
+                period=period,
+                n_subjects=n_subjects,
+            )
+            if self.execution.device_memory_bytes is None and residency is None
+            else None
+        )
+        if route_key is not None:
+            bound = self._bind_prepared_route(
+                key=route_key, program=program, arguments=arguments, period=period
+            )
+            if bound is not None:
+                compiled, bound_arguments = bound
+                return compiled(**bound_arguments)
         materialized = self._materialize(
             program=program,
             arguments=arguments,
@@ -212,42 +255,91 @@ class SimulationRuntime:
             n_subjects=n_subjects,
             residency=residency,
         )
-        if self.execution.device_memory_bytes is None:
-            prepared = self._prepared_dispatch(
-                program=materialized, n_subjects=n_subjects
-            )
-            if prepared is not None:
-                return prepared(**materialized.arguments)
         compiled = self._prepare_materialized(
             program=materialized, n_subjects=n_subjects, residency=residency
         )
+        if route_key is not None:
+            self._publish_prepared_route(
+                key=route_key,
+                program=program,
+                materialized=materialized,
+                compiled=compiled,
+            )
         return compiled(**materialized.arguments)
 
-    def _prepared_dispatch(
-        self, *, program: MaterializedCoreProgram, n_subjects: int
-    ) -> CompiledSimulationProgram | None:
-        """Return an already-cached executable for an exact unbudgeted signature.
+    def _bind_prepared_route(
+        self,
+        *,
+        key: Hashable,
+        program: CoreProgram,
+        arguments: Mapping[str, object],
+        period: int,
+    ) -> tuple[CompiledSimulationProgram, Mapping[str, object]] | None:
+        """Bind this call's live leaves onto a cached static preparation.
 
-        Eligible only when no device-memory budget is configured (see `dispatch`).
-        Recomputes the same widths and the same full compiler-identity key that
-        `compile_candidate` would build, then looks the entry up directly instead
-        of re-running `plan_workspace`/`_prepare_materialized`. A miss — new
-        shape, dtype, layout, period program, parameters, devices or an
-        unsupported disposition — falls back to the existing materialization and
-        candidate-selection route, which populates this same cache entry.
+        Returns the selected executable together with freshly built and freshly
+        placed operands, or `None` to send the call down the full validated
+        route. Nothing is carried over from the previous call except immutable
+        abstract description and compiled code: the argument tree is rebuilt by
+        the declared builder and placed again, so a same-shaped new array is a
+        fresh value, never a reason to reuse the old object.
+
+        Three guards keep the reuse exact. The record must have been published
+        for this very `CoreProgram` object, so a rebuilt period program cannot
+        inherit a predecessor's preparation. The builder's result must still be
+        a mapping, the check `materialize_core_program` performs. And the bound,
+        placed operands must carry exactly the abstract signature the cached
+        executable was compiled for — which also settles the donation-candidate
+        check, since that reads only the argument names the signature pins. Any
+        other outcome is a refusal, never a repair.
         """
-        widths = workspace_width_candidates(
-            axes=program.requirements.axes,
-            fixed_widths=_dispatch_widths(
-                program=program, configured=self.execution.axis_widths, residency=None
-            ),
-            budget_bytes=None,
-        )[0]
-        key = _simulation_lowering_key(
-            runtime=self, program=program, n_subjects=n_subjects, widths=widths
-        )
         with self.lock:
-            return self.cache.get(key)
+            route = self.routes.get(key)
+        if route is None or route.source_program is not program:
+            return None
+        built = route.argument_builder(
+            _build_context(arguments=arguments, period=period)
+        )
+        if not isinstance(built, Mapping):
+            return None
+        placed = place_simulation_arguments(
+            arguments=built,
+            subject_arg_names=route.subject_arg_names,
+            value_reads=route.requirements.value_reads,
+            devices=self.subject_devices,
+            budget_bytes=None,
+            live_footprint=None,
+            budget_devices=(),
+        )
+        if _operand_signature(arguments=placed) != route.operand_signature:
+            return None
+        return route.compiled, placed
+
+    def _publish_prepared_route(
+        self,
+        *,
+        key: Hashable,
+        program: CoreProgram,
+        materialized: MaterializedCoreProgram,
+        compiled: CompiledSimulationProgram,
+    ) -> None:
+        """Record the static preparation an exact repeat of this call may reuse."""
+        builder = program.argument_builder
+        if not isinstance(builder, SubjectArgumentNames):
+            return
+        signature = _operand_signature(arguments=materialized.arguments)
+        if signature is None:
+            return
+        with self.lock:
+            self.routes[key] = _PreparedRoute(
+                source_program=program,
+                argument_builder=builder,
+                subject_arg_names=builder.subject_arg_names,
+                requirements=materialized.requirements,
+                widths=compiled.widths,
+                operand_signature=signature,
+                compiled=compiled,
+            )
 
     def prepare(
         self,
@@ -494,6 +586,89 @@ class SimulationRuntime:
         return compiled
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _PreparedRoute:
+    """One signature's static preparation, separated from its per-call binding.
+
+    Everything here is fixed by the abstract signature alone and is therefore
+    safe to share between calls. The values a call actually computes on —
+    the built argument tree and its placement — are rebuilt every time by
+    `SimulationRuntime._bind_prepared_route`, which also refuses the record
+    unless the freshly bound operands reproduce `operand_signature` exactly.
+    """
+
+    source_program: CoreProgram
+    """The exact declared program this preparation was published for."""
+
+    argument_builder: CoreArgumentBuilder
+    """The declared binder invoked afresh on every call; it owns no arrays."""
+
+    subject_arg_names: tuple[str, ...]
+    """Operands partitioned across subjects, as the builder declares them."""
+
+    requirements: CoreExecutionRequirements
+    """Subject-extent descriptor: planner axes and addressed value reads."""
+
+    widths: Mapping[str, int]
+    """The selected candidate's width map, reused instead of re-derived.
+
+    Pinned from the compiled candidate itself, so an explicit `ExecutionConfig`
+    width and a derived unbudgeted subject width are both carried exactly as the
+    planner selected them; nothing here re-runs `workspace_width_candidates`.
+    """
+
+    operand_signature: Hashable
+    """Abstract identity the bound operands must reproduce to be admitted."""
+
+    compiled: CompiledSimulationProgram
+    """The selected executable, already owned by the shared compiler cache."""
+
+
+def _operand_signature(*, arguments: Mapping[str, object]) -> Hashable | None:
+    """Return one argument tree's complete abstract identity.
+
+    Tree structure — which also pins the argument names, so an added or dropped
+    optional column is a different signature — together with every leaf's shape,
+    dtype, weak type and ordered device layout, and the exact value of a typed
+    static leaf. `None` reports a tree this runtime cannot key on, which sends
+    the call down the full validated route rather than guessing.
+    """
+    leaves, treedef = jax.tree_util.tree_flatten(dict(arguments))
+    signature = (treedef, tuple(_abstract_operand(leaf) for leaf in leaves))
+    try:
+        hash(signature)
+    except TypeError:
+        return None
+    return signature
+
+
+def _prepared_route_key(
+    *,
+    program: CoreProgram,
+    arguments: Mapping[str, object],
+    period: int,
+    n_subjects: int,
+) -> Hashable | None:
+    """Return the caller-side key a prepared route is probed with.
+
+    Built from the caller's own arguments before anything is materialized, so a
+    warm hit reaches the record without constructing a static descriptor or a
+    width frontier first. `None` means no route can be keyed for this call.
+    """
+    signature = _operand_signature(arguments=arguments)
+    if signature is None:
+        return None
+    return (
+        period,
+        program.name,
+        _func_dedup_key(func=program.function),
+        program.disposition,
+        program.compiler_options,
+        n_subjects,
+        signature,
+    )
+
+
 def _simulation_lowering_key(
     *,
     runtime: SimulationRuntime,
@@ -507,8 +682,8 @@ def _simulation_lowering_key(
     identity, resolved argument PyTree structure and leaf shape/dtype/weak
     type/sharding, output roles, disposition, device placement and compiler
     options. Reused unchanged by `compile_candidate` (populating the cache) and
-    by `_prepared_dispatch` (a warm unbudgeted hit reading it), so the two can
-    never diverge.
+    by `compile_candidate`'s own cache probe, so the identity a candidate is
+    stored under and the identity it is found under can never diverge.
     """
     return _lowering_key(
         program_identity=_func_dedup_key(func=program.function),

@@ -393,7 +393,7 @@ _SOURCE_SEALS = {
     WORKSPACE_PLANNING_SOURCE: "b82b62dcb9b7dc3aad78d10f16d479695a1d29ba177464e0f060aea627dfcb09",
     SIMULATION_PROGRAMS_SOURCE: "b75ec55e48f7abf37a5d0401681f54ce92f4f7c7bddd7ab45407c0551ed8ed07",
     SIMULATION_PROGRAM_TYPES_SOURCE: "222cb4d5053a26f333b0c2f97393badc50182b0ae8d90f2fccc6b8faa4eb6169",
-    SIMULATION_RUNTIME_SOURCE: "24a9004ef77b6826e4dde230306df994d466de1864f45098a12a219d2fd740d6",
+    SIMULATION_RUNTIME_SOURCE: "313d71a48b0dc645d78095d44e1b9b06ba21697fe98f63f839e84452eda1adc4",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
@@ -3120,11 +3120,14 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_RUNTIME_SOURCE: (
-            "6ed06e6677cc898298a42fa119d00db89b0adf1c41d3b08a09d78a95f7c8fd68",
+            "49bef93ca14a3371de78170635b29b84883e5f876e686212d607ee23bbc35d3e",
             {
                 "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
-                "SimulationRuntime.dispatch": "0eb4aa7e14fbb6614d6f63d3993d620ad1ad3b946d22b119879d81b330fd30e5",
-                "SimulationRuntime._prepared_dispatch": "5f2564d8e5583e60d0d53900ebc8d42c773773be074b272624757b2a9548b087",
+                "SimulationRuntime.dispatch": "8ba6cd9386f3210c6478c5f31684f9f0dd9acff0533e272dbc34bbbb4cf89463",
+                "SimulationRuntime._bind_prepared_route": "096e7a9fb3488df5c2b3cd44c1bba2231bc17806c00c3b4e988d30f0732a3617",
+                "SimulationRuntime._publish_prepared_route": "01e0eac9f1d73abe967ffcb570f7e6ec1e98eb139205ee0c50709e8028b637c1",
+                "_operand_signature": "baafdf01b0e315e7edf3e12555ddf94901382991391470e28bfc0c41fa6b747f",
+                "_prepared_route_key": "c24e6727be651d6e766953a595de9094ad87bbd0c51223e98f23bfd99a855369",
                 "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
                 "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
                 "SimulationRuntime._prepare_materialized": "81f08f68234a734a0d5a4ac0cf45d5cad6bcae7426a6291f61e9d7b1635d0cc2",
@@ -4314,7 +4317,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/runtime.py": (
-        "6ed06e6677cc898298a42fa119d00db89b0adf1c41d3b08a09d78a95f7c8fd68",
+        "49bef93ca14a3371de78170635b29b84883e5f876e686212d607ee23bbc35d3e",
         {
             "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
             "SimulationRuntime.prepare_abstract": "842dba8c1e48637eba99548bebb2858a25116785451901451be656ad3ab55a76",

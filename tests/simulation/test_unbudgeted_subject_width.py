@@ -168,8 +168,8 @@ def test_a_budgeted_residency_context_still_owns_the_width() -> None:
     assert dict(widths) == {"subject": 1024}
 
 
-def test_dispatch_and_the_prepared_unbudgeted_lookup_resolve_the_same_width() -> None:
-    """`_prepared_dispatch` keys on exactly the width dispatch goes on to use."""
+def test_dispatch_and_the_prepared_route_pin_the_same_width() -> None:
+    """A published prepared route carries exactly the width dispatch selected."""
     core = _program()
     program = _materialized(n_subjects=9_000, program=core)
     runtime = _runtime()
@@ -182,8 +182,9 @@ def test_dispatch_and_the_prepared_unbudgeted_lookup_resolve_the_same_width() ->
         period=0,
         n_subjects=9_000,
     )
-    assert runtime._prepared_dispatch(program=program, n_subjects=9_000) is not None
-    assert dict(resolved) == {"subject": 9_000}
+    assert len(runtime.routes) == 1
+    (route,) = runtime.routes.values()
+    assert dict(route.widths) == dict(resolved) == {"subject": 9_000}
 
 
 @pytest.mark.parametrize("n_subjects", [9_000])
