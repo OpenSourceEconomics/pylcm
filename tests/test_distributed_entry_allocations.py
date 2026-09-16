@@ -415,6 +415,7 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
         DeviceBufferFootprint,
         measure_buffer_footprint,
         resident_bytes_by_device,
+        union_buffer_footprints,
     )
     from tests.simulation.test_action_grid_entry_admission import (  # noqa: PLC0415
         _inputs,
@@ -429,21 +430,46 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
     source_checks: list[int] = []
     source_accounting_checks: list[bool] = []
     active_sources: DeviceBufferFootprint | None = None
+    active_owners: DeviceBufferFootprint | None = None
     original_headroom = operand_placement.require_transfer_headroom
 
     def headroom(**kwargs: Any) -> None:
         if active_sources is not None:
+            assert active_owners is not None
+            # Admission reads the live inventory only on the devices it budgets,
+            # so the guarded property is what it charges there, not which
+            # unread devices the inventory object happens to carry. Observe both
+            # halves directly: the sources are accounted on every budgeted
+            # device they occupy, and the projected inventory charges exactly
+            # what the complete owner union plus these sources would charge.
+            budgeted = tuple(kwargs["devices"])
+            assert budgeted
             missing = resident_bytes_by_device(
                 live=active_sources,
                 arguments=kwargs["live"],
-                devices=tuple(active_sources.spans),
+                devices=tuple(
+                    device for device in active_sources.spans if device in budgeted
+                ),
             )
             assert not any(missing.values())
+            nothing = DeviceBufferFootprint(spans={})
+            complete = union_buffer_footprints(
+                footprints=(active_owners, active_sources)
+            )
+            assert dict(
+                resident_bytes_by_device(
+                    live=kwargs["live"], arguments=nothing, devices=budgeted
+                )
+            ) == dict(
+                resident_bytes_by_device(
+                    live=complete, arguments=nothing, devices=budgeted
+                )
+            )
             source_accounting_checks.append(True)
         original_headroom(**kwargs)
 
     def dispatch(self: ProfiledSimulationOperations, **kwargs: Any) -> object:
-        nonlocal active_sources
+        nonlocal active_sources, active_owners
         arguments = kwargs["arguments"]
         if tuple(arguments) == ("grids",):
             sources = measure_buffer_footprint(tree=arguments)
@@ -465,10 +491,12 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
             assert kwargs["devices"] == (entry_device,)
             source_checks.append(len(sources.spans))
             active_sources = sources
+            active_owners = full
         try:
             return original_dispatch(self, **kwargs)
         finally:
             active_sources = None
+            active_owners = None
 
     def resolve(self: PreflightActionGrids, **kwargs: Any) -> Mapping[str, jax.Array]:
         product = original_resolve(self, **kwargs)
