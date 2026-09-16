@@ -586,7 +586,8 @@ def _admit_anchor_then_descend(
         raise ExecutionPlanningError(
             "no anchor map fits after top-first admission in the bounded "
             f"independent frontier with the {budget}-byte device budget "
-            f"({len(attempts)} complete profiles; {map_reason}); "
+            f"({len(attempts)} complete profiles; {map_reason});"
+            f"{profiler.runtime.execution.device_memory_cap_note()} "
             "rejected attempts: " + repr(tuple(attempts))
         )
     reason = "descending candidates rejected; admitted anchor retained"

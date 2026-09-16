@@ -187,3 +187,37 @@ def test_simulation_sharding_is_an_explicit_legacy_preserving_opt_in() -> None:
 def test_simulation_sharding_rejects_unknown_modes(mode: object) -> None:
     with pytest.raises((BeartypeCallHintViolation, TypeError, ValueError)):
         ExecutionConfig(simulation_sharding=mode)  # ty: ignore[invalid-argument-type]
+
+
+def test_device_memory_headroom_fraction_defaults_to_a_fifteen_percent_margin() -> None:
+    """Budgets are admitted against the pool less an operational safety margin."""
+    assert ExecutionConfig().device_memory_headroom_fraction == 0.15
+
+
+def test_device_memory_headroom_fraction_is_configurable() -> None:
+    """A caller who has measured their own envelope sets their own margin."""
+    config = ExecutionConfig(
+        device_memory_bytes=1024, device_memory_headroom_fraction=0.05
+    )
+
+    assert config.device_memory_headroom_fraction == 0.05
+
+
+def test_device_memory_headroom_fraction_survives_a_roundtrip() -> None:
+    """The margin travels with the configuration to a worker process."""
+    config = ExecutionConfig(device_memory_headroom_fraction=0.4)
+
+    assert cloudpickle.loads(cloudpickle.dumps(config)) == config
+
+
+def test_device_memory_headroom_fraction_reaches_the_resolution() -> None:
+    """Every phase can read the margin its model was planned under."""
+    resolved = resolve_execution_config(
+        config=ExecutionConfig(
+            device_memory_bytes=1024, device_memory_headroom_fraction=0.2
+        ),
+        visible_device_ids=(0,),
+        state_names=frozenset(),
+    )
+
+    assert resolved.device_memory_headroom_fraction == 0.2

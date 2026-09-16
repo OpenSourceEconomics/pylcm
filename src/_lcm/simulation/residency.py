@@ -161,6 +161,7 @@ def require_transfer_headroom(
     scratch_bytes: Mapping[jax.Device, int],
     budget_bytes: int,
     devices: tuple[jax.Device, ...],
+    budget_note: str = "",
 ) -> None:
     """Refuse a fresh transfer before its source, destination and scratch can overlap.
 
@@ -169,6 +170,8 @@ def require_transfer_headroom(
     existing-copy storage is already in `live`; this stage excludes no arguments.
     Uncertain destination aliases may be conservatively projected as fresh storage.
     The callback authorizes no allocation beyond the explicitly supplied cost model.
+    `budget_note` is appended to a refusal, so a caller whose budget was capped
+    below the request can say so where the ceiling is named.
     """
     if type(budget_bytes) is not int or budget_bytes <= 0:
         raise ExecutionPlanningError("A transfer budget must be a positive integer.")
@@ -192,6 +195,7 @@ def require_transfer_headroom(
             raise ExecutionPlanningError(
                 f"Simulation transfer requires {required} bytes on {device!s} "
                 f"against a {budget_bytes}-byte budget before allocation."
+                f"{budget_note}"
             )
 
 

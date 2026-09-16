@@ -3142,15 +3142,20 @@ def _width_selection_failure(
     triple: _CoreTriple,
     resident_bytes: int,
     budget_bytes: int,
+    execution: ResolvedExecution,
     error: ExecutionPlanningError,
 ) -> ExecutionPlanningError:
-    """Name the cell a workspace refusal belongs to and what it competed with."""
+    """Name the cell a workspace refusal belongs to and what it competed with.
+
+    The budget named here is the effective one, so the message also states the
+    request it came from whenever the devices capped it.
+    """
     regime_name, period, core_key = triple
     msg = (
         f"Regime {regime_name!r} at period {period} cannot select a workspace "
         f"width for core {core_key!r}: the plan keeps {resident_bytes} bytes "
-        f"resident on its busiest device against a {budget_bytes}-byte budget. "
-        f"{error}"
+        f"resident on its busiest device against a {budget_bytes}-byte budget."
+        f"{execution.device_memory_cap_note()} {error}"
     )
     return ExecutionPlanningError(msg)
 
@@ -3673,6 +3678,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 triple=triple,
                 resident_bytes=resident_bytes_by_triple[triple],
                 budget_bytes=budget_bytes,
+                execution=execution,
                 error=error,
             ) from error
         selected_candidate = (triple, _width_key(widths=plan.widths))

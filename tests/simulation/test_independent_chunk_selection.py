@@ -44,7 +44,11 @@ def _selector(
     profiler = object.__new__(admission._ChunkProfiler)
     for name, value in {
         "runtime": SimpleNamespace(
-            execution=SimpleNamespace(device_memory_bytes=100, axis_widths=pins)
+            execution=SimpleNamespace(
+                device_memory_bytes=100,
+                axis_widths=pins,
+                device_memory_cap_note=lambda: "",
+            )
         ),
         "population": population,
         "original_population": population,
@@ -319,7 +323,9 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
     for name, value in {
         "runtime": SimpleNamespace(
             execution=SimpleNamespace(
-                device_memory_bytes=totals[64], axis_widths={"subject": 64}
+                device_memory_bytes=totals[64],
+                axis_widths={"subject": 64},
+                device_memory_cap_note=lambda: "",
             )
         ),
         "population": 256,

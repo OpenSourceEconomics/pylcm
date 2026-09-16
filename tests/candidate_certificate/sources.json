@@ -174,7 +174,7 @@
           },
           {
             "path": "src/_lcm/simulation/chunk_admission.py",
-            "sha256": "425c4b2c3e7361d71a7e9f153bdac0e8646634a912ff5e6fd35651dd291d1a44"
+            "sha256": "12848bf848c6b6d5640b993ed111a2f7a934c7b0d0365234f975556ba41d8803"
           },
           {
             "path": "src/_lcm/simulation/chunk_inputs.py",
@@ -286,7 +286,7 @@
           },
           {
             "path": "src/_lcm/simulation/residency.py",
-            "sha256": "b390559ad29c98ce3eac9175194630a0643ef5e08cde97e36e5e638e8d2aa33e"
+            "sha256": "922eb2b78189f0c9714b24dd865cb1b2c7eeff3ec5b861bb257efb9f079f78dc"
           },
           {
             "path": "src/_lcm/simulation/result_dataframe.py",
@@ -298,7 +298,7 @@
           },
           {
             "path": "src/_lcm/simulation/runtime.py",
-            "sha256": "313d71a48b0dc645d78095d44e1b9b06ba21697fe98f63f839e84452eda1adc4"
+            "sha256": "fa8427cf1c10f0564b3f77f239853bc64b9f81d8baa203b6f3c209eec509a038"
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
@@ -338,7 +338,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "73e4a55e9374f12bc9a03f37704cd48c11d01e86ccbcee8e485f1d8a752ce683"
+            "sha256": "65fa34bfc5f251e0ee5e5725c1c39a27d73efdb89833fefcc41a1354642f99ed"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -462,7 +462,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "30c09cd220321d9ccbf52a3f4599d587446b090d6da5a74755fc213c2e6a38e5"
+            "sha256": "fd3266ade9d0835c8c5c2be9f75c8e6d5fe05a8e991b243ea1d0ce4ba8167437"
           },
           {
             "path": "src/lcm/result.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "49346bcdc91bdc08445dbc2acebadf97824d1af9fd8853ab67e2608920b0c603"
+        "source_inventory_sha256": "9a3e7c2a712d93112662981744354ecbc2eaee06c72a1a9a84080f68d68e4f12"
       },
       "fast": {
         "candidate_sources": [
@@ -644,7 +644,7 @@
           },
           {
             "path": "src/_lcm/simulation/chunk_admission.py",
-            "sha256": "425c4b2c3e7361d71a7e9f153bdac0e8646634a912ff5e6fd35651dd291d1a44"
+            "sha256": "12848bf848c6b6d5640b993ed111a2f7a934c7b0d0365234f975556ba41d8803"
           },
           {
             "path": "src/_lcm/simulation/chunk_inputs.py",
@@ -756,7 +756,7 @@
           },
           {
             "path": "src/_lcm/simulation/residency.py",
-            "sha256": "b390559ad29c98ce3eac9175194630a0643ef5e08cde97e36e5e638e8d2aa33e"
+            "sha256": "922eb2b78189f0c9714b24dd865cb1b2c7eeff3ec5b861bb257efb9f079f78dc"
           },
           {
             "path": "src/_lcm/simulation/result_dataframe.py",
@@ -768,7 +768,7 @@
           },
           {
             "path": "src/_lcm/simulation/runtime.py",
-            "sha256": "313d71a48b0dc645d78095d44e1b9b06ba21697fe98f63f839e84452eda1adc4"
+            "sha256": "fa8427cf1c10f0564b3f77f239853bc64b9f81d8baa203b6f3c209eec509a038"
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
@@ -808,7 +808,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "73e4a55e9374f12bc9a03f37704cd48c11d01e86ccbcee8e485f1d8a752ce683"
+            "sha256": "65fa34bfc5f251e0ee5e5725c1c39a27d73efdb89833fefcc41a1354642f99ed"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -932,7 +932,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "30c09cd220321d9ccbf52a3f4599d587446b090d6da5a74755fc213c2e6a38e5"
+            "sha256": "fd3266ade9d0835c8c5c2be9f75c8e6d5fe05a8e991b243ea1d0ce4ba8167437"
           },
           {
             "path": "src/lcm/result.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "49346bcdc91bdc08445dbc2acebadf97824d1af9fd8853ab67e2608920b0c603"
+        "source_inventory_sha256": "9a3e7c2a712d93112662981744354ecbc2eaee06c72a1a9a84080f68d68e4f12"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "49346bcdc91bdc08445dbc2acebadf97824d1af9fd8853ab67e2608920b0c603",
+  "source_inventory_sha256": "9a3e7c2a712d93112662981744354ecbc2eaee06c72a1a9a84080f68d68e4f12",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1118,7 +1118,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_admission.py",
-      "sha256": "425c4b2c3e7361d71a7e9f153bdac0e8646634a912ff5e6fd35651dd291d1a44"
+      "sha256": "12848bf848c6b6d5640b993ed111a2f7a934c7b0d0365234f975556ba41d8803"
     },
     {
       "path": "src/_lcm/simulation/chunk_inputs.py",
@@ -1230,7 +1230,7 @@
     },
     {
       "path": "src/_lcm/simulation/residency.py",
-      "sha256": "b390559ad29c98ce3eac9175194630a0643ef5e08cde97e36e5e638e8d2aa33e"
+      "sha256": "922eb2b78189f0c9714b24dd865cb1b2c7eeff3ec5b861bb257efb9f079f78dc"
     },
     {
       "path": "src/_lcm/simulation/result_dataframe.py",
@@ -1242,7 +1242,7 @@
     },
     {
       "path": "src/_lcm/simulation/runtime.py",
-      "sha256": "313d71a48b0dc645d78095d44e1b9b06ba21697fe98f63f839e84452eda1adc4"
+      "sha256": "fa8427cf1c10f0564b3f77f239853bc64b9f81d8baa203b6f3c209eec509a038"
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
@@ -1282,7 +1282,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "73e4a55e9374f12bc9a03f37704cd48c11d01e86ccbcee8e485f1d8a752ce683"
+      "sha256": "65fa34bfc5f251e0ee5e5725c1c39a27d73efdb89833fefcc41a1354642f99ed"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -1406,7 +1406,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "30c09cd220321d9ccbf52a3f4599d587446b090d6da5a74755fc213c2e6a38e5"
+      "sha256": "fd3266ade9d0835c8c5c2be9f75c8e6d5fe05a8e991b243ea1d0ce4ba8167437"
     },
     {
       "path": "src/lcm/result.py",

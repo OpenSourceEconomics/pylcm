@@ -26,6 +26,37 @@ workspace and constants, thread stacks, allocator overhead, and executable-cache
 remain outside a complete runtime bound. The CPU evidence below establishes this
 allocation contract on the captured executable. It establishes no GPU capacity claim.
 
+## Effective budget and headroom
+
+The reservation this document bounds covers represented allocations only. Generated
+code, omitted runtime workspace, collective-communication buffers, library workspaces
+such as cuBLAS, the driver context, thread stacks, allocator overhead and fragmentation
+are all outside it, yet they occupy the same allocator pool. A budget set to the whole
+pool therefore admits plans the pool cannot host.
+
+`ExecutionConfig.device_memory_bytes` is consequently a request, not the ceiling. The
+ceiling is resolved once, where a model binds its devices, as
+
+`B_effective = min(B_requested, min over selected devices d of (L_d - ceil(f * L_d)))`
+
+with `L_d` the device's observed allocator pool limit (`memory_stats()["bytes_limit"]`)
+and `f` the `ExecutionConfig.device_memory_headroom_fraction`, which defaults to `0.15`.
+A request of `None` stays unbudgeted and queries no device. A device whose backend
+reports no pool limit contributes no cap, and taking the minimum means a request already
+below the capped limit is never reduced a second time, so no margin is applied twice.
+
+The fraction moves the ceiling and nothing else: every compiler reservation, residency
+figure and admission inequality is unchanged, and `f = 0.0` reproduces admission against
+the whole pool. The default is a policy awaiting workload validation, not a measured
+requirement — no measurement establishes 15% as the required margin on any device.
+
+The motivating case is a three-device A40 float32 production simulation on 2026-09-16
+(Slurm job 27624359), which failed during backward induction when the BFC allocator
+refused a 39.82 GiB allocation against a 40.49 GiB pool limit. The caller had passed the
+entire pool as `device_memory_bytes`, so 98.3% of it was formally admissible while the
+unrepresented storage above made it unallocatable, and no deliberate margin stood
+between the admitted plan and the pool.
+
 ## Captured CPU witness
 
 The implementation base is `1f554a30c49ad6ddfaa8ead541ad40431e7d7235`. The public

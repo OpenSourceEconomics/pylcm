@@ -1,5 +1,6 @@
 """Public execution-policy configuration."""
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -28,6 +29,26 @@ class ExecutionConfig:
     The reservation enforces the raw peak and represented argument, output,
     alias, and temporary allocations. Runtime storage omitted by the compiler
     remains outside this accounting scope. `None` disables budget admission.
+
+    A caller may pass the device's whole allocator pool limit here: the model
+    resolves the ceiling it plans against by taking
+    `device_memory_headroom_fraction` off every selected device's pool limit
+    and keeping the smaller of that and this request.
+    """
+
+    device_memory_headroom_fraction: float = 0.15
+    """Share of each device's allocator pool kept out of the budget ceiling.
+
+    An operational safety margin for pool pressure that lives outside the
+    represented accounting: collective-communication buffers, library
+    workspaces such as cuBLAS, the driver context, and allocator
+    fragmentation. It is a policy awaiting workload validation, not a measured
+    requirement, so a caller who has measured their own envelope may set it to
+    `0.0` and plan against the whole pool.
+
+    It moves only the ceiling a plan is admitted against; every compiler
+    reservation and residency figure the admission compares to that ceiling is
+    unchanged. Must be an exact float in `[0, 1)`.
     """
 
     sharded_states: tuple[StateName, ...] = ()
@@ -75,6 +96,9 @@ class ExecutionConfig:
     def __post_init__(self) -> None:
         """Reject ambiguous or unusable values at construction."""
         _fail_if_budget_invalid(device_memory_bytes=self.device_memory_bytes)
+        _fail_if_headroom_fraction_invalid(
+            device_memory_headroom_fraction=self.device_memory_headroom_fraction
+        )
         if type(self.donate_buffers) is not bool:
             raise TypeError("ExecutionConfig.donate_buffers must be an exact bool.")
         if type(self.simulation_sharding) is not str:
@@ -102,6 +126,24 @@ def _fail_if_budget_invalid(*, device_memory_bytes: int | None) -> None:
         raise TypeError("ExecutionConfig.device_memory_bytes must be an exact int.")
     if device_memory_bytes <= 0:
         raise ValueError("ExecutionConfig.device_memory_bytes must be positive.")
+
+
+def _fail_if_headroom_fraction_invalid(
+    *, device_memory_headroom_fraction: float
+) -> None:
+    """Require an exact float share of the pool in `[0, 1)`."""
+    if type(device_memory_headroom_fraction) is not float:
+        msg = "ExecutionConfig.device_memory_headroom_fraction must be an exact float."
+        raise TypeError(msg)
+    if math.isnan(device_memory_headroom_fraction):
+        msg = "ExecutionConfig.device_memory_headroom_fraction must not be NaN."
+        raise ValueError(msg)
+    if not 0.0 <= device_memory_headroom_fraction < 1.0:
+        msg = (
+            "ExecutionConfig.device_memory_headroom_fraction must lie in [0, 1); got "
+            f"{device_memory_headroom_fraction!r}."
+        )
+        raise ValueError(msg)
 
 
 def _normalized_axis_widths(

@@ -5,6 +5,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Device-memory headroom below the allocator pool
+
+- `ExecutionConfig(device_memory_headroom_fraction=0.15)` keeps a share of each
+  selected device's allocator pool out of the admission ceiling, so a caller may pass
+  the device's whole pool limit as `device_memory_bytes` without planning against
+  memory the pool cannot actually hand out. The effective budget is the smaller of the
+  request and every selected device's pool limit less its headroom; an
+  already-conservative request is never reduced again, a device that reports no pool
+  limit places no cap, and `device_memory_bytes=None` stays unbudgeted and queries no
+  device. The margin is an operational policy for pressure outside the represented
+  accounting — collective buffers, library workspaces, driver context, fragmentation —
+  and `0.0` restores planning against the whole pool. A capped budget is logged as a
+  warning naming request, per-device limits and effective ceiling, and admission
+  refusals name both budgets.
+
 ### Execution widths per regime
 
 - `ExecutionConfig(axis_widths=...)` accepts a width per regime. A bare integer under an

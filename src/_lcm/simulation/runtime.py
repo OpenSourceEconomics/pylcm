@@ -479,6 +479,7 @@ class SimulationRuntime:
                 scratch_bytes={},
                 budget_bytes=budget,
                 devices=residency.budget_devices,
+                budget_note=self.execution.device_memory_cap_note(),
             )
             external = resident_bytes_by_device(
                 live=live, arguments=arguments, devices=self.subject_devices

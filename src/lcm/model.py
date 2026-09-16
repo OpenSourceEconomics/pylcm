@@ -33,6 +33,7 @@ from _lcm.execution.execution_plan import (
     fail_if_per_regime_widths_name_non_solve_axes,
     resolve_execution_config,
     visible_device_ids,
+    visible_device_pool_limits,
 )
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_processing import (
@@ -622,6 +623,7 @@ class Model:
         self._execution = resolve_execution_config(
             config=execution_config,
             visible_device_ids=visible_device_ids(),
+            device_pool_limit_bytes=visible_device_pool_limits(),
             state_names=frozenset(states)
             | frozenset(
                 name for regime in self.user_regimes.values() for name in regime.states

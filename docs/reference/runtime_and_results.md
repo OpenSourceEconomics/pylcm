@@ -51,7 +51,14 @@ model = Model(
 Its fields:
 
 - `device_memory_bytes` declares a per-device ceiling for compiler peak plus accounted
-  live residency. `None` (the default) omits memory-budget admission.
+  live residency. `None` (the default) omits memory-budget admission. It may be the
+  device's whole allocator pool limit: the model admits against that limit less
+  `device_memory_headroom_fraction` of it, whichever is smaller.
+- `device_memory_headroom_fraction` (default `0.15`) is the share of each selected
+  device's allocator pool kept out of the ceiling, an operational margin for storage
+  outside the represented accounting — collective buffers, library workspaces, the
+  driver context, fragmentation. It is a policy, not a measured requirement; `0.0`
+  admits against the whole pool.
 - `sharded_states` names supported model-level states whose grid axes are spread over
   the devices their regimes are placed on. A continuous grid cannot be sharded merely
   because its extent divides the number of devices.
