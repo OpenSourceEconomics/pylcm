@@ -108,10 +108,26 @@ def _toy_model(*, variant: str, outer_search: AdaptiveOuterMesh | None = None) -
     )
 
 
-def _mss_model(*, arithmetic: ComparisonArithmetic) -> Model:
-    """Build the DC-EGM twin on a coarse savings grid under one MSS arithmetic."""
+_MSS_SAVINGS_GRID_POINTS_DEFAULT = 8
+_MSS_SAVINGS_GRID_POINTS_FULL = 40
+
+
+def _mss_model(
+    *,
+    arithmetic: ComparisonArithmetic,
+    n_points: int = _MSS_SAVINGS_GRID_POINTS_DEFAULT,
+) -> Model:
+    """Build the DC-EGM twin on a savings grid under one MSS arithmetic.
+
+    The default 8-point grid retains both endpoints and interior points; it
+    creates the same engine-function families as the original 40-point grid
+    (see the test-suite cleanup ledger, W8, for the adequacy trace) and is
+    used on the GitHub lane. The `slow`-marked `_MSS_SAVINGS_GRID_POINTS_FULL`
+    variant keeps the original dense-grid stress coverage for the full
+    (Marvin/default) battery.
+    """
     return dcegm_paper_twin.build_dcegm_model(
-        savings_grid=LinSpacedGrid(start=0.0, stop=50.0, n_points=40),
+        savings_grid=LinSpacedGrid(start=0.0, stop=50.0, n_points=n_points),
         envelope=MSSEnvelope(arithmetic=arithmetic),
     )
 
@@ -144,12 +160,38 @@ _FAMILIES: dict[str, tuple[Callable[[], Model], Callable[[], UserParams]]] = {
         lambda: _mss_model(arithmetic="ordinary"),
         dcegm_paper_twin.get_params,
     ),
+    "mss_certified_full_grid": (
+        lambda: _mss_model(
+            arithmetic="certified", n_points=_MSS_SAVINGS_GRID_POINTS_FULL
+        ),
+        dcegm_paper_twin.get_params,
+    ),
+    "mss_ordinary_full_grid": (
+        lambda: _mss_model(
+            arithmetic="ordinary", n_points=_MSS_SAVINGS_GRID_POINTS_FULL
+        ),
+        dcegm_paper_twin.get_params,
+    ),
 }
+# `mss_certified*` families require the exact affine kernel; the `_full_grid`
+# variants additionally keep the original dense 40-point grid and are `slow`
+# (dropped on the Windows/macOS lanes, retained in the full Linux/Marvin
+# battery). Everything else runs unmarked on every lane.
+_SLOW_FAMILIES = frozenset({"mss_certified_full_grid", "mss_ordinary_full_grid"})
+_EXACT_KERNEL_FAMILIES = frozenset({"mss_certified", "mss_certified_full_grid"})
+
+
+def _family_marks(family: str) -> tuple[pytest.MarkDecorator, ...]:
+    marks: list[pytest.MarkDecorator] = []
+    if family in _EXACT_KERNEL_FAMILIES:
+        marks.append(_requires_exact_kernel)
+    if family in _SLOW_FAMILIES:
+        marks.append(pytest.mark.slow)
+    return tuple(marks)
+
+
 _FAMILY_CASES = [
-    pytest.param(family, marks=_requires_exact_kernel)
-    if family == "mss_certified"
-    else family
-    for family in _FAMILIES
+    pytest.param(family, marks=_family_marks(family)) for family in _FAMILIES
 ]
 
 
