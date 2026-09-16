@@ -421,7 +421,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "30c09cd220321d9ccbf52a3f4599d587446b090d6da5a74755fc213c2e6a38e5",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "4af29438d1b8f5b382a48578833347f42c4fb563f0b0b61b0b9f1b370b86c15b",
+    BACKWARD_INDUCTION_SOURCE: "73e4a55e9374f12bc9a03f37704cd48c11d01e86ccbcee8e485f1d8a752ce683",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "daf16daa43dfa0aa5b832442e8cc87cf6709b8579a658de9dbabdf0cbedd1ecb",
     RESULT_SOURCE: "0e9a35c1b403bf828e9d5174217ce8ae987b0b8fdf9cb1d8c3638ec204c10006",
@@ -3884,7 +3884,7 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "0a89d8a8971037fbc226483490bb9423450add22076e42fa98cf2b0bd29669c3",
+        "95e59be7843e19e5f5d3e4fde788fa120739d27586ad65f5d193da66cdb8c0a4",
         {
             "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -3968,7 +3968,7 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "0a89d8a8971037fbc226483490bb9423450add22076e42fa98cf2b0bd29669c3",
+        "95e59be7843e19e5f5d3e4fde788fa120739d27586ad65f5d193da66cdb8c0a4",
         {
             "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4237,7 +4237,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "0a89d8a8971037fbc226483490bb9423450add22076e42fa98cf2b0bd29669c3",
+        "95e59be7843e19e5f5d3e4fde788fa120739d27586ad65f5d193da66cdb8c0a4",
         {
             "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4441,7 +4441,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
             "_compile_all_functions": "1f519b7dcda33b893cc3bf1ecca93cdb681fc1c2dcbbb2a7926bb58b0eaa5754",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
-            "_resolve_output_layouts_and_lowering_keys": "cb56ebdf25d99b0c3383886a6dc83b7c557eabde9dbe09b308d357192246c531",
+            "_resolve_output_layouts_and_lowering_keys": "52337a240e326511fd44a9a94ba234126f301a39032a94d836aa77aaa1e9e15c",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "55e6e53f9d98a5e16b8b0548de876ed9e73a208d92156cacb837f594784d17fd",
@@ -4470,7 +4470,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "0a89d8a8971037fbc226483490bb9423450add22076e42fa98cf2b0bd29669c3"
+        != "95e59be7843e19e5f5d3e4fde788fa120739d27586ad65f5d193da66cdb8c0a4"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6325,7 +6325,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "0a89d8a8971037fbc226483490bb9423450add22076e42fa98cf2b0bd29669c3",
+        "95e59be7843e19e5f5d3e4fde788fa120739d27586ad65f5d193da66cdb8c0a4",
         {
             "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -6334,7 +6334,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_iter_edge_topologies": "de3078515a59f624e07889c6f3e05c8ac948472416c81a993c8d02f29905789b",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
             "_compile_all_functions": "1f519b7dcda33b893cc3bf1ecca93cdb681fc1c2dcbbb2a7926bb58b0eaa5754",
-            "_resolve_output_layouts_and_lowering_keys": "cb56ebdf25d99b0c3383886a6dc83b7c557eabde9dbe09b308d357192246c531",
+            "_resolve_output_layouts_and_lowering_keys": "52337a240e326511fd44a9a94ba234126f301a39032a94d836aa77aaa1e9e15c",
         },
     ),
     "src/_lcm/solution/diagnostics.py": (
@@ -10088,7 +10088,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            tile_widths=width_candidates[:1],",
+                old=(
+                    "            tile_widths=width_candidates "
+                    "if consumed else width_candidates[:1],"
+                ),
                 new="            tile_widths=({},),",
                 label="native program planned widths",
             ),

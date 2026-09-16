@@ -32,6 +32,7 @@ from tests.solution.test_footprint_width_selection import (
     _fixed_fixture_bytes,
     _value_bytes,
 )
+from tests.solution.test_public_weak_type_contract import _solve as _solve_scalar_edge
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -263,3 +264,54 @@ def test_the_width_product_of_the_selection_is_unchanged(
         math.prod(dict(observed.selected_widths[("acting", 2)]).values())
         == _FULL_WIDTH_PRODUCT
     )
+
+
+def _observe_scalar_edge(
+    *, monkeypatch: pytest.MonkeyPatch, convention: str
+) -> list[backward_induction._LazyCandidateFrontier]:
+    """Solve the published-scalar fixture and return the frontier of every plan."""
+    frontiers: list[backward_induction._LazyCandidateFrontier] = []
+    original_planning = backward_induction._resolve_output_layouts_and_lowering_keys
+
+    def observe_planning(**kwargs: Any) -> tuple:
+        result = original_planning(**kwargs)
+        frontiers.append(result[7])
+        return result
+
+    monkeypatch.setattr(
+        backward_induction,
+        "_resolve_output_layouts_and_lowering_keys",
+        observe_planning,
+    )
+    _solve_scalar_edge(convention=convention)
+    return frontiers
+
+
+def test_a_published_subtree_is_held_at_widths_admission_never_reaches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A producer whose published typing follows the width is refused regardless.
+
+    What a consumed producer publishes has to be one subtree at every width of
+    its frontier, because the consumer is lowered against the top-ranked one
+    before the budget selects. That is a property of the program, so the solve
+    refuses a width-dependent publication even when the budget admits the widest
+    candidate and no narrower one is ever selected, lowered or dispatched.
+    """
+    admitted = _observe_scalar_edge(monkeypatch=monkeypatch, convention="strong")
+    bound = {
+        triple: len(candidates)
+        for frontier in admitted
+        for triple, candidates in frontier.candidates_by_triple.items()
+    }
+    lengths = {
+        triple: length
+        for frontier in admitted
+        for triple, length in frontier.frontier_lengths.items()
+    }
+
+    assert set(bound.values()) == {1}
+    assert max(lengths.values()) > 1
+
+    with pytest.raises(ExecutionPlanningError, match="scalar"):
+        _observe_scalar_edge(monkeypatch=monkeypatch, convention="width_dependent")

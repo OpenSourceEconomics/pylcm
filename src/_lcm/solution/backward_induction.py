@@ -4007,6 +4007,43 @@ def _resolve_candidate_donations(
     return nominations, readers_by_dispatch, donations
 
 
+def _checked_producer_records(
+    *,
+    candidates: Sequence[ResolvedCoreProgram],
+    templates: Mapping[str, object],
+) -> MappingProxyType[Hashable, ResolvedProducer]:
+    """Publish one producer record per width candidate, invariance established.
+
+    A consumer is lowered against the record of the producer's top-ranked
+    candidate, before the budget selects which width runs, so every candidate of
+    the frontier has to publish the same subtree per label — the same shape, the
+    same dtype and the same weak typing. That is a property of the program, not
+    of the plan, so it is established over the whole ranked frontier rather than
+    over the candidates admission happens to reach.
+
+    Args:
+        candidates: The core's resolved width candidates, ranked widest first.
+        templates: The internal-input templates the core was resolved with.
+
+    Returns:
+        The records, keyed by width and ordered as the frontier ranks them, so
+        that the first is the top-ranked candidate the consumers are lowered
+        against.
+
+    Raises:
+        ExecutionPlanningError: Two candidates publish different subtrees.
+
+    """
+    records: dict[Hashable, ResolvedProducer] = {
+        _width_key(widths=candidate.tile_widths): resolve_producer(
+            program=candidate, templates=templates
+        )
+        for candidate in candidates
+    }
+    assert_width_invariant_internal_outputs(candidates=records)
+    return MappingProxyType(records)
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _CoreFrontier:
     """What one core's not-yet-bound width candidates are bound from.
@@ -4023,6 +4060,15 @@ class _CoreFrontier:
     templates: Mapping[str, object]
     widths: tuple[Mapping[str, object] | None, ...]
     consumed: bool
+    prebound: tuple[ResolvedCoreProgram, ...] | None
+    """Every candidate already resolved abstractly, for a consumed producer.
+
+    A consumed producer's whole frontier is resolved before any width is
+    selected, so that its published internal outputs can be held against one
+    another; binding a later candidate then reads the resolution off this tuple
+    instead of repeating it. `None` for a core no consumer reads, whose
+    candidates are resolved one refusal at a time.
+    """
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -4098,31 +4144,24 @@ class _LazyCandidateFrontier:
         bound = self.candidates_by_triple[triple]
         position = len(bound)
         templates = frontier.templates
-        resolved = resolve_core_program_candidates(
-            program=frontier.program,
-            tile_widths=frontier.widths[position : position + 1],
-            input_transfer_plan=frontier.transfer_plan,
-            abstract_inputs=True,
-        )[0]
+        # A consumed producer was resolved at every width before any consumer
+        # of it was lowered, so that the subtrees it publishes could be held
+        # against one another over the whole frontier; this reads that
+        # resolution rather than repeating it.
+        resolved = (
+            frontier.prebound[position]
+            if frontier.prebound is not None
+            else resolve_core_program_candidates(
+                program=frontier.program,
+                tile_widths=frontier.widths[position : position + 1],
+                input_transfer_plan=frontier.transfer_plan,
+                abstract_inputs=True,
+            )[0]
+        )
         candidate = (triple, _width_key(widths=resolved.tile_widths))
         resolved = _apply_transfer_marks(
             programs={candidate: resolved}, consumers=self.transfer_consumers
         )[candidate]
-        if frontier.consumed:
-            # The consumers of this core were lowered against the subtree its
-            # top-ranked candidate publishes, and selection may now hand them this
-            # one instead, so the two are held against each other exactly as the
-            # whole-frontier binding held them.
-            assert_width_invariant_internal_outputs(
-                candidates={
-                    bound[0][1]: resolve_producer(
-                        program=self.resolved_programs[bound[0]], templates=templates
-                    ),
-                    candidate[1]: resolve_producer(
-                        program=resolved, templates=templates
-                    ),
-                }
-            )
         self.resolved_programs[candidate] = resolved
         self.internal_templates[candidate] = templates
         regime_name, period, _core_key = triple
@@ -4207,21 +4246,26 @@ def _resolve_output_layouts_and_lowering_keys(
     before the consumers that read it, and each consumer is lowered against the
     producer's abstract output rather than a stand-in.
 
-    Only the top-ranked candidate of each core is bound here. The planner accepts
-    the first candidate of the ranked frontier that admission lets it keep, so
-    every narrower candidate is waste on a core whose widest one fits. The
-    returned `_LazyCandidateFrontier` binds candidate `k + 1` of a core once the
-    compilation waves have seen candidate `k` refused, from the same materialized
-    program, the same declaration order and the same width frontier, so both the
-    candidates offered to admission and the order they are offered in are the
-    ones the whole-frontier binding produced.
+    Only the top-ranked candidate of each core is *bound* here. The planner
+    accepts the first candidate of the ranked frontier that admission lets it
+    keep, so every narrower candidate is waste on a core whose widest one fits.
+    The returned `_LazyCandidateFrontier` binds candidate `k + 1` of a core once
+    the compilation waves have seen candidate `k` refused, from the same
+    materialized program, the same declaration order and the same width
+    frontier, so both the candidates offered to admission and the order they are
+    offered in are the ones the whole-frontier binding produced.
 
-    Each producer is traced once per bound width candidate with everything it is
-    lowered with — its dynamic arguments, the templates of the internal inputs it
-    reads itself, and its planner-owned static widths — before any consumer of it
-    is traced. Its candidates must publish one subtree per label, since a
-    consumer is lowered before the producer's width is selected; each candidate
-    the frontier binds later is held against the same published subtree.
+    A core some consumer reads is the exception: every candidate of its frontier
+    is resolved abstractly here, before any consumer of it is traced. Each
+    producer is traced with everything it is lowered with — its dynamic
+    arguments, the templates of the internal inputs it reads itself, and its
+    planner-owned static widths — and its candidates must publish one subtree per
+    label, since a consumer is lowered against the top-ranked subtree before the
+    producer's width is selected. That is a property of the program rather than
+    of the plan, so it is established over the whole ranked frontier and not only
+    over the candidates admission happens to reach. Only what a candidate costs
+    to *lower* — its compilation key and its donation decision — waits for the
+    refusal that binds it, and the resolution it waits with is this one.
 
     Each candidate's lowering key opens with the program's durable identity —
     the model, the regime, the core, and both groupings of its period — so a
@@ -4306,6 +4350,20 @@ def _resolve_output_layouts_and_lowering_keys(
             if name not in regime.fold_state_names
         )
         consumed = core_key in consumed_names
+        # Width invariance of a published internal output is a property of the
+        # program, not of the plan: a consumer is lowered against the producer's
+        # top-ranked subtree, so a candidate whose published shape, dtype or weak
+        # typing follows the width is a defect however the budget later selects.
+        # Every candidate of a consumed producer is therefore resolved
+        # abstractly here, before any consumer of it is lowered, while the parts
+        # that cost a lowering — the compilation key and the donation decision —
+        # stay with the lazy frontier and bind one refusal at a time.
+        eager = resolve_core_program_candidates(
+            program=materialized,
+            tile_widths=width_candidates if consumed else width_candidates[:1],
+            input_transfer_plan=transfer_plan,
+            abstract_inputs=True,
+        )
         if len(width_candidates) > 1:
             frontiers[triple] = _CoreFrontier(
                 program=materialized,
@@ -4313,13 +4371,9 @@ def _resolve_output_layouts_and_lowering_keys(
                 templates=templates,
                 widths=width_candidates,
                 consumed=consumed,
+                prebound=tuple(eager) if consumed else None,
             )
-        resolved = resolve_core_program_candidates(
-            program=materialized,
-            tile_widths=width_candidates[:1],
-            input_transfer_plan=transfer_plan,
-            abstract_inputs=True,
-        )[0]
+        resolved = eager[0]
         layouts[triple] = resolve_output_layout(
             core_key=core_key,
             value_template=next_regime_to_V_arr[regime_name],
@@ -4332,11 +4386,9 @@ def _resolve_output_layouts_and_lowering_keys(
         candidates_by_triple[triple] = [candidate]
         frontier_lengths[triple] = len(width_candidates)
         if consumed:
-            records: dict[Hashable, ResolvedProducer] = {
-                candidate[1]: resolve_producer(program=resolved, templates=templates)
-            }
-            assert_width_invariant_internal_outputs(candidates=records)
-            producers[core_key] = MappingProxyType(records)
+            producers[core_key] = _checked_producer_records(
+                candidates=eager, templates=templates
+            )
     transfer_consumers = _transfer_consumer_counts(resolved_programs=resolved_programs)
     resolved_programs.update(
         _apply_transfer_marks(programs=resolved_programs, consumers=transfer_consumers)
