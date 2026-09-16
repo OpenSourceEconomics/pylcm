@@ -29,7 +29,8 @@ from tests.simulation.test_compile_requests import (
     HOST_TIME_BAR,
     HOST_TIME_REPEATS,
     _lcm_log_output_held_fixed,
-    _median_host_times,
+    _require_a_steady_host,
+    _steady_median_host_times,
 )
 
 
@@ -235,7 +236,7 @@ def test_unstubbed_warm_full_call_progress_meets_existing_time_bar(
 ) -> None:
     """Keep the original paired nine-repeat whole-call 1.5x acceptance bar."""
     start = time.perf_counter()
-    measurement = _median_host_times(
+    measurement = _steady_median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
@@ -245,7 +246,16 @@ def test_unstubbed_warm_full_call_progress_meets_existing_time_bar(
     record_property("off_ms", off * 1000)
     record_property("progress_ms", progress * 1000)
     record_property("progress_over_off", progress / off)
+    record_property("off_relative_iqr", measurement.off_relative_iqr)
+    record_property("progress_relative_iqr", measurement.progress_relative_iqr)
     record_property("measurement_seconds", time.perf_counter() - start)
+    _require_a_steady_host(
+        measurement=measurement,
+        receipt=(
+            f"off={off:.6f}s progress={progress:.6f}s "
+            f"ratio={progress / off:.3f} witness={witness}"
+        ),
+    )
     assert progress / off <= HOST_TIME_BAR
 
 

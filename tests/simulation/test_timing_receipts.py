@@ -199,3 +199,116 @@ def test_receipt(*, request: pytest.FixtureRequest, progress: float) -> None:
                 "TIMING_RECEIPT=" + value in (failure.text or "")
                 for failure in failures
             )
+
+
+def _uniform(*, level: str, value: float, count: int) -> tuple[tuple[str, float], ...]:
+    """Return `count` samples of one log level, all at the same wall time."""
+    return tuple((level, value) for _ in range(count))
+
+
+def _spread(*, level: str, spread: float) -> tuple[tuple[str, float], ...]:
+    """Return three samples centred on one second, spanning `spread` of a second.
+
+    Over three points the inclusive interquartile range is half the full range,
+    so the batch's relative spread statistic comes out at half of `spread`.
+    """
+    return tuple((level, value) for value in (1.0 - spread / 2, 1.0, 1.0 + spread / 2))
+
+
+def _measurement(samples: tuple[tuple[str, float], ...]) -> TimingMeasurement:
+    """Wrap samples in a measurement that requested no compilation."""
+    return TimingMeasurement(
+        samples=samples,
+        trace_requests=0,
+        lowering_requests=0,
+        compile_requests=0,
+    )
+
+
+def test_relative_iqr_reports_each_leg_spread_against_its_own_median() -> None:
+    """The steadiness statistic is the inclusive interquartile range over the median."""
+    measurement = _measurement(
+        tuple(("off", value) for value in (1.0, 2.0, 3.0, 4.0, 5.0))
+        + _uniform(level="progress", value=2.0, count=5)
+    )
+
+    assert measurement.off_relative_iqr == pytest.approx(2.0 / 3.0)
+    assert measurement.progress_relative_iqr == pytest.approx(0.0)
+
+
+def test_steadiness_is_decided_on_the_validation_free_control_leg_alone() -> None:
+    """A dispersed `progress` leg is the signal under test, not a broken instrument."""
+    steady = _measurement(
+        _uniform(level="off", value=1.0, count=5)
+        + tuple(("progress", value) for value in (1.0, 2.0, 3.0, 4.0, 5.0))
+    )
+    unsteady = _measurement(
+        tuple(("off", value) for value in (1.0, 2.0, 3.0, 4.0, 5.0))
+        + _uniform(level="progress", value=1.0, count=5)
+    )
+
+    assert steady.host_is_steady
+    assert not unsteady.host_is_steady
+
+
+def test_the_receipt_carries_the_steadiness_statistics(tmp_path: Path) -> None:
+    """A reader of a receipt can tell a steady batch from a contaminated one."""
+    measurement = _measurement(
+        _uniform(level="off", value=1.0, count=5)
+        + _uniform(level="progress", value=2.0, count=5)
+    )
+
+    observed = json.loads(
+        measurement.write_receipt(
+            directory=tmp_path,
+            nodeid="tests/test_timing.py::test_wall_time[dissolution]",
+            witness="dissolution",
+            stub_preflight=False,
+        )
+    )
+
+    assert observed["relative_iqr"] == {"off": 0.0, "progress": 0.0}
+    assert observed["host_is_steady"] is True
+
+
+def test_a_steady_batch_is_kept_and_no_further_batch_is_taken(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry loop stops at the first batch the control leg says is usable."""
+    spreads = (0.0, *(1.0,) * (timing_tests.HOST_TIME_ATTEMPTS - 1))
+    taken, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+
+    assert taken == 1
+    assert chosen.host_is_steady
+
+
+def test_the_steadiest_attempt_is_reported_when_no_attempt_is_steady(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every attempt is spent and the least contaminated batch is the one reported."""
+    spreads = (0.4, *(1.0,) * (timing_tests.HOST_TIME_ATTEMPTS - 1))
+    taken, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+
+    assert taken == timing_tests.HOST_TIME_ATTEMPTS
+    assert chosen.off_relative_iqr == pytest.approx(0.2)
+    assert not chosen.host_is_steady
+
+
+def _run_retry_loop(
+    *, monkeypatch: pytest.MonkeyPatch, spreads: tuple[float, ...]
+) -> tuple[int, TimingMeasurement]:
+    """Return how many batches the retry loop took and the batch it settled on."""
+    remaining = list(spreads)
+
+    def batch(**_kwargs: object) -> TimingMeasurement:
+        """Stand in for one timed batch with a prescribed control-leg spread."""
+        return _measurement(
+            _spread(level="off", spread=remaining.pop(0))
+            + _uniform(level="progress", value=1.0, count=3)
+        )
+
+    monkeypatch.setattr(timing_tests, "_median_host_times", batch)
+    chosen = timing_tests._steady_median_host_times(
+        witness="receipt", log_level="progress", repeats=3, stub_preflight=False
+    )
+    return len(spreads) - len(remaining), chosen

@@ -29,7 +29,11 @@ from benchmarks.asv._simulation_witnesses import (
 )
 from lcm import Model
 from lcm.typing import FloatND, UserInitialConditions, UserParams
-from tests.ci.simulation_timings import TimingMeasurement
+from tests.ci.simulation_timings import (
+    HOST_TIME_MAX_RELATIVE_IQR,
+    UNSTABLE_HOST_MARKER,
+    TimingMeasurement,
+)
 from tests.test_models.processes import (
     MultiRegimeId,
     get_multi_regime_model,
@@ -46,6 +50,12 @@ HOST_TIME_BAR = 1.5
 # timed alternately, so a background load that varies slowly over the run moves
 # both medians together rather than the ratio.
 HOST_TIME_REPEATS = 9
+
+# Batches taken before the row gives up on finding a steady host. A GitHub
+# macOS runner is a three-core shared VM, and a batch taken while it was being
+# descheduled says nothing about pylcm; retrying costs a few seconds and
+# recovers a usable measurement most of the time.
+HOST_TIME_ATTEMPTS = 4
 
 # The coordinator `Model.simulate` runs before the period loop. The recording
 # stub must observe it, or the measurement no longer isolates the loop.
@@ -239,6 +249,52 @@ def test_repeating_a_subject_width_at_debug_compiles_nothing(*, witness: str) ->
     assert counts.compile_requests == 0
 
 
+def _steady_median_host_times(
+    *, witness: str, log_level: LogLevel, repeats: int, stub_preflight: bool
+) -> TimingMeasurement:
+    """Return the first steady batch, or the steadiest of `HOST_TIME_ATTEMPTS`.
+
+    Steadiness is read off the `off` leg, which carries no runtime validation,
+    so the retry never selects on the ratio under test: a batch is kept or
+    discarded on how evenly the machine served the control calls, whatever
+    ratio it happens to show.
+    """
+    steadiest: TimingMeasurement | None = None
+    for _ in range(HOST_TIME_ATTEMPTS):
+        measurement = _median_host_times(
+            witness=witness,
+            log_level=log_level,
+            repeats=repeats,
+            stub_preflight=stub_preflight,
+        )
+        if steadiest is None or measurement.off_relative_iqr < (
+            steadiest.off_relative_iqr
+        ):
+            steadiest = measurement
+        if measurement.host_is_steady:
+            return measurement
+    assert steadiest is not None
+    return steadiest
+
+
+def _require_a_steady_host(*, measurement: TimingMeasurement, receipt: str) -> None:
+    """Decline to report a ratio taken while the machine was not steady.
+
+    This is not room given to the bar. `HOST_TIME_BAR` is unchanged and still
+    decides every batch the control leg certifies as readable, on every
+    platform. What it refuses is the other outcome: calling a contaminated
+    batch a regression because the runner stalled in the middle of it.
+    """
+    if not measurement.host_is_steady:
+        pytest.skip(
+            f"{UNSTABLE_HOST_MARKER}: the `off` leg spread over "
+            f"{measurement.off_relative_iqr:.3f} of its median across "
+            f"{HOST_TIME_ATTEMPTS} batches, above the "
+            f"{HOST_TIME_MAX_RELATIVE_IQR} ceiling, so this host timed nothing "
+            f"the bar can read; TIMING_RECEIPT={receipt}"
+        )
+
+
 @pytest.mark.parametrize("witness", sorted(WITNESSES))
 def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
     *,
@@ -262,7 +318,7 @@ def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
     cost rather than a measurement of it in isolation. The two medians are
     recorded alongside the ratio so a reader can see how much room there is.
     """
-    measurement = _median_host_times(
+    measurement = _steady_median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
@@ -274,6 +330,7 @@ def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
         witness=witness,
         stub_preflight=True,
     )
+    _require_a_steady_host(measurement=measurement, receipt=receipt)
     off_seconds, progress_seconds = (
         measurement.off_seconds,
         measurement.progress_seconds,
@@ -297,7 +354,7 @@ def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
     Same estimator as the loop row above, with nothing stubbed, so the ratio
     covers the complete `validate_simulation_inputs` preflight and period loop.
     """
-    measurement = _median_host_times(
+    measurement = _steady_median_host_times(
         witness=witness,
         log_level="progress",
         repeats=HOST_TIME_REPEATS,
@@ -309,6 +366,7 @@ def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
         witness=witness,
         stub_preflight=False,
     )
+    _require_a_steady_host(measurement=measurement, receipt=receipt)
     off_seconds, progress_seconds = (
         measurement.off_seconds,
         measurement.progress_seconds,
