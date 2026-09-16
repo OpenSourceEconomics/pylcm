@@ -3295,6 +3295,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         input_liveness,
         donations,
         representative_metadata,
+        frontier,
     ) = _resolve_output_layouts_and_lowering_keys(
         all_programs=all_programs,
         regimes=regimes,
@@ -3322,7 +3323,10 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         for candidate, decisions in donations.items()
         if _donated_arguments(donations=decisions)
     }
-    fallback_donations = dict.fromkeys(fallback_programs, ())
+    fallback_donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]] = (
+        dict.fromkeys(fallback_programs, ())
+    )
+    fallback_argument_keys: dict[_CoreTriple, Hashable] = {}
     fallback_keys = _lowering_keys(
         resolved_programs=fallback_programs,
         internal_templates=internal_templates,
@@ -3330,11 +3334,18 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         donations=fallback_donations,
         regimes=regimes,
         model_fingerprint=model_fingerprint,
+        argument_keys=fallback_argument_keys,
+    )
+    frontier.bind_fallbacks(
+        fallback_keys=fallback_keys,
+        fallback_donations=fallback_donations,
+        argument_keys=fallback_argument_keys,
     )
 
-    candidates_by_triple: dict[_CoreTriple, list[_CoreCandidate]] = {}
-    for candidate in resolved_programs:
-        candidates_by_triple.setdefault(candidate[0], []).append(candidate)
+    # Bound candidates, in rank order, of each core. The frontier appends to these
+    # lists as refusals ask for narrower candidates; `frontier_lengths` is the
+    # full ranked frontier a core still has left to offer.
+    candidates_by_triple = frontier.candidates_by_triple
 
     # Eager execution uses the same resolved function, arguments, requirements,
     # roles, static widths, and transfers as AOT. Only the final JAX compilation
@@ -3384,7 +3395,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     # without a budget, the full extent under one, or the requested width — so an
     # unbudgeted solve lowers exactly one candidate per core. Under a budget, only
     # the triples whose current candidate exceeds it
-    # advance to their next candidate in the following wave. Each wave deduplicates
+    # advance to their next candidate in the following wave, and only then is that
+    # candidate bound at all: a core whose widest candidate is admitted resolves
+    # one program, not its whole frontier. Each wave deduplicates
     # by lowering key across triples, lowers sequentially (tracing is
     # single-threaded), and compiles in parallel.
     budget_bytes = execution.device_memory_bytes
@@ -3471,7 +3484,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     wave = 0
     while pending:
         wave_candidates = {
-            triple: candidates_by_triple[triple][position]
+            triple: frontier.candidate(triple=triple, position=position)
             for triple, position in pending.items()
         }
         wave_lowering_keys = {
@@ -3595,7 +3608,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 <= budget_bytes
             ):
                 continue
-            if position + 1 < len(candidates_by_triple[triple]):
+            if position + 1 < frontier.frontier_lengths[triple]:
                 next_pending[triple] = position + 1
             # A triple that fits at no width has its whole frontier compiled; the
             # planner below reports it with every candidate's peak in hand.
@@ -3932,6 +3945,234 @@ def _describe_candidate(*, candidate: _CoreCandidate) -> str:
     return f"regime {regime_name!r}, core {core_name!r}, period {period}"
 
 
+def _resolve_candidate_donations(
+    *,
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    representatives: Mapping[_CoreTriple, ResolvedCoreProgram],
+    input_liveness: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
+    n_periods: int,
+    enable_jit: bool,
+    donate_buffers: bool,
+) -> tuple[
+    dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    dict[
+        tuple[int, RegimeName],
+        MappingProxyType[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
+    ],
+    dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
+]:
+    """Decide what each bound candidate donates, and against which read census.
+
+    Returns:
+        The ledger's nominations, the unit read census every dispatch is judged
+        against, and the nominations that survived that census.
+
+    """
+    nominations = {
+        candidate: (
+            resolve_donations(
+                program=resolved,
+                dispatch=(candidate[0][1], candidate[0][0]),
+                ledger=input_liveness,
+                n_periods=n_periods,
+            )
+            if enable_jit and donate_buffers
+            else ()
+        )
+        for candidate, resolved in resolved_programs.items()
+    }
+    # Two cores nominating one artifact is a declaration defect, so it is
+    # refused here, over the nominations: withholding one of them afterwards
+    # would resolve the competition instead of reporting it.
+    _fail_if_a_unit_donates_one_artifact_twice(donations=nominations)
+    # Donation consumes one executable input, so the surviving nominations need
+    # the unit's read census next to the ledger's per-dispatch count. The
+    # representatives carry it: every core of the unit appears once, and the
+    # declared reads a census counts do not vary with the width.
+    unit_programs: dict[tuple[int, RegimeName], list[ResolvedCoreProgram]] = {}
+    for (regime_name, period, _core_key), resolved in representatives.items():
+        unit_programs.setdefault((period, regime_name), []).append(resolved)
+    readers_by_dispatch = {
+        dispatch: unit_input_readers(programs=programs)
+        for dispatch, programs in unit_programs.items()
+    }
+    donations = {
+        candidate: withhold_shared_donations(
+            program=resolved_programs[candidate],
+            donations=decisions,
+            unit_readers=readers_by_dispatch[(candidate[0][1], candidate[0][0])],
+        )
+        for candidate, decisions in nominations.items()
+    }
+    return nominations, readers_by_dispatch, donations
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CoreFrontier:
+    """What one core's not-yet-bound width candidates are bound from.
+
+    Everything here is decided before any width is: the abstract program, the
+    resolved transfer plan it shares with every width, the internal-input
+    templates its cell published, and the ranked width frontier. Binding a later
+    candidate therefore asks nothing of the cell it was materialized in, and the
+    trees retained are abstract.
+    """
+
+    program: MaterializedCoreProgram
+    transfer_plan: tuple[ResolvedValueTransfer, ...]
+    templates: Mapping[str, object]
+    widths: tuple[Mapping[str, object] | None, ...]
+    consumed: bool
+
+
+@dataclasses.dataclass(kw_only=True)
+class _LazyCandidateFrontier:
+    """Bind a core's ranked width candidates one refusal at a time.
+
+    `plan_workspace` walks the ranked frontier widest first and keeps the first
+    candidate admission admits, so a core whose widest candidate fits never needs
+    a narrower one resolved, lowered or compiled. This holds the state the
+    whole-frontier binding built once — the marks census, the liveness ledger, the
+    unit read census and the per-core argument descriptions — and extends it by
+    exactly one candidate whenever a compilation wave reports a refusal.
+
+    The candidate order is the width frontier's, unchanged, and every derived
+    fact a later candidate needs is width-invariant and already complete, so the
+    plan admission sees is the plan it saw when the whole frontier was bound
+    ahead of it.
+    """
+
+    frontiers: Mapping[_CoreTriple, _CoreFrontier]
+    candidates_by_triple: dict[_CoreTriple, list[_CoreCandidate]]
+    frontier_lengths: Mapping[_CoreTriple, int]
+    layouts: Mapping[_CoreTriple, ResolvedOutputLayout]
+    resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram]
+    internal_templates: dict[_CoreCandidate, Mapping[str, object]]
+    nominations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]]
+    donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]]
+    lowering_keys: dict[_CoreCandidate, Hashable]
+    argument_keys: dict[_CoreTriple, Hashable]
+    transfer_consumers: Mapping[_ConsumerKey, set[_CoreTriple]]
+    readers_by_dispatch: Mapping[
+        tuple[int, RegimeName],
+        Mapping[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
+    ]
+    input_liveness: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]
+    regimes: MappingProxyType[RegimeName, Regime]
+    model_fingerprint: str
+    n_periods: int
+    enable_jit: bool
+    donate_buffers: bool
+    fallback_keys: dict[_CoreCandidate, Hashable] = dataclasses.field(
+        default_factory=dict
+    )
+    fallback_donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]] = (
+        dataclasses.field(default_factory=dict)
+    )
+    fallback_argument_keys: dict[_CoreTriple, Hashable] = dataclasses.field(
+        default_factory=dict
+    )
+
+    def bind_fallbacks(
+        self,
+        *,
+        fallback_keys: dict[_CoreCandidate, Hashable],
+        fallback_donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
+        argument_keys: dict[_CoreTriple, Hashable],
+    ) -> None:
+        """Extend the caller's donation-free variant maps alongside the frontier."""
+        self.fallback_keys = fallback_keys
+        self.fallback_donations = fallback_donations
+        self.fallback_argument_keys = argument_keys
+
+    def candidate(self, *, triple: _CoreTriple, position: int) -> _CoreCandidate:
+        """Return the candidate at one rank, binding the ranks up to it on the way."""
+        bound = self.candidates_by_triple[triple]
+        while len(bound) <= position:
+            self._bind_next(triple=triple)
+        return bound[position]
+
+    def _bind_next(self, *, triple: _CoreTriple) -> None:
+        """Bind one core's next-ranked candidate and everything derived from it."""
+        frontier = self.frontiers[triple]
+        bound = self.candidates_by_triple[triple]
+        position = len(bound)
+        templates = frontier.templates
+        resolved = resolve_core_program_candidates(
+            program=frontier.program,
+            tile_widths=frontier.widths[position : position + 1],
+            input_transfer_plan=frontier.transfer_plan,
+            abstract_inputs=True,
+        )[0]
+        candidate = (triple, _width_key(widths=resolved.tile_widths))
+        resolved = _apply_transfer_marks(
+            programs={candidate: resolved}, consumers=self.transfer_consumers
+        )[candidate]
+        if frontier.consumed:
+            # The consumers of this core were lowered against the subtree its
+            # top-ranked candidate publishes, and selection may now hand them this
+            # one instead, so the two are held against each other exactly as the
+            # whole-frontier binding held them.
+            assert_width_invariant_internal_outputs(
+                candidates={
+                    bound[0][1]: resolve_producer(
+                        program=self.resolved_programs[bound[0]], templates=templates
+                    ),
+                    candidate[1]: resolve_producer(
+                        program=resolved, templates=templates
+                    ),
+                }
+            )
+        self.resolved_programs[candidate] = resolved
+        self.internal_templates[candidate] = templates
+        regime_name, period, _core_key = triple
+        self.nominations[candidate] = (
+            resolve_donations(
+                program=resolved,
+                dispatch=(period, regime_name),
+                ledger=self.input_liveness,
+                n_periods=self.n_periods,
+            )
+            if self.enable_jit and self.donate_buffers
+            else ()
+        )
+        _fail_if_a_unit_donates_one_artifact_twice(donations=self.nominations)
+        self.donations[candidate] = withhold_shared_donations(
+            program=resolved,
+            donations=self.nominations[candidate],
+            unit_readers=self.readers_by_dispatch[(period, regime_name)],
+        )
+        self.lowering_keys.update(
+            _lowering_keys(
+                resolved_programs={candidate: resolved},
+                internal_templates={candidate: templates},
+                layouts=self.layouts,
+                donations=self.donations,
+                regimes=self.regimes,
+                model_fingerprint=self.model_fingerprint,
+                argument_keys=self.argument_keys,
+            )
+        )
+        _fail_if_one_key_covers_two_callables(
+            lowering_keys=self.lowering_keys,
+            resolved_programs=self.resolved_programs,
+        )
+        if _donated_arguments(donations=self.donations[candidate]):
+            self.fallback_donations[candidate] = ()
+            self.fallback_keys.update(
+                _lowering_keys(
+                    resolved_programs={candidate: resolved},
+                    internal_templates={candidate: templates},
+                    layouts=self.layouts,
+                    donations=self.fallback_donations,
+                    regimes=self.regimes,
+                    model_fingerprint=self.model_fingerprint,
+                    argument_keys=self.fallback_argument_keys,
+                )
+            )
+        bound.append(candidate)
+
+
 def _resolve_output_layouts_and_lowering_keys(
     *,
     all_programs: Mapping[_CoreTriple, CoreProgram],
@@ -3958,36 +4199,55 @@ def _resolve_output_layouts_and_lowering_keys(
     PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
     MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
+    _LazyCandidateFrontier,
 ]:
-    """Materialize once, then resolve every width candidate before global dedup.
+    """Materialize once, then bind the top-ranked width candidate of every core.
 
     Programs are visited so every producer of an internal output is materialized
     before the consumers that read it, and each consumer is lowered against the
     producer's abstract output rather than a stand-in.
 
-    Each producer is traced once per width candidate with everything it is
+    Only the top-ranked candidate of each core is bound here. The planner accepts
+    the first candidate of the ranked frontier that admission lets it keep, so
+    every narrower candidate is waste on a core whose widest one fits. The
+    returned `_LazyCandidateFrontier` binds candidate `k + 1` of a core once the
+    compilation waves have seen candidate `k` refused, from the same materialized
+    program, the same declaration order and the same width frontier, so both the
+    candidates offered to admission and the order they are offered in are the
+    ones the whole-frontier binding produced.
+
+    Each producer is traced once per bound width candidate with everything it is
     lowered with — its dynamic arguments, the templates of the internal inputs it
     reads itself, and its planner-owned static widths — before any consumer of it
     is traced. Its candidates must publish one subtree per label, since a
-    consumer is lowered before the producer's width is selected.
+    consumer is lowered before the producer's width is selected; each candidate
+    the frontier binds later is held against the same published subtree.
 
     Each candidate's lowering key opens with the program's durable identity —
     the model, the regime, the core, and both groupings of its period — so a
     key says what the program computes rather than which object computes it.
 
-    Reuse marks are applied once every candidate is resolved, because a transfer
-    shared by two source cores is only visible across the whole set; the keys are
-    computed afterwards, over the marked programs, and the mark is outside every
-    specialization key, so it moves none of them.
+    Reuse marks are applied once every core has published its plan, because a
+    transfer shared by two source cores is only visible across the whole set. The
+    census ranges over cores, not over widths, so it is complete here and every
+    later candidate is marked against it. The keys are computed over the marked
+    programs, and the mark is outside every specialization key, so it moves none
+    of them.
 
-    The ledger is built from one representative per triple once every candidate
-    is resolved, the donation set of every candidate is decided against it, and
-    only then are the keys computed, so a key names everything the executable is
-    lowered with.
+    The ledger is built from one representative per triple — the top-ranked
+    candidate, whose declared reads and transfer plan no width changes — the
+    donation set of every candidate is decided against it, and only then are the
+    keys computed, so a key names everything the executable is lowered with.
     """
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram] = {}
     internal_templates: dict[_CoreCandidate, Mapping[str, object]] = {}
+    # The frontier of a core with one candidate is exhausted by the binding
+    # below, so nothing is kept for it; only a budgeted frontier retains what a
+    # later candidate is bound from.
+    frontiers: dict[_CoreTriple, _CoreFrontier] = {}
+    candidates_by_triple: dict[_CoreTriple, list[_CoreCandidate]] = {}
+    frontier_lengths: dict[_CoreTriple, int] = {}
     # A producer's records are kept only while its own graph is being resolved,
     # and only when some consumer of that graph names it, so no argument tree is
     # held across the whole solve. Each record adds one abstract-shape tree.
@@ -4045,34 +4305,42 @@ def _resolve_output_layouts_and_lowering_keys(
             for name in state_action_space.states
             if name not in regime.fold_state_names
         )
-        records: dict[Hashable, ResolvedProducer] = {}
-        for resolved in resolve_core_program_candidates(
+        consumed = core_key in consumed_names
+        if len(width_candidates) > 1:
+            frontiers[triple] = _CoreFrontier(
+                program=materialized,
+                transfer_plan=transfer_plan,
+                templates=templates,
+                widths=width_candidates,
+                consumed=consumed,
+            )
+        resolved = resolve_core_program_candidates(
             program=materialized,
-            tile_widths=width_candidates,
+            tile_widths=width_candidates[:1],
             input_transfer_plan=transfer_plan,
             abstract_inputs=True,
-        ):
-            layout = layouts.get(triple)
-            if layout is None:
-                layout = resolve_output_layout(
-                    core_key=core_key,
-                    value_template=next_regime_to_V_arr[regime_name],
-                    state_order=state_order,
-                    output_roles=resolved.output_roles,
-                )
-                layouts[triple] = layout
-            candidate = (triple, _width_key(widths=resolved.tile_widths))
-            resolved_programs[candidate] = resolved
-            internal_templates[candidate] = templates
-            if core_key in consumed_names:
-                records[candidate[1]] = resolve_producer(
-                    program=resolved, templates=templates
-                )
-        if core_key in consumed_names:
+        )[0]
+        layouts[triple] = resolve_output_layout(
+            core_key=core_key,
+            value_template=next_regime_to_V_arr[regime_name],
+            state_order=state_order,
+            output_roles=resolved.output_roles,
+        )
+        candidate = (triple, _width_key(widths=resolved.tile_widths))
+        resolved_programs[candidate] = resolved
+        internal_templates[candidate] = templates
+        candidates_by_triple[triple] = [candidate]
+        frontier_lengths[triple] = len(width_candidates)
+        if consumed:
+            records: dict[Hashable, ResolvedProducer] = {
+                candidate[1]: resolve_producer(program=resolved, templates=templates)
+            }
             assert_width_invariant_internal_outputs(candidates=records)
             producers[core_key] = MappingProxyType(records)
-    marked = _mark_reused_transfers(resolved_programs=resolved_programs)
-    resolved_programs.update(marked)
+    transfer_consumers = _transfer_consumer_counts(resolved_programs=resolved_programs)
+    resolved_programs.update(
+        _apply_transfer_marks(programs=resolved_programs, consumers=transfer_consumers)
+    )
     # The first candidate of a triple is its representative: the width frontier
     # is listed widest first, and neither the declared reads nor the transfer
     # plan the ledger consults depends on the width.
@@ -4089,42 +4357,15 @@ def _resolve_output_layouts_and_lowering_keys(
         persistable_artifact_refs=persistable_artifact_refs,
     )
     n_periods = _model_n_periods(regimes=regimes)
-    nominations = {
-        candidate: (
-            resolve_donations(
-                program=resolved,
-                dispatch=(candidate[0][1], candidate[0][0]),
-                ledger=input_liveness,
-                n_periods=n_periods,
-            )
-            if enable_jit and donate_buffers
-            else ()
-        )
-        for candidate, resolved in resolved_programs.items()
-    }
-    # Two cores nominating one artifact is a declaration defect, so it is
-    # refused here, over the nominations: withholding one of them afterwards
-    # would resolve the competition instead of reporting it.
-    _fail_if_a_unit_donates_one_artifact_twice(donations=nominations)
-    # Donation consumes one executable input, so the surviving nominations need
-    # the unit's read census next to the ledger's per-dispatch count. The
-    # representatives carry it: every core of the unit appears once, and the
-    # declared reads a census counts do not vary with the width.
-    unit_programs: dict[tuple[int, RegimeName], list[ResolvedCoreProgram]] = {}
-    for (regime_name, period, _core_key), resolved in representatives.items():
-        unit_programs.setdefault((period, regime_name), []).append(resolved)
-    readers_by_dispatch = {
-        dispatch: unit_input_readers(programs=programs)
-        for dispatch, programs in unit_programs.items()
-    }
-    donations = {
-        candidate: withhold_shared_donations(
-            program=resolved_programs[candidate],
-            donations=decisions,
-            unit_readers=readers_by_dispatch[(candidate[0][1], candidate[0][0])],
-        )
-        for candidate, decisions in nominations.items()
-    }
+    nominations, readers_by_dispatch, donations = _resolve_candidate_donations(
+        resolved_programs=resolved_programs,
+        representatives=representatives,
+        input_liveness=input_liveness,
+        n_periods=n_periods,
+        enable_jit=enable_jit,
+        donate_buffers=donate_buffers,
+    )
+    argument_keys: dict[_CoreTriple, Hashable] = {}
     lowering_keys = _lowering_keys(
         resolved_programs=resolved_programs,
         internal_templates=internal_templates,
@@ -4132,6 +4373,27 @@ def _resolve_output_layouts_and_lowering_keys(
         donations=donations,
         regimes=regimes,
         model_fingerprint=model_fingerprint,
+        argument_keys=argument_keys,
+    )
+    frontier = _LazyCandidateFrontier(
+        frontiers=frontiers,
+        candidates_by_triple=candidates_by_triple,
+        frontier_lengths=MappingProxyType(frontier_lengths),
+        layouts=layouts,
+        resolved_programs=resolved_programs,
+        internal_templates=internal_templates,
+        nominations=nominations,
+        donations=donations,
+        lowering_keys=lowering_keys,
+        argument_keys=argument_keys,
+        transfer_consumers=transfer_consumers,
+        readers_by_dispatch=readers_by_dispatch,
+        input_liveness=input_liveness,
+        regimes=regimes,
+        model_fingerprint=model_fingerprint,
+        n_periods=n_periods,
+        enable_jit=enable_jit,
+        donate_buffers=donate_buffers,
     )
     return (
         layouts,
@@ -4141,6 +4403,7 @@ def _resolve_output_layouts_and_lowering_keys(
         input_liveness,
         donations,
         representative_metadata,
+        frontier,
     )
 
 
@@ -4152,6 +4415,7 @@ def _lowering_keys(
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
     regimes: MappingProxyType[RegimeName, Regime],
     model_fingerprint: str,
+    argument_keys: dict[_CoreTriple, Hashable] | None = None,
 ) -> dict[_CoreCandidate, Hashable]:
     """Compute every candidate's lowering key, donation set included.
 
@@ -4159,9 +4423,15 @@ def _lowering_keys(
     their static widths are resolved. Describe that argument tree once per frontier;
     specialization, donation, placement, layout, and compiler choices remain in each
     candidate's key.
+
+    The frontier is bound one candidate at a time, so the caller may hand over the
+    cache that description lives in. A width candidate bound after a refusal then
+    reuses the description its core already published instead of assembling a
+    second one.
     """
     keys: dict[_CoreCandidate, Hashable] = {}
-    argument_keys: dict[_CoreTriple, Hashable] = {}
+    if argument_keys is None:
+        argument_keys = {}
     for candidate, resolved in resolved_programs.items():
         triple = candidate[0]
         regime_name, period, core_key = triple
@@ -4248,13 +4518,37 @@ def _mark_reused_transfers(
     the unmarked program had. A program whose transfers already carry the marks the
     count implies is returned unchanged, so the single-source case rebuilds nothing.
     """
+    return _apply_transfer_marks(
+        programs=resolved_programs,
+        consumers=_transfer_consumer_counts(resolved_programs=resolved_programs),
+    )
+
+
+def _transfer_consumer_counts(
+    *, resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram]
+) -> dict[_ConsumerKey, set[_CoreTriple]]:
+    """Count, per shareable transfer result, the source cores of a period that read it.
+
+    A core's resolved input transfer plan is the same at every width — the plan is
+    resolved once for the materialized program, before any width is bound — and the
+    count ranges over triples, so one candidate per triple names the whole census.
+    """
     consumers: dict[_ConsumerKey, set[_CoreTriple]] = {}
     for (triple, _widths), resolved in resolved_programs.items():
         for transfer in resolved.input_transfer_plan:
             key = _consumer_key(triple=triple, transfer=transfer)
             consumers.setdefault(key, set()).add(triple)
+    return consumers
+
+
+def _apply_transfer_marks(
+    *,
+    programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    consumers: Mapping[_ConsumerKey, set[_CoreTriple]],
+) -> dict[_CoreCandidate, ResolvedCoreProgram]:
+    """Write a census of shared transfer results onto each candidate's plan."""
     marked: dict[_CoreCandidate, ResolvedCoreProgram] = {}
-    for candidate, resolved in resolved_programs.items():
+    for candidate, resolved in programs.items():
         triple = candidate[0]
         plan: list[ResolvedValueTransfer] = []
         rebuilt = False

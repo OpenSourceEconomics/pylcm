@@ -129,7 +129,13 @@ def _capture_lowering_keys(
 def test_candidate_frontier_describes_dynamic_arguments_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Static width alternatives share one dynamic argument description per core."""
+    """One dynamic argument description per core covers its whole width frontier.
+
+    Only the top-ranked candidate of a core is bound before admission, so the
+    frontier is asked for one candidate per core here; the description that
+    binding publishes is the one every candidate a later refusal binds reuses,
+    which `tests/solution/test_lazy_width_frontier.py` holds across refusals.
+    """
     frontier_count = 0
     candidate_count = 0
     argument_key_count = 0
@@ -180,7 +186,7 @@ def test_candidate_frontier_describes_dynamic_arguments_once(
         backward_induction, "_abstract_arguments_key", original_argument_key
     )
     result, planning_kwargs = captured[0]
-    layouts, lowering_keys, programs, templates, _, donations, _ = result
+    layouts, lowering_keys, programs, templates, _, donations, _, _ = result
     regimes = planning_kwargs["regimes"]
     expected = {}
     for candidate, program in programs.items():
@@ -205,7 +211,7 @@ def test_candidate_frontier_describes_dynamic_arguments_once(
             compiler_options=program.compiler_options,
         )
     assert (
-        candidate_count > frontier_count > 0,
+        candidate_count == frontier_count > 0,
         argument_key_count,
         lowering_keys,
     ) == (
