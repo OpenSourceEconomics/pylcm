@@ -39,6 +39,7 @@ def place_simulation_arguments(
     devices: tuple[jax.Device, ...],
     budget_bytes: int | None = None,
     live_footprint: DeviceBufferFootprint | None = None,
+    argument_footprint: DeviceBufferFootprint | None = None,
     budget_devices: tuple[jax.Device, ...] = (),
 ) -> Mapping[str, object]:
     """Share scalars/grids/params and shard subjects on the declared device order.
@@ -46,6 +47,13 @@ def place_simulation_arguments(
     Addressed value leaves are already supplied by the period's value owner and
     pass through unchanged. Placement is call-local; this module caches no arrays.
     An already-correct array passes through by identity, including subject states.
+
+    A budgeted caller supplies the live inventory in `live_footprint`; the
+    operands are charged on top of it here. A caller that already measured
+    `arguments` for its own accounting may pass that measurement as
+    `argument_footprint` instead of having it taken again: the charge is the
+    same, and one `unsafe_buffer_pointer` barrier over the operand tree is not
+    repeated in the same dispatch.
     """
     subject_sharding = subject_operand_sharding(devices=devices)
     shared_sharding = simulation_value_sharding(
@@ -70,7 +78,12 @@ def place_simulation_arguments(
             # Only the budgeted devices are read below, and projection precedes
             # normalization, so retained history elsewhere costs a key lookup.
             live=union_buffer_footprints(
-                footprints=(live_footprint, measure_buffer_footprint(tree=arguments)),
+                footprints=(
+                    live_footprint,
+                    argument_footprint
+                    if argument_footprint is not None
+                    else measure_buffer_footprint(tree=arguments),
+                ),
                 devices=budget_devices,
             ),
             budget_devices=budget_devices,

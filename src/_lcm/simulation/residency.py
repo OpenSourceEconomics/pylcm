@@ -237,8 +237,10 @@ class OwnerLedger:
 
     A ledger records the address spans of bindings an external owner manager keeps
     alive; it never retains an array and never outlives its call. Every bind,
-    rebind and release advances `epoch` and discards the cached unions, so a union
-    can be reused only while the recorded ownership is provably unchanged.
+    rebind and release advances `epoch`, so a union can be reused only while the
+    recorded ownership is provably unchanged. A rebinding or a release discards
+    the cached unions; binding a name never held before only adds address ranges
+    and is folded into them instead, which is the same union.
 
     A stale binding can only over-charge: spans are unioned, so an address recycled
     by a live owner is counted once, which is that owner's own charge. Admission can
@@ -257,9 +259,19 @@ class OwnerLedger:
     """Merged projections of the current epoch, one per requested device set."""
 
     def bind(self, *, owner: str, footprint: DeviceBufferFootprint) -> None:
-        """Record already-measured spans for one owner, replacing any earlier one."""
+        """Record already-measured spans for one owner, replacing any earlier one.
+
+        Binding an owner name this ledger has never held only ever *adds* address
+        ranges, so every cached projection stays a correct union once the new
+        owner's spans are folded into it. A rebinding may instead remove ranges,
+        so it discards the projections and re-merges from the bindings.
+        """
+        if owner in self._bindings:
+            self._bindings[owner] = footprint
+            self._invalidate()
+            return
         self._bindings[owner] = footprint
-        self._invalidate()
+        self._extend(footprint=footprint)
 
     def measure(self, *, owner: str, tree: object) -> None:
         """Await and measure one owner tree exactly once, at its placement.
@@ -302,6 +314,24 @@ class OwnerLedger:
             )
             self._unions[devices] = cached
         return cached
+
+    def _extend(self, *, footprint: DeviceBufferFootprint) -> None:
+        """Fold a newly bound owner into every cached projection of this ledger.
+
+        `union_buffer_footprints` is associative over address ranges and
+        `_merge_spans` is idempotent, so folding the addition into an already
+        merged projection yields exactly the union a full re-merge of every
+        binding would, without re-reading the spans of the unchanged owners.
+        The epoch still advances, so no consumer reuses a snapshot across the
+        addition and no cached admission verdict survives it.
+        """
+        self.epoch += 1
+        self._unions = {
+            devices: union_buffer_footprints(
+                footprints=(cached, footprint), devices=devices
+            )
+            for devices, cached in self._unions.items()
+        }
 
     def _invalidate(self) -> None:
         """Make every cached union unusable before any owner can disappear."""

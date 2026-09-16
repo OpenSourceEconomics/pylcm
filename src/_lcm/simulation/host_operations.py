@@ -19,7 +19,7 @@ import jax
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     compiler_memory_reservation,
-    plan_workspace,
+    plan_axis_free_workspace,
 )
 from _lcm.simulation.operand_placement import (
     place_simulation_arguments,
@@ -94,6 +94,10 @@ class ProfiledSimulationOperations:
             raise ExecutionPlanningError(
                 "The operation budget omits executing devices."
             )
+        # The operand tree is measured once and charged twice: the placement
+        # headroom check and this dispatch's admission use the identical spans,
+        # so the `unsafe_buffer_pointer` barrier over the operands is not repeated.
+        argument_footprint = measure_buffer_footprint(tree=arguments)
         placed = place_simulation_arguments(
             arguments=MappingProxyType(dict(sorted(arguments.items()))),
             subject_arg_names=subject_arg_names,
@@ -101,15 +105,12 @@ class ProfiledSimulationOperations:
             devices=devices,
             budget_bytes=budget_bytes,
             live_footprint=live_footprint(),
+            argument_footprint=argument_footprint,
             budget_devices=budget_devices,
         )
         argument_buffers = measure_buffer_footprint(tree=placed)
         live = union_buffer_footprints(
-            footprints=(
-                live_footprint(),
-                measure_buffer_footprint(tree=arguments),
-                argument_buffers,
-            ),
+            footprints=(live_footprint(), argument_footprint, argument_buffers),
             devices=budget_devices,
         )
         require_transfer_headroom(
@@ -130,10 +131,9 @@ class ProfiledSimulationOperations:
             subject_outputs=subject_outputs,
             devices=devices,
         )
-        plan = plan_workspace(
-            axes=(),
-            compile_candidate=_OperationCompiler(
-                owner=self,
+        plan = plan_axis_free_workspace(
+            compile_candidate=partial(
+                self.compile_candidate,
                 key=key,
                 function=function,
                 arguments=abstract,

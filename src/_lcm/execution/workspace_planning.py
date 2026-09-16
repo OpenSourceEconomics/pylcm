@@ -20,6 +20,9 @@ from lcm.exceptions import ExecutionPlanningError
 
 _MISSING = object()
 
+# The single candidate of a program that declares no width axis.
+_NO_WIDTHS: MappingProxyType[str, int] = MappingProxyType({})
+
 # Largest width an unbudgeted reduced axis is lowered at, and the floor no
 # unbudgeted axis is lowered below.
 BOOTSTRAP_WIDTH_CAP = 64
@@ -221,11 +224,9 @@ def plan_workspace[Compiled](
         return WorkspacePlan(widths=widths, peak_bytes=None, compiled=compiled)
 
     if resident >= budget:
-        msg = (
-            f"The plan keeps {resident} bytes resident at the node's position, "
-            f"leaving nothing of the {budget}-byte budget for a workspace."
+        raise ExecutionPlanningError(
+            _resident_exhausts_budget_message(resident=resident, budget=budget)
         )
-        raise ExecutionPlanningError(msg)
 
     least_total: int | None = None
     least_peak: int | None = None
@@ -264,14 +265,91 @@ def plan_workspace[Compiled](
             f"with {least_resident} resident bytes at the node's position."
         )
     else:
-        msg = (
-            "No workspace-width candidate fits the "
-            f"{budget}-byte budget; the smallest total is {least_total} bytes "
-            f"({least_reservation} compiler reservation plus {least_resident} resident "
-            f"bytes; raw compiler peak {least_peak}, "
-            "at the node's position)."
+        msg = _no_candidate_fits_message(
+            budget=budget,
+            total=least_total,
+            reservation=least_reservation,
+            resident=least_resident,
+            peak=least_peak,
         )
     raise ExecutionPlanningError(msg)
+
+
+def plan_axis_free_workspace[Compiled](
+    *,
+    compile_candidate: Callable[[], Compiled],
+    memory_for: Callable[[Compiled], CompilerMemoryReservation],
+    budget_bytes: int,
+    resident_bytes: int,
+) -> WorkspacePlan[Compiled]:
+    """Admit the single candidate of a program that declares no width axis.
+
+    A pure host operation has one shape and therefore one workspace candidate, so
+    `plan_workspace`'s frontier is the one-element map `{}`. This entry point is
+    that specialization and nothing else: it applies the identical feasibility
+    test — the candidate's represented reservation plus the bytes the caller keeps
+    resident at the node's position must fit the budget — refuses an already
+    exhausted position *before* compiling anything, and raises the same
+    `ExecutionPlanningError` messages, built by the same message functions. It
+    exists so a per-call dispatch need not re-validate an empty axis tuple or
+    re-enumerate a one-element frontier; it grants no allocation `plan_workspace`
+    would refuse and refuses none it would grant.
+    """
+    budget = _validate_budget(budget_bytes=budget_bytes)
+    if budget is None:
+        raise TypeError("An axis-free workspace plan requires an explicit budget.")
+    resident = _validate_resident_bytes(resident_bytes=resident_bytes)
+    if resident >= budget:
+        raise ExecutionPlanningError(
+            _resident_exhausts_budget_message(resident=resident, budget=budget)
+        )
+    compiled = compile_candidate()
+    memory = _memory_for_candidate(
+        compiled=compiled, widths=_NO_WIDTHS, memory_for=memory_for
+    )
+    total = memory.reservation_bytes + resident
+    if total > budget:
+        raise ExecutionPlanningError(
+            _no_candidate_fits_message(
+                budget=budget,
+                total=total,
+                reservation=memory.reservation_bytes,
+                resident=resident,
+                peak=memory.peak_bytes,
+            )
+        )
+    return WorkspacePlan(
+        widths=_NO_WIDTHS,
+        peak_bytes=memory.peak_bytes,
+        reservation_bytes=memory.reservation_bytes,
+        compiled=compiled,
+    )
+
+
+def _resident_exhausts_budget_message(*, resident: int, budget: int) -> str:
+    """State that a node's own residency leaves no workspace at any width."""
+    return (
+        f"The plan keeps {resident} bytes resident at the node's position, "
+        f"leaving nothing of the {budget}-byte budget for a workspace."
+    )
+
+
+def _no_candidate_fits_message(
+    *,
+    budget: int,
+    total: int | None,
+    reservation: int | None,
+    resident: int,
+    peak: int | None,
+) -> str:
+    """State the cheapest total the frontier could offer against the budget."""
+    return (
+        "No workspace-width candidate fits the "
+        f"{budget}-byte budget; the smallest total is {total} bytes "
+        f"({reservation} compiler reservation plus {resident} resident "
+        f"bytes; raw compiler peak {peak}, "
+        "at the node's position)."
+    )
 
 
 def _validate_axes(

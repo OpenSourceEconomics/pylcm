@@ -66,7 +66,7 @@
           },
           {
             "path": "src/_lcm/execution/workspace_planning.py",
-            "sha256": "20c3b3d75b6c4f9b13386470e317e2ec6d39fb304c335196f0e386e4a63c4b53"
+            "sha256": "a862c5ba6e3680f293a88f092dd51d03fe0e6ec62808e25f18193502b7e6df7c"
           },
           {
             "path": "src/_lcm/grids/__init__.py",
@@ -226,7 +226,7 @@
           },
           {
             "path": "src/_lcm/simulation/host_operations.py",
-            "sha256": "09124f1bdeb891d9738eef846a452fce124b29259f2bbb17d4ba870164b43678"
+            "sha256": "1fe75ee552b09c96bb4124368cb49127a8ae5e8416c0caaee12bf5a6654017e7"
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
@@ -242,7 +242,7 @@
           },
           {
             "path": "src/_lcm/simulation/operand_placement.py",
-            "sha256": "4de307370dd3a2d95885f3d25d97c96481a3cbeeb597edd755fd7b381fcf7c00"
+            "sha256": "ff1f5458bc2f2cc3f68ae8adbe574fb099cb90f9ddf76f084e09a9533c03b56a"
           },
           {
             "path": "src/_lcm/simulation/period_inputs.py",
@@ -286,7 +286,7 @@
           },
           {
             "path": "src/_lcm/simulation/residency.py",
-            "sha256": "04adc631f781d938d856075a9601c5c82829731a725f339b29775f3f4c54f549"
+            "sha256": "b390559ad29c98ce3eac9175194630a0643ef5e08cde97e36e5e638e8d2aa33e"
           },
           {
             "path": "src/_lcm/simulation/result_dataframe.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "cfe1ec9150434cd968416020819944d38a8999862ba0c36fdc0bda6441cfc9ff"
+        "source_inventory_sha256": "e5c7d0980a5615ae339bd2dc58167f6aac935ac82ecdabecdef44d655b3ded94"
       },
       "fast": {
         "candidate_sources": [
@@ -536,7 +536,7 @@
           },
           {
             "path": "src/_lcm/execution/workspace_planning.py",
-            "sha256": "20c3b3d75b6c4f9b13386470e317e2ec6d39fb304c335196f0e386e4a63c4b53"
+            "sha256": "a862c5ba6e3680f293a88f092dd51d03fe0e6ec62808e25f18193502b7e6df7c"
           },
           {
             "path": "src/_lcm/grids/__init__.py",
@@ -696,7 +696,7 @@
           },
           {
             "path": "src/_lcm/simulation/host_operations.py",
-            "sha256": "09124f1bdeb891d9738eef846a452fce124b29259f2bbb17d4ba870164b43678"
+            "sha256": "1fe75ee552b09c96bb4124368cb49127a8ae5e8416c0caaee12bf5a6654017e7"
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
@@ -712,7 +712,7 @@
           },
           {
             "path": "src/_lcm/simulation/operand_placement.py",
-            "sha256": "4de307370dd3a2d95885f3d25d97c96481a3cbeeb597edd755fd7b381fcf7c00"
+            "sha256": "ff1f5458bc2f2cc3f68ae8adbe574fb099cb90f9ddf76f084e09a9533c03b56a"
           },
           {
             "path": "src/_lcm/simulation/period_inputs.py",
@@ -756,7 +756,7 @@
           },
           {
             "path": "src/_lcm/simulation/residency.py",
-            "sha256": "04adc631f781d938d856075a9601c5c82829731a725f339b29775f3f4c54f549"
+            "sha256": "b390559ad29c98ce3eac9175194630a0643ef5e08cde97e36e5e638e8d2aa33e"
           },
           {
             "path": "src/_lcm/simulation/result_dataframe.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "cfe1ec9150434cd968416020819944d38a8999862ba0c36fdc0bda6441cfc9ff"
+        "source_inventory_sha256": "e5c7d0980a5615ae339bd2dc58167f6aac935ac82ecdabecdef44d655b3ded94"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "cfe1ec9150434cd968416020819944d38a8999862ba0c36fdc0bda6441cfc9ff",
+  "source_inventory_sha256": "e5c7d0980a5615ae339bd2dc58167f6aac935ac82ecdabecdef44d655b3ded94",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1010,7 +1010,7 @@
     },
     {
       "path": "src/_lcm/execution/workspace_planning.py",
-      "sha256": "20c3b3d75b6c4f9b13386470e317e2ec6d39fb304c335196f0e386e4a63c4b53"
+      "sha256": "a862c5ba6e3680f293a88f092dd51d03fe0e6ec62808e25f18193502b7e6df7c"
     },
     {
       "path": "src/_lcm/grids/__init__.py",
@@ -1170,7 +1170,7 @@
     },
     {
       "path": "src/_lcm/simulation/host_operations.py",
-      "sha256": "09124f1bdeb891d9738eef846a452fce124b29259f2bbb17d4ba870164b43678"
+      "sha256": "1fe75ee552b09c96bb4124368cb49127a8ae5e8416c0caaee12bf5a6654017e7"
     },
     {
       "path": "src/_lcm/simulation/initial_conditions.py",
@@ -1186,7 +1186,7 @@
     },
     {
       "path": "src/_lcm/simulation/operand_placement.py",
-      "sha256": "4de307370dd3a2d95885f3d25d97c96481a3cbeeb597edd755fd7b381fcf7c00"
+      "sha256": "ff1f5458bc2f2cc3f68ae8adbe574fb099cb90f9ddf76f084e09a9533c03b56a"
     },
     {
       "path": "src/_lcm/simulation/period_inputs.py",
@@ -1230,7 +1230,7 @@
     },
     {
       "path": "src/_lcm/simulation/residency.py",
-      "sha256": "04adc631f781d938d856075a9601c5c82829731a725f339b29775f3f4c54f549"
+      "sha256": "b390559ad29c98ce3eac9175194630a0643ef5e08cde97e36e5e638e8d2aa33e"
     },
     {
       "path": "src/_lcm/simulation/result_dataframe.py",

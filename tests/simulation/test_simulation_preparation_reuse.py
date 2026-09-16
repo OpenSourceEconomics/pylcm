@@ -388,7 +388,7 @@ def test_operand_admission_rechecks_growing_live_inventory(
         return original(leaf=leaf, sharding=sharding)
 
     monkeypatch.setattr(operand_placement, "_place_operand_leaf", observed)
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "arguments": {"state": value},
         "subject_arg_names": ("state",),
         "value_reads": (),
@@ -415,7 +415,7 @@ def test_operand_admission_exact_boundary_and_occurrences(delta: int) -> None:
     device = jax.devices()[0]
     value = np.arange(3, dtype=canonical_float_dtype())
     required = 4 * value.nbytes  # two copies, each destination plus scratch
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "arguments": {"a": value, "b": value},
         "subject_arg_names": ("a", "b"),
         "value_reads": (),
