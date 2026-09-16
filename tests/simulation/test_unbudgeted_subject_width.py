@@ -82,7 +82,7 @@ def _materialized(*, n_subjects: int, program: CoreProgram | None = None):
             flat_params={},
             period=0,
             ages=None,
-            call_arguments={"state": jnp.zeros(n_subjects, dtype=jnp.float64)},
+            call_arguments={"state": jnp.zeros(n_subjects, dtype=jnp.float32)},
         ),
     )
 
@@ -92,7 +92,7 @@ def _with_heavy_operand(*, n_subjects: int, per_subject_leaf: int):
     return dataclasses.replace(
         _materialized(n_subjects=n_subjects),
         arguments=MappingProxyType(
-            {"state": jax.ShapeDtypeStruct((n_subjects, per_subject_leaf), jnp.float64)}
+            {"state": jax.ShapeDtypeStruct((n_subjects, per_subject_leaf), jnp.float32)}
         ),
     )
 
@@ -136,7 +136,7 @@ def test_a_heavy_per_subject_operand_never_narrows_below_the_old_default() -> No
     widths = _dispatch_widths(
         program=_with_heavy_operand(
             n_subjects=20_000,
-            per_subject_leaf=2 * _UNBUDGETED_SUBJECT_BLOCK_BYTES // 8,
+            per_subject_leaf=2 * _UNBUDGETED_SUBJECT_BLOCK_BYTES // 4,
         ),
         configured=MappingProxyType({}),
         residency=None,
@@ -178,7 +178,7 @@ def test_dispatch_and_the_prepared_unbudgeted_lookup_resolve_the_same_width() ->
     )
     runtime.dispatch(
         program=core,
-        arguments={"state": jnp.arange(9_000, dtype=float)},
+        arguments={"state": jnp.arange(9_000, dtype=jnp.float32)},
         period=0,
         n_subjects=9_000,
     )
