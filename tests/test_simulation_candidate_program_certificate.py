@@ -889,9 +889,19 @@ _FINITE_BUDGET_MUTATIONS = {
     ),
     "finite_budget:required_policy_layout_ignored": (
         "src/_lcm/simulation/forward_program_profiles.py",
-        "\n            stored_sharding=leaf.sharding, devices=devices\n",
         (
-            "\n            stored_sharding=leaf.sharding, devices=tupl"
+            'abstracting a retained policy leaf."""\n'
+            "    return _placed_abstract(\n"
+            "        leaf=leaf,\n"
+            "        sharding=simulation_value_sharding(\n"
+            "            stored_sharding=leaf.sharding, devices=devices\n"
+        ),
+        (
+            'abstracting a retained policy leaf."""\n'
+            "    return _placed_abstract(\n"
+            "        leaf=leaf,\n"
+            "        sharding=simulation_value_sharding(\n"
+            "            stored_sharding=leaf.sharding, devices=tupl"
             "e(leaf.sharding.device_set)\n"
         ),
     ),

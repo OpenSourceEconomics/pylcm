@@ -154,9 +154,12 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
         errors.append("staged roots must release on success and failure")
 
     trace = ast.unparse(_definition(tree=tree, name="_trace_process_jaxpr"))
+    call = ast.unparse(_definition(tree=tree, name="_process_grid_call"))
     if (
-        "dict(zip(parameter_names, values, strict=True))" not in trace
-        or "jax.make_jaxpr(process_grid)(*parameter_values)" not in trace
+        "dict(zip(parameter_names, values, strict=True))" not in call
+        or "partial(_process_grid_call, spec=spec, parameter_names=parameter_names)"
+        not in trace
+        or "jax.make_jaxpr(bound)(*parameter_values)" not in trace
     ):
         errors.append("traced inputs must use one explicit positional order")
 
@@ -392,7 +395,7 @@ def test_runtime_process_admission_contract_is_complete() -> None:
             "staged roots must release on success and failure",
         ),
         (
-            "_trace_process_jaxpr",
+            "_process_grid_call",
             "strict=True",
             "strict=False",
             "traced inputs must use one explicit positional order",
