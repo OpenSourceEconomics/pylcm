@@ -105,6 +105,82 @@ def _assert_raw_equal(*, actual: Any, expected: Any) -> None:
             np.testing.assert_array_equal(got_array, want_array)
 
 
+def _install_profile_observers(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    profiled_programs: set,
+    profile_shapes: dict,
+    profile_layouts: dict,
+    profile_widths: list,
+) -> None:
+    """Record every declared body of the chunk profile each call selects.
+
+    A budgeted call that reuses an identical abstract chunk profile does not
+    recompile its declared bodies, so `prepare_abstract` fires only on the call
+    that builds a given profile. Keep each profile's own build records and
+    replay exactly those on every later call that selects it, warm or cold: the
+    guarded contract is the profile a call dispatches against, never whether
+    that profile happened to be compiled during this call.
+    """
+    prepare = SimulationRuntime.prepare_abstract
+    profile_chunk = chunk_admission._ChunkProfiler.profile_widths
+    build_records: list[dict[str, Any]] = []
+    building: list[bool] = []
+    profile_builds: dict[int, tuple[Any, tuple[dict[str, Any], ...]]] = {}
+
+    def apply_records(records: tuple[dict[str, Any], ...]) -> None:
+        for record in records:
+            profiled_programs.add(record["declaration"])
+            profile_shapes[record["executable"]] = record["shapes"]
+            profile_layouts[record["executable"]] = record["layouts"]
+            profile_widths.append(record["widths"])
+
+    def record_profile(self: SimulationRuntime, **call: Any) -> Any:
+        prepared = prepare(self, **call)
+        executable = prepared.executable
+        assert isinstance(executable, jax.stages.Compiled)
+        record = {
+            "declaration": (
+                id(self),
+                id(call["program"].function),
+                call["period"],
+                call["n_subjects"],
+            ),
+            "executable": id(executable),
+            "shapes": _shape_tree(executable.out_info),
+            "layouts": tuple(
+                leaf.sharding for leaf in jax.tree.leaves(executable.out_info)
+            ),
+            "widths": dict(call["widths"]),
+        }
+        if building:
+            build_records.append(record)
+        else:
+            apply_records((record,))
+        return prepared
+
+    def record_chunk_profile(self: Any, **call: Any) -> Any:
+        build_records.clear()
+        building.append(True)
+        try:
+            profile = profile_chunk(self, **call)
+        finally:
+            building.pop()
+        # Hold the profile itself, so its identity cannot be recycled while its
+        # records are still replayable.
+        _, records = profile_builds.setdefault(
+            id(profile), (profile, tuple(build_records))
+        )
+        build_records.clear()
+        apply_records(records)
+        return profile
+
+    monkeypatch.setattr(SimulationRuntime, "prepare_abstract", record_profile)
+    monkeypatch.setattr(
+        chunk_admission._ChunkProfiler, "profile_widths", record_chunk_profile
+    )
+
+
 def _observe_execution(
     *, monkeypatch: pytest.MonkeyPatch, device_count: int
 ) -> tuple[list[dict[str, int]], list[tuple[slice, int, int]]]:
@@ -115,26 +191,17 @@ def _observe_execution(
     profile_widths = []
     chunks = []
     placed_subjects = []
-    prepare = SimulationRuntime.prepare_abstract
     dispatch = SimulationRuntime.dispatch
     compiled_call = simulation_runtime.CompiledSimulationProgram.__call__
     place = simulation_runtime.place_simulation_arguments
     run_chunk = simulation._simulate_subject_chunk
-
-    def record_profile(self: SimulationRuntime, **call: Any) -> Any:
-        prepared = prepare(self, **call)
-        executable = prepared.executable
-        assert isinstance(executable, jax.stages.Compiled)
-        key = id(executable)
-        profiled_programs.add(
-            (id(self), id(call["program"].function), call["period"], call["n_subjects"])
-        )
-        profile_shapes[key] = _shape_tree(executable.out_info)
-        profile_layouts[key] = tuple(
-            leaf.sharding for leaf in jax.tree.leaves(executable.out_info)
-        )
-        profile_widths.append(dict(call["widths"]))
-        return prepared
+    _install_profile_observers(
+        monkeypatch=monkeypatch,
+        profiled_programs=profiled_programs,
+        profile_shapes=profile_shapes,
+        profile_layouts=profile_layouts,
+        profile_widths=profile_widths,
+    )
 
     def record_dispatch(self: SimulationRuntime, **call: Any) -> Any:
         declaration = (
@@ -188,7 +255,6 @@ def _observe_execution(
             )
         return result
 
-    monkeypatch.setattr(SimulationRuntime, "prepare_abstract", record_profile)
     monkeypatch.setattr(SimulationRuntime, "dispatch", record_dispatch)
     monkeypatch.setattr(
         simulation_runtime.CompiledSimulationProgram, "__call__", record_compiled

@@ -27,6 +27,7 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
+from _lcm.simulation import chunk_admission
 from _lcm.variables import from_regime
 from lcm import (
     AgeGrid,
@@ -408,16 +409,61 @@ def test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(  
             assert not value.is_deleted()
 
 
+def _record_profiled_executables(
+    *, monkeypatch: pytest.MonkeyPatch, profiles: dict
+) -> None:
+    """Record the declared output layout of every chunk-profiled executable.
+
+    A budgeted call that reuses an identical abstract chunk profile does not
+    recompile its declared bodies, so `prepare_abstract` fires only on the call
+    that builds a given profile. Read the declared layouts off the selected
+    chunk profile itself, which every call resolves before it admits and
+    dispatches: the guarded contract is that dispatch executes exactly the
+    stages that profile declared, never that the profile happened to be
+    compiled during this call.
+    """
+    runtime_class = simulation_runtime.SimulationRuntime
+    prepare = runtime_class.prepare_abstract
+    profile_chunk = chunk_admission._ChunkProfiler.profile_widths
+    selected_profiles: list[Any] = []
+
+    def record_executable(executable: Any) -> None:
+        assert isinstance(executable, jax.stages.Compiled)
+        profiles[id(executable)] = tuple(
+            (leaf.shape, leaf.dtype, leaf.sharding)
+            for leaf in jax.tree.leaves(executable.out_info)
+        )
+
+    def observe_prepare(self: Any, **call: Any) -> Any:
+        prepared = prepare(self, **call)
+        record_executable(prepared.executable)
+        return prepared
+
+    def observe_chunk_profile(self: Any, **call: Any) -> Any:
+        profile = profile_chunk(self, **call)
+        # Keep the profile alive, so no stage executable it declares can be
+        # collected and have its identity recycled while `profiles` is read.
+        selected_profiles.append(profile)
+        for stage in (*profile.stages, *profile.host_stages):
+            record_executable(stage.executable)
+        return profile
+
+    monkeypatch.setattr(runtime_class, "prepare_abstract", observe_prepare)
+    monkeypatch.setattr(
+        chunk_admission._ChunkProfiler, "profile_widths", observe_chunk_profile
+    )
+
+
 def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Observe required input shards and the exact inferred output layouts."""
     runtime_class = simulation_runtime.SimulationRuntime
     place = simulation_runtime.place_simulation_arguments
-    prepare = runtime_class.prepare_abstract
     dispatch = runtime_class.dispatch
     compiled_call = simulation_runtime.CompiledSimulationProgram.__call__
     profiles = {}
-    profiled_programs = set()
     placed_counts = []
+    profiled_runs: list[int] = []
+    _record_profiled_executables(monkeypatch=monkeypatch, profiles=profiles)
 
     def observe_place(**call: Any) -> Any:
         placed = place(**call)
@@ -436,28 +482,16 @@ def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
                 placed_counts.append(24)
         return placed
 
-    def observe_prepare(self: Any, **call: Any) -> Any:
-        prepared = prepare(self, **call)
-        executable = prepared.executable
-        assert isinstance(executable, jax.stages.Compiled)
-        profiled_programs.add(
-            (id(self), id(call["program"].function), call["period"], call["n_subjects"])
-        )
-        profiles[id(executable)] = tuple(
-            (leaf.shape, leaf.dtype, leaf.sharding)
-            for leaf in jax.tree.leaves(executable.out_info)
-        )
-        return prepared
-
     def observe_dispatch(self: Any, **call: Any) -> Any:
-        declaration = (
-            id(self),
-            id(call["program"].function),
-            call["period"],
-            call["n_subjects"],
+        # Every dispatch must run a body the selected chunk profile declared.
+        # Observe that through the executable it actually runs, rather than
+        # through a compile that a warm profile legitimately skips.
+        before = len(profiled_runs)
+        result = dispatch(self, **call)
+        assert len(profiled_runs) > before, (
+            "Dispatch ran no chunk-profiled compiled program"
         )
-        assert declaration in profiled_programs
-        return dispatch(self, **call)
+        return result
 
     def observe_compiled(
         self: simulation_runtime.CompiledSimulationProgram, **call: Any
@@ -465,6 +499,7 @@ def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
         assert id(self.executable) in profiles, (
             "Dispatch selected an unprofiled executable"
         )
+        profiled_runs.append(id(self.executable))
         expected = profiles[id(self.executable)]
         result = compiled_call(self, **call)
         for value, (shape, dtype, sharding) in zip(
@@ -477,7 +512,6 @@ def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
         return result
 
     monkeypatch.setattr(simulation_runtime, "place_simulation_arguments", observe_place)
-    monkeypatch.setattr(runtime_class, "prepare_abstract", observe_prepare)
     monkeypatch.setattr(runtime_class, "dispatch", observe_dispatch)
     monkeypatch.setattr(
         simulation_runtime.CompiledSimulationProgram, "__call__", observe_compiled
