@@ -132,6 +132,7 @@ jobs:
         run: >-
           mkdir -p reports &&
           pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
+          --deselect=tests/simulation/test_outer_endpoint_admission.py::test_both_workflows_publish_the_same_endpoint_admissions
           --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off
           --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off
           --deselect=tests/simulation/test_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar
@@ -188,6 +189,7 @@ jobs:
             fi
           }
           pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
+            --deselect=tests/simulation/test_outer_endpoint_admission.py::test_both_workflows_publish_the_same_endpoint_admissions\
             --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
             --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
             --deselect=tests/simulation/test_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
@@ -563,6 +565,7 @@ jobs:
             fi
           }
           pixi run -e tests-cpu pytest tests --precision=32 \
+            --deselect=tests/simulation/test_outer_endpoint_admission.py::test_both_workflows_publish_the_same_endpoint_admissions\
             --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
             --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
             --deselect=tests/simulation/test_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\

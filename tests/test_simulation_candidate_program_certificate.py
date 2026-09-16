@@ -1283,6 +1283,14 @@ _SOLVE_READINESS_MUTATIONS = {
 
 
 @pytest.fixture(scope="module")
+def clean_corridor_sources() -> tuple[str, ...]:
+    """Check the frozen checkout once; each mutant still gets a full fresh verdict."""
+    clean = verify_direct_candidate_flow(repo_root=Path(__file__).parents[1])
+    assert clean["ok"], clean["errors"]
+    return tuple(clean["certified_corridor_sources"])
+
+
+@pytest.fixture(scope="module")
 def program_mutations() -> dict[str, dict[str, str]]:
     """Build registry controls plus explicit random and profiling defects."""
     root = Path(__file__).parents[1]
@@ -1313,11 +1321,11 @@ def program_mutations() -> dict[str, dict[str, str]]:
     "source",
     ["src/_lcm/solution/continuation_arguments.py", "src/_lcm/solution/nbegm.py"],
 )
-def test_donation_argument_adapter_is_in_the_reviewed_source_inventory(source: str):
+def test_donation_argument_adapter_is_in_the_reviewed_source_inventory(
+    *, source: str, clean_corridor_sources: tuple[str, ...]
+):
     """The sole-marginal adapter and its installation are independently sealed."""
-    result = verify_direct_candidate_flow(repo_root=Path(__file__).parents[1])
-
-    assert source in result["certified_corridor_sources"]
+    assert source in clean_corridor_sources
 
 
 def test_supplemental_sources_complete_the_pinned_registry_coverage():
@@ -1402,11 +1410,11 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "src/_lcm/egm/published_policy.py",
     ],
 )
-def test_live_simulation_program_sources_are_certified(source: str):
+def test_live_simulation_program_sources_are_certified(
+    *, source: str, clean_corridor_sources: tuple[str, ...]
+):
     """Declaration, argument binding, resolution, and dispatch are live obligations."""
-    result = verify_direct_candidate_flow(repo_root=Path(__file__).parents[1])
-
-    assert source in result["certified_corridor_sources"]
+    assert source in clean_corridor_sources
 
 
 @pytest.mark.parametrize(
@@ -1437,12 +1445,13 @@ def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(
     *,
     mutation: str,
     program_mutations: dict[str, dict[str, str]],
+    clean_corridor_sources: tuple[str, ...],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Each transport defect fails its own semantic corridor after byte resealing."""
     root = Path(__file__).parents[1]
-    sources = verify_direct_candidate_flow(repo_root=root)["certified_corridor_sources"]
+    sources = clean_corridor_sources
     for relative in sources:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
