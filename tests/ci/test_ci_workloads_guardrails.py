@@ -14,11 +14,10 @@ from __future__ import annotations
 
 from tests.ci import ci_workloads
 
-_NOTSLOW_INVOCATION_IDS = (
-    "notslow-fp64-linux",
-    "notslow-fp64-macos",
-    "notslow-fp64-windows",
-    "notslow-fp32-linux",
+_NOTSLOW_INVOCATION_IDS = tuple(
+    inv["id"]
+    for inv in ci_workloads.invocations()
+    if inv["id"].startswith("general-shard-")
 )
 
 
@@ -140,3 +139,61 @@ def test_guardrail_is_not_evaluated_against_unweighted_files():
     # unweighted set (it only reads files present in `file_weights`).
     assert unweighted.isdisjoint(_notslow_files_with_weight())
     del notslow_files
+
+
+def test_every_invocation_stays_inside_the_payload_guardrail():
+    """No recorded lane's predicted payload exceeds the manifest's ceiling.
+
+    The prediction is `max(total worker seconds / workers, largest single file)`
+    over the frozen head's observed per-leg JUnit times. It is a *lower bound*
+    on real time -- it excludes setup, collection, reporting and worker
+    imbalance -- so a lane already over the ceiling here is certainly over it in
+    CI. Being under it is necessary, not sufficient; only a CI run can confirm
+    the 30-minute job total.
+    """
+    ceiling = ci_workloads.guardrails()["job_payload_ceiling_minutes"]
+    offenders = [
+        (inv["id"], inv["predicted_payload_minutes"])
+        for inv in ci_workloads.invocations()
+        if inv.get("predicted_payload_minutes", 0.0) > ceiling
+    ]
+    assert not offenders, (
+        f"lanes over the {ceiling} min payload guardrail: "
+        f"{sorted(offenders, key=lambda x: -x[1])}"
+    )
+
+
+def test_every_invocation_records_a_predicted_payload():
+    """A lane with no prediction is an unbudgeted lane, not a free one."""
+    missing = [
+        inv["id"]
+        for inv in ci_workloads.invocations()
+        if "predicted_payload_minutes" not in inv
+    ]
+    assert not missing, f"lanes with no predicted payload: {missing}"
+
+
+def test_no_whole_file_atom_exceeds_its_lane_payload_guardrail():
+    """No single file costs more than a whole job is allowed to spend.
+
+    Under `--dist loadfile` a file is indivisible, so a file above the ceiling
+    cannot be fixed by adding shards or workers -- LPT cannot split an atom. The
+    source-contract lane is the deliberate exception: it uses `--dist load`, so
+    its modules are not atoms there.
+    """
+    ceiling = ci_workloads.guardrails()["job_payload_ceiling_minutes"]
+    offenders = []
+    for inv in ci_workloads.invocations():
+        if inv["environment"]["isolation"] != "loadfile-xdist":
+            continue
+        leg = (inv.get("shard") or {}).get("leg")
+        if leg is None:
+            continue
+        weights = ci_workloads.leg_weights(leg=leg)
+        for file_ in inv["files"]:
+            minutes = weights.get(file_, 0.0) / 60.0
+            if minutes > ceiling:
+                offenders.append((inv["id"], file_, minutes))
+    assert not offenders, (
+        f"indivisible files over the {ceiling} min payload guardrail: {offenders}"
+    )

@@ -30,6 +30,10 @@ from lcm.typing import ScalarInt
 from tests.ci import pytest_policy
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
 from tests.ci.receipt_plugin import maybe_register as maybe_register_receipt_plugin
+from tests.ci.shard_test_files import (
+    general_shard_files,
+    ignore_out_of_shard_collection,
+)
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
 X64_ENABLED: bool = True
@@ -238,6 +242,33 @@ def assert_agrees_to_ulp(
         raise AssertionError(msg)
 
 
+def _general_shard_selection() -> frozenset[str] | None:
+    """Return this process's general-lane shard, or None when unsharded.
+
+    CI splits each general (`notslow`) lane into duration-weighted shards. The
+    split is passed through the environment rather than as several hundred
+    paths on the command line: a Windows runner's command line is bounded, and
+    naming a file explicitly would also defeat
+    `ignore_implicit_eight_device_collection`, whose exclusion is keyed on the
+    file NOT being named. Ignoring at collection time (rather than deselecting)
+    means an out-of-shard module is never imported, so a shard pays no
+    collection cost for the files it does not run.
+    """
+    leg = os.environ.get("PYLCM_CI_GENERAL_LEG")
+    shards = os.environ.get("PYLCM_CI_GENERAL_SHARDS")
+    shard = os.environ.get("PYLCM_CI_GENERAL_SHARD")
+    if not (leg and shards and shard):
+        return None
+    return frozenset(
+        general_shard_files(leg=leg, n_shards=int(shards), shard=int(shard))
+    )
+
+
+@functools.cache
+def _cached_general_shard_selection() -> frozenset[str] | None:
+    return _general_shard_selection()
+
+
 # keyword-only-exempt: library-callback=pytest.hookspec.pytest_ignore_collect
 def pytest_ignore_collect(
     collection_path: pathlib.Path, config: pytest.Config
@@ -247,6 +278,11 @@ def pytest_ignore_collect(
         collection_path=collection_path,
         root=config.rootpath,
         invocation_args=config.args,
+    ):
+        return True
+    shard = _cached_general_shard_selection()
+    if shard is not None and ignore_out_of_shard_collection(
+        collection_path=collection_path, root=config.rootpath, shard_files=shard
     ):
         return True
     return None

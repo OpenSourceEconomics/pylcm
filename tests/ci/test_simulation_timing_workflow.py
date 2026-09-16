@@ -22,40 +22,59 @@ _TIMING_NODES = (
         "test_unstubbed_warm_full_call_progress_meets_existing_time_bar"
     ),
 )
-_ROUTES = (
-    ("tests", "Run pytest", 64),
-    ("tests", "Run pytest and collect coverage", 64),
-    ("tests-fp32", "Run pytest at fp32", 32),
+# The timing witnesses now have a job of their own, reached once per route by
+# its matrix, rather than a link at the end of each general leg's chain. "Once
+# after the parallel work" became "never next to any parallel work".
+_TIMING_JOB = "tests-timing"
+_TIMING_STEP = "Run the serial timing witnesses"
+_GENERAL_STEPS = (
+    ("tests", "Run one general shard"),
+    ("tests-fp32", "Run one general shard"),
 )
 
 
-@pytest.mark.parametrize(("job", "step_name", "precision"), _ROUTES)
-def test_each_cpu_route_runs_timing_cases_once_after_parallel_work(
-    *, job: str, step_name: str, precision: int
-) -> None:
-    """Route all three timing families to one serial process with complete reports."""
-    workflow = yaml.safe_load(
+def _workflow() -> dict:
+    return yaml.safe_load(
         (_REPO_ROOT / ".github/workflows/cpu.yml").read_text(encoding="utf-8")
     )
-    step = next(
+
+
+def _step(*, job: str, step_name: str) -> dict:
+    return next(
         entry
-        for entry in workflow["jobs"][job]["steps"]
+        for entry in _workflow()["jobs"][job]["steps"]
         if entry.get("name") == step_name
     )
+
+
+@pytest.mark.parametrize(("job", "step_name"), _GENERAL_STEPS)
+def test_general_shards_deselect_every_timing_witness(
+    *, job: str, step_name: str
+) -> None:
+    """No general shard may run a timing case next to four xdist workers.
+
+    A bar measured against three other workers' load is a bar measured against
+    noise. Every shard of every general lane deselects all three, so no shard
+    of any split can pick one up.
+    """
+    (argv,) = cpu_suite_invocation_argvs(_step(job=job, step_name=step_name)["run"])
+    for node in _TIMING_NODES:
+        assert argv.count(f"--deselect={node}") == 1, node
+
+
+def test_the_timing_job_runs_all_three_witnesses_once_serially() -> None:
+    """One serial, uncontended invocation carries exactly the three witnesses."""
+    step = _step(job=_TIMING_JOB, step_name=_TIMING_STEP)
     run = step["run"]
     argvs = cpu_suite_invocation_argvs(run)
-    parallel = argvs[0]
-    assert all(parallel.count(f"--deselect={node}") == 1 for node in _TIMING_NODES)
-    matches = [argv for argv in argvs if any(node in argv for node in _TIMING_NODES)]
-    assert len(matches) == 1
-    serial = matches[0]
-    assert serial == argvs[-1]
+    assert len(argvs) == 1
+    serial = argvs[0]
     assert tuple(argument for argument in serial if argument.startswith("tests/")) == (
         _TIMING_NODES
     )
     assert serial[serial.index("-n") + 1] == "0"
     assert "-v" in serial
-    assert f"--precision={precision}" in serial
+    assert "--precision=$PYLCM_CI_PRECISION" in serial
     assert "--policy-child" in serial
     assert "--ci-policy=full" in serial
     assert "--hardware-profile=cpu" in serial
@@ -70,33 +89,44 @@ def test_each_cpu_route_runs_timing_cases_once_after_parallel_work(
         if arg.startswith("--junitxml=")
     ]
     assert len(reports) == 1
-    assert reports[0].startswith("reports/junit-cpu-")
-    assert reports[0].endswith("simulation-timing.xml")
-    normalized = run.replace("\\\n", " ")
+    assert reports[0] == "$pylcm_junit_report"
+    normalized = " ".join(run.replace("\\\n", " ").split())
     assert (
-        "&& pixi run -e tests-cpu python -m "
-        f"tests.ci.check_simulation_timing_report {reports[0]}"
-        in " ".join(normalized.split())
-    )
-    if step_name == "Run pytest and collect coverage":
-        assert "--cov=./" in serial
-        assert "--cov-append" in serial
-        assert "--cov-report=xml" in serial
-        assert all("--cov-report=xml" not in argv for argv in argvs[:-1])
-    else:
-        assert not any(arg.startswith("--cov") for arg in serial)
+        "pixi run -e tests-cpu python -m "
+        'tests.ci.check_simulation_timing_report "$pylcm_junit_report"'
+    ) in normalized
+
+
+def test_the_timing_job_covers_every_route_the_general_lanes_do() -> None:
+    """Each (OS, precision) route that runs general work also runs the bars.
+
+    Dropping a route here would silently stop measuring that platform's timing
+    while its general lane kept passing.
+    """
+    include = _workflow()["jobs"][_TIMING_JOB]["strategy"]["matrix"]["include"]
+    routes = {(entry["os"], entry["precision"]) for entry in include}
+    assert routes == {
+        ("ubuntu-latest", 64),
+        ("macos-latest", 64),
+        ("windows-latest", 64),
+        ("ubuntu-latest", 32),
+    }
+
+
+def test_the_timing_job_runs_no_other_payload() -> None:
+    """The timing job carries exactly one CPU-suite invocation, so it is uncontended."""
+    job = _workflow()["jobs"][_TIMING_JOB]
+    invocations = [
+        argv
+        for step in job["steps"]
+        for argv in cpu_suite_invocation_argvs(str(step.get("run", "")))
+    ]
+    assert len(invocations) == 1
 
 
 def test_slow_solution_shards_keep_their_slow_selector() -> None:
     """The slow shards cannot duplicate the unmarked timing witnesses."""
-    workflow = yaml.safe_load(
-        (_REPO_ROOT / ".github/workflows/cpu.yml").read_text(encoding="utf-8")
-    )
-    step = next(
-        entry
-        for entry in workflow["jobs"]["tests-slow-solution"]["steps"]
-        if entry.get("name") == "Run one slow solution shard"
-    )
+    step = _step(job="tests-slow-solution", step_name="Run one slow solution shard")
     (argv,) = cpu_suite_invocation_argvs(step["run"])
     assert argv[argv.index("-m") + 1] == "slow"
     assert not any(node in argv for node in _TIMING_NODES)

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.ci import ci_workloads
 from tests.ci.cpu_suite_invocations import (
     EIGHT_DEVICE_TEST_FILES,
     FOUR_DEVICE_TEST_FILES,
@@ -19,16 +20,35 @@ from tests.ci.cpu_suite_invocations import (
 
 _REPO_ROOT = Path(__file__).parents[2]
 
-# The fp64 and fp32 legs each run every four-CPU-device file in one invocation
-# of their own; every property below is checked once per (leg, file) pair.
-_FOUR_DEVICE_INVOCATION_CASES = tuple(
-    (job, step_name, four_device_file)
-    for job, step_name in (
-        ("tests", "Run pytest and collect coverage"),
-        ("tests-fp32", "Run pytest at fp32"),
+
+def _workflow() -> dict:
+    return yaml.safe_load(
+        (_REPO_ROOT / ".github/workflows/cpu.yml").read_text(encoding="utf-8")
     )
-    for four_device_file in FOUR_DEVICE_TEST_FILES
-)
+
+
+def _all_cpu_suite_invocations() -> list[tuple[str, str, list[str]]]:
+    """Return `(job, step name, argv)` for every CPU-suite pytest invocation.
+
+    Scanning the whole workflow, rather than two named steps, is what lets the
+    topology lanes live in their own jobs: a lane moved from the general chain
+    into `tests-topology-*` is still found here, while a lane that vanished
+    altogether is not, and the singleton assertions below fail.
+    """
+    return [
+        (job_name, step.get("name", ""), argv)
+        for job_name, job in _workflow()["jobs"].items()
+        for step in job.get("steps", ())
+        if isinstance(step.get("run"), str)
+        for argv in cpu_suite_invocation_argvs(step["run"])
+    ]
+
+
+# Each four-CPU-device file now has exactly one invocation in the whole
+# workflow: the topology job runs each file in its own step and reaches both
+# precisions through its matrix, instead of the two precision legs each
+# carrying their own copy of the chain.
+_FOUR_DEVICE_INVOCATION_CASES = tuple(FOUR_DEVICE_TEST_FILES)
 
 
 def test_windows_cpu_suite_has_no_missing_kernel_skip_policy():
@@ -66,42 +86,73 @@ def test_every_four_device_test_file_is_registered():
     )
 
 
-def test_only_the_last_fp64_invocation_writes_the_coverage_report():
-    """The fp64 leg writes its coverage report from its last pytest invocation.
+def test_no_lane_uploads_coverage_to_codecov_before_the_combine_stage():
+    """Only the dedicated `coverage` job talks to Codecov.
 
-    The leg is one `&&` chain accumulating coverage with `--cov-append`, so the
-    XML is complete only once every invocation of the chain has run. Written
-    from any earlier link it would omit whatever the links after it cover —
-    which is what appending another own-process file to the end of the chain
-    would silently do.
+    The suite used to accumulate coverage with `--cov-append` along one `&&`
+    chain and publish from the chain's last link. Independent jobs cannot
+    append to each other's data file, so that contract is replaced by an
+    explicit one: every lane uploads its own complete XML as an artifact and a
+    single combine stage checks the full contributor set before publishing. A
+    lane uploading on its own would republish a partial picture, which reads as
+    a coverage drop rather than as a missing lane.
     """
-    argvs = _pytest_invocation_argvs(
-        job="tests", step_name="Run pytest and collect coverage"
-    )
-    writing = [index for index, argv in enumerate(argvs) if "--cov-report=xml" in argv]
-
-    assert writing == [len(argvs) - 1], (
-        f"{len(argvs)} invocations, coverage XML written by {writing} instead of "
-        f"by the last one alone"
-    )
-
-
-def test_every_earlier_fp64_invocation_suppresses_its_coverage_report():
-    """Every fp64 invocation but the last suppresses its own coverage report.
-
-    An invocation without `--cov-report=` writes the default report, so the
-    file the last link publishes is no longer the one the leg accumulated.
-    """
-    argvs = _pytest_invocation_argvs(
-        job="tests", step_name="Run pytest and collect coverage"
-    )
-    reporting = [
-        index for index, argv in enumerate(argvs[:-1]) if "--cov-report=" not in argv
+    uploaders = [
+        job_name
+        for job_name, job in _workflow()["jobs"].items()
+        for step in job.get("steps", ())
+        if str(step.get("uses", "")).startswith("codecov/codecov-action")
     ]
 
-    assert not reporting, (
-        f"fp64 invocations {reporting} do not suppress their coverage report"
+    assert uploaders == ["coverage"], (
+        f"jobs uploading to Codecov: {uploaders}; expected only the combine stage"
     )
+
+
+def test_every_recorded_coverage_contributor_uploads_its_artifact():
+    """Each lane the manifest records as contributing coverage uploads one.
+
+    This is the replacement completeness contract. The combine stage refuses to
+    publish unless every recorded contributor is present
+    (`tests/ci/check_coverage_manifest.py`); this test checks the other half --
+    that the workflow actually contains a step producing each of them, so the
+    manifest cannot name a lane that no job would ever deliver.
+    """
+    expected = set(ci_workloads.coverage_contributors())
+    uploaded = {
+        (step.get("with", {}) or {}).get("name", "")
+        for job in _workflow()["jobs"].values()
+        for step in job.get("steps", ())
+        if str(step.get("uses", "")).startswith("actions/upload-artifact")
+    }
+    # Matrix lanes publish a templated artifact name; compare on the literal
+    # prefix before the first `${{`.
+    literal = {name.split("${{")[0] for name in uploaded}
+    missing = sorted(
+        name
+        for name in expected
+        if name not in uploaded
+        and not any(name.startswith(prefix) for prefix in literal if prefix)
+    )
+
+    assert not missing, f"recorded coverage contributors with no upload step: {missing}"
+
+
+def test_the_combine_stage_checks_the_manifest_before_uploading():
+    """The `coverage` job runs the contributor check ahead of the Codecov step."""
+    steps = _workflow()["jobs"]["coverage"]["steps"]
+    check = next(
+        index
+        for index, step in enumerate(steps)
+        if "check_coverage_manifest" in str(step.get("run", ""))
+    )
+    upload = next(
+        index
+        for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("codecov/codecov-action")
+    )
+
+    assert check < upload
 
 
 def _step_run_block(*, job: str, step_name: str) -> str:
@@ -119,66 +170,52 @@ def _pytest_invocation_argvs(*, job: str, step_name: str) -> list[list[str]]:
     return cpu_suite_invocation_argvs(_step_run_block(job=job, step_name=step_name))
 
 
-def _invocations_naming(
-    *, job: str, step_name: str, four_device_file: str
-) -> list[list[str]]:
-    """Return every pytest invocation argv in one step that names `four_device_file`."""
+def _invocations_naming(*, four_device_file: str) -> list[tuple[str, str, list[str]]]:
+    """Return every CPU-suite invocation in the workflow naming `four_device_file`."""
     return [
-        argv
-        for argv in _pytest_invocation_argvs(job=job, step_name=step_name)
-        if four_device_file in argv
+        case for case in _all_cpu_suite_invocations() if four_device_file in case[2]
     ]
 
 
-def _sole_invocation(*, job: str, step_name: str, four_device_file: str) -> list[str]:
-    """Return the one invocation argv naming `four_device_file` in one step.
+def _invocations_naming_any(*, test_file: str) -> list[tuple[str, str, list[str]]]:
+    """Return every CPU-suite invocation in the workflow naming `test_file`."""
+    return [case for case in _all_cpu_suite_invocations() if test_file in case[2]]
+
+
+def _sole_invocation(*, four_device_file: str) -> list[str]:
+    """Return the one invocation argv naming `four_device_file`.
 
     `test_four_device_file_appears_in_exactly_one_invocation` is the test that
     names and asserts this singleton precondition; every other property test
     below reuses this helper to reach the one invocation it inspects.
     """
-    matches = _invocations_naming(
-        job=job, step_name=step_name, four_device_file=four_device_file
-    )
-    return matches[0]
+    return _invocations_naming(four_device_file=four_device_file)[0][2]
 
 
-@pytest.mark.parametrize(
-    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
-)
-def test_four_device_file_appears_in_exactly_one_invocation(
-    *, job: str, step_name: str, four_device_file: str
-):
+@pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
+def test_four_device_file_appears_in_exactly_one_invocation(*, four_device_file: str):
     """Each four-CPU-device test file is named by exactly one pytest invocation.
 
     Such a file pins a four-CPU-device topology at import, a pin that depends on
     running alone in its process; naming the file from zero or from more than
     one invocation means it either never runs or no longer runs alone.
     """
-    matches = _invocations_naming(
-        job=job, step_name=step_name, four_device_file=four_device_file
-    )
+    matches = _invocations_naming(four_device_file=four_device_file)
     assert len(matches) == 1, (
-        f"{job}/{step_name!r}: expected exactly one pytest invocation naming "
-        f"{four_device_file}, found {len(matches)}"
+        f"expected exactly one pytest invocation naming {four_device_file}, "
+        f"found {len(matches)} in {[(job, step) for job, step, _ in matches]}"
     )
 
 
-@pytest.mark.parametrize(
-    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
-)
-def test_four_device_file_runs_without_other_test_paths(
-    *, job: str, step_name: str, four_device_file: str
-):
+@pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
+def test_four_device_file_runs_without_other_test_paths(*, four_device_file: str):
     """A four-CPU-device test file's invocation names no other test path.
 
     Sharing the invocation with `tests` or another `tests/...` target would
     fold the file back into a multi-file process, defeating the import-time
     device-count pin that assumes it runs alone.
     """
-    argv = _sole_invocation(
-        job=job, step_name=step_name, four_device_file=four_device_file
-    )
+    argv = _sole_invocation(four_device_file=four_device_file)
     other_targets = [
         argument
         for argument in argv
@@ -186,57 +223,42 @@ def test_four_device_file_runs_without_other_test_paths(
         and argument != four_device_file
     ]
     assert not other_targets, (
-        f"{job}/{step_name!r}: {four_device_file} shares its invocation with "
-        f"{other_targets}"
+        f"{four_device_file} shares its invocation with {other_targets}"
     )
 
 
-@pytest.mark.parametrize(
-    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
-)
+@pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
 def test_four_device_file_invocation_passes_the_worker_count_flag(
-    *, job: str, step_name: str, four_device_file: str
+    *, four_device_file: str
 ):
     """A four-CPU-device test file's invocation states its worker count explicitly.
 
     An implicit worker count would leave the invocation's process-isolation
     guarantee undeclared; the sibling test then checks the count itself.
     """
-    argv = _sole_invocation(
-        job=job, step_name=step_name, four_device_file=four_device_file
-    )
-    assert "-n" in argv, (
-        f"{job}/{step_name!r}: {four_device_file}'s invocation is missing -n"
-    )
+    argv = _sole_invocation(four_device_file=four_device_file)
+    assert "-n" in argv, f"{four_device_file}'s invocation is missing -n"
 
 
-@pytest.mark.parametrize(
-    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
-)
-def test_four_device_file_runs_at_worker_count_zero(
-    *, job: str, step_name: str, four_device_file: str
-):
+@pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
+def test_four_device_file_runs_at_worker_count_zero(*, four_device_file: str):
     """A four-CPU-device test file's invocation runs at `-n 0`, its own process.
 
     Any other worker count would distribute the file's tests across xdist
     workers that fork before the file's own import-time device-count pin runs,
     so the pin would apply to at most one worker and the rest would skip.
     """
-    argv = _sole_invocation(
-        job=job, step_name=step_name, four_device_file=four_device_file
-    )
+    argv = _sole_invocation(four_device_file=four_device_file)
     worker_count = argv[argv.index("-n") + 1]
     assert worker_count == "0", (
-        f"{job}/{step_name!r}: {four_device_file} runs at -n {worker_count!r} "
-        "instead of its own process (-n 0)"
+        f"{four_device_file} runs at -n {worker_count!r} instead of its own "
+        "process (-n 0)"
     )
 
 
-@pytest.mark.parametrize(
-    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
-)
+@pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
 def test_four_device_file_invocation_omits_policy_activation_flags(
-    *, job: str, step_name: str, four_device_file: str
+    *, four_device_file: str
 ):
     """A four-CPU-device test file's invocation never activates the CI policy launcher.
 
@@ -247,32 +269,31 @@ def test_four_device_file_invocation_omits_policy_activation_flags(
     four-CPU-device pin, so the pin sees an already-initialised backend, never
     applies, and every test in the file silently skips.
     """
-    argv = _sole_invocation(
-        job=job, step_name=step_name, four_device_file=four_device_file
-    )
+    argv = _sole_invocation(four_device_file=four_device_file)
     assert not carries_policy_activation_flags(argv), (
-        f"{job}/{step_name!r}: {four_device_file}'s invocation carries a CI "
-        "policy activation flag, which silently skips every test in the file"
+        f"{four_device_file}'s invocation carries a CI policy activation flag, "
+        "which silently skips every test in the file"
     )
 
 
-@pytest.mark.parametrize(
-    ("job", "step_name", "precision"),
-    [
-        ("tests", "Run pytest and collect coverage", 64),
-        ("tests-fp32", "Run pytest at fp32", 32),
-    ],
-)
 @pytest.mark.parametrize("test_file", EIGHT_DEVICE_TEST_FILES)
 def test_eight_device_witness_has_one_fresh_full_policy_invocation(
-    *, job: str, step_name: str, precision: int, test_file: str
+    *, test_file: str
 ) -> None:
-    """Environment topology precedes policy initialization; no native skip passes."""
-    run = _step_run_block(job=job, step_name=step_name)
-    argvs = cpu_suite_invocation_argvs(run)
-    matches = [argv for argv in argvs if test_file in argv]
-    assert len(matches) == 1
-    argv = matches[0]
+    """Environment topology precedes policy initialization; no native skip passes.
+
+    One invocation for the whole workflow now, not one per precision leg: the
+    topology job reaches both precisions through its matrix and passes the
+    precision in `$PYLCM_CI_PRECISION`, so the argv is precision-agnostic and
+    the JUnit name interpolates it.
+    """
+    matches = _invocations_naming_any(test_file=test_file)
+    assert len(matches) == 1, (
+        f"expected exactly one invocation naming {test_file}, found "
+        f"{[(job, step) for job, step, _ in matches]}"
+    )
+    job_name, step_name, argv = matches[0]
+    run = _step_run_block(job=job_name, step_name=step_name)
     assert [arg for arg in argv if arg == "tests" or arg.startswith("tests/")] == [
         test_file
     ]
@@ -288,10 +309,10 @@ def test_eight_device_witness_has_one_fresh_full_policy_invocation(
         "--policy-child",
         "--ci-policy=full",
         "--hardware-profile=cpu",
-        f"--precision={precision}",
+        "--precision=$PYLCM_CI_PRECISION",
         "-v",
     ):
-        assert argv.count(flag) == 1
+        assert argv.count(flag) == 1, flag
     assert "-k" not in argv
     assert "-m" not in argv
     assert not any(arg.startswith(("--ignore", "--deselect")) for arg in argv)
@@ -299,16 +320,96 @@ def test_eight_device_witness_has_one_fresh_full_policy_invocation(
         arg.removeprefix("--junitxml=") for arg in argv if arg.startswith("--junitxml=")
     ]
     assert len(reports) == 1
-    assert reports[0].startswith(f"reports/junit-cpu-fp{precision}-")
+    # The report path is bound once to a shell variable and reused, so the
+    # invocation and its population guard cannot drift onto different files.
+    assert reports[0] == "$pylcm_junit"
     normalized = " ".join(run.replace("\\\n", " ").split())
-    assert f"&& check_population {reports[0]} no-skips" in normalized
+    assigned = [
+        line.strip().removeprefix("pylcm_junit=")
+        for line in run.splitlines()
+        if line.strip().startswith("pylcm_junit=")
+    ]
+    assert len(assigned) == 1, assigned
+    assert assigned[0].startswith("reports/junit-cpu-fp$PYLCM_CI_PRECISION-")
+    assert assigned[0].endswith(".xml")
+    assert 'check_population "$pylcm_junit" no-skips' in normalized
     assert "EVERYTHING SKIPPED" in run
     assert '"${2:-}" = "no-skips"' in run
     assert '"$skipped" -ne 0' in run
-    if precision == 64:
-        assert "--cov-append" in argv
-        assert "--cov-report=" in argv
-        assert "--cov-report=xml" not in argv
+
+
+def _assert_unchained(*, step: dict) -> None:
+    """Fail unless this step's single pytest invocation stands on its own.
+
+    `&&` alone is not the test: the shared `check_population` helper legitimately
+    uses it inside its own body. What must not appear is a *pytest* invocation
+    joined to another command, which is what would restore the chain this batch
+    removed -- and with it the behaviour where the first failing lane prevents
+    every later lane from running at all.
+    """
+    normalized = " ".join(str(step["run"]).replace("\\\n", " ").split())
+    for chained in ("&& pixi run", "&& JAX_NUM_CPU_DEVICES", "&& XLA_FLAGS"):
+        assert chained not in normalized, (
+            f"{step.get('name')} chains its pytest invocation ({chained!r})"
+        )
+
+
+def test_every_eight_device_lane_lives_in_its_own_unchained_step() -> None:
+    """No two eight-device witnesses share a step, and none is `&&`-chained.
+
+    Equal device count is not evidence about cache, environment or serial-group
+    compatibility, so merging two of these files into one process is not
+    authorized. One file per step also means one exit status and one report per
+    witness instead of a chain that stops at its first failure.
+    """
+    job = _workflow()["jobs"]["tests-topology-eight-device"]
+    payload_steps = [
+        step
+        for step in job["steps"]
+        if cpu_suite_invocation_argvs(str(step.get("run", "")))
+    ]
+    assert len(payload_steps) == len(EIGHT_DEVICE_TEST_FILES)
+    for step in payload_steps:
+        argvs = cpu_suite_invocation_argvs(step["run"])
+        assert len(argvs) == 1, f"{step.get('name')} runs {len(argvs)} invocations"
+        _assert_unchained(step=step)
+
+
+def test_every_topology_lane_writes_its_own_junit_report() -> None:
+    """No two topology lanes share a JUnit filename.
+
+    Each lane is a separate process with its own population guard, so two lanes
+    writing the same path would leave the second overwriting the first: the
+    guard would pass twice while only one lane's results survived to be read
+    back. The names are historical short forms rather than the file's own slug,
+    so uniqueness -- not a name match -- is what this checks.
+    """
+    for job_name in ("tests-topology-four-device", "tests-topology-eight-device"):
+        assigned = [
+            line.strip().removeprefix("pylcm_junit=")
+            for step in _workflow()["jobs"][job_name]["steps"]
+            for line in str(step.get("run", "")).splitlines()
+            if line.strip().startswith("pylcm_junit=")
+        ]
+        assert assigned, job_name
+        assert len(assigned) == len(set(assigned)), (
+            f"{job_name} reuses a JUnit path: {sorted(assigned)}"
+        )
+
+
+def test_every_four_device_lane_lives_in_its_own_unchained_step() -> None:
+    """Same isolation contract for the import-time four-device pins."""
+    job = _workflow()["jobs"]["tests-topology-four-device"]
+    payload_steps = [
+        step
+        for step in job["steps"]
+        if cpu_suite_invocation_argvs(str(step.get("run", "")))
+    ]
+    assert len(payload_steps) == len(FOUR_DEVICE_TEST_FILES)
+    for step in payload_steps:
+        argvs = cpu_suite_invocation_argvs(step["run"])
+        assert len(argvs) == 1, f"{step.get('name')} runs {len(argvs)} invocations"
+        _assert_unchained(step=step)
 
 
 @pytest.mark.parametrize("test_file", EIGHT_DEVICE_TEST_FILES)

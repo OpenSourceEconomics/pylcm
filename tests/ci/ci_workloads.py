@@ -120,6 +120,47 @@ def lane_summary(*, path: Path = MANIFEST_PATH) -> dict[str, dict[str, Any]]:
     return summary
 
 
+def leg_weights(*, leg: str, path: Path = MANIFEST_PATH) -> Mapping[str, float]:
+    """Return observed per-file seconds for one leg of the frozen head.
+
+    A "leg" is one OS/precision combination (`fp64-windows`, `fp32-linux`,
+    `fp64-solution`, ...). These are the weights a shard layout must use: the
+    cross-leg totals in `file_weights` sum four general legs, so the program
+    certificate's 6,966 s there is 37 min on Windows but 27 on Linux fp64.
+    Dividing a cross-leg sum by the leg count would understate the expensive
+    platform and overstate the cheap one.
+    """
+    legs = load_manifest(path=path)["leg_weights"]
+    if leg not in legs:
+        raise KeyError(f"{leg!r} is not a recorded leg: {sorted(legs)}")
+    return {f: float(seconds) for f, seconds in legs[leg]["seconds"].items()}
+
+
+def leg_names(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return every leg name the manifest records observed weights for."""
+    return tuple(sorted(load_manifest(path=path)["leg_weights"]))
+
+
+def general_shard_universe(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return the file universe every general (`notslow`) lane shards over.
+
+    Recorded once in the manifest rather than derived per lane, so the three
+    fp64 legs and the fp32 leg provably shard the same set and only their
+    weights differ.
+    """
+    return tuple(load_manifest(path=path)["general_shard_universe"])
+
+
+def coverage_contributors(*, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Return the artifact name of every lane that contributes to coverage."""
+    return tuple(load_manifest(path=path)["coverage_contributors"])
+
+
+def shard_layout(*, path: Path = MANIFEST_PATH) -> Mapping[str, Any]:
+    """Return the recorded shard counts and worker counts per lane family."""
+    return load_manifest(path=path)["shard_layout"]
+
+
 def node_ids(*, invocation_id: str, path: Path = MANIFEST_PATH) -> tuple[str, ...]:
     """Return explicit node IDs for an invocation that selects by node ID."""
     inv = invocation_by_id(invocation_id=invocation_id, path=path)
@@ -129,15 +170,20 @@ def node_ids(*, invocation_id: str, path: Path = MANIFEST_PATH) -> tuple[str, ..
 __all__: Sequence[str] = (
     "MANIFEST_PATH",
     "all_manifest_files",
+    "coverage_contributors",
     "excluded_files",
     "file_weight_seconds",
     "files_for",
+    "general_shard_universe",
     "guardrails",
     "invocation_by_id",
     "invocations",
     "invocations_for_job",
     "lane_summary",
+    "leg_names",
+    "leg_weights",
     "load_manifest",
     "node_ids",
+    "shard_layout",
     "unweighted_files",
 )
