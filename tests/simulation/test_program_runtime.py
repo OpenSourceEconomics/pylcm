@@ -233,14 +233,19 @@ def test_subject_tiles_preserve_every_output(
     np.testing.assert_array_equal(output, np.arange(n_subjects) + 1)
 
 
-@pytest.mark.parametrize(("n_subjects", "expected_width"), [(7, 7), (4097, 4096)])
+@pytest.mark.parametrize(("n_subjects", "expected_width"), [(7, 7), (4097, 4097)])
 def test_unbudgeted_simulation_uses_the_subject_specific_inner_width(
     *,
     monkeypatch: pytest.MonkeyPatch,
     n_subjects: int,
     expected_width: int,
 ) -> None:
-    """The default inner tile is wide while the outer population stays complete."""
+    """The inner tile is the widest the byte cap admits, the population complete.
+
+    A scalar-per-subject program is far lighter than the standing per-subject
+    weight, so both populations here fit one tile; the derived rule and its
+    bounds are pinned in `test_unbudgeted_subject_width.py`.
+    """
     selected: list[tuple[dict[str, int], int]] = []
     original = runtime_module.plan_workspace
 

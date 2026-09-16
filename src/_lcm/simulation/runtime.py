@@ -1,6 +1,7 @@
 """Plan, lower and dispatch the declared forward-simulation programs."""
 
 import dataclasses
+import math
 import threading
 from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import Future
@@ -14,6 +15,7 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreProgram,
     MaterializedCoreProgram,
+    TiledOutputAxis,
     _value_read_argument_leaf,
     materialize_core_program,
     resolve_core_program,
@@ -25,6 +27,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
+    _admissible_width,
     compiler_memory_reservation,
     plan_workspace,
     workspace_width_candidates,
@@ -59,7 +62,24 @@ from _lcm.solution.backward_induction import (
 )
 from lcm.exceptions import ExecutionPlanningError
 
+# Narrowest inner tile an unbudgeted subject axis is lowered at, and the width it
+# keeps when one subject is too heavy for the byte cap below to afford more.
 _DEFAULT_UNBUDGETED_SUBJECT_WIDTH = 4096
+
+# Largest argument slice one unbudgeted subject tile aims for, so the live block
+# stays bounded by a fixed number of bytes on every backend whatever the model.
+# With the standing per-subject weight below this admits 262,144 subjects, the
+# widest tile the A40 width sweep measured and the widest it needed: every
+# simulation there reaches its full population extent, or that tile.
+_UNBUDGETED_SUBJECT_BLOCK_BYTES = 16 * 1024 * 1024
+
+# Standing per-subject weight, and the floor under the weight read off a
+# program's own operands.  Declared operands are only the visible part of a
+# subject's working set -- the sweep measured roughly thirty times their bytes
+# once temporaries and outputs are counted -- so a light program is still
+# charged this much, and one that reads no per-subject operand at all is charged
+# it rather than being admitted at an unbounded width.
+_MIN_SUBJECT_ARGUMENT_BYTES = 64
 
 
 def _empty_widths() -> Mapping[str, int]:
@@ -504,18 +524,64 @@ def _simulation_lowering_key(
     )
 
 
+def _unbudgeted_subject_width(
+    *, program: MaterializedCoreProgram, axis: TiledOutputAxis
+) -> int:
+    """Return the widest subject tile a constant byte cap admits without a budget.
+
+    Without a declared budget the runtime still derives a bound: the argument
+    slice of one subject tile may not exceed `_UNBUDGETED_SUBJECT_BLOCK_BYTES`.
+    The per-subject weight comes from the operands this materialized program
+    already holds abstractly — every leaf whose leading dimension is the subject
+    extent — so the result depends on nothing but the model's shapes, dtypes and
+    the population size, and is identical on every backend and in a certificate.
+
+    The proposal never falls below `_DEFAULT_UNBUDGETED_SUBJECT_WIDTH`, so no
+    population is lowered narrower than the fixed default alone would have
+    lowered it, and it passes through `_admissible_width`, so the axis
+    alignment, its floor and the extent clamp are unchanged. Width is a lowering
+    specialization only: a wider tile moves no value and no RNG stream.
+    """
+    per_subject = max(
+        sum(
+            _subject_slice_bytes(leaf=leaf)
+            for leaf in jax.tree.leaves(program.arguments)
+            if getattr(leaf, "shape", ())[:1] == (axis.extent,)
+        ),
+        _MIN_SUBJECT_ARGUMENT_BYTES,
+    )
+    proposal = max(
+        _DEFAULT_UNBUDGETED_SUBJECT_WIDTH,
+        _UNBUDGETED_SUBJECT_BLOCK_BYTES // per_subject,
+    )
+    return _admissible_width(axis=axis, width=min(proposal, axis.extent))
+
+
+def _subject_slice_bytes(*, leaf: object) -> int:
+    """Size one subject's share of a leading-axis operand, extended dtypes included."""
+    shape = tuple(leaf.shape)  # ty: ignore[unresolved-attribute]
+    count = math.prod(shape)
+    if isinstance(leaf, jax.Array):
+        # nbytes also sizes extended PRNG-key dtypes, which are not NumPy dtypes.
+        item_bytes = leaf.nbytes // count if count else 0
+    else:
+        item_bytes = jax.typeof(leaf).dtype.itemsize
+    return item_bytes * math.prod(shape[1:])
+
+
 def _dispatch_widths(
     *,
     program: MaterializedCoreProgram,
     configured: Mapping[str, int],
     residency: SimulationDispatchContext | None,
 ) -> Mapping[str, int]:
-    """Resolve explicit, budgeted, or default inner simulation widths.
+    """Resolve explicit, budgeted, or derived inner simulation widths.
 
     An unbudgeted simulation keeps the complete population in one outer chunk.
-    Its inner subject tile uses a wider simulation-specific default so device
-    programs do enough work per dispatch. Explicit widths and the budgeted outer
-    plan remain authoritative.
+    Its inner subject tile is derived by `_unbudgeted_subject_width`, which
+    bounds the block by bytes rather than pinning a model-blind cell count, so
+    device programs do enough work per dispatch. Explicit widths and the
+    budgeted outer plan remain authoritative.
     """
     fixed = dict(configured)
     if residency is None:
@@ -523,14 +589,14 @@ def _dispatch_widths(
             subject_axis = next(
                 (
                     axis
-                    for axis in program.requirements.axes
+                    for axis in program.requirements.tiled_axes
                     if axis.name == SUBJECT_AXIS
                 ),
                 None,
             )
             if subject_axis is not None:
-                fixed[SUBJECT_AXIS] = min(
-                    _DEFAULT_UNBUDGETED_SUBJECT_WIDTH, subject_axis.extent
+                fixed[SUBJECT_AXIS] = _unbudgeted_subject_width(
+                    program=program, axis=subject_axis
                 )
         return MappingProxyType(fixed)
     for axis in program.requirements.axes:
