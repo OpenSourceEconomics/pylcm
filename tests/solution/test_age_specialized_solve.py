@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -22,7 +23,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidAdditionalTargetsError, InvalidInitialConditionsError
+from lcm.exceptions import InvalidAdditionalTargetsError, UnsupportedOperationError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
@@ -386,20 +387,23 @@ def test_additional_targets_all_rejects_age_specialized_constraint():
         result.to_dataframe(additional_targets="all")
 
 
-def test_initial_conditions_feasibility_check_rejects_age_specialized_constraint():
-    """Feasibility validation rejects a specialized constraint for subjects starting
-    away from the regime's representative age.
+@pytest.mark.parametrize("log_level", ["warning", "debug"])
+def test_initial_conditions_feasibility_check_rejects_age_specialized_constraint(
+    log_level: LogLevel,
+):
+    """Feasibility validation cannot answer for a specialized constraint when
+    subjects start away from the regime's representative age, so it raises.
 
-    `_check_regime_feasibility` builds its feasibility function from the published
-    `regime.simulation.constraints`, which hold an `AgeSpecializedFunction` resolved
-    at the regime's representative (first active) age only. Checking a subject who
-    starts at a later age against that closure would silently apply the wrong age's
-    policy, so it must raise instead.
+    The published `regime.simulation.constraints` hold an `AgeSpecializedFunction`
+    resolved at the regime's representative (first active) age only. Checking a
+    subject who starts at a later age against that closure would silently apply
+    the wrong age's policy. This is a property of the model, not of the supplied
+    rows, so it is an unsupported operation and is never downgraded to a warning.
     """
     model = _make_specialized_constraint_model(
         AgeSpecializedFunction(build=_cap_of_age, signature=lambda age: age)
     )
-    with pytest.raises(InvalidInitialConditionsError, match="policy-specialized"):
+    with pytest.raises(UnsupportedOperationError, match="policy-specialized"):
         model.simulate(
             params={"discount_factor": 0.95},
             initial_conditions={
@@ -407,7 +411,7 @@ def test_initial_conditions_feasibility_check_rejects_age_specialized_constraint
                 "wealth": jnp.array([10.0, 50.0, 100.0]),
                 "regime_id": jnp.full(3, RegimeId.working_life),
             },
-            log_level="debug",
+            log_level=log_level,
         )
 
 

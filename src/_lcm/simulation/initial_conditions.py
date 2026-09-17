@@ -70,6 +70,7 @@ from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
     PyLCMError,
+    UnsupportedOperationError,
 )
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserInitialConditions
 
@@ -174,10 +175,15 @@ def validate_simulation_inputs(
                     process_grid_resolver=process_grid_resolver,
                 )
                 accepted = summary.valid()
-            except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
+            except (
+                ExecutionPlanningError,
+                MemoryError,
+                jax.errors.JaxRuntimeError,
+                UnsupportedOperationError,
+            ):
                 raise
-            # Re-evaluate user-law failures in legacy order; resource failures above
-            # must never enter this diagnostic retry.
+            # Re-evaluate user-law failures in legacy order; resource failures and
+            # unsupported checks above must never enter this diagnostic retry.
             except Exception:  # noqa: BLE001
                 accepted = False
         finally:
@@ -793,6 +799,9 @@ def validate_initial_conditions(
 
     Raises:
         InvalidInitialConditionsError: If any validation check fails.
+        UnsupportedOperationError: If a constraint depends on an age-specialized
+            function while subjects start away from the regime's representative
+            age, so that feasibility cannot be evaluated for them.
 
     """
     # Build reverse lookup from regime IDs to names. `regime_names_to_ids`
@@ -1435,9 +1444,7 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
         cohorts=cohorts,
     )
     if age_specialized_message is not None:
-        if summary is not None:
-            raise _SerialValidationRequired
-        return age_specialized_message
+        raise UnsupportedOperationError(age_specialized_message)
 
     feasibility_func = _get_feasibility(
         functions=regime.simulation.functions,
