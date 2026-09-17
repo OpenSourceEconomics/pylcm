@@ -199,7 +199,7 @@ def _build_with_regime_level_sharded_terminal() -> Model:
 @pytest.mark.parametrize(
     ("build", "match"),
     [
-        (_build_with_model_level_sharded_pruned, "pruned from non-terminal"),
+        (_build_with_model_level_sharded_pruned, "no regime retains them"),
         (_build_with_model_level_sharded_used, "DCEGM.*cannot shard discrete"),
         (
             _build_with_regime_level_sharded_terminal,
@@ -214,11 +214,14 @@ def test_sharded_state_cannot_feed_a_dcegm_carry(*, build, match):
     axes; a device-sharded axis would break that index, and the carry channel is
     not co-mapped device-local the way the continuation value array is. Three
     independent rules already make every route to such a configuration
-    unconstructible — a model-level sharded state pruned from a non-terminal
-    regime, a sharded discrete state surviving onto a DCEGM regime, and a
-    regime-level `distributed` declaration are each rejected — so no dedicated
-    carry guard is needed. Relaxing any one rule must keep the carry case
-    rejected (or add carry co-mapping).
+    unconstructible — a model-level sharded state that no regime retains, a
+    sharded discrete state surviving onto a DCEGM regime, and a regime-level
+    `distributed` declaration are each rejected — so no dedicated carry guard
+    is needed. A sharded state pruned from the DCEGM regime alone is admitted
+    since the regime then carries no such axis at all, so its carry rows have no
+    device axis to break; the case that would need one, the state surviving
+    onto the DCEGM regime, stays rejected by the second rule. Relaxing any one
+    rule must keep the carry case rejected (or add carry co-mapping).
     """
     with pytest.raises((ModelInitializationError, ExecutionPlanningError), match=match):
         build()
