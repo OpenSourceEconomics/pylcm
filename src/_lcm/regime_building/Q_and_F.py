@@ -2445,10 +2445,17 @@ class _ComputeCE:
             extra_kw = {
                 k: states_actions_params[k] for k in continuation.extra_param_names
             }
+            # A co-mapped state's axis is sliced off the value array, so the
+            # interpolation places no coordinate on it. A gated edge's projected
+            # references are read at the landing instead, and a projection may map
+            # such a state onto the referenced regime's grid — it needs the state's
+            # value, not an index — so a coordinate the continuation still names is
+            # passed rather than dropped with the axis.
             interpolator_coordinates = {
                 name: val
                 for name, val in next_states.items()
                 if name not in self.co_map_next_names
+                or name in continuation.co_mapped_landing_names
             }
             next_V_at_stochastic_states_arr = continuation.next_V(
                 **interpolator_coordinates,
@@ -2614,6 +2621,16 @@ class _TargetContinuation:
 
     draw_dependent_names: frozenset[TransitionFunctionName] = frozenset()
     """Laws resolved on a node axis, one value per node of a sibling draw."""
+
+    co_mapped_landing_names: frozenset[TransitionFunctionName] = frozenset()
+    """Co-mapped `next_<state>` names `next_V` still names as a landing value.
+
+    A co-mapped state's axis is sliced off the value array, so the interpolation
+    never places a coordinate on it. A gated edge's projected references are read
+    at the landing point instead of off a channel, and a projection may map such a
+    state onto the referenced regime's grid — it consumes the state as a value, not
+    as an index, so the coordinate is supplied even though the axis is gone.
+    """
 
 
 def _draw_dependencies_by_law(
@@ -3116,6 +3133,34 @@ def _build_target_continuation(
         ),
         has_lottery_axes=bool(lottery_variables),
         draw_dependent_names=frozenset(dependencies_by_law),
+        co_mapped_landing_names=_co_mapped_landing_names(
+            mapped_interpolator=mapped_interpolator,
+            co_map_state_names=co_map_state_names,
+        ),
+    )
+
+
+def _co_mapped_landing_names(
+    *,
+    mapped_interpolator: Callable[..., FloatND],
+    co_map_state_names: tuple[StateName, ...],
+) -> frozenset[TransitionFunctionName]:
+    """Return the co-mapped landing coordinates this continuation still names.
+
+    Args:
+        mapped_interpolator: The continuation's interpolator, gated or plain.
+        co_map_state_names: Tuple of state names co-mapped with the continuation V.
+
+    Returns:
+        Frozen set of `next_<state>` names for co-mapped states the interpolator
+        declares.
+
+    """
+    declared = get_union_of_args([mapped_interpolator])
+    return frozenset(
+        landing
+        for name in co_map_state_names
+        if (landing := f"next_{name}") in declared
     )
 
 

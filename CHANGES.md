@@ -5,6 +5,20 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### A gated edge may project a sharded state onto the referenced regime's grid
+
+- A gated edge's `ProjectedRegimeValue` — a gate reference or a leg fallback — may now
+  have its projection read a discrete state the source declares in
+  `ExecutionConfig.sharded_states`. Such a state's device axis is sliced off every
+  value array before the continuation is read, so the interpolation places no
+  coordinate on it; the projection, however, is evaluated at the point the source lands
+  on and consumes the state as a value rather than as an index. The landing coordinate
+  was dropped together with the axis, so the solve refused with
+  `Expected arguments: [..., 'next_<state>'], missing: {'next_<state>'}`. A coordinate
+  the continuation still names is now supplied, which reproduced on a single device as
+  well, since the declaration alone co-maps the state. Values and simulated frames are
+  unchanged wherever the solve already ran.
+
 ### A value read across regime meshes is planned from where it is stored
 
 - A regime reading another regime's stored value — a gated edge's
