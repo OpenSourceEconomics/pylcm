@@ -37,9 +37,9 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.simulation.initial_conditions.test_initial_conditions import (
-    _make_asymmetric_state_model,
-    _make_constrained_asymmetric_model,
+from tests.simulation.initial_conditions._models import (
+    make_asymmetric_state_model,
+    make_constrained_asymmetric_model,
 )
 from tests.test_transition_checks import _model_with_state_probs
 
@@ -78,7 +78,7 @@ def test_earlier_initial_errors_prevent_every_feasibility_build(
     expected: str,
 ) -> None:
     """Invalid IDs, names, ages and codes retain their established precedence."""
-    model = _make_asymmetric_state_model()
+    model = make_asymmetric_state_model()
     initial = {
         "regime_id": jnp.array([regime_id], dtype=jnp.int32),
         "age": jnp.array([age]),
@@ -99,7 +99,7 @@ def test_earlier_initial_errors_prevent_every_feasibility_build(
 
 def test_name_errors_and_lengths_are_reported_in_the_existing_order() -> None:
     """One initial exception retains all structural messages before age checks."""
-    model = _make_asymmetric_state_model()
+    model = make_asymmetric_state_model()
     with pytest.raises(InvalidInitialConditionsError) as caught:
         _validate(
             model=model,
@@ -126,7 +126,7 @@ def test_unused_regime_feasibility_is_neither_built_nor_traced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An unused action regime is skipped before even composing its constraints."""
-    model = _make_constrained_asymmetric_model()
+    model = make_constrained_asymmetric_model()
     unused = model._regimes["alive"].simulation.constraints
     original = initial_module._get_feasibility
     visited = []
@@ -152,7 +152,7 @@ def test_unused_regime_feasibility_is_neither_built_nor_traced(
 
 def test_a_discrete_code_in_an_unrelated_cohort_is_ignored() -> None:
     """A supplied state of an absent regime is allowed and not validated there."""
-    model = _make_asymmetric_state_model()
+    model = make_asymmetric_state_model()
     _validate(
         model=model,
         initial={
@@ -166,7 +166,7 @@ def test_a_discrete_code_in_an_unrelated_cohort_is_ignored() -> None:
 
 def test_changed_initial_values_are_validated_again_on_the_same_model() -> None:
     """A successful first call cannot cache a validity bit for later arrays."""
-    model = _make_asymmetric_state_model()
+    model = make_asymmetric_state_model()
     initial = {
         "regime_id": jnp.array([0], dtype=jnp.int32),
         "age": jnp.array([0.0]),
@@ -245,7 +245,7 @@ def test_skipping_either_validation_family_breaks_a_real_refusal(
 ) -> None:
     """Each seeded bypass makes its independent invalid-input oracle fail."""
     if family == "initial":
-        model = _make_constrained_asymmetric_model()
+        model = make_constrained_asymmetric_model()
         initial = {
             "age": jnp.array([0.0]),
             "wealth": jnp.array([40.0]),
