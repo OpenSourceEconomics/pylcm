@@ -484,6 +484,16 @@ or a DataFrame with a `regime_name` column.
 Start model development at `"debug"`. Reduce validation only after the model is trusted
 and the cost matters.
 
+`model.simulate(...)` also reports the resolved execution plan it dispatched: the
+forward route (`"legacy"` or `"subjects"`), the ordered subject devices and their
+backend, the resolved planner axis widths by regime, the outer chunk count and admitted
+chunk widths, and the budget mode with its effective device-memory bytes. A one-line
+summary logs at `log_level="progress"` and `"debug"`; the complete record logs at
+`"debug"` only, and neither line appears at `"warning"` or `"off"`. This is diagnostic
+only — it changes no numerical, RNG, ownership or admission decision — and exists so a
+clean production run carries evidence of which route actually engaged. The same record
+is available programmatically as `SimulationResult.plan_summary`.
+
 pylcm enables a persistent JAX compilation cache by default. Set
 `JAX_COMPILATION_CACHE_DIR` to choose the full directory or `LCM_COMPILATION_CACHE_NAME`
 to choose the project-specific leaf. Set `XLA_PYTHON_CLIENT_PREALLOCATE=true` before
@@ -501,10 +511,13 @@ only terminal entry.
 
 Inspection properties include `regime_names`, `state_names`, `action_names`,
 `n_periods`, `n_subjects`, `available_targets`, `raw_results`, `flat_params`, and
-`period_to_regime_to_V_arr`.
+`period_to_regime_to_V_arr`. `plan_summary` carries the resolved execution plan the call
+reported (route, subject devices, resolved widths, chunking, budget mode); it is
+diagnostic only and is `None` for a result read back with `load`.
 
 `SimulationResult.save(directory=...)` writes array checkpoints, value functions,
-metadata, and a Feather table. `SimulationResult.load(directory=...)` restores it.
+metadata, and a Feather table. `SimulationResult.load(directory=...)` restores it;
+`plan_summary` (like `solution`) is not part of the saved archive.
 
 (api-standalone-persistence)=
 

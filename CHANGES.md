@@ -21,6 +21,32 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   overlap without either containing the other — which no single operator serves — is
   refused while planning, naming both regimes and both device axes.
 
+### The resolved simulation execution plan is logged
+
+- `Model.simulate` now reports, once per call, the resolved execution plan: the
+  forward route (`legacy`/`subjects`), the ordered subject devices and their
+  backend, the resolved planner axis widths by regime, the outer chunk count and
+  admitted chunk widths, and the budget mode with its effective device-memory
+  bytes. A one-line summary logs at `log_level="progress"` and `"debug"`; the
+  complete record logs at `"debug"` only. Neither line appears at `"warning"` or
+  `"off"`. The record is also exposed as `SimulationResult.plan_summary`
+  (`None` after `save`/`load`, diagnostic only). This closes the gap where a
+  clean production run carried no evidence of which route actually engaged
+  (issue #450). Purely diagnostic: no numerical, RNG, ownership or admission
+  behavior changes.
+
+### Gated edges simulate across subject devices
+
+- A model whose regime declares a gated edge — a `ValueDependentTransition` carrying a
+  `gate`, such as the dissolution edge of a collective regime — may be simulated with
+  `ExecutionConfig(simulation_sharding="subjects")` on more than one device. The gate
+  fold reads and writes regime-level grids and declares no subject axis, so it is
+  replicated and the continuations it publishes stay shared operands; the gate route
+  recomputes each row's gate at that row's own realized candidate state, follows the leg
+  its role selects, and writes its fallback coordinates under an elementwise mask, so
+  its population operands are partitioned over the configured devices. The rows
+  published are the rows one device publishes.
+
 ### Sharding follows pruning, regime by regime
 
 - A state named in `ExecutionConfig.sharded_states` may be dropped from any regime whose

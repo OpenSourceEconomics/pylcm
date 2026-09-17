@@ -290,13 +290,7 @@ def attach_gated_simulation_programs(
                 ),
                 argument_builder=_ArgumentsBoundAtDispatch(
                     program_name=GATE_ROUTE_PROGRAM,
-                    subject_arg_names=(
-                        "next_states",
-                        "new_subject_regime_ids",
-                        "subjects_in_regime",
-                        "own_stakeholder",
-                        "new_own_stakeholder",
-                    ),
+                    subject_arg_names=_GATE_ROUTE_SUBJECT_ARG_NAMES,
                 ),
                 requirements=CoreExecutionRequirements(
                     tiled_axes=(
@@ -368,12 +362,37 @@ def gated_simulation_programs_ready(*, regime: Regime) -> bool:
     )
 
 
+#: Gate-route operands partitioned across subjects; every other one is shared.
+_GATE_ROUTE_SUBJECT_ARG_NAMES = (
+    "next_states",
+    "new_subject_regime_ids",
+    "subjects_in_regime",
+    "own_stakeholder",
+    "new_own_stakeholder",
+)
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
 class _GateFoldBody:
+    """One period's gated continuations, folded on the regime-level grids.
+
+    The fold reads the next period's value and dissolution arrays over each
+    target's own grid and writes the substituted continuation over that same
+    grid. No operand and no output carries a subject axis, so the body is
+    replicated rather than partitioned wherever the population is spread over
+    several devices, and the grids it publishes stay shared operands of the
+    gate route that consumes them.
+    """
+
     regime: Regime
     name: RegimeName
     regimes: Mapping[RegimeName, Regime]
     period: int
+
+    @property
+    def subject_shard_arg_names(self) -> tuple[str, ...]:
+        """Declare that the fold partitions nothing: it has no subject axis."""
+        return ()
 
     def __call__(self, **kwargs: Any) -> object:  # noqa: ANN401
         folded = simulation_gate_fold(
@@ -400,9 +419,24 @@ class _GateFoldBody:
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
 class _GateRouteBody:
+    """Each subject's own passage through its regime's gated edges.
+
+    Every step is taken at the subject's own row: the gate is recomputed at
+    that row's realized candidate state, its leg's destinations follow the role
+    the row carries, and the fallback coordinates are written under an
+    elementwise mask. Nothing reduces, sorts or scatters across rows, so the
+    population may be partitioned over devices while the folded continuation
+    grids and the params stay shared.
+    """
+
     regime: Regime
     regime_names_to_ids: RegimeNamesToIds
     fold_period: int
+
+    @property
+    def subject_shard_arg_names(self) -> tuple[str, ...]:
+        """Name the operands whose leaves carry the independent subject axis."""
+        return _GATE_ROUTE_SUBJECT_ARG_NAMES
 
     def __call__(self, **kwargs: Any) -> object:  # noqa: ANN401
         return simulation_gate_route_delta(

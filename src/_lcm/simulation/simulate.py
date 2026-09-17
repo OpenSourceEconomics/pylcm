@@ -85,6 +85,7 @@ from _lcm.simulation.period_inputs import (
     gate_reads,
     unit_value_reads,
 )
+from _lcm.simulation.plan_summary import build_simulation_plan_summary
 from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
@@ -403,6 +404,20 @@ def simulate(  # noqa: C901, PLR0915
     # directly; `invert_regime_ids` coerces them to Python `int`.
     regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
+    # Diagnostic only: report the resolved execution plan once per call, so a
+    # clean run carries evidence of which route (legacy/subjects), devices,
+    # widths and chunking actually engaged. Never consulted for dispatch — it
+    # is built from what the runtime already resolved above.
+    plan_summary = build_simulation_plan_summary(
+        regimes=regimes,
+        subject_devices=call_inputs.devices,
+        n_subjects=n_subjects,
+        batch_size=batch_size,
+        prepared_chunks=prepared_chunks,
+    )
+    logger.info(plan_summary.summary())
+    logger.debug(plan_summary.details())
+
     # When chunking, offload each chunk's results to host as it finishes so the
     # device frees them before the next chunk's period loop allocates — bounding
     # device residency to a single chunk. A single pass (batch_size == n_subjects)
@@ -536,7 +551,7 @@ def simulate(  # noqa: C901, PLR0915
         if regime.simulation.replay_route.consumer_route == "nnbegm_nested"
     )
 
-    return SimulationResult(
+    result = SimulationResult(
         raw_results=wrapped_results,
         regimes=regimes,
         flat_params=flat_params,
@@ -546,6 +561,11 @@ def simulate(  # noqa: C901, PLR0915
         subject_batch_size=subject_batch_size,
         nested_policy_regimes=nested_policy_regimes,
     )
+    # Diagnostic-only attribute, mirroring how `Model.simulate` attaches
+    # `_solution`: never part of the constructor's persisted fields, so it is
+    # not written by `SimulationResult.save` and is `None` after `load`.
+    result._plan_summary = plan_summary  # noqa: SLF001
+    return result
 
 
 def _initialize_chunk_state(

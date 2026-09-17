@@ -21,6 +21,7 @@ from _lcm.simulation.additional_targets import (
     _collect_all_available_targets,
     _resolve_targets,
 )
+from _lcm.simulation.plan_summary import SimulationPlanSummary
 from _lcm.simulation.result_dataframe import (
     _convert_to_categorical,
     _create_flat_dataframe,
@@ -57,6 +58,7 @@ class SimulationResult:
         self._ages = ages
         self._subject_batch_size = subject_batch_size
         self._solution: object | None = None
+        self._plan_summary: SimulationPlanSummary | None = None
         self._metadata = _compute_metadata(
             regimes=regimes,
             raw_results=raw_results,
@@ -102,6 +104,16 @@ class SimulationResult:
         result has been saved, and for a result read back with `load`.
         """
         return self._solution
+
+    @property
+    def plan_summary(self) -> SimulationPlanSummary | None:
+        """The resolved execution plan this call's `simulate()` reported.
+
+        Diagnostic only (route, subject devices, resolved widths, chunking,
+        budget mode). Attached the same way as `solution`: never part of the
+        constructor's persisted fields, so it is `None` after `save`/`load`.
+        """
+        return self._plan_summary
 
     @property
     def regime_names(self) -> list[RegimeName]:
@@ -389,6 +401,7 @@ class SimulationResult:
         instance._available_targets = metadata.available_targets  # noqa: SLF001
         instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
         instance._solution = None  # noqa: SLF001
+        instance._plan_summary = None  # noqa: SLF001
         return instance
 
     def __repr__(self) -> str:
