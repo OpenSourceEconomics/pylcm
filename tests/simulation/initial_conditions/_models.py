@@ -11,6 +11,8 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    Period,
+    ScalarFloat,
     ScalarInt,
 )
 
@@ -293,4 +295,113 @@ def make_state_only_constraint_model(
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
+    )
+
+
+def make_period_constraint_model() -> Model:
+    """Create a model whose constraint reads `period`, a fixed and a runtime scalar.
+
+    `alive` chooses consumption on a grid from 1 to 10 subject to
+    `consumption <= wealth + period * cap - floor`, where `cap` is a runtime
+    parameter and `floor` is fixed at model build. Ages 0, 1, 2 map to periods
+    0, 1, 2; `dead` is active from age 3.
+    """
+
+    @categorical(ordered=False)
+    class RegimeId:
+        alive: ScalarInt
+        dead: ScalarInt
+
+    def utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    def affordable(
+        *,
+        consumption: ContinuousAction,
+        wealth: ContinuousState,
+        period: Period,
+        cap: ScalarFloat,
+        floor: ScalarFloat,
+    ) -> BoolND:
+        return consumption <= wealth + period * cap - floor
+
+    def next_wealth(
+        *, wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption + 5.0
+
+    def next_regime(age: float) -> ScalarInt:
+        return jnp.where(age >= 2, RegimeId.dead, RegimeId.alive)
+
+    alive = UserRegime(
+        functions={"utility": utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        state_transitions={"wealth": next_wealth},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=10)},
+        constraints={"affordable": affordable},
+        transition=next_regime,
+        active=lambda age: age < 3,
+    )
+    dead = UserRegime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 3,
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params={"alive": {"affordable": {"floor": 0.5}}},
+    )
+
+
+def make_joint_constraint_model() -> Model:
+    """Create a model with two constraints that can conflict only jointly.
+
+    `at_least` requires `consumption >= lower` and `borrowing` requires
+    `consumption <= wealth`, with consumption on a grid from 1 to 10. Each is
+    satisfiable alone at any wealth in the grid; together they fail exactly when
+    `wealth < lower`.
+    """
+
+    @categorical(ordered=False)
+    class RegimeId:
+        alive: ScalarInt
+        dead: ScalarInt
+
+    def utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    def at_least(*, consumption: ContinuousAction, lower: ScalarFloat) -> BoolND:
+        return consumption >= lower
+
+    def borrowing(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+        return consumption <= wealth
+
+    def next_wealth(
+        *, wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption + 5.0
+
+    def next_regime(age: float) -> ScalarInt:
+        return jnp.where(age >= 1, RegimeId.dead, RegimeId.alive)
+
+    alive = UserRegime(
+        functions={"utility": utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        state_transitions={"wealth": next_wealth},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=10)},
+        constraints={"at_least": at_least, "borrowing": borrowing},
+        transition=next_regime,
+        active=lambda age: age < 2,
+    )
+    dead = UserRegime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 2,
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=RegimeId,
     )
