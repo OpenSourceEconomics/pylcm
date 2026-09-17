@@ -4,12 +4,14 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.params.processing import process_params
+from _lcm.simulation import initial_conditions as preflight
 from _lcm.simulation.initial_conditions import validate_initial_conditions
 from lcm import IrregSpacedGrid, LinSpacedGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from tests.simulation.initial_conditions._models import (
     make_constrained_asymmetric_model,
     make_constraint_model,
+    make_state_only_constraint_model,
 )
 
 
@@ -174,7 +176,7 @@ def test_constraint_checked_for_starting_regime() -> None:
 def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
     """One subject in alive (infeasible), one in dead (no constraint).
 
-    wealth=40 violates alive's constraint but dead has no actions to check.
+    wealth=40 violates alive's constraint; dead declares no constraint to check.
     """
     model = make_constrained_asymmetric_model()
     flat_params = process_params(
@@ -195,3 +197,96 @@ def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
             flat_params=flat_params,
             ages=model.ages,
         )
+
+
+def test_action_free_regime_state_only_constraint_rejects_violating_subject() -> None:
+    """A subject of an action-free regime violating a state constraint is infeasible."""
+    model = make_state_only_constraint_model()
+    flat_params = process_params(
+        params={"discount_factor": 0.95}, params_template=model._params_template
+    )
+    _dead = model.regime_names_to_ids["dead"]
+
+    with pytest.raises(InvalidInitialConditionsError, match="infeasible"):
+        validate_initial_conditions(
+            initial_conditions={
+                "age": jnp.array([2.0, 2.0]),
+                "wealth": jnp.array([-1.0, 5.0]),
+                "regime_id": jnp.array([_dead, _dead]),
+            },
+            regimes=model._regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+            flat_params=flat_params,
+            ages=model.ages,
+        )
+
+
+def test_action_free_regime_state_only_constraint_accepts_satisfying_subjects() -> None:
+    """Subjects in an action-free regime whose states satisfy the constraint pass."""
+    model = make_state_only_constraint_model()
+    flat_params = process_params(
+        params={"discount_factor": 0.95}, params_template=model._params_template
+    )
+    _dead = model.regime_names_to_ids["dead"]
+
+    validate_initial_conditions(
+        initial_conditions={
+            "age": jnp.array([2.0, 2.0]),
+            "wealth": jnp.array([1.0, 5.0]),
+            "regime_id": jnp.array([_dead, _dead]),
+        },
+        regimes=model._regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+        flat_params=flat_params,
+        ages=model.ages,
+    )
+
+
+@pytest.mark.parametrize("device_memory_bytes", [None, 2**24])
+def test_simulate_rejects_state_only_violation_in_action_free_regime(
+    device_memory_bytes: int | None,
+) -> None:
+    """`simulate` refuses a subject whose action-free regime constraint fails."""
+    model = make_state_only_constraint_model(device_memory_bytes=device_memory_bytes)
+    _dead = model.regime_names_to_ids["dead"]
+
+    with pytest.raises(InvalidInitialConditionsError, match="infeasible"):
+        model.simulate(
+            log_level="debug",
+            params={"discount_factor": 0.95},
+            initial_conditions={
+                "age": jnp.array([2.0]),
+                "wealth": jnp.array([-1.0]),
+                "regime_id": jnp.array([_dead]),
+            },
+        )
+
+
+def test_budgeted_simulate_accepts_action_free_regime_without_serial_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under a memory budget, a valid action-free population is admitted in one pass.
+
+    The reduced host summary answers for the action-free regime; the serial
+    diagnostic validator is never consulted.
+    """
+
+    def forbidden(**kwargs: object) -> None:
+        del kwargs
+        pytest.fail("Serial validation ran for a valid action-free population.")
+
+    monkeypatch.setattr(preflight, "validate_initial_conditions", forbidden)
+    model = make_state_only_constraint_model(device_memory_bytes=2**24)
+    _dead = model.regime_names_to_ids["dead"]
+
+    result = model.simulate(
+        log_level="debug",
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "age": jnp.array([2.0, 2.0]),
+            "wealth": jnp.array([1.0, 5.0]),
+            "regime_id": jnp.array([_dead, _dead]),
+        },
+    )
+
+    assert result.to_dataframe()["wealth"].tolist() == [1.0, 5.0]

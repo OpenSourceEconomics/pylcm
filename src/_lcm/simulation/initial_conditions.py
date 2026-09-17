@@ -1249,7 +1249,7 @@ def _batched_feasibility_check(
         )
 
     n_subjects = len(next(iter(subject_states.values())))
-    n_action_combos = max(len(v) for v in flat_actions.values())
+    n_action_combos = max((len(v) for v in flat_actions.values()), default=1)
     batch_size = max(
         1,
         _TARGET_BATCH_BYTES // max(n_action_combos * _BYTES_PER_ACTION_ELEMENT, 1),
@@ -1398,7 +1398,7 @@ def _age_specialized_feasibility_message(
     )
 
 
-def _check_regime_feasibility(  # noqa: C901, PLR0912
+def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
     *,
     regime: Regime,
     regime_name: RegimeName,
@@ -1446,8 +1446,6 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
     accepted = get_union_of_args([feasibility_func])
 
     action_names = list(regime.solution.action_names)
-    if not action_names:
-        return None
 
     # Build the state-action space with runtime-supplied grid points
     # substituted. The base grid's `to_jax()` raises for runtime-supplied
@@ -1466,17 +1464,21 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
     }
-    flat_actions = (
-        _build_flat_action_grid(
+    # An action-free regime has exactly one (empty) action combination, so its
+    # constraints are evaluated on states and parameters alone.
+    flat_actions: Mapping[ActionName, FloatND | IntND]
+    if not action_names:
+        flat_actions = {}
+    elif action_grid_resolver is None:
+        flat_actions = _build_flat_action_grid(
             action_names=action_names, grids=MappingProxyType(action_grids)
         )
-        if action_grid_resolver is None
-        else action_grid_resolver.resolve(
+    else:
+        flat_actions = action_grid_resolver.resolve(
             action_names=tuple(action_names),
             grids=MappingProxyType(action_grids),
             retained_arrays=(state_action_space.states, state_action_space.actions),
         )
-    )
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
     # Simulate state set: a carried pair state is a leaf of the feasibility
