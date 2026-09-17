@@ -19,6 +19,24 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   well, since the declaration alone co-maps the state. Values and simulated frames are
   unchanged wherever the solve already ran.
 
+### Broadcast pruning closes both phase slices jointly
+
+- Which model-level states and actions a regime keeps is now the least common fixed
+  point of the solution-slice and simulation-slice reachability operators, instead of
+  one application of each in a fixed order. The two slices feed each other: a target
+  regime that keeps a state only because its simulation-side payoff reads it turns the
+  *solution* side of the entry law toward that target into a live computation, and
+  whatever that law reads has to survive in the source regime. Closing the slices one
+  at a time stopped before that hand-over was visible and pruned a retained law's own
+  input, which surfaced at solve time as a spurious required parameter named after the
+  entry law (`<source>__<target>__next_<state>__<input>`). It also made promoting a
+  state from regime level to model level change the retained-state set, contrary to
+  the declaration-move guarantee. Models with more than two alternating hops close to
+  the end of the chain, a source feeding several targets keeps what every retained
+  entry law reads, and the closed set does not depend on which slice is closed first.
+  The additional work is build-time dependency traversal only; no warm-call path
+  changes.
+
 ### A value read across regime meshes is planned from where it is stored
 
 - A regime reading another regime's stored value — a gated edge's

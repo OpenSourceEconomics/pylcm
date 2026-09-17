@@ -9,9 +9,10 @@ never both — with regime-level `None` masking the model entry.
 regime by DAG reachability: a broadcast variable survives in a regime only if
 it is a transitive input of that regime's root computations in either phase
 slice. Regime-level declarations are never pruned. The needed-set is a
-cross-regime fixed point: a state unused inside a regime is still required
-when a candidate target keeps it and the law of motion toward that target
-reads it.
+cross-regime, cross-phase fixed point: a state unused inside a regime is
+still required when a candidate target keeps it and the law of motion toward
+that target reads it, and the target may keep it on the strength of the other
+phase slice.
 
 `root_functions` is the single definition of those root computations. The
 pruning walk here and the variable-usage check in `_lcm.model_processing`
@@ -203,18 +204,16 @@ def prune_broadcast_variables(
         ) - broadcast_variables[regime_name]
         kept[regime_name] = frozenset(declared)
 
-    for phase_name in ("solution", "simulation"):
-        kept = _phase_fixed_point(
-            specs=specs,
-            user_regimes=user_regimes,
-            broadcast_variables=broadcast_variables,
-            koopmans_aggregator=koopmans_aggregator,
-            kept=kept,
-            phase_name=phase_name,
-            all_regime_names=all_regime_names,
-            ages=ages,
-            active_periods_by_regime=active_periods_by_regime,
-        )
+    kept = _joint_phase_closure(
+        specs=specs,
+        user_regimes=user_regimes,
+        broadcast_variables=broadcast_variables,
+        koopmans_aggregator=koopmans_aggregator,
+        kept=kept,
+        all_regime_names=all_regime_names,
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
+    )
 
     reachable_targets = {
         regime_name: frozenset(
@@ -458,6 +457,50 @@ def _for_phase(*, value: object, phase: Literal["solve", "simulate"]) -> object:
     if isinstance(value, Phased):
         return value.solve if phase == "solve" else value.simulate
     return value
+
+
+def _joint_phase_closure(
+    *,
+    specs: Mapping[RegimeName, PhasedRegimeSpec],
+    user_regimes: Mapping[RegimeName, UserRegime],
+    broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
+    koopmans_aggregator: UserFunction,
+    kept: Mapping[RegimeName, frozenset[StateOrActionName]],
+    all_regime_names: frozenset[RegimeName],
+    ages: AgeGrid | None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None,
+    phase_order: tuple[PhaseName, ...] = ("solution", "simulation"),
+) -> dict[RegimeName, frozenset[StateOrActionName]]:
+    """Grow the kept-sets to the least fixed point of both phase operators.
+
+    The two phase slices feed each other: a target that keeps a state only
+    because its simulation slice reads it makes the *solution*-side entry law
+    toward that target a pruning root, and whatever that law reads then has to
+    survive in the source. Applying each operator once cannot see that, so the
+    operators alternate until the kept-sets stop growing.
+
+    Each operator only ever adds names and the candidate pool is finite, so the
+    alternation reaches the least common fixed point after finitely many turns.
+    Being the least fixed point of both operators, the result is the same for
+    either `phase_order`.
+    """
+    grown = dict(kept)
+    while True:
+        before = grown
+        for phase_name in phase_order:
+            grown = _phase_fixed_point(
+                specs=specs,
+                user_regimes=user_regimes,
+                broadcast_variables=broadcast_variables,
+                koopmans_aggregator=koopmans_aggregator,
+                kept=grown,
+                phase_name=phase_name,
+                all_regime_names=all_regime_names,
+                ages=ages,
+                active_periods_by_regime=active_periods_by_regime,
+            )
+        if grown == before:
+            return grown
 
 
 def _phase_fixed_point(
