@@ -165,7 +165,10 @@ def prune_broadcast_variables(
     A broadcast variable is pruned from a regime when no root computation of
     either phase slice transitively reads it — in that regime or through a
     law of motion toward a candidate target that keeps it. Pruning drops the
-    variable's grid, and for states also the regime's law entry for it.
+    variable's grid, and for states the part of the regime's law entry that
+    the pruned state took with it — an entry law toward a target that retains
+    the state stays, so which entry laws a model has does not depend on
+    whether the state is declared at model or at regime level.
 
     Args:
         user_regimes: Mapping of regime names to merged `Regime` instances.
@@ -213,6 +216,18 @@ def prune_broadcast_variables(
             active_periods_by_regime=active_periods_by_regime,
         )
 
+    reachable_targets = {
+        regime_name: frozenset(
+            target
+            for phase_name in ("solution", "simulation")
+            for target in candidate_targets_from_transition(
+                transition=getattr(spec, phase_name).regime_transition,
+                all_regime_names=all_regime_names,
+            )
+        )
+        for regime_name, spec in specs.items()
+    }
+
     pruned_regimes: dict[RegimeName, UserRegime] = {}
     pruned_variables: dict[RegimeName, frozenset[StateOrActionName]] = {}
     for regime_name, user_regime in user_regimes.items():
@@ -221,6 +236,20 @@ def prune_broadcast_variables(
         if not pruned:
             pruned_regimes[regime_name] = user_regime
             continue
+        state_transitions: dict[StateName, object] = {}
+        for name, law in user_regime.state_transitions.items():
+            if name not in pruned:
+                state_transitions[name] = law
+                continue
+            retained = _retained_state_transition(
+                law=law,
+                retaining_targets=frozenset(
+                    target for target in all_regime_names if name in kept[target]
+                ),
+                reachable_targets=reachable_targets[regime_name],
+            )
+            if retained is not None:
+                state_transitions[name] = retained
         pruned_regimes[regime_name] = user_regime.replace(
             states={
                 name: grid
@@ -232,11 +261,7 @@ def prune_broadcast_variables(
                 for name, grid in user_regime.actions.items()
                 if name not in pruned
             },
-            state_transitions={
-                name: law
-                for name, law in user_regime.state_transitions.items()
-                if name not in pruned
-            },
+            state_transitions=state_transitions,
         )
 
     return MappingProxyType(pruned_regimes), MappingProxyType(pruned_variables)
@@ -688,6 +713,56 @@ class _ComposedResourcesEdge:
     # document the contract and are not enforced at call time.
     @no_type_check
     def __call__(self, *args: object, **kwargs: object) -> None: ...
+
+
+def _retained_state_transition(
+    *,
+    law: object,
+    retaining_targets: frozenset[RegimeName],
+    reachable_targets: frozenset[RegimeName],
+) -> object | None:
+    """Return the part of a pruned state's law of motion that survives pruning.
+
+    A law keyed by target regime is an *entry* law: it places a value on the
+    support of a target that carries the state, and says nothing about the
+    source's own copy. Pruning the state from the source therefore leaves those
+    cells standing, restricted to the targets that retain the state — which is
+    what makes promoting a state from regime level to model level a declaration
+    move rather than a change of the transition structure. An unkeyed law makes
+    the same statement toward every reachable target, so it survives exactly
+    when one of them retains the state.
+
+    Args:
+        law: The regime's `state_transitions` entry for the pruned state.
+        retaining_targets: Names of the regimes that keep the state.
+        reachable_targets: Names of the regimes this one can transition into,
+            in either phase.
+
+    Returns:
+        The surviving law, or `None` when the entry is dropped because nothing
+        the regime reaches has the state to receive a value.
+
+    """
+    if isinstance(law, Phased):
+        solve = _retained_state_transition(
+            law=law.solve,
+            retaining_targets=retaining_targets,
+            reachable_targets=reachable_targets,
+        )
+        simulate = _retained_state_transition(
+            law=law.simulate,
+            retaining_targets=retaining_targets,
+            reachable_targets=reachable_targets,
+        )
+        if solve is None and simulate is None:
+            return None
+        return Phased(solve=solve, simulate=simulate)
+    if isinstance(law, Mapping):
+        retained = {
+            target: cell for target, cell in law.items() if target in retaining_targets
+        }
+        return retained or None
+    return law if retaining_targets & reachable_targets else None
 
 
 def _law_roots(

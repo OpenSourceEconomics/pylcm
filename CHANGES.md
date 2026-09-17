@@ -5,6 +5,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Entry laws survive broadcast pruning
+
+- A regime that does not read a model-level state keeps the `state_transitions` entry
+  through which it hands the state to a regime that does. Pruning drops a keyed entry
+  law only for the targets that also prune the state, and an unkeyed law only when no
+  reachable target retains it, so promoting a state from regime level to model level no
+  longer turns a declared entry law into a "the source does not carry '<state>' and
+  defines no entry law" build error.
+
 ### Device-memory headroom below the allocator pool
 
 - `ExecutionConfig(device_memory_headroom_fraction=0.15)` keeps a share of each
