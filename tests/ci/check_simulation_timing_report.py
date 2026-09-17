@@ -19,7 +19,7 @@ EXPECTED_CASES = Counter(
             "test_simulate_host_time_at_progress_is_within_the_bar_of_off",
         ),
         (
-            "tests.simulation.test_preflight_contract",
+            "tests.simulation.initial_conditions.test_admission_preflight_contract",
             "test_unstubbed_warm_full_call_progress_meets_existing_time_bar",
         ),
     )

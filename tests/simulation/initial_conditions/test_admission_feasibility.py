@@ -199,7 +199,7 @@ def test_simulate_refuses_feasibility_workspace_before_diagnostics(
     assert (
         Path(lcm.__file__)
         .resolve()
-        .is_relative_to(Path(__file__).resolve().parents[2] / "src")
+        .is_relative_to(Path(__file__).resolve().parents[3] / "src")
     )
     budget = (12 if jax.config.x64_enabled else 6) * 1024
     model, params, initial = _inputs(budget=budget, n_actions=1024)

@@ -24,7 +24,9 @@ from _lcm.typing import FlatParams, InitialConditions
 from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, Model
 from lcm.exceptions import ExecutionPlanningError
-from tests.simulation.test_initial_conditions import _make_asymmetric_state_model
+from tests.simulation.initial_conditions.test_initial_conditions import (
+    _make_asymmetric_state_model,
+)
 
 
 def _case(*, n_subjects: int = 1) -> tuple[Model, FlatParams, InitialConditions]:

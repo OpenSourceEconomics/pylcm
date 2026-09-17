@@ -9,14 +9,14 @@ replicated because their lengths may be smaller than the subject mesh. Earlier a
 products remain owned by `PreflightActionGrids`.
 
 This change is relative to `32549408bbbfb39b906ad0df99a5128ada6df1b9`.
-`tests/simulation/test_feasibility_admission.py` exercises the public simulation
-boundary and observes actual JAX memory profiles and dispatch boundaries. Its principal
-low-budget example has two subjects, 1,024 actions, and a constraint that sorts 4,096
-sine samples before comparing the median with a parameter. At 12 KiB in float64 the
-baseline executes feasibility and raises `InvalidInitialConditionsError`; the admitted
-implementation raises `ExecutionPlanningError` before executing the declined feasibility
-program. The original red and first green runs contained one test each, respectively
-zero and one passing tests.
+`tests/simulation/initial_conditions/test_admission_feasibility.py` exercises the public
+simulation boundary and observes actual JAX memory profiles and dispatch boundaries. Its
+principal low-budget example has two subjects, 1,024 actions, and a constraint that
+sorts 4,096 sine samples before comparing the median with a parameter. At 12 KiB in
+float64 the baseline executes feasibility and raises `InvalidInitialConditionsError`;
+the admitted implementation raises `ExecutionPlanningError` before executing the
+declined feasibility program. The original red and first green runs contained one test
+each, respectively zero and one passing tests.
 
 The CPU checks pass all 45 new cases in both float64 and float32. These include
 automatic and supplied solutions, enabled log levels, forced serial validation, natural
@@ -51,7 +51,7 @@ bytes and a 4,155-byte peak, so the discrepancy is reproducible beyond one shape
 
 To reproduce the original public example from the repository in the tests-cpu Pixi
 environment, enable JAX float64 and import `_inputs` from
-`tests.simulation.test_feasibility_admission`. Construct
+`tests.simulation.initial_conditions.test_admission_feasibility`. Construct
 `model, params, initial = _inputs(budget=16_384, n_actions=2)`, then call
 `model.simulate(params=params, initial_conditions=initial, log_level="debug")`. To
 inspect its statistics, observe `jax.stages.Lowered.compile` and read

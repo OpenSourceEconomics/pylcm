@@ -417,7 +417,7 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
         resident_bytes_by_device,
         union_buffer_footprints,
     )
-    from tests.simulation.test_action_grid_entry_admission import (  # noqa: PLC0415
+    from tests.simulation.initial_conditions.test_admission_action_grid_entry import (  # noqa: PLC0415
         _inputs,
     )
 

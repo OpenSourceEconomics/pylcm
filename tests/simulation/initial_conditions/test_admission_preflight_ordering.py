@@ -37,7 +37,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.simulation.test_initial_conditions import (
+from tests.simulation.initial_conditions.test_initial_conditions import (
     _make_asymmetric_state_model,
     _make_constrained_asymmetric_model,
 )

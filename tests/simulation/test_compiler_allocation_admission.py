@@ -10,7 +10,7 @@ import jaxlib
 import pytest
 
 from lcm.exceptions import ExecutionPlanningError
-from tests.simulation.test_feasibility_admission import _inputs
+from tests.simulation.initial_conditions.test_admission_feasibility import _inputs
 
 
 @pytest.mark.requires(device="cpu")
