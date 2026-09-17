@@ -85,7 +85,10 @@ from _lcm.simulation.period_inputs import (
     gate_reads,
     unit_value_reads,
 )
-from _lcm.simulation.plan_summary import build_simulation_plan_summary
+from _lcm.simulation.plan_summary import (
+    SimulationPlanSummary,
+    build_simulation_plan_summary,
+)
 from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
@@ -415,8 +418,7 @@ def simulate(  # noqa: C901, PLR0915
         batch_size=batch_size,
         prepared_chunks=prepared_chunks,
     )
-    logger.info(plan_summary.summary())
-    logger.debug(plan_summary.details())
+    _log_simulation_plan(logger=logger, plan_summary=plan_summary)
 
     # When chunking, offload each chunk's results to host as it finishes so the
     # device frees them before the next chunk's period loop allocates — bounding
@@ -566,6 +568,20 @@ def simulate(  # noqa: C901, PLR0915
     # not written by `SimulationResult.save` and is `None` after `load`.
     result._plan_summary = plan_summary  # noqa: SLF001
     return result
+
+
+def _log_simulation_plan(
+    *, logger: logging.Logger, plan_summary: SimulationPlanSummary
+) -> None:
+    """Emit the plan lines only at the tiers that show them.
+
+    Both lines are formatted from the record on demand, so a run at the warning
+    or off tier pays nothing for them.
+    """
+    if logger.isEnabledFor(logging.INFO):
+        logger.info(plan_summary.summary())
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(plan_summary.details())
 
 
 def _initialize_chunk_state(

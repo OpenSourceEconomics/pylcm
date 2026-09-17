@@ -302,7 +302,7 @@
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
-            "sha256": "82102904924433c787a27d6fb362e47c70a48f1cbac197e61628697c9b49cea3"
+            "sha256": "f7fd5642464d1d207e63e0be9f1ee47ddede775510d5aad177c7314d603bb626"
           },
           {
             "path": "src/_lcm/simulation/solution_copies.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "097cb0307cf444207353733f522d67a420b516d2f590f7998f2646d22c3f0c80"
+        "source_inventory_sha256": "ad647ed6db6bfcec36be72e7ac544c4a4f290f539f4d02ec606569048c2af2cf"
       },
       "fast": {
         "candidate_sources": [
@@ -772,7 +772,7 @@
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
-            "sha256": "82102904924433c787a27d6fb362e47c70a48f1cbac197e61628697c9b49cea3"
+            "sha256": "f7fd5642464d1d207e63e0be9f1ee47ddede775510d5aad177c7314d603bb626"
           },
           {
             "path": "src/_lcm/simulation/solution_copies.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "097cb0307cf444207353733f522d67a420b516d2f590f7998f2646d22c3f0c80"
+        "source_inventory_sha256": "ad647ed6db6bfcec36be72e7ac544c4a4f290f539f4d02ec606569048c2af2cf"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "097cb0307cf444207353733f522d67a420b516d2f590f7998f2646d22c3f0c80",
+  "source_inventory_sha256": "ad647ed6db6bfcec36be72e7ac544c4a4f290f539f4d02ec606569048c2af2cf",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1246,7 +1246,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "82102904924433c787a27d6fb362e47c70a48f1cbac197e61628697c9b49cea3"
+      "sha256": "f7fd5642464d1d207e63e0be9f1ee47ddede775510d5aad177c7314d603bb626"
     },
     {
       "path": "src/_lcm/simulation/solution_copies.py",

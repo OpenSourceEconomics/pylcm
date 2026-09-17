@@ -416,7 +416,7 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "847f9bfa7d51281347cb02c9654348f688e6751632d8985082739f34839773ee",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "82102904924433c787a27d6fb362e47c70a48f1cbac197e61628697c9b49cea3",
+    SIMULATION_SOURCE: "f7fd5642464d1d207e63e0be9f1ee47ddede775510d5aad177c7314d603bb626",
     SIMULATION_TRANSITIONS_SOURCE: "76ba02db6b40070033d1c6b3fd5769a675ff8c1d27e2bb8b179246c06be8066e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "b9d42222e09c77f14ce9f579f5e418ffc97eed5f37f9efdd67e5fdb82737af54",
@@ -3173,11 +3173,11 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     """
     contracts = {
         SIMULATION_SOURCE: (
-            "3ac4d0d55fc1cd9f821b4447d27d941b967e3ca05d2b0846177c847d9de30e0a",
+            "46e0b4d121f1f59e9600b4fdcf5d74c20fc865b8c1efff8718ba2ad0fdde6b93",
             {
                 "_simulate_regime_in_period": "4bb984cc3b7aac7cc82a31eb5863853ca026fb7863755d8c303458821bda13f9",
                 "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
-                "simulate": "d905ec66165aa8df5e956d95ea0bc206c33a1fea42ff9abb0745fee66d5ad466",
+                "simulate": "7541ae0aa5cdbae1332b56224b37c61afcd04fc84602bfdb0ed2a7a37b992a92",
                 "_simulate_subject_chunk": "d7b200529fd1f8740c7641277628be3fb2b2e7cec4a03e386295de2947f95150",
                 "_bind_unit_executor": "b6bd770b2af202adb765511eaff29ed05bf2c2823a34c22226b36dd792533064",
                 "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
@@ -3834,9 +3834,9 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/simulate.py": (
-        "3ac4d0d55fc1cd9f821b4447d27d941b967e3ca05d2b0846177c847d9de30e0a",
+        "46e0b4d121f1f59e9600b4fdcf5d74c20fc865b8c1efff8718ba2ad0fdde6b93",
         {
-            "simulate": "d905ec66165aa8df5e956d95ea0bc206c33a1fea42ff9abb0745fee66d5ad466",
+            "simulate": "7541ae0aa5cdbae1332b56224b37c61afcd04fc84602bfdb0ed2a7a37b992a92",
             "_simulate_regime_in_period": "4bb984cc3b7aac7cc82a31eb5863853ca026fb7863755d8c303458821bda13f9",
             "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
             "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
@@ -4248,7 +4248,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/simulate.py": (
-        "3ac4d0d55fc1cd9f821b4447d27d941b967e3ca05d2b0846177c847d9de30e0a",
+        "46e0b4d121f1f59e9600b4fdcf5d74c20fc865b8c1efff8718ba2ad0fdde6b93",
         {
             "_compute_starting_periods": "33feb11da04e05bfb34b8a2302530eae0746ccd14b94af5575bcefad850c411c",
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
@@ -6321,9 +6321,9 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/simulate.py": (
-        "3ac4d0d55fc1cd9f821b4447d27d941b967e3ca05d2b0846177c847d9de30e0a",
+        "46e0b4d121f1f59e9600b4fdcf5d74c20fc865b8c1efff8718ba2ad0fdde6b93",
         {
-            "simulate": "d905ec66165aa8df5e956d95ea0bc206c33a1fea42ff9abb0745fee66d5ad466",
+            "simulate": "7541ae0aa5cdbae1332b56224b37c61afcd04fc84602bfdb0ed2a7a37b992a92",
             "_simulate_subject_chunk": "d7b200529fd1f8740c7641277628be3fb2b2e7cec4a03e386295de2947f95150",
         },
     ),

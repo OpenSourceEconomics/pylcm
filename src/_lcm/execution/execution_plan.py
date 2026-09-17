@@ -62,7 +62,8 @@ class ResolvedExecution:
     device_pool_limit_bytes: MappingProxyType[int, int | None] = MappingProxyType({})
     """Allocator pool limit of each selected device, `None` where unreported.
 
-    Empty on an unbudgeted model: no device is queried when no budget is set.
+    Empty on an unbudgeted model: the resolver keeps no limit when no budget is
+    set, although construction still reads the visible pool statistics once.
     """
 
     simulation_sharding: Literal["legacy", "subjects"] = "legacy"
