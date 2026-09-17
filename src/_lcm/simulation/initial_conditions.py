@@ -183,12 +183,9 @@ def validate_simulation_inputs(
                     process_grid_resolver=process_grid_resolver,
                 )
                 accepted = summary.valid()
-            except (
-                ExecutionPlanningError,
-                MemoryError,
-                jax.errors.JaxRuntimeError,
-                UnsupportedOperationError,
-            ):
+            except UnsupportedOperationError:
+                raise
+            except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
                 raise
             # Re-evaluate user-law failures in legacy order; resource failures and
             # unsupported checks above must never enter this diagnostic retry.
