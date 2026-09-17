@@ -1,3 +1,10 @@
+"""Grid infrastructure behind the outcome-space classes `lcm.grids` exposes.
+
+`base.py` holds the abstract `Grid`, `continuous.py`, `discrete.py` and
+`piecewise.py` the leaf classes, `categorical.py` the `@categorical` decorator,
+and `coordinates.py` the coordinate lookups interpolation reads.
+"""
+
 from _lcm.grids.base import Grid
 from _lcm.grids.categorical import categorical, validate_category_class
 from _lcm.grids.continuous import (

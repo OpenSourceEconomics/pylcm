@@ -41,9 +41,11 @@ ceiling is resolved once, where a model binds its devices, as
 
 with `L_d` the device's observed allocator pool limit (`memory_stats()["bytes_limit"]`)
 and `f` the `ExecutionConfig.device_memory_headroom_fraction`, which defaults to `0.15`.
-A request of `None` stays unbudgeted and queries no device. A device whose backend
-reports no pool limit contributes no cap, and taking the minimum means a request already
-below the capped limit is never reduced a second time, so no margin is applied twice.
+A request of `None` stays unbudgeted and applies no pool-derived cap; public model
+construction still reads each visible device's pool statistics once. A device whose
+backend reports no pool limit contributes no cap, and taking the minimum means a request
+already below the capped limit is never reduced a second time, so no margin is applied
+twice.
 
 The fraction moves the ceiling and nothing else: every compiler reservation, residency
 figure and admission inequality is unchanged, and `f = 0.0` reproduces admission against

@@ -45,10 +45,11 @@ impossibility only as a zero probability in an all-regime vector.
 
 ## Joint transitions
 
-`JointTransition(support_size, support, probabilities, outputs)` declares one or more
-next states driven by one shared draw. `support` is a literal pytree of joint nodes or a
-callable returning one, `probabilities` returns a vector of length `support_size`, and
-each `outputs` entry projects a sampled joint node into one target state.
+`JointTransition(*, support_size, support, probabilities, outputs)` declares one or more
+next states driven by one shared draw; all four are keyword-only. `support` is a literal
+pytree of joint nodes or a callable returning one, `probabilities` returns a vector of
+length `support_size`, and each `outputs` entry projects a sampled joint node into one
+target state.
 
 Joint laws occupy the separate `Regime.joint_transitions` slot. Its public shape is a
 mapping from target regime, to local joint-node name, to the `JointTransition`:

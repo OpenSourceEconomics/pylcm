@@ -143,6 +143,16 @@ Declare a discrete state at model level, then name it in
 visible to JAX. Solver-specific restrictions also apply; see
 [Solvers and capabilities](../reference/solvers.md).
 
+Sharding is resolved per regime, from the state each regime actually carries. A regime
+whose DAG reads the state carries its grid axis and runs on the submesh that axis
+defines. A regime that never reads it --- so DAG pruning drops it there --- publishes a
+value without that axis and runs on a single device; the planner moves the values that
+cross between the two placements. That holds for a non-terminal regime as much as for a
+terminal one, so a shock read through working life and dropped in retirement shards the
+working-life regimes alone. Only a state *every* regime prunes is refused, because then
+no axis is left to spread. The stricter continuous route additionally requires the state
+in every regime.
+
 Ordinary singleton hard-max `GridSearch` also supports one model-level `LinSpacedGrid`
 as the sole sharded state. Every regime must retain that same static grid. Unsharded
 states may include:
@@ -193,6 +203,51 @@ uses any of the next core's execution or transfer devices. Work on disjoint devi
 can remain asynchronous. A shared source array can therefore serialize cores assigned to
 different regime submeshes. The wait covers returned auxiliary arrays and declared
 copies as well as values; it does not bound memory used by compiler autotuning.
+
+(set-a-device-memory-budget)=
+
+## Set a device-memory budget
+
+`ExecutionConfig(device_memory_bytes=...)` declares a per-device ceiling for the
+compiler's reservation plus the accounted live residency, and turns on budget admission:
+a plan that does not fit is refused with `ExecutionPlanningError` rather than left to
+the allocator. The default `None` omits admission entirely. Pass a positive integer
+resolved for the hardware you will run on --- the population count is not a memory
+budget.
+
+You may pass a device's whole allocator pool limit. The model does not plan against all
+of it: `device_memory_headroom_fraction` (default `0.15`) is the share of each selected
+device's pool kept outside the ceiling, an operational margin for storage the
+represented accounting does not see --- collective-communication buffers, library
+workspaces such as cuBLAS, the driver context, allocator fragmentation. The effective
+ceiling is the smaller of your request and every selected device's pool limit less that
+fraction. The fraction is a policy awaiting workload validation, not a measured
+requirement: if you have measured your own envelope, set it to `0.0` and plan against
+the whole pool. It must be an exact float in `[0, 1)`, and it moves only the ceiling ---
+every reservation and residency figure compared against that ceiling is unchanged.
+
+```python
+execution_config = ExecutionConfig(
+    devices=(0, 1),
+    device_memory_bytes=40 * 2**30,
+    device_memory_headroom_fraction=0.0,  # Only with a measured envelope.
+)
+```
+
+Resolving the budget is logged, so you can see which of the two bounds actually bound:
+
+- The devices did not cap the request: one summary line at `log_level="progress"` and
+  `"debug"`, naming the request, the fraction, each selected device's pool limit and the
+  effective ceiling.
+- The devices capped the request: the same line as a **warning**, visible from
+  `log_level="warning"` up. Read it --- the plan was admitted against less memory than
+  you asked for.
+
+Every admission refusal repeats both budgets: when the devices capped the request, the
+message appends the effective bytes, the requested bytes, and the headroom fraction that
+separates them, so a refusal is never ambiguous about which ceiling it was measured
+against. Field-by-field contracts are in
+[Runtime, results, and persistence](../reference/runtime_and_results.md).
 
 ## Batch forward simulation
 

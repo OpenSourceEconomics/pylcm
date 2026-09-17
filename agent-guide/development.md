@@ -179,7 +179,8 @@ Explanation notebooks live in `docs/explanations/*.ipynb`. After editing one, ve
 
 - Each cell's `source` is a JSON array of lines (one array element per line), never a
   single multi-line string — a one-string `source` produces an unreadable diff.
-- Outputs and execution counts are stripped (`pixi run nbstripout <file>`).
+- Outputs and execution counts are stripped. `nbstripout` is a pre-commit hook, not a
+  pixi task, so strip a file with `prek run nbstripout --files <file>`.
 - Markdown and code use literal UTF-8 characters (`—`, `→`, `μ`), never `\u`-style
   escape sequences.
 

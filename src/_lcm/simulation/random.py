@@ -1,3 +1,11 @@
+"""The PRNG keys behind every simulation draw.
+
+`create_simulation_key` turns a caller seed into the call's root key,
+`split_simulation_key` and `generate_simulation_keys` derive the per-period and
+per-chunk keys from it, and `draw_random_seed` supplies a seed when the caller
+gave none.
+"""
+
 import os
 
 import jax

@@ -1,3 +1,12 @@
+"""Derive one regime's params template from what its callables actually read.
+
+`create_regime_params_template` inspects the finalized user regime — its
+functions, constraints, transitions, gated edges, Koopmans aggregator,
+certainty equivalent and Pareto objective — and returns the nested template of
+parameters a caller must supply. It fails closed on a name that shadows a
+function and on a transition-local node read from outside its transition.
+"""
+
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Literal, cast

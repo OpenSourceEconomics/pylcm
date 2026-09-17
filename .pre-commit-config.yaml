@@ -137,7 +137,9 @@ repos:
       # files, the generated inventory and the hand-maintained seal map. An edit
       # under `src/` that leaves them stale fails the certificate tests on every
       # CI platform and nowhere earlier; this check takes well under a second
-      # and names the `--fix` that reseals both.
+      # and names the `--fix` that reseals both. Exit 2 means the drift is an
+      # AST corridor pin instead, which `repin_corridors.py` re-anchors for the
+      # sources whose edit was intended; see docs/development/certification.md.
       - id: candidate-certificate-seals
         name: candidate certificate seals match the tree
         entry: pixi run python tests/candidate_certificate/check_seals.py

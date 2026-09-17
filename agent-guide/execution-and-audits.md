@@ -21,6 +21,12 @@ Read the relevant full contracts, not only the checkpoint's success narrative:
   Also read the repository's `docs/development/compiler_allocation_admission.md`,
   `docs/development/collective_resource_contract.md` and
   `docs/development/feasibility_admission_evidence.md` when making admission claims.
+  The in-repository description of the layer these contracts govern — `_lcm/execution/`
+  owning placement, the six-kind transfer catalogue, liveness and donation, the wave
+  schedule, the device-memory headroom and the workspace widths — is the execution
+  sections of [Internal Architecture](../docs/explanations/architecture.md). Read it
+  before asserting what the planner does; do not infer the mechanism from a plan
+  document alone.
 - GridSearch or NB-EGM algorithm changes: respectively `04-GRIDSEARCH-IMPROVEMENTS.md`
   or `05-NBEGM-IMPROVEMENTS.md`, plus the adopted implementation contract and math/JAX
   routes. Other solver work starts from `06-OTHER-SOLVERS.md`.

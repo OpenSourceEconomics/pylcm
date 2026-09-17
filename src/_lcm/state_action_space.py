@@ -1,3 +1,10 @@
+"""Materialize the state and action grids one regime evaluates on.
+
+`create_state_action_space` fills a regime's declared axes with concrete
+arrays, substituting a placeholder for any grid whose support only runtime
+parameters fix, and fails closed when a declared state has no entry.
+"""
+
 from types import MappingProxyType
 
 import jax.numpy as jnp

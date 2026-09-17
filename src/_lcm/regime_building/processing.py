@@ -1,3 +1,13 @@
+"""Per-regime canonicalisation: user regimes become engine `Regime` objects.
+
+`prepare_model_structure` resolves the model-level structure every regime is
+built against. `process_regimes` then compiles each regime's two phase
+namespaces — grids, transition plans, constraint routes, and the `Q_and_F`,
+`max_Q_over_a` and next-state closures each period needs.
+`compute_active_periods_by_regime` is the single definition of when a regime is
+active that both reachability and this build read.
+"""
+
 import functools
 import inspect
 import logging

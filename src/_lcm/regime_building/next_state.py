@@ -1,4 +1,4 @@
-"""Generate function that compute the next states for solution and simulation."""
+"""Compose a regime's per-state transitions into one next-state function."""
 
 import inspect
 import operator

@@ -87,8 +87,18 @@ collective routing, serialization, and stale-support refusal. This removes a dup
 execution route; it is not by itself evidence of an ACA speedup or whole-call memory
 acceptance.
 
-The September 12 steering checkpoint keeps adaptive NNBEGM replay, active-subject
-compaction, and runtime width tuning deferred. Solve placement and simulation execution
+Adaptive NNBEGM replay has landed: a kernel emits its data-dependent replay-axis
+coordinates on the auxiliary channel under `GENERATED_REPLAY_AUTHORITY`, the model binds
+them into a `GeneratedReplayAuthority` cached per parameter fingerprint, and
+`_lcm/egm/outer_replay_capability.py` is the adaptive nested reader; what remains
+deferred is the stable persistence of those coordinates, recorded in its own row above.
+Runtime width derivation has landed for the *unbudgeted subject axis* only
+(`_unbudgeted_subject_width` in `simulation/runtime.py`, a constant byte cap over the
+program's own abstract operands, floored at the fixed default width). Width tuning
+against a *measured* cost on the target hardware remains deliberately unimplemented, for
+the reason recorded in the compile-only width-selection row above.
+
+Active-subject compaction remains deferred. Solve placement and simulation execution
 retain separate acceptance gates. Compiler-key coverage observes the active bulk-key
 path, including changed and omitted FUES options. GPU placement, current ACA timing
 attribution, and the isolated macOS timing failure require fresh evidence on the final

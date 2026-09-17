@@ -1,3 +1,10 @@
+"""The continuous outcome-space grids and their coordinate maps.
+
+`ContinuousGrid` is the abstract base; `UniformContinuousGrid` covers the
+start/stop/n_points forms `LinSpacedGrid` and `LogSpacedGrid` take, while
+`IrregSpacedGrid` carries explicit points.
+"""
+
 import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Sequence

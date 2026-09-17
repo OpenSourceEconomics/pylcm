@@ -1,6 +1,8 @@
 # Bounded task workflow
 
-Read `CURRENT-TASK.md`, reconcile its source pin and dirty files, then read the adopted
+Read the checkpoint, `CURRENT-TASK.md` at the repository root. It is a local working
+file that `.gitignore` excludes, so a fresh clone has none; create one at the first
+completion or blocker. Reconcile its source pin and dirty files, then read the adopted
 contract and the routes required by `AGENTS.md`. A new task should have one verifiable
 outcome. A fresh task at a meaningful boundary reduces repeated context; restarting
 between individual edits or tests needlessly discards useful context.

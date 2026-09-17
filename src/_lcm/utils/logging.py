@@ -1,3 +1,11 @@
+"""The logger, the log-level gate, and the records solve and simulate emit.
+
+`get_logger` and `format_duration` build the logger and its time strings.
+`validation_enabled`, `validation_raises` and `raise_or_warn` derive from the
+public `log_level` what a non-finite value does, and the `log_*` helpers write
+the period header, timing, transition and non-finite-value records.
+"""
+
 import logging
 from collections.abc import Callable
 from typing import Literal

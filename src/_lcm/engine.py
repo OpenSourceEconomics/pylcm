@@ -1,3 +1,15 @@
+"""The canonical dataclasses the DP machinery operates on.
+
+`Regime` is the engine-side regime, aliased as `UserRegime` wherever the
+user-facing `lcm.regime.Regime` is imported alongside it. It carries only
+phase-invariant data plus two frozen phase namespaces, `SolutionPhase` and
+`SimulationPhase`, each holding that phase's variables, grids and compiled
+function sets; `SolutionPhase.state_action_space()` fills a `StateActionSpace`
+with runtime-supplied grid points. `Variables` and `VariableInfo` describe every
+state and action, and `PeriodRegimeSimulationData` is one (regime, period)
+pair's raw simulation output.
+"""
+
 import dataclasses
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from math import prod as math_prod

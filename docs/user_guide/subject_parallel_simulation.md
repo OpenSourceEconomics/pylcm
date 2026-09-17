@@ -77,6 +77,23 @@ publish that capability. An undeclared function or a host-driven/eager program i
 refused rather than silently given a new meaning. Shared-only `_SubjectTiled` functions
 retain their existing execution path.
 
+A regime declaring `gated_edges` is supported on more than one device, because the two
+programs a gated edge needs split cleanly along the same line as everything else here.
+The gate fold reads the next period's value and dissolution arrays over each target's
+own regime-level grid and writes the substituted continuation over that same grid, so it
+carries no subject axis and is replicated. The gate route recomputes the gate at each
+subject's own realized state and writes that row's destination under an elementwise
+mask, so its per-subject operands --- the candidate next states, the new regime ids, the
+in-regime membership, and the current and new stakeholder roles --- are partitioned like
+any other per-subject tree, while the folded continuation grids and the params stay
+shared. Nothing in the route reduces, sorts, or scatters across rows.
+
+One solve-side restriction is unaffected by the forward mode: a gate predicate that
+reads a state named in `sharded_states` is refused when the continuation co-maps that
+state as fixed distributed state, because a co-mapped axis is sliced off before the
+continuation is read and leaves no landing coordinate to evaluate the gate at. Read the
+state through a gate reference, or drop it from `sharded_states`.
+
 The mode does not introduce parallel regimes, cross-period scheduling, an adaptive
 residency policy, a faster outer-cohort planner, or multi-host support. It is a
 single-process subject partition. Physical GPU resource and numerical acceptance must be

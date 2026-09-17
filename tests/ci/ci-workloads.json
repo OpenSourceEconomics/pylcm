@@ -66,6 +66,7 @@
   "coverage-solution-7"
  ],
  "general_shard_universe": [
+  "tests/candidate_certificate/test_repin_corridors.py",
   "tests/ci/test_benchmark_workflow_contract.py",
   "tests/ci/test_ci_workloads_guardrails.py",
   "tests/ci/test_ci_workloads_manifest.py",
@@ -969,6 +970,7 @@
    ],
    "junit": "junit-cpu-fp64-Linux-general-3.xml",
    "files": [
+    "tests/candidate_certificate/test_repin_corridors.py",
     "tests/ci/test_ci_workloads_manifest.py",
     "tests/ci/test_probe_native.py",
     "tests/ci/test_receipt_plugin.py",
@@ -1167,6 +1169,7 @@
    ],
    "junit": "junit-cpu-fp64-macOS-general-1.xml",
    "files": [
+    "tests/candidate_certificate/test_repin_corridors.py",
     "tests/ci/test_execution_policy.py",
     "tests/ci/test_mahler_execution.py",
     "tests/ci/test_policy_launcher.py",
@@ -1850,6 +1853,7 @@
    ],
    "junit": "junit-cpu-fp64-Windows-general-2.xml",
    "files": [
+    "tests/candidate_certificate/test_repin_corridors.py",
     "tests/ci/test_cpu_workflow_contract.py",
     "tests/ci/test_execution_policy.py",
     "tests/ci/test_keyword_only_convention.py",
@@ -2490,6 +2494,7 @@
    ],
    "junit": "junit-cpu-fp32-Linux-general-2.xml",
    "files": [
+    "tests/candidate_certificate/test_repin_corridors.py",
     "tests/ci/test_benchmark_workflow_contract.py",
     "tests/ci/test_mahler_execution.py",
     "tests/ci/test_policy_launcher.py",
@@ -13912,6 +13917,7 @@
   }
  },
  "unweighted_files": [
+  "tests/candidate_certificate/test_repin_corridors.py",
   "tests/ci/test_ci_workloads_guardrails.py",
   "tests/ci/test_ci_workloads_manifest.py",
   "tests/ci/test_receipt_plugin.py",

@@ -1,3 +1,13 @@
+"""The backward-induction loop that drives whichever solver each regime declares.
+
+`solve` walks periods from the last to the first and, for every active regime,
+dispatches the core programs that regime's solver declares, rolls their
+published values and continuation artifacts into the next period up, and
+releases each buffer whose last declared consumer has returned. Under a
+device-memory budget it also selects the period's workspace widths and admits
+the resulting residency before anything is compiled.
+"""
+
 import dataclasses
 import functools
 import gc

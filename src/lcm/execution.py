@@ -86,9 +86,9 @@ class ExecutionConfig:
       names; every other regime keeps the width the planner chooses for it.
 
     The per-regime form serves the solve phase, where a regime's shape drives
-    the choice: two regimes of opposite shape no longer share the width one of
-    them needs. Simulation plans without a regime in hand, so an axis only its
-    programs declare takes the bare-integer form.
+    the choice: each regime is fixed independently, so two regimes of opposite
+    shape need not share a width. Simulation plans without a regime in hand, so
+    an axis only its programs declare takes the bare-integer form.
     """
 
     devices: tuple[int, ...] | None = None

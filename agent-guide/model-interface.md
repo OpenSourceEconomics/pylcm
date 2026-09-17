@@ -132,15 +132,18 @@ errors). Terminal regimes receive neither, and declaring either on one is an err
 Broadcast states and actions are pruned per regime by DAG reachability: a broadcast
 variable survives only where a root computation (utility, the Koopmans aggregator,
 constraints, derived categoricals, the regime transition, or a law of motion toward a
-reachable target that keeps the state) transitively reads it, per phase slice, pruned
-only when dead in both phases. Regime-level declarations are never pruned.
-`model.pruned_variables` records the result per regime.
+reachable target that keeps the state) transitively reads it. The two phase slices are
+closed *jointly* to one least fixed point, not pruned one slice at a time, so a
+simulation-side read can keep a solution-side entry law alive. Regime-level declarations
+are never pruned. `model.pruned_variables` records the result per regime.
 
 Declare device axes with `Model(execution_config=ExecutionConfig(sharded_states=...))`,
 using model-level discrete states or the narrow continuous GridSearch route described in
 `docs/user_guide/tuning.md`: one concrete `LinSpacedGrid`, sole continuous and sharded
-state, retained in every regime. A sharded state pruned from a non-terminal regime is an
-error (unshard or make the regime use it). Grids define outcome spaces only;
+state, retained in every regime. Sharding follows pruning, regime by regime: a regime
+that prunes the sharded state simply runs single-device, and only a state that *every*
+regime prunes is refused. The narrow continuous route keeps the stricter rule — there
+the state must be retained in every regime. Grids define outcome spaces only;
 planner-owned widths live in `ExecutionConfig(axis_widths=...)` and name axes the
 model's actual core programs declare.
 
@@ -244,7 +247,7 @@ See `docs/user_guide/collective_regimes.md` and `docs/reference/collective_regim
 `NBEGM` (from `lcm.solvers`) is the endogenous-grid solver for a 1-D consumption-saving
 regime whose budget is split by a binary case boundary on the liquid state (e.g. a
 Medicaid asset test). The model author exposes the split with metadata-only decorators
-(`lcm.case_boundary`, `lcm.piece`, `lcm.boundary`); the solver runs EGM per case,
+(`lcm.case_boundary`, `lcm.piece`); the solver runs EGM per case,
 NaN-dead masks each case to the region where its predicate is consistent with the
 recovered state, and merges the cases on the liquid grid with the branch-aware upper
 envelope.
@@ -253,22 +256,13 @@ envelope.
 import jax.numpy as jnp
 
 import lcm
-from lcm.typing import BoolND, ContinuousState, FloatND
+from lcm.typing import FloatND
 
-
-@lcm.case_boundary(
-    lcm.boundary(
-        variable="liquid",
-        threshold="medicaid_asset_limit",
-        equality="otherwise",
-        kind="jump",
-    )
+# Medicaid asset test: eligible while liquid wealth is below the limit.
+medicaid_eligible = lcm.case_boundary(
+    condition=lcm.ref("liquid") < lcm.ref("medicaid_asset_limit"),
+    kind="jump",
 )
-def medicaid_eligible(
-    *, liquid: ContinuousState, medicaid_asset_limit: float
-) -> BoolND:
-    """Medicaid asset test: eligible while liquid wealth is below the limit."""
-    return liquid < medicaid_asset_limit
 
 
 @lcm.piece(output="subsidy", when=medicaid_eligible)
@@ -288,14 +282,16 @@ def subsidy_private(subsidy_low: float) -> FloatND:
 resources = lcm.cash_on_hand_with_subsidy
 ```
 
-- `lcm.boundary(*, variable, threshold, equality, kind)` declares one equality surface:
-  `equality` is `"when"` or `"otherwise"` — the side that owns the exact boundary point;
-  `kind` is `"continuous_kink"`, `"jump"`, or `"hard_constraint"`. A bare
-  `(variable, threshold)` tuple is rejected.
-- `lcm.case_boundary(*boundaries)` marks a Boolean DAG predicate;
-  `lcm.piece(output=…, when=…|otherwise=…)` marks the smooth formula for one side of an
-  output. The decorators only attach metadata and return the function unchanged, so the
-  model still solves identically under `GridSearch`.
+- `lcm.case_boundary(*, condition, kind)` declares one executable, inspectable split.
+  `condition` is exactly one `<`, `<=`, `>` or `>=` comparison built from `lcm.ref`;
+  conjunctions, unions, equality tests and opaque callables are rejected, because they
+  do not identify one ordered split with unambiguous ownership. Ownership of the exact
+  boundary point falls out of the operator — `<` leaves equality to the `otherwise`
+  side, `<=` gives it to `when` — and is not a separate argument. `kind` is
+  `"continuous_kink"`, `"jump"`, or `"hard_constraint"`.
+- `lcm.piece(output=…, when=…|otherwise=…)` marks the smooth formula for one side of an
+  output. The decorator only attaches metadata and returns the function unchanged, so
+  the model still solves identically under `GridSearch`.
 - The case-piece route is scoped narrowly, and everything outside it is refused at model
   build. A case-piece regime must split exactly one output, named `subsidy`, on a
   boundary that is `equality="otherwise"`, `kind="jump"`, and declared on the liquid
@@ -360,8 +356,9 @@ result.raw_results  # dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
 result.flat_params  # FlatParams
 result.period_to_regime_to_V_arr  # dict[int, dict[RegimeName, FloatND]]
 
-# Persistence: writes `arrays/` (orbax), `metadata.pkl` (cloudpickle),
-# and `simulated_data.arrow` (feather of `to_dataframe`).
+# Persistence: writes `arrays/` (orbax), `V_arr/` (the solved values),
+# `metadata.pkl` (cloudpickle), and `simulated_data.arrow` (feather of
+# `to_dataframe`).
 # `directory` is a pathlib.Path, not a str.
 from pathlib import Path
 

@@ -1,3 +1,11 @@
+"""Turn a function of scalars into a function of grids.
+
+`productmap` maps over the Cartesian product of its named arguments,
+`tiled_productmap` evaluates that product in blocks, `vmap_1d` maps over named
+arguments jointly, `simulation_spacemap` maps the per-subject axes simulation
+needs, and `map_over_leading_axis` maps one leading axis of a pytree.
+"""
+
 import inspect
 import math
 from collections.abc import Callable

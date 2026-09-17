@@ -6,9 +6,11 @@ models with JAX. Public code lives in `src/lcm`, engine code in `src/_lcm`, and 
 
 ## Operating contract
 
-- Reconcile [CURRENT-TASK.md](CURRENT-TASK.md) with the checkout before resuming work:
-  exact head, dirty files, adopted decision, evidence, pending jobs and their owners. A
-  checkpoint routes into authoritative plans; it never replaces them.
+- Reconcile the session checkpoint with the checkout before resuming work: exact head,
+  dirty files, adopted decision, evidence, pending jobs and their owners. The checkpoint
+  is `CURRENT-TASK.md` at the repository root, a local working file that `.gitignore`
+  excludes, so a fresh clone has none and starting without one is normal. A checkpoint
+  routes into authoritative plans; it never replaces them.
 - Complete one authorized, coherent task and its acceptance gates. Do not start a new
   workstream merely because the current one finished. Continue routine authorized work
   without repeated permission requests; existing approval boundaries still apply.
@@ -41,18 +43,19 @@ The shared standards remain binding; their files and the global guidance are unc
 Expand reading when a concrete dependency requires it, rather than loading all
 references.
 
-| Task or affected surface                                                        | Required reading                                                                                                                        |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Implementation, review, verification, evidence or tooling                       | `.ai-instructions/AGENTS.md`                                                                                                            |
-| Python code or fixtures, including fixture-only edits                           | `.ai-instructions/profiles/tier-a.md` (and its shared, beartype and math imports); `agent-guide/development.md`; `agent-guide/style.md` |
-| Any test, build, dependency or environment work                                 | `agent-guide/build-and-test.md`; `agent-guide/testing.md`; applicable memory skill                                                      |
-| Numerical/JAX code, numerical assertions, solvers, RNG or transformations       | `.ai-instructions/modules/math.md`; `.ai-instructions/modules/jax.md`; `agent-guide/testing.md`                                         |
-| DAG signatures, processing, transitions or model fixtures                       | `.ai-instructions/modules/dags.md`; `agent-guide/architecture.md`; `agent-guide/model-interface.md`                                     |
-| Model/regime/solver/result API or its documentation                             | `agent-guide/architecture.md`; `agent-guide/model-interface.md`                                                                         |
-| Sharding, transfers, execution planning, memory lifetime or admission           | `agent-guide/execution-and-audits.md`; `.ai-instructions/modules/jax.md`                                                                |
-| External audit, Pro handoff, reply intake, ACA/cluster work or pending receipts | `agent-guide/execution-and-audits.md`; the applicable audit/cluster skill and its complete required reading                             |
-| Documentation, comments, docstrings, plots or notebooks                         | `agent-guide/style.md`; `agent-guide/development.md` (including notebook rules); `.ai-instructions/AGENTS.md`                           |
-| Task handoff, delegation, escalation or checkpoint update                       | `agent-guide/workflow.md`                                                                                                               |
+| Task or affected surface                                                                | Required reading                                                                                                                        |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Implementation, review, verification, evidence or tooling                               | `.ai-instructions/AGENTS.md`                                                                                                            |
+| Python code or fixtures, including fixture-only edits                                   | `.ai-instructions/profiles/tier-a.md` (and its shared, beartype and math imports); `agent-guide/development.md`; `agent-guide/style.md` |
+| Any test, build, dependency or environment work                                         | `agent-guide/build-and-test.md`; `agent-guide/testing.md`; `docs/development/continuous_integration.md`; applicable memory skill        |
+| Certificate or corridor anchors, the CI workload manifest, or moving a pinned test file | `docs/development/certification.md`; `agent-guide/build-and-test.md`                                                                    |
+| Numerical/JAX code, numerical assertions, solvers, RNG or transformations               | `.ai-instructions/modules/math.md`; `.ai-instructions/modules/jax.md`; `agent-guide/testing.md`                                         |
+| DAG signatures, processing, transitions or model fixtures                               | `.ai-instructions/modules/dags.md`; `agent-guide/architecture.md`; `agent-guide/model-interface.md`                                     |
+| Model/regime/solver/result API or its documentation                                     | `agent-guide/architecture.md`; `agent-guide/model-interface.md`                                                                         |
+| Sharding, transfers, execution planning, memory lifetime or admission                   | `agent-guide/execution-and-audits.md`; `.ai-instructions/modules/jax.md`                                                                |
+| External audit, Pro handoff, reply intake, ACA/cluster work or pending receipts         | `agent-guide/execution-and-audits.md`; the applicable audit/cluster skill and its complete required reading                             |
+| Documentation, comments, docstrings, plots or notebooks                                 | `agent-guide/style.md`; `agent-guide/development.md` (including notebook rules); `.ai-instructions/AGENTS.md`                           |
+| Task handoff, delegation, escalation or checkpoint update                               | `agent-guide/workflow.md`                                                                                                               |
 
 Full API examples belong in the topic files, and full plans remain in their
 authoritative location. For the next bounded task, use the templates linked from
@@ -68,8 +71,9 @@ CLI; pull requests are not a request surface. See `.agents/issue-tracker.md`.
 
 ### Triage labels
 
-The five canonical triage labels are used verbatim (`needs-triage`, `needs-info`,
-`ready-for-agent`, `ready-for-human`, `wontfix`). See `.agents/triage-labels.md`.
+Five canonical triage roles map to the tracker's label strings: `needs-triage`,
+`needs-info`, `ready-for-agent` and `ready-for-human` are spelled the same, and the
+fifth role, `wontfix`, is the label `won't fix`. See `.agents/triage-labels.md`.
 
 ### Domain docs
 

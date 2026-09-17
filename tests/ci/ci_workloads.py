@@ -10,9 +10,20 @@ comes from the reviewer's per-file CSV keyed to the frozen head
 `29396117e6ff6cc90cc0a1bdad7669554c7c32d9`; a file absent from that CSV is never
 assigned a weight of zero, it is listed in `unweighted_files`.
 
-This module only reads the manifest back. Regenerating it (a new file, a new
-cpu.yml invocation, a re-measured weight) is a deliberate, reviewed step, not
-something a test or this module does implicitly.
+This module only reads the manifest back. Regenerating it is a deliberate,
+reviewed step, not something a test or this module does implicitly, and each
+kind of regeneration has its own route:
+
+- a new test file ⇒ `tests/ci/generate_ci_workloads.py`, which registers it in
+  `general_shard_universe` and `unweighted_files` and re-derives the general
+  shards. `--check` exits non-zero when the committed manifest differs from
+  regeneration;
+- a new or changed `cpu.yml` invocation ⇒ a reviewed hand edit, checked by
+  `tests/ci/test_cpu_workflow_contract.py`;
+- re-measured weights ⇒ a new per-file CSV and a new `frozen_head`.
+
+`frozen_head` names the commit the weights were measured at, not the commit the
+manifest was last edited at, so registering a file leaves it where it is.
 """
 
 from __future__ import annotations

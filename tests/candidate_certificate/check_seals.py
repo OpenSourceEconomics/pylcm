@@ -12,8 +12,10 @@ Exit codes:
 - `0` ⇒ both files agree with the tree
 - `1` ⇒ a seal drifted; each offending source is printed with its expected and
   actual digest, and `--fix` regenerates the inventory and rewrites the seal map
-- `2` ⇒ the direct-flow verifier reports an error that is not a seal, which a
-  reseal cannot repair
+- `2` ⇒ the direct-flow verifier reports an error that is not a seal. A reseal
+  cannot repair it; `repin_corridors.py` re-anchors the AST corridor pins for
+  the sources whose edit was intended, and the remaining anchors — field
+  tuples, enum bodies, binding counts — are reviewed and edited by hand
 """
 
 from __future__ import annotations
@@ -42,7 +44,13 @@ except ModuleNotFoundError:  # Imported as tests.candidate_certificate.check_sea
     )
 
 DIRECT_FLOW_PATH = "tests/candidate_certificate/direct_flow.py"
-_SEAL_LINE = re.compile(r'^(?P<indent>\s+)(?P<name>[A-Z_]+_SOURCE): "[0-9a-f]{64}",$')
+# Seal constants are named after their source file, so some carry a digit
+# (`PROCESS_AR1_SOURCE`). A name class without `0-9` silently skips those: `--fix`
+# reports success, one entry stays stale, and the next check reports it as an error
+# a reseal cannot repair.
+_SEAL_LINE = re.compile(
+    r'^(?P<indent>\s+)(?P<name>[A-Z0-9_]+_SOURCE): "[0-9a-f]{64}",$'
+)
 _SEAL_MISMATCH = re.compile(r"^(?P<path>[^:]+): source seal mismatch: ")
 
 
@@ -158,7 +166,20 @@ def main() -> int:
             "and stage the rewritten inventory and seal map."
         )
         return 1
-    print("\nThe direct-flow verifier reports an error a reseal cannot repair.")
+    print(
+        "\nThe direct-flow verifier reports an error a reseal cannot repair: an "
+        "AST corridor pin, not a byte seal.\n"
+        "If the edit to each certified source below was intended, re-anchor "
+        "those corridors with\n"
+        "    pixi run python tests/candidate_certificate/repin_corridors.py \\\n"
+        "        --changed-source <path> [--changed-source <path> ...]\n"
+        "which refuses to write if a pin outside the named sources drifted. "
+        "Field tuples, enum bodies\n"
+        "and binding counts it leaves alone: those are reviewed and edited by "
+        "hand.\n"
+        "See docs/development/certification.md. Never widen an anchor to make "
+        "a changed route green."
+    )
     return 2
 
 

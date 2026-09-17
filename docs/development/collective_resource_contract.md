@@ -16,24 +16,29 @@ level.
 
 ## The workloads
 
-All of them are in `benchmarks/asv/bench_collective_household.py`. The first six run
-over the marriage market of `lcm_examples.collective_household`: two singles who marry
-under mutual consent, a household with a participation constraint on each partner, and a
-dissolution edge keyed by the continuing household. `ReferenceChainSolve` is not that
-model — it builds a synthetic chain of collective links with no gated edge, no consent
-and no dissolution, so that reference depth is the only thing varying.
+All of them are in `benchmarks/asv/bench_collective_household.py`. All but the last two
+run over the marriage market of `lcm_examples.collective_household`: two singles who
+marry under mutual consent, a household with a participation constraint on each partner,
+and a dissolution edge keyed by the continuing household. `ReferenceChainSolve` is not
+that model — it builds a synthetic chain of collective links with no gated edge, no
+consent and no dissolution, so that reference depth is the only thing varying.
 
-| Workload                    | Class                                                         | What it isolates                                                                                                                                |
-| --------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Model construction          | `CollectiveHouseholdConstruct`                                | The phase scan, the lowering of the collective declarations, and per-edge parameter discovery, with nothing traced or compiled.                 |
-| First-solve assembly        | `CollectiveHouseholdSolve.track_compilation_time`             | A whole first `solve()`: tracing, lowering, compiling-or-loading every kernel and fold, AND running the backward induction. See the note below. |
-| Warm solve                  | `CollectiveHouseholdSolve.time_execution`                     | What an estimation loop pays per parameter vector.                                                                                              |
-| Host memory, solve          | `CollectiveHouseholdSolve.peakmem_execution`                  | Resident peak while backward induction runs.                                                                                                    |
-| Device memory, solve        | `CollectiveHouseholdSolveGpuPeakMem`                          | Device peak on the same workload.                                                                                                               |
-| Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e4, 1e5}` | Routing: one gate evaluation per edge per period over the whole population.                                                                     |
-| Transitive reference depth  | `ReferenceChainSolve`, `depth ∈ {1, 2, 4, 8}`                 | The closure a value constraint opens: link `k` reads link `k-1` in the same period.                                                             |
-| Device memory, simulation   | `CollectiveHouseholdSimulateGpuPeakMem`                       | Device peak while routing the cohort.                                                                                                           |
-| Device memory, chain solve  | `ReferenceChainSolveGpuPeakMem`                               | Device peak as reference depth grows.                                                                                                           |
+`CollectiveHouseholdConstruct` and `CollectiveHouseholdSolve` publish their timing and
+host-memory numbers through `setup_cache`-backed `track_*` metrics, so one build and one
+cold call are shared by every metric of that class. The two parameterized workloads use
+the ASV-native `time_execution` / `peakmem_execution` pair instead, because sharing a
+setup across parameters would need the device-memory subprocess to accept parameters.
+
+| Workload                    | Class and metric                                         | What it isolates                                                                                                                                |
+| --------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model construction          | `CollectiveHouseholdConstruct.track_execution_time`      | The phase scan, the lowering of the collective declarations, and per-edge parameter discovery, with nothing traced or compiled.                 |
+| Host memory, construction   | `CollectiveHouseholdConstruct.track_peak_cpu_mem`        | Resident peak while the model is built.                                                                                                         |
+| First-solve assembly        | `CollectiveHouseholdSolve.track_compilation_time`        | A whole first `solve()`: tracing, lowering, compiling-or-loading every kernel and fold, AND running the backward induction. See the note below. |
+| Warm solve                  | `CollectiveHouseholdSolve.track_execution_time`          | What an estimation loop pays per parameter vector.                                                                                              |
+| Host memory, solve          | `CollectiveHouseholdSolve.track_peak_cpu_mem`            | Resident peak while backward induction runs.                                                                                                    |
+| Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e5}` | Routing: one gate evaluation per edge per period over the whole population.                                                                     |
+| Device memory, simulation   | `CollectiveHouseholdSimulateGpuPeakMem`                  | Device peak while routing the cohort, at the larger of the two cohort sizes.                                                                    |
+| Transitive reference depth  | `ReferenceChainSolve`, `depth ∈ {1, 8}`                  | The closure a value constraint opens: link `k` reads link `k-1` in the same period.                                                             |
 
 ## The budgets
 
@@ -53,8 +58,10 @@ machines and backends. A level is defended by the ASV history on one machine.
   stakeholder count; a gated edge adds one fold over the target's grid per period. It
   may not grow with the *number of subjects*, which appears nowhere in the solve.
 - **Simulation** is `O(periods × (regimes + edges) × subjects)` and therefore linear in
-  the cohort. The three cohort sizes exist to make a super-linear term visible; a slope
-  above one between adjacent points is the regression this workload is for.
+  the cohort. The two cohort sizes exist to make a super-linear term visible; a slope
+  above one between them is the regression this workload is for. They are two orders of
+  magnitude apart deliberately — an intermediate point cost run time without separating
+  anything the endpoints do not.
 - **Memory**, host and device, is `O(largest single V array + working set)` and does not
   accumulate across periods. Backward induction frees each period's intermediates, so a
   peak that grew with the *number of periods* would mean it stopped.
@@ -97,8 +104,8 @@ Three things follow, all about how to *read* a change in this line:
 - A number from one machine is not comparable to one from another whose cache holds a
   different set of programs. The ASV history is per machine for this reason.
 - On a model whose grids are large enough for execution to dominate, this line stops
-  being an assembly measurement at all. Read it next to `time_execution`, which is the
-  same solve with the programs already in memory.
+  being an assembly measurement at all. Read it next to `track_execution_time`, which is
+  the same solve with the programs already in memory.
 
 ## Where a pointwise reoptimization mode would sit
 
@@ -116,8 +123,9 @@ share a budget line.
 These workloads run under the ordinary ASV tasks; [Benchmarking](benchmarking.md) has
 the machine registration, the run and compare invocations, and the publish workflows.
 
-One caveat is specific to this suite. The GPU peak-memory companions need a CUDA
+One caveat is specific to this suite. The GPU peak-memory companion needs a CUDA
 environment and a device that publishes memory statistics, and there is no skip path:
 nothing here raises ASV's `NotImplementedError` or detects a device, so on a machine
-without one they fail rather than abstain. Run them only where a GPU is present; the
-host `peakmem_*` rows are the portable ones.
+without one it fails rather than abstains. Run it only where a GPU is present; the host
+memory rows are the portable ones. Because its subprocess driver takes no arguments, it
+names the single parameterization it measures rather than sweeping them.

@@ -3,10 +3,19 @@
 This project uses [pixi](https://pixi.sh/) for dependency management and task
 automation. Python 3.14+ is required.
 
-- `pixi run tests` - Run all tests
-- `pixi run tests-with-cov` - Run tests with coverage reporting
-- `pytest tests/test_specific_module.py` - Run specific test file
-- `pytest tests/test_specific_module.py::test_function_name` - Run specific test
+Name the environment on every task that several environments provide. The `tests` feature
+belongs to four of them (`tests-cpu`, `tests-cuda12`, `tests-cuda13`, `type-checking`),
+so a bare `pixi run tests` exits with "the task 'tests' is ambiguous".
+
+- `pixi run -e tests-cpu tests` - Run all tests at the default precision
+- `pixi run -e tests-cpu tests-32bit` - Run all tests at float32
+- `pixi run -e tests-cpu tests-with-cov` - Run tests with coverage reporting
+- `pixi run -e tests-cpu pytest tests/<file>.py -v --junitxml=<abs-path>.xml` - Run one
+  test file
+- `pixi run -e tests-cpu pytest tests/<file>.py::<test> -v --junitxml=<abs-path>.xml` -
+  Run one test
+- `pixi run test -- --ci-policy=pr` - Run what an ordinary pull request runs, through the
+  policy launcher
 - `prek run ty --all-files` - Type checking with ty (a pre-commit hook; resolves
   third-party imports from the pixi env named in `[tool.ty] environment.python`, so run
   `pixi install` once)
@@ -14,8 +23,40 @@ automation. Python 3.14+ is required.
 - `pixi run -e docs build-docs` - Build documentation
 - `pixi run -e docs view-docs` - Live preview documentation
 - `pixi install` - Install dependencies
-- `pixi run explanation-notebooks` - Execute explanation notebooks
+- `pixi run -e docs explanation-notebooks` - Execute the explanation notebooks. Only
+  `docs/explanations/*.ipynb` are executed; the notebooks under `docs/examples/`,
+  `docs/getting_started/` and `docs/user_guide/` have no CI execution gate
 - `prek install` - Install pre-commit hooks (after `pixi global install prek`)
+
+`prek run --all-files` does not run everything CI runs, and it runs some things CI never
+does. `candidate-certificate-seals`, `keyword-only-convention`, `ty`, `pixi-lock-check`,
+`pre-push-hooks-installed` and `notebook-cell-source-format` are in the config's CI
+`skip:` list, so they fire in developer clones only. The seals hook is the one that
+matters most: a clone that never ran `prek install` first learns about a stale
+certificate seal from a red CI run on every platform.
+
+### CI policy, markers and the workload manifest
+
+`pixi run test` is the policy launcher, not plain pytest. It selects by the contract a
+test declares rather than by where the file lives, fans precision legs and fresh-process
+tests out into separate pytest children, and refuses a hardware profile the machine
+cannot truthfully execute. The four markers a test declares (`requires`, `coverage`,
+`isolation`, `ci`) and the policy tiers are in
+[Continuous integration](../docs/development/continuous_integration.md).
+
+Two obligations fire on ordinary work and have no local warning:
+
+- **A new test file must be registered** in `tests/ci/ci-workloads.json`, or
+  `tests/ci/test_ci_workloads_manifest.py` fails in CI and the file runs on no lane.
+  Register it with `pixi run -e tests-cpu python -m tests.ci.generate_ci_workloads`, and
+  check a manifest you did not write with the same command plus `--check`.
+- **Editing a certified source under `src/` stales the certificate seals.** Reseal byte
+  seals with `pixi run python tests/candidate_certificate/check_seals.py --fix`; when
+  that exits 2, the drift is an AST corridor pin and
+  `tests/candidate_certificate/repin_corridors.py --changed-source <path>` is the next
+  step. Never widen an anchor to make a changed route green. Both procedures, and the
+  list of test files CI pins by path, are in
+  [Certification and preflight](../docs/development/certification.md).
 
 ### Running tests
 

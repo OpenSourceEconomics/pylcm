@@ -1,3 +1,12 @@
+"""The forward-simulation loop over periods, regimes and subjects.
+
+`simulate` seeds the population from the validated initial conditions and then,
+for each period, decides every subject's actions — replaying a solver's
+published policy where one exists, recomputing on the grid otherwise — applies
+the state and regime transitions, and collects one
+`PeriodRegimeSimulationData` per (regime, period) pair.
+"""
+
 import functools
 import inspect
 import itertools

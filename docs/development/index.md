@@ -13,8 +13,11 @@ here.
 - [Architecture](../explanations/architecture.md)
 - [Dispatchers](../explanations/dispatchers.ipynb)
 - [Continuous integration](continuous_integration.md)
+- [Certification and preflight](certification.md)
 - [Package benchmarks](benchmarking.md)
 - [Resource contract for collective and gated models](collective_resource_contract.md)
+- [Compiler allocation and admission](compiler_allocation_admission.md)
+- [Feasibility admission evidence](feasibility_admission_evidence.md)
 - [Architecture transition ledger](architecture_transition_ledger.md)
 
 A solver can be written against the public names alone, and

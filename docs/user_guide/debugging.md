@@ -118,18 +118,17 @@ function.
 
 Each snapshot is a directory (e.g. `solve_snapshot_001/`) containing:
 
-| File                  | Contents                                                               |
-| --------------------- | ---------------------------------------------------------------------- |
-| `arrays.h5`           | Value function arrays in HDF5 (datasets at `/V_arr/{period}/{regime}`) |
-| `model.pkl`           | The Model instance (cloudpickle)                                       |
-| `params.pkl`          | User parameters (cloudpickle)                                          |
-| `initial_states.pkl`  | Initial state arrays (simulate only)                                   |
-| `initial_regimes.pkl` | Initial regime assignments (simulate only)                             |
-| `result.pkl`          | SimulationResult (simulate only)                                       |
-| `metadata.json`       | Snapshot type, platform string, field manifest                         |
-| `pixi.lock`           | Lock file from the project root                                        |
-| `pyproject.toml`      | Project file from the project root                                     |
-| `REPRODUCE.md`        | Step-by-step reconstruction recipe                                     |
+| File                     | Contents                                                               |
+| ------------------------ | ---------------------------------------------------------------------- |
+| `arrays.h5`              | Value function arrays in HDF5 (datasets at `/V_arr/{period}/{regime}`) |
+| `model.pkl`              | The Model instance (cloudpickle)                                       |
+| `params.pkl`             | User parameters (cloudpickle)                                          |
+| `initial_conditions.pkl` | Initial state arrays and regime codes (simulate only)                  |
+| `result.pkl`             | SimulationResult (simulate only)                                       |
+| `metadata.json`          | Snapshot type, platform string, field manifest                         |
+| `pixi.lock`              | Lock file from the project root                                        |
+| `pyproject.toml`         | Project file from the project root                                     |
+| `REPRODUCE.md`           | Step-by-step reconstruction recipe                                     |
 
 ### Creating snapshots
 
@@ -356,7 +355,80 @@ compilation overhead in the normal (no-NaN) solve path.
 
 ## Understanding error messages
 
-pylcm raises specific exceptions to help you diagnose problems:
+pylcm raises specific exceptions to help you diagnose problems. Every one of them lives
+in `lcm.exceptions` and derives from `lcm.exceptions.PyLCMError`, so `except PyLCMError`
+catches anything pylcm itself raises:
+
+```python
+from lcm.exceptions import ExecutionPlanningError, PyLCMError
+```
+
+### Model definition
+
+- **`ModelInitializationError`**: Something is wrong with the model definition
+  (mismatched regime names, unused variables, etc.). Read the message carefully --- it
+  usually lists all issues found.
+
+- **`RegimeInitializationError`**: A single regime is invalid. A regime is validated
+  both at its own construction and again when a model finalizes it, so the same defect
+  surfaces from either call. It subclasses `ModelInitializationError`, so catching that
+  catches both.
+
+- **`GridInitializationError`**: A grid declaration is invalid. The same exception
+  covers the age grid and the category class a discrete grid is built from.
+
+- **`CategoricalDefinitionError`**: An `@categorical`-decorated class violates the
+  contract that every field is annotated `ScalarInt`. Raised at decoration time, before
+  any grid, regime, or derived-categorical mapping is built.
+
+- **`InvalidNameError`**: Names are invalid --- a name contains the reserved separator,
+  or two name sets that must be disjoint overlap. A parameter written at two levels of
+  the params dict also lands here.
+
+- **`NBEGMCaseError`**: An NBEGM case-boundary or formula-piece declaration is invalid
+  --- a malformed boundary or piece, hidden branching caught by the smoothness gate, or
+  a declaration outside the supported case-piece scope.
+
+- **`ModelSealError`**: A name one of the model's callables reads was rebound after the
+  model was built. The model captures its callables together with the globals and
+  closure cells they read, and refuses to solve or simulate against a rebinding rather
+  than produce a result its durable identity would accept for the wrong model.
+
+### Parameters, inputs, and results
+
+- **`InvalidParamsError`**: The params structure does not match the params template.
+
+- **`InvalidInitialConditionsError`**: The initial states or regime codes handed to
+  `simulate` are invalid --- a wrongly shaped or wrongly typed array, a value off its
+  grid, an invalid discrete or regime code, or a missing `own_stakeholder` entry where
+  roles are required.
+
+- **`InvalidAdditionalTargetsError`**: A requested additional DAG target is not
+  available on the result.
+
+- **`InvalidSimulationInputError`**: Caller-supplied solve artifacts cannot drive
+  simulation --- a missing value-function array for a continuation target, or a missing
+  or mismatched replay policy where the solver's decision cannot be reconstructed from
+  value functions alone.
+
+- **`UnsupportedOperationError`**: A valid model requests a runtime operation pylcm does
+  not support, such as simulating a regime whose solver declares its decision
+  irreproducible.
+
+### Planning and execution
+
+- **`ExecutionPlanningError`**: The requested execution policy cannot produce a valid
+  plan. This covers every device-memory budget, axis-width, device-selection and
+  sharding refusal, so it is the exception a tuning run meets most often. When the
+  selected devices capped the requested budget, the message names both the requested and
+  the effective bytes together with the headroom fraction that separates them; see
+  [Performance and memory tuning](tuning.md#set-a-device-memory-budget).
+
+- **`FunctionDispatchError`**: A function cannot be dispatched over the variables it is
+  asked to map --- a positional-only parameter, or a requested variable absent from the
+  signature.
+
+### Numerical validation
 
 - **`InvalidValueFunctionError`**: The value function array contains NaN at a given age
   and regime. The message lists common causes and a diagnostic summary showing NaN
@@ -368,9 +440,50 @@ pylcm raises specific exceptions to help you diagnose problems:
   inactive regime. The message includes the source regime, age range, and a table of
   failing entries.
 
-- **`ModelInitializationError`**: Something is wrong with the model definition
-  (mismatched regime names, unused variables, etc.). Read the message carefully --- it
-  usually lists all issues found.
+- **`InvalidStateTransitionProbabilitiesError`**: A `MarkovTransition` produces an
+  output with the wrong outcome-axis size, values outside [0, 1], rows that don't sum to
+  1, or `probs_array[…]` subscripts that don't match the signature parameter order.
+
+- **`OuterSearchConvergenceError`**: An adaptive outer mesh reached its node or round
+  budget while validation-marked intervals remained. Inference-grade continuous-outer
+  solves fail closed rather than silently return a degraded solution.
+
+- **`ScaledLotteryDifferentiationError`**: A lottery is differentiated with respect to
+  probabilities too small to represent as ordinary floating-point numbers. Returning
+  zero would suggest a locally flat objective to an optimizer, so pylcm raises instead.
+
+- **`UnrepresentableOuterCandidateError`**: Replay cannot reconstruct an outer candidate
+  the solve kept, because the recovered action reaches a stock outside the outer state's
+  declared domain. Such candidates are dropped from that subject's choice set, and the
+  message reports how many.
+
+- **`ExactAffineKernelUnavailableError`**: A certified exact-affine operation
+  (`ExactEnvelope`, or NBEGM's `"certified"` ownership mode) found no loadable compiled
+  payload for the active JAX backend. pylcm raises rather than fall back to approximate
+  floating-point comparisons.
+
+### Persistence
+
+- **`SolutionIntegrityError`**: A persisted solution archive failed an integrity check.
+
+- **`IncompatibleSolutionError`**: A solution uses an unsupported schema or plugin
+  version. pylcm rejects a mismatch rather than migrating it silently.
+
+## Inspect the resolved execution plan
+
+`model.simulate(...)` reports the execution plan it actually dispatched: the forward
+route, the ordered subject devices and their backend, the resolved planner axis widths
+by regime, the outer chunk count and admitted chunk widths, and the budget mode with its
+effective device-memory bytes. A one-line summary logs at `log_level="progress"` and
+`"debug"`, and the complete record at `"debug"` only.
+
+Read it when a run is slower or larger than expected but raises nothing: it is the only
+statement of which route engaged, at which widths, and against which budget. The same
+record is available on the result as `SimulationResult.plan_summary`, so a batch job can
+keep it without keeping the log. It is `None` for a result read back with
+`SimulationResult.load`. See
+[Runtime, results, and persistence](../reference/runtime_and_results.md) for the exact
+contract.
 
 ## See also
 

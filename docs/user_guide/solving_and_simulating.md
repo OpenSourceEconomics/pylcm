@@ -161,6 +161,15 @@ The full behaviour of every `log_level` × `log_path` combination:
 meaningless result rather than an exception; use this to keep an estimation loop
 running, but read the warnings.
 
+`simulate()` adds one further record to the console output: the resolved execution plan
+it dispatched --- the forward route, the subject devices and their backend, the resolved
+planner axis widths by regime, the chunk count and admitted widths, and the budget mode
+with its effective device-memory bytes. A one-line summary appears at `"progress"` and
+`"debug"`, the complete record at `"debug"` only, and neither at `"warning"` or `"off"`.
+It is diagnostic only, and the same record is available as
+`SimulationResult.plan_summary`. See
+[Inspect the resolved execution plan](debugging.md#inspect-the-resolved-execution-plan).
+
 See [Debugging](debugging.md) for details on snapshots.
 
 ## Simulating
@@ -316,6 +325,9 @@ for the full rules.
   counterfactual models. Omit it to keep the ordinary `seed` behavior.
 - `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
+- `max_compilation_workers=None`: Maximum number of threads for parallel XLA
+  compilation. Used only on the automatic-solve path, i.e. when `solution` is omitted.
+  `None` uses the number of physical CPU cores.
 
 ### Common taste shocks across counterfactuals
 
@@ -455,6 +467,14 @@ result.n_subjects  # 1000
 - `simulated_data.arrow` — a `feather` dump of `to_dataframe`, ready for downstream
   consumers that want the flat per-subject view without re-instantiating a
   `SimulationResult`.
+
+Two keywords select what that Feather table holds; neither affects the other three
+artifacts. `save(directory=..., df_additional_targets=...)` is passed through to
+`to_dataframe`: `None` (the default) writes only the base columns (states, actions,
+regime, age, period, `V_arr`), a list of target names bakes those DAG outputs in, and
+`"all"` includes every available target --- which can grow the file by an order of
+magnitude on a model with many DAG leaves. `df_use_labels=True` (the default) stores
+discrete variables as pandas `Categorical` labels; `False` stores integer codes.
 
 `save()` consumes the in-memory result by clearing its value-function arrays and
 compiled regimes. Reload the saved directory before further access that needs either.

@@ -73,17 +73,24 @@ are merged into every regime under three rules:
   a reachable target that carries the state" refers to *other* regimes' carried states,
   pruning one variable in regime B can make a variable in regime A newly dead, so the
   pruning iterates across all regimes until nothing more can be dropped (a cross-regime
-  fixed point). It runs separately on the solve slice and the simulate slice of each
-  regime; a variable is dropped only when dead in **both** phases. Regime-level
-  declarations are never pruned. `model.pruned_variables` records the outcome per
-  regime.
+  fixed point). The solve slice and the simulate slice of each regime are closed
+  **jointly** to a single such fixed point, not one application of each in turn: a
+  target that keeps a state only because its simulate slice reads it makes the
+  solve-side law of motion toward that target a root as well, and whatever that law
+  reads then survives in the source regime. Both operators only ever add names to a
+  finite pool, so the alternation reaches the least common fixed point and the result
+  does not depend on which phase is closed first. Regime-level declarations are never
+  pruned. `model.pruned_variables` records the outcome per regime.
 
 Pruning means a model-level state costs nothing in regimes that never touch it — the
 grid axis simply does not appear there. To spread a state's grid axis over the devices,
 declare the state in `ExecutionConfig.sharded_states` on the `Model`. Sharding is legal
 only on model-level states, and it follows pruning: the regimes that read the state
-carry its device axis, while the regimes that prune it run on a single device. Only a
-state every regime prunes is an error, because then no axis is left to spread.
+carry its device axis, while the regimes that prune it publish a value without that axis
+and run on a single device. Placement is resolved per regime, so a sharded state may be
+absent from a non-terminal regime as readily as from a terminal one, and the planner
+moves the values that cross between the two placements. Only a state every regime prunes
+is an error, because then no axis is left to spread.
 
 ## Regime ID Classes
 

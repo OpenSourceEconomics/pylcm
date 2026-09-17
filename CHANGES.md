@@ -5,6 +5,24 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Documentation for the execution and certification layers
+
+- `docs/explanations/architecture.md` now describes the execution layer as built:
+  ownership and lifetime of device buffers, admission and workspace planning, value
+  transfers between regime meshes, and the resolved simulation plan. The development
+  pages gain `certification.md`, which explains the candidate certificate, its source
+  corridors, the seal check and the re-pin tool, and `continuous_integration.md` now
+  documents the sharded CPU workflow, the workload manifest and its generator. The user
+  guide's debugging, tuning and subject-parallel pages cover the log tiers, the budget
+  knobs and the sharding routes that landed in this cycle, and every engine module
+  carries a module docstring naming what it owns.
+- The claim that a `None` device-memory budget queries no device was wrong and is
+  corrected everywhere it appeared: an unbudgeted request applies no pool-derived cap,
+  but public model construction still reads each visible device's pool statistics once.
+- `tests/ci/generate_ci_workloads.py` regenerates the CI workload manifest and checks
+  it accounts for every test file; `tests/candidate_certificate/test_repin_corridors.py`
+  pins the re-pin tool's contract.
+
 ### Every route charges a transfer operator's own storage on every device it touches
 
 - Budgeted admission now reserves a planned transfer's declared temporary bytes — what
@@ -140,8 +158,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   memory the pool cannot actually hand out. The effective budget is the smaller of the
   request and every selected device's pool limit less its headroom; an
   already-conservative request is never reduced again, a device that reports no pool
-  limit places no cap, and `device_memory_bytes=None` stays unbudgeted and queries no
-  device. The margin is an operational policy for pressure outside the represented
+  limit places no cap, and `device_memory_bytes=None` stays unbudgeted and applies no
+  pool-derived cap — model construction still reads each visible device's pool
+  statistics once. The margin is an operational policy for pressure outside the represented
   accounting — collective buffers, library workspaces, driver context, fragmentation —
   and `0.0` restores planning against the whole pool. A capped budget is logged as a
   warning naming request, per-device limits and effective ceiling, and admission

@@ -1,3 +1,13 @@
+"""Build the `(Q, F)` closure a period's kernels evaluate.
+
+`get_Q_and_F` composes utility, feasibility and the expected continuation over
+every reachable target into one function of states, actions and params.
+`get_Q_and_F_terminal`, `get_Q_and_F_collective` and the terminal collective
+variant are the specializations the regimes that need them get instead, and
+`get_compute_intermediates` publishes the same chain's intermediates for the
+NaN diagnostics.
+"""
+
 import dataclasses
 import inspect
 import operator

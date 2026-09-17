@@ -1,3 +1,10 @@
+"""The discretized AR(1) processes a regime can declare as a state.
+
+`TauchenAR1Process`, `RouwenhorstAR1Process` and
+`TauchenNormalMixtureAR1Process` each pair a node grid with the transition
+matrix its discretization implies.
+"""
+
 from abc import abstractmethod
 from dataclasses import dataclass, fields
 from math import comb

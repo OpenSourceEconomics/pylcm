@@ -22,59 +22,92 @@ pylcm's source is two packages, and the split is a hard binary:
   the engine-side type aliases. The leading underscore on the *package* carries the
   entire "private" signal — modules inside `_lcm/` are plainly named.
 
-There is no gradient and no per-module underscore convention: a module is either in
-`lcm/` (public) or in `_lcm/` (private). Internal code reaches the user-facing classes
-through `from lcm.regime import Regime as UserRegime` etc.; the public `lcm/__init__.py`
-imports `_lcm` first so the jaxtyping patch and the beartype claw are installed before
-anything else loads.
+The package boundary is the primary signal: a module is either in `lcm/` (public) or in
+`_lcm/` (private). Within `lcm/` a leading underscore marks the two places that carry
+implementation the public surface happens to need at its own import time —
+`lcm/_compilation_cache.py` and the `lcm/_solver_api/` package, whose contents are
+re-exported through the plainly named `lcm/solver_api.py`. Internal code reaches the
+user-facing classes through `from lcm.regime import Regime as UserRegime` etc.;
+`lcm/__init__.py` registers the beartype claw over both packages before any of their
+submodules load.
 
 ```
 lcm/
-├── __init__.py       ← re-export façade for the public symbols
-├── ages.py           ← AgeGrid
-├── grids.py          ← LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid, DiscreteGrid,
-│                       PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid,
-│                       GridBreakpoint, and the @categorical decorator
-├── model.py          ← Model
-├── params.py         ← as_leaf + the MappingLeaf / SequenceLeaf re-exports
-├── persistence.py    ← SolveSnapshot, SimulateSnapshot, load_snapshot,
-│                       complete-result save/load and legacy value reader
-├── processes.py      ← the seven *Process classes
-├── regime.py         ← Regime (Phased and MarkovTransition re-exported)
-├── result.py         ← SimulationResult
-├── solver_api.py     ← versioned solver, artifact, replay, and solution contracts
-├── solvers.py        ← built-in solvers plus the out-of-tree re-export façade
-├── transition.py     ← transition helpers
-├── typing.py         ← user-facing type aliases
-└── exceptions.py     ← every project-specific exception class
+├── __init__.py          ← runtime perimeter + re-export façade for the public symbols
+├── ages.py              ← AgeGrid
+├── branch_aggregation.py ← outer branch-aggregation configuration (re-export façade)
+├── case_piece.py        ← case_boundary, piece, piecewise_affine, affine_breakpoint
+├── certainty_equivalent.py ← certainty-equivalent classes (re-export façade)
+├── collective.py        ← collective and value-dependent choice declarations
+├── condition.py         ← lcm.ref and the declared-condition vocabulary
+├── consumption_savings_regime.py ← specialized consumption-savings regime declarations
+├── execution.py         ← ExecutionConfig
+├── fixed_forms.py       ← the conventional accounting forms of a one-asset regime
+├── grids.py             ← LinSpacedGrid, LogSpacedGrid, IrregSpacedGrid, DiscreteGrid,
+│                          PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid,
+│                          GridBreakpoint, and the @categorical decorator
+├── koopmans_aggregation.py ← LinearAggregator, CESAggregator, KoopmansAggregator
+├── model.py             ← Model
+├── outer_search.py      ← outer-search strategy configuration (re-export façade)
+├── params.py            ← as_leaf + the MappingLeaf / SequenceLeaf re-exports
+├── persistence.py       ← SolveSnapshot, SimulateSnapshot, load_snapshot,
+│                          complete-result save/load and legacy value reader
+├── phased.py            ← Phased
+├── processes.py         ← the seven *Process classes
+├── regime.py            ← Regime
+├── result.py            ← SimulationResult
+├── solver_api.py        ← versioned solver, artifact, replay, and solution contracts
+├── solvers.py           ← built-in solvers plus the out-of-tree re-export façade
+├── taste_shocks.py      ← ExtremeValueTasteShocks
+├── transition.py        ← fixed_transition, MarkovTransition, JointTransition
+├── typing.py            ← user-facing type aliases, string labels, UserFunction
+├── exceptions.py        ← every project-specific exception class
+├── _compilation_cache.py ← this project's slice of the persistent JIT cache
+└── _solver_api/         ← the implementation behind lcm/solver_api.py
 ```
 
 ```
 _lcm/
-├── __init__.py            ← applies the jaxtyping patch + registers the beartype claw
+├── __init__.py            ← bootstraps `lcm`, so the claw is installed either way
 ├── ages.py                ← AgeGrid validators and step parsing
+├── axis_boundaries.py     ← ownership rules for one-dimensional interior boundaries
 ├── beartype_conf.py       ← the beartype configurations
+├── certainty_equivalent.py ← certainty-equivalent classes and engine helpers
+├── coarse_transition.py   ← the shared-evaluation cell of a coarse regime transition
 ├── config.py              ← build-time configuration constants
+├── continuation.py        ← ContinuationSpec / EGMContinuationSpec and the artifact key
 ├── dtypes.py              ← canonical-dtype resolution
 ├── engine.py              ← canonical / engine-side dataclasses
-├── jaxtyping_patch.py     ← bootstrap patch run before any jaxtyping type
+├── gated_edge.py          ← what a ValueDependentTransition decomposes into
+├── identity_transition.py ← the identity law behind lcm.fixed_transition
+├── logsum.py              ← EV1 smoothed maximum and choice probabilities
 ├── model_processing.py    ← Model.__init__ build pipeline
 ├── pandas_utils.py        ← pd.Series ↔ JAX array bridge
+├── post_decision_bound.py ← the checkable lower-bound declaration
+├── power_mean.py          ← stable weighted power mean
+├── probability.py         ← one reading of a probability's bits, shared by consumers
 ├── reachability.py        ← construction-time solve/simulate regime graphs
-├── state_action_space.py  ← state / action space validators
+├── state_action_space.py  ← materialize a regime's state / action grids
 ├── transition_checks.py   ← pre-solve regime + state transition prob checks
-├── typing.py              ← engine-side type aliases and protocols
+├── transition_plans.py    ← canonical target-edge transition plans
+├── typing.py              ← engine-side aliases and protocols
 ├── user_regime_validation.py ← validators for the user-facing Regime
 ├── variables.py           ← factories that build `Variables` from `Regime`
-├── version.py             ← generated version string (hatch-vcs)
+├── version.py             ← generated version string (hatch-vcs), untracked
+├── zero_safe.py           ← arithmetic treating an exactly-zero weight as a null event
+├── constraints/           ← declared constraints: normalization, routes, materialization
+├── docs/                  ← render reference tables from public declarations
+├── egm/                   ← the EGM family's kernels, envelopes and outer search
+├── execution/             ← placement, transfers, liveness, admission, width selection
 ├── grids/                 ← grid infrastructure
-├── processes/             ← stochastic-process infrastructure
-├── persistence/           ← snapshot I/O and versioned solution-archive internals
-├── regime_building/       ← per-regime canonicalisation
-├── solution/              ← backward induction (solve) + validate_V
-├── simulation/            ← forward sampling (simulate) + result helpers
+├── optimization/          ← safeguarded scalar optimization primitives
 ├── params/                ← params templating and processing
-└── utils/                 ← small, dependency-free helpers
+├── persistence/           ← snapshot I/O and versioned solution-archive internals
+├── processes/             ← stochastic-process infrastructure
+├── regime_building/       ← per-regime canonicalisation
+├── simulation/            ← forward sampling (simulate) + its planning and admission
+├── solution/              ← backward induction (solve), the shipped solvers, admission
+└── utils/                 ← small, dependency-light helpers
 ```
 
 Names cross the boundary in exactly one direction (user → canonical form) and only twice
@@ -94,20 +127,31 @@ similar implementation detail live in `_lcm/` and are imported back in.
 
 The mapping of public names to files:
 
-| File             | What lives there                                                                                                                                                                                          |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `model.py`       | `Model`                                                                                                                                                                                                   |
-| `regime.py`      | `Regime` and the private default Bellman aggregator `_default_H`. Validators live in `_lcm/user_regime_validation.py`; the phase normalizer in `_lcm/regime_building/phases.py`.                          |
-| `ages.py`        | `AgeGrid`. Step parser and validators live in `_lcm/ages.py`.                                                                                                                                             |
-| `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `GridBreakpoint`, and the `@categorical` decorator                               |
-| `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
-| `persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, complete-result `save_solution` / `load_solution`, and `load_legacy_solution`. Archive and snapshot writers live in `_lcm/persistence/`.            |
-| `result.py`      | `SimulationResult`. DataFrame assembly, metadata, and additional-targets computation live in `_lcm/simulation/result_*.py` and `_lcm/simulation/additional_targets.py`.                                   |
-| `solver_api.py`  | Lightweight versioned contracts for solver identity, kernel output, artifacts, replay, lazy solution stores, and descriptive result metadata.                                                             |
-| `solvers.py`     | Built-in solver configurations and the complete public re-export façade used by an out-of-tree solver.                                                                                                    |
-| `params.py`      | `as_leaf` plus the `MappingLeaf` / `SequenceLeaf` re-exports. The leaf-class definitions and the engine params machinery live in `_lcm/params/`.                                                          |
-| `typing.py`      | The model-authoring aliases (`FloatND`, `ScalarInt`, `Period`, `Age`, ...) and the `User*` boundary aliases.                                                                                              |
-| `exceptions.py`  | Every project-specific exception class.                                                                                                                                                                   |
+| File                                                                  | What lives there                                                                                                                                                                                                                                           |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model.py`                                                            | `Model`                                                                                                                                                                                                                                                    |
+| `regime.py`                                                           | `Regime`, including its `koopmans_aggregator` slot — left empty, `finalize_regimes` injects the model-level default `lcm.LinearAggregator`. Validators live in `_lcm/user_regime_validation.py`; the phase normalizer in `_lcm/regime_building/phases.py`. |
+| `ages.py`                                                             | `AgeGrid`. Step parser and validators live in `_lcm/ages.py`.                                                                                                                                                                                              |
+| `grids.py`                                                            | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `GridBreakpoint`, and the `@categorical` decorator                                                                                |
+| `processes.py`                                                        | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`.                                                  |
+| `persistence.py`                                                      | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, complete-result `save_solution` / `load_solution`, and `load_legacy_solution`. Archive and snapshot writers live in `_lcm/persistence/`.                                                             |
+| `result.py`                                                           | `SimulationResult`. DataFrame assembly, metadata, and additional-targets computation live in `_lcm/simulation/result_*.py` and `_lcm/simulation/additional_targets.py`.                                                                                    |
+| `solver_api.py`                                                       | Lightweight versioned contracts for solver identity, kernel output, artifacts, replay, lazy solution stores, and descriptive result metadata.                                                                                                              |
+| `solvers.py`                                                          | Built-in solver configurations and the complete public re-export façade used by an out-of-tree solver.                                                                                                                                                     |
+| `params.py`                                                           | `as_leaf` plus the `MappingLeaf` / `SequenceLeaf` re-exports. The leaf-class definitions and the engine params machinery live in `_lcm/params/`.                                                                                                           |
+| `typing.py`                                                           | The model-authoring aliases (`FloatND`, `ScalarInt`, `Period`, `Age`, ...), the domain string labels (`RegimeName`, `StateName`, ...), the `UserFunction` protocol, and the `User*` boundary aliases.                                                      |
+| `exceptions.py`                                                       | Every project-specific exception class.                                                                                                                                                                                                                    |
+| `execution.py`                                                        | `ExecutionConfig` — devices, sharded states, planner-owned axis widths, the device-memory budget and its headroom fraction.                                                                                                                                |
+| `phased.py`                                                           | `Phased`, the container for phase-specific variants of a regime-slot value.                                                                                                                                                                                |
+| `transition.py`                                                       | `fixed_transition`, `MarkovTransition`, `JointTransition`.                                                                                                                                                                                                 |
+| `collective.py`                                                       | `ValueDependentTransition`, `StakeholderRoute`, `ProjectedRegimeValue`, `ValueDependentConstraint`, `CollectiveUtility`, `ParetoObjective`.                                                                                                                |
+| `koopmans_aggregation.py`                                             | `KoopmansAggregator`, `LinearAggregator`, `CESAggregator`.                                                                                                                                                                                                 |
+| `certainty_equivalent.py`, `branch_aggregation.py`, `outer_search.py` | Re-export façades for classes whose definitions live in `_lcm/`.                                                                                                                                                                                           |
+| `condition.py`                                                        | `lcm.ref` and the declared-condition vocabulary every solver reads the same way.                                                                                                                                                                           |
+| `case_piece.py`                                                       | `case_boundary`, `piece`, `piecewise_affine`, `affine_breakpoint`, `smooth_helper`.                                                                                                                                                                        |
+| `taste_shocks.py`                                                     | `ExtremeValueTasteShocks`.                                                                                                                                                                                                                                 |
+| `fixed_forms.py`, `consumption_savings_regime.py`                     | The conventional accounting nodes and the specialized regime declarations a one-asset consumption-savings model can reuse.                                                                                                                                 |
+| `_compilation_cache.py`, `_solver_api/`                               | Underscore-private inside `lcm/`: the persistent-cache location `lcm/__init__.py` needs before anything else imports, and the implementation `solver_api.py` re-exports.                                                                                   |
 
 ### Why a package boundary, not just naming?
 
@@ -134,8 +178,10 @@ _lcm/processes/
 ├── base.py            ← _ContinuousStochasticProcess + Gauss-Hermite / mixture helpers
 ├── iid.py             ← UniformIIDProcess, NormalIIDProcess, LogNormalIIDProcess,
 │                        NormalMixtureIIDProcess
-└── ar1.py             ← TauchenAR1Process, RouwenhorstAR1Process,
-                         TauchenNormalMixtureAR1Process
+├── ar1.py             ← TauchenAR1Process, RouwenhorstAR1Process,
+│                        TauchenNormalMixtureAR1Process
+├── grid_resolution.py ← admission of a support only runtime params fix
+└── state_conditioned.py ← direct-CDF rows when a shock parameter varies with a state
 ```
 
 The leaf classes are surfaced through `lcm/grids.py` and `lcm/processes.py`; the ABCs
@@ -207,10 +253,12 @@ machinery operates on:
 
 - `Regime` — the canonical regime (distinct from the user-facing `lcm.regime.Regime`; in
   source files that import both we alias the user-facing one as `UserRegime`).
-- `StateActionSpace` — pre-built state and action grids for a regime, with a
-  `state_action_space(params)` method that fills in runtime-supplied grid points.
-- `SolveFunctions` / `SimulateFunctions` — the compiled function bundles consumed by
-  `solve` and `simulate`.
+- `StateActionSpace` — pre-built state and action grids for a regime.
+- `SolutionPhase` / `SimulationPhase` — the canonical `Regime`'s two frozen phase
+  namespaces, reached as `regime.solution` and `regime.simulation`. Each holds that
+  phase's variables, grids and compiled function sets, so every phase-dependent read
+  names its phase in the access path. `SolutionPhase.state_action_space(params)` is the
+  method that fills a `StateActionSpace` with runtime-supplied grid points.
 - `Variables` / `VariableInfo` — name + kind + topology metadata for every state and
   action in a regime.
 - `PeriodRegimeSimulationData` — raw simulation output for one (regime, period) pair,
@@ -271,13 +319,58 @@ _lcm/regime_building/
 ├── next_state.py         ← compose per-state transitions into a single
 │                            next_state function for simulation
 ├── ndimage.py            ← map-coordinates wrapper for continuous interp
+├── collective.py         ← the stakeholder value gather at the household
+│                            argmax
+├── gated_edges.py        ← the gated-edge objects behind mutual-consent
+│                            marriage / dissolution routing
+├── fixed_process_laws.py ← bind process laws supplied through fixed_params
+│                            into the process grids
+├── transition_invariants.py
+│                         ← construction-time checks that the two transition
+│                            namespaces stayed separate
+├── zero_safe.py          ← zero-weight-safe arithmetic for the collective
+│                            solve core
 └── diagnostics.py        ← cold-path machinery invoked by validate_V to
                             pinpoint *which* intermediate produced a NaN
 ```
 
+### Broadcast pruning is one fixed point over both phases
+
+`prune_broadcast_variables` weeds each regime's *broadcast* states and actions — the
+ones declared at model level — by DAG reachability: a broadcast variable survives in a
+regime only if a root computation of that regime (utility, the Koopmans aggregator,
+constraints, derived categoricals, the regime transition, or a law of motion toward a
+target that keeps the state) transitively reads it. Regime-level declarations are never
+pruned, and `model.pruned_variables` records the outcome per regime.
+
+The two phase slices are not pruned independently. They feed each other — a target that
+keeps a state only because its *simulation* slice reads it makes the *solution*-side
+entry law toward that target a pruning root, and whatever that law reads then has to
+survive in the source — so `_joint_phase_closure` alternates the two slice operators
+until the kept-sets stop growing. The retained set is the least fixed point of both
+operators taken jointly, not one application of each.
+
+Pruning a state from a regime does not delete its whole law of motion.
+`_retained_state_transition` keeps the part that survives: a law keyed by target regime
+is an *entry* law, placing a value on the support of a target that carries the state and
+saying nothing about the source's own copy, so the cells aimed at targets that retain
+the state stand. The entry is dropped only when nothing the regime reaches can receive
+the value. That is what makes promoting a state from regime level to model level a
+declaration move rather than a change of transition structure.
+
 The two-step name (`model_processing` at the model level, `regime_building` per regime)
 reflects what each layer actually does — the top level merges regimes and resolves fixed
 params; each regime is then canonicalised independently.
+
+### Co-mapped landing coordinates
+
+A continuation whose target is read at a landing point co-mapped with the value array
+needs the landing coordinates named, not guessed. `_co_mapped_landing_names`
+(`Q_and_F.py`) asks the continuation's interpolator — gated or plain — which arguments
+it declares, and returns the `next_<state>` names among them for the states co-mapped
+with the continuation's `V`. Only what the interpolator actually names is supplied, so
+adding a co-mapped state does not silently start feeding a coordinate no reader
+consumes.
 
 The numerical checks fired at solve / simulate time live outside `regime_building/`:
 
@@ -326,26 +419,130 @@ build; they do not re-derive it.
 
 ## Solve and simulate
 
+`_lcm/solution/` and `_lcm/simulation/` are the JAX-traced hot paths, and each has grown
+a planning layer around its numerical core. Both packages are large enough that the
+useful map is by *family* rather than by file; the responsibility of every individual
+module is in its own module docstring.
+
 ```
 _lcm/solution/
-├── backward_induction.py  ← backward induction loop:
-│                             V[T], V[T-1], ..., V[0] via max_Q_over_a
+├── backward_induction.py  ← the loop: V[T], V[T-1], ..., V[0], driving whichever
+│                            solver each regime declares
+├── contract.py            ← the seam a solver meets the loop through
+├── grid_search.py, egm.py, dcegm.py, negm.py, nbegm.py, nnbegm.py
+│                          ← the shipped solvers; shipped_solvers.py lists them
+├── action_reduction.py, action_streaming.py, logsumexp_action_reduction.py,
+│   collective_action_reduction.py
+│                          ← the blockwise reductions over the action product
+├── model_authority.py, replay_validation.py, native_values.py, period_capture.py,
+│   period_replay.py       ← what a replay route may assume, and the preflight of it
+├── solve_inputs.py, continuation_reads.py, continuation_target.py,
+│   continuation_arguments.py, undeclared_reads.py, retained_buffers.py
+│                          ← which artifact each dispatch reads, and who still owns it
+├── v_topology.py, kernel_output.py, kernel_attribution.py, artifacts.py,
+│   result_snapshot.py, fingerprint.py, model_seal.py
+│                          ← what a period publishes, and how it is identified
+├── preconditions.py, periodization.py, solver_diagnostics.py, diagnostics.py
 └── validate_V.py          ← per-period NaN / Inf validation
 
 _lcm/simulation/
-├── simulate.py         ← forward sampling loop with state-action draws
-├── compile.py          ← compiled-function assembly for the simulate phase
+├── simulate.py         ← the forward loop over periods, regimes and subjects
+├── programs.py, program_types.py, program_arguments.py, policy_programs.py
+│                       ← the per-regime work, declared as planner-owned programs
+├── runtime.py, compile.py, unit_executor.py, subject_devices.py, subject_parallel.py
+│                       ← lowering, the prepared-route probe, and device-local dispatch
+├── chunk_*.py, memory.py, residency.py, value_reads.py, value_placement.py,
+│   entry_*.py, operand_placement.py, host_operations.py, solution_copies.py
+│                       ← budgeted chunking and the admission of every payload
+├── gated_routing.py    ← the forward value router for gated edges
 ├── random.py           ← PRNG-key handling for the sampling draws
 ├── transitions.py      ← per-state transition composition for simulation
+├── plan_summary.py     ← the diagnostic record of the resolved plan
+├── result_metadata.py, result_dataframe.py, additional_targets.py
 └── initial_conditions.py
                         ← canonicalize / validate the user's
                           initial_conditions kwarg
 ```
 
-These are the JAX-traced hot paths. The DP and sampling logic is the *only* thing here;
-everything that constructs the inputs (parameters, grids, transitions, compiled
-callables) lives in `regime_building/` and is read out of the canonical `Regime`
-instances.
+The DP and sampling logic is the only *numerical* thing here; everything that constructs
+the inputs (parameters, grids, transitions, compiled callables) lives in
+`regime_building/` and is read out of the canonical `Regime` instances. Everything that
+decides *where* those inputs live and *whether* they fit lives in `_lcm/execution/`.
+
+## Execution planning: `_lcm/execution/`
+
+`ExecutionConfig` is a user declaration; `_lcm/execution/` is what resolves it against
+what a model actually declares, before anything is compiled. The package owns five
+concerns that the solve and simulate loops only consume:
+
+- **Placement.** `plan_submesh_placement` (`placement.py`) decides the devices each
+  regime's nodes run on. Sharding follows pruning: a regime that prunes the sharded
+  state runs single-device, and only a state *every* regime prunes is refused.
+- **The transfer catalogue.** `value_transfer.py` resolves each declared value read into
+  exactly one operator (see below).
+- **Liveness and donation.** `liveness.py` counts the declared consumers of each planned
+  input and `donation.py` decides which arguments a dispatch may hand to its executable,
+  so a buffer is released only after its last declared consumer returns.
+- **Scheduling.** `scheduler.py` turns the resolved programs into waves and fixes
+  physical buffer lifetime once the ledger closes a count.
+- **Budget and width.** `execution_plan.py` resolves the device-memory budget and
+  `workspace_planning.py` selects the widest workspace widths that fit inside it.
+
+### The transfer catalogue has six kinds
+
+A stored value is written on one regime's layout and read by another's core, and the two
+need not agree. `classify_value_transfer` is a total function from (stored layout,
+required layout) onto one `ValueTransferKind`:
+
+- `ALIGNED_LOCAL` — already resident on the source core's mesh; passed through with its
+  own partitioning intact.
+- `COPY_TO_SOURCE_LAYOUT` — an explicit copy into the required layout on that mesh.
+- `ALL_GATHER` — a partitioned value the reader needs whole.
+- `LOCAL_SLICE` — a replicated value the reader needs only its own shard of.
+- `RESHARD` — a change of partitioning within one mesh.
+- `CROSS_MESH_COPY` — a copy between two different device sets, for disjoint or nested
+  meshes only.
+
+The one pair no single collective can serve is two meshes that *partially* overlap with
+neither containing the other; that is refused with an `ExecutionPlanningError` rather
+than approximated. A value stored off the source mesh is delivered as a replica
+(`jax.P()`) on the source mesh, and a request for partitioned cross-mesh delivery is
+refused on the same route. The reference table is in
+[Custom solvers](../reference/custom_solvers.md).
+
+Each planned read also authenticates its declared
+`(source_regime, source_period, core_key)` against the compiled core it claims to come
+from, so agreement among declarations cannot make a different node authoritative.
+
+### Continuous-route transfer scratch
+
+Every non-`ALIGNED_LOCAL` transfer needs somewhere to land, and that scratch is charged
+against the budget only on the narrow continuous sharded-state route
+(`_period_transfer_scratch_reservations`, armed when
+`execution.continuous_sharded_state is not None`). The reservation is a declared
+conservative envelope, not measured allocator scratch: every copy is assumed pending
+simultaneously and overlapped with every core's compiler peak, while a copy several
+consumers share is counted once. It requires each transfer's endpoints to equal the
+admission devices, which is what keeps the route inside the devices whose resident and
+concurrent-output burdens were planned.
+
+### Device memory: the headroom, and the note
+
+`ExecutionConfig(device_memory_bytes=...)` is a request, not the ceiling admission uses.
+`_effective_device_memory_bytes` takes the minimum of the request and every selected
+device's allocator pool limit less `device_memory_headroom_fraction` of it (0.15 by
+default), so an already-conservative request is never reduced twice and a device that
+reports no limit contributes no cap. A `None` request applies no pool-derived cap,
+though public model construction still reads each visible device's pool statistics once.
+The result is floored at one byte: a pool small enough that its headroom consumes all of
+it still yields a budget, one that refuses every width — which is the honest outcome,
+where a non-positive budget would not be a budget at all.
+
+The resolved budget is logged as a summary line naming the request, the headroom
+fraction, the per-device limits and the effective ceiling — at warning level when the
+devices capped the request, at info level otherwise. `device_memory_cap_note()` returns
+the same fact as a clause that admission refusals append, so a refusal always says which
+of the two budgets it was measured against.
 
 Workspace admission combines a represented compiler allocation reservation with external
 resident storage. The reservation enforces both the raw peak and
@@ -417,6 +614,62 @@ mutations of an entire result. Loader callbacks remain call-local and do not ent
 archive cache or consumed-view memo. Budgeted foreign artifact authorities, native
 artifact payloads and arbitrary lazy decoders remain unprofiled and are refused before
 their copying or upload callbacks. Their unbudgeted behavior is unchanged.
+
+## Forward simulation: subjects, gates and the prepared route
+
+Simulation's own vocabulary is about the *population* axis, which solve does not have.
+
+### Subject parallelism is declared, not inferred
+
+`SubjectShardable` (`simulation/subject_parallel.py`) is an explicit capability, not a
+shape coincidence: a program declaring it promises that its named argument subtrees
+carry the independent subject axis, that every output leaf retains that axis, and that
+no operation crosses subjects. Merely having an array whose leading extent equals the
+population is *not* this declaration — parameter arrays and solution reads are shared
+even when their first dimension happens to match.
+
+`declared_subject_shard_arg_names` reads the declaration off the innermost callable,
+seeing through the `functools.partial` wrappers the model layer puts around a body to
+bind fixed params, and drops every name a binding has already consumed, so only
+arguments still supplied per dispatch are offered for partitioning. A positional binding
+is refused, because it renames nothing and would shift the keyword contract the
+declaration is written in.
+
+The two halves of a gated edge use this to split differently:
+
+- The **gate fold** (`_GateFoldBody`) reads the next period's value and dissolution
+  arrays on each target's own regime-level grids and writes the substituted continuation
+  over those same grids. No operand and no output carries a subject axis, so it declares
+  `()` — the empty tuple — and is *replicated* wherever the population is spread over
+  several devices.
+- The **gate route** declares `_GATE_ROUTE_SUBJECT_ARG_NAMES` — `next_states`,
+  `new_subject_regime_ids`, `subjects_in_regime`, `own_stakeholder`,
+  `new_own_stakeholder` — and is *partitioned* across the subject devices. The grids the
+  fold published stay shared operands of it.
+
+### The prepared unbudgeted dispatch route
+
+An unbudgeted repeat of an exact abstract signature does not re-walk the full
+materialize-and-plan route. `SimulationRuntime.dispatch` probes a prepared-route record
+*before* anything is materialized, keyed on the complete abstract signature of the
+caller's arguments, and taken only when both `execution.device_memory_bytes is None` and
+no residency context is supplied. A hit binds this call's own leaves onto the cached
+static preparation; a miss — budgeted, first-seen, or freshly bound operands that no
+longer match — takes the validated route, which then publishes the record an exact
+repeat may reuse. The record holds immutable abstract description and compiled code
+only: never a caller array, and never an admission or validation verdict. The runtime's
+own configuration is immutable for its lifetime and therefore deliberately absent from
+the key — a different execution config, device order, width or JIT disposition is a
+different runtime with its own empty cache.
+
+Without a declared budget the runtime still derives a subject tile width rather than
+using a fixed one: `_unbudgeted_subject_width` caps one tile's argument slice at a
+constant byte block, weighing only the operands the materialized program already holds
+abstractly, so the result depends on nothing but the model's shapes, dtypes and the
+population size and is identical on every backend. It never falls below the fixed
+default width, and it passes through the same admissible-width check, so axis alignment,
+the floor and the extent clamp are unchanged. Width is a lowering specialization only: a
+wider tile moves no value and no RNG stream.
 
 ## The solver seam: keys and routes
 
@@ -556,11 +809,12 @@ Small, dependency-light helpers grouped by topic:
 
 ```
 lcm/typing.py    ← user-facing aliases: jaxtyping array shapes (FloatND,
-                   ScalarInt, ...), Period, Age, and the User* boundary
-                   aliases (UserParams, UserInitialConditions, ...)
-_lcm/typing.py   ← engine-side aliases and protocols: string labels
-                   (RegimeName, StateName, ...), compound mapping
-                   aliases, canonical post-processing forms (Params,
+                   ScalarInt, ...), Period, Age, the domain string labels
+                   (RegimeName, StateName, ...), the UserFunction Protocol,
+                   and the User* boundary aliases (UserParams,
+                   UserInitialConditions, ...)
+_lcm/typing.py   ← engine-side aliases and protocols: the compound mapping
+                   aliases, the canonical post-processing forms (Params,
                    InitialConditions, ...), and the structural Protocol
                    classes (EconFunction, TransitionFunction, ...)
 ```
@@ -570,6 +824,11 @@ aliases a user needs to annotate model functions and the `User*` aliases that ac
 wide boundary types; it imports nothing from `_lcm`. `_lcm/typing.py` holds the
 engine-internal aliases — including the post-canonicalization forms (`Params`,
 `InitialConditions`) — and builds on the public aliases it imports from `lcm.typing`.
+
+The domain string labels (`RegimeName`, `StateName`, `ActionName`, `ProcessName`, ...)
+are PEP 695 aliases of `str` that exist purely to make signatures self-documenting. They
+are *defined* in `lcm/typing.py` and re-exported from `_lcm/typing.py`, so
+`from _lcm.typing import RegimeName` keeps working while there is only one definition.
 
 ## Exceptions: `lcm/exceptions.py`
 
@@ -587,8 +846,11 @@ They split into two categories:
   `IncompatibleSolutionError`. These fire from transition/value checks, restored-result
   preflight, or the solution-archive reader during solve / simulate / load.
 
-The exception classes are public — both `from lcm.exceptions import InvalidParamsError`
-and `except lcm.InvalidParamsError` work. `format_messages`, the helper that assembles a
+The exception classes are public, and `lcm.exceptions` is the one place to reach them:
+`from lcm.exceptions import InvalidParamsError`. They are deliberately not re-exported
+on the top-level package, so `lcm.InvalidParamsError` does not resolve.
+`ExecutionPlanningError` — every budget, width, device and sharding refusal — is the one
+a user tuning a model meets most often. `format_messages`, the helper that assembles a
 list of validation errors into one string, is internal validation plumbing and lives in
 `_lcm/utils/error_messages.py`.
 
@@ -597,11 +859,11 @@ list of validation errors into one string, is internal validation plumbing and l
 A few `_lcm/` modules exist for ordering reasons rather than for any conceptual
 grouping:
 
-- `jaxtyping_patch.py` — Bootstrap patch that has to run before any
-  `jaxtyping`-annotated type is created. `_lcm/__init__.py` applies it as its first
-  statement.
 - `beartype_conf.py` — Holds the beartype configurations used in the package (the
-  internal-claw conf + the user-facing constructor-decorator confs).
+  internal-claw conf + the user-facing constructor-decorator confs). `lcm/__init__.py`
+  registers `beartype_package` over both `_lcm` and `lcm` with `INTERNAL_CONF` before
+  either package's submodules load, and `_lcm/__init__.py` bootstraps `lcm` so importing
+  the private package first still installs the claw.
 - `config.py` — Build-time configuration constants (paths to test data, etc.).
 - `dtypes.py` — Canonical-dtype resolution (`canonical_float_dtype()`), which depends on
   the JAX x64 setting.

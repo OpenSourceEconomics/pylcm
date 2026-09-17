@@ -1,3 +1,11 @@
+"""How a stored value function is read back at an arbitrary query point.
+
+`create_v_interpolation_info` records the axis order, grids and category guards
+of a regime's `V_arr`, and `get_V_interpolator` builds the callable the
+continuation evaluates against it — process-aware, so an entered process node
+is looked up rather than interpolated.
+"""
+
 import dataclasses
 import functools
 import inspect

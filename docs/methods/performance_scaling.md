@@ -74,12 +74,14 @@ so model names never force a dense fallback. Blockwise action evaluation preserv
 full represented support; its runtime and memory effect remains empirical.
 
 Before lowering a planned GridSearch core, the engine resolves every declared value read
-to one of two private transfer operations. `ALIGNED_LOCAL` passes an array through when
-it is already resident on the source core's mesh, retaining the value's own
-rank-specific partitioning. `COPY_TO_SOURCE_LAYOUT` makes an explicit copy into the
-supported layout on the source core's mesh. The exact same resolved plan transforms the
-lowering arguments and the runtime arguments; unexpected shape, dtype, sharding,
-address, or conversion combinations fail closed.
+to exactly one of six private transfer operations: `ALIGNED_LOCAL`,
+`COPY_TO_SOURCE_LAYOUT`, `ALL_GATHER`, `LOCAL_SLICE`, `RESHARD` and `CROSS_MESH_COPY`.
+The classification is total over stored and required layouts, and fails closed on the
+one pair no single collective can serve — two meshes that partially overlap with neither
+containing the other. The catalogue's row-by-row contract is the
+[transfer-operator table](../reference/custom_solvers.md). The exact same resolved plan
+transforms the lowering arguments and the runtime arguments; unexpected shape, dtype,
+sharding, address, or conversion combinations fail closed.
 
 Each planned read also authenticates its declared
 `(source_regime, source_period, core_key)` against the actual compiled core before its

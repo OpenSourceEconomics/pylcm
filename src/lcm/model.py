@@ -2245,11 +2245,14 @@ class Model:
                 `model.regime_names_to_ids`). May also be a `pd.DataFrame`
                 with a `"regime_name"` column carrying regime label strings
                 (auto-converted via `initial_conditions_from_dataframe`).
-                Subjects starting in a COLLECTIVE regime also need an
-                `"own_stakeholder"` entry naming the role each one occupies,
-                as an integer code from the model's role vocabulary
-                (`model.stakeholder_names_to_ids`): which partner a row is
-                decides which regime it enters when the household dissolves.
+                A subject starting in a COLLECTIVE regime that can reach a
+                value-dependent transition declaring more than one route --- its
+                own, or one further along --- also needs an `"own_stakeholder"`
+                entry naming the role it occupies, as an integer code from the
+                model's role vocabulary (`model.stakeholder_names_to_ids`):
+                which partner a row is decides which regime it enters when the
+                household dissolves. A collective start that can never arrive at
+                such a transition needs no entry.
             solution: Complete labelled result returned by ``solve()``. Required
                 replay artifacts are validated before forward simulation starts. Its
                 canonical parameters and value schemas are checked even when

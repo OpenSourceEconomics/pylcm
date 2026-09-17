@@ -58,7 +58,13 @@ Its fields:
   device's allocator pool kept out of the ceiling, an operational margin for storage
   outside the represented accounting — collective buffers, library workspaces, the
   driver context, fragmentation. It is a policy, not a measured requirement; `0.0`
-  admits against the whole pool.
+  admits against the whole pool. Resolving a positive budget logs one line naming the
+  request, the fraction, each selected device's pool limit with the bytes the fraction
+  keeps free, the effective ceiling, and whether the devices capped the request. The
+  line is a warning when they did and an informational line when they did not, so a cap
+  is visible from `log_level="warning"` up and an uncapped resolution from `"progress"`.
+  Every admission refusal under a capped budget repeats the effective bytes, the
+  requested bytes, and the fraction that separates them.
 - `sharded_states` names supported model-level states whose grid axes are spread over
   the devices their regimes are placed on. Sharding is resolved per regime: a regime
   whose DAG reads the state carries its axis and runs on the mesh that axis defines,
@@ -515,9 +521,12 @@ Inspection properties include `regime_names`, `state_names`, `action_names`,
 reported (route, subject devices, resolved widths, chunking, budget mode); it is
 diagnostic only and is `None` for a result read back with `load`.
 
-`SimulationResult.save(directory=...)` writes array checkpoints, value functions,
-metadata, and a Feather table. `SimulationResult.load(directory=...)` restores it;
-`plan_summary` (like `solution`) is not part of the saved archive.
+`SimulationResult.save(directory=..., df_additional_targets=None, df_use_labels=True)`
+writes array checkpoints, value functions, metadata, and a Feather table. The two `df_*`
+keywords are passed through to `to_dataframe` when projecting that table and select what
+it holds; they leave the other three artifacts unchanged.
+`SimulationResult.load(directory=...)` restores it; `plan_summary` (like `solution`) is
+not part of the saved archive.
 
 (api-standalone-persistence)=
 

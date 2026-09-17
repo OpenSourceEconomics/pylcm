@@ -43,6 +43,24 @@ def test_solve_resolves_chain_via_dags():
 Rule of thumb: **would the docstring still make sense in 9 months without the PR
 context?** If not, rewrite it.
 
+### When a certificate goes red
+
+Editing a file under `src/` can turn a `tests/test_*_certificate.py` battery red for a
+reason unrelated to whether the edit is correct: the candidate certificate pins every
+certified source by byte digest, and pins the callables and transport surfaces its nine
+proved corridors depend on by AST digest. A moved callable stales a pin whether or not
+it changed behavior.
+
+Do not treat that as a test to relax. Re-anchor it, or find out why it moved:
+[Certification and preflight](../docs/development/certification.md) gives the exit-code
+decision table, the re-anchor procedure, and the rule that governs both — never refresh
+a seal merely to make a changed route green.
+
+Two related obligations: a new test file must be registered in
+`tests/ci/ci-workloads.json`, and several test files are pinned by path and classname by
+`cpu.yml` and the timing-report checkers, so moving one needs the checklist on that page.
+See [build-and-test.md](build-and-test.md).
+
 ### Concrete-value assertions
 
 Assert *what* the result is, not just that it didn't crash.

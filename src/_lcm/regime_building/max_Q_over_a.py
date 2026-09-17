@@ -1,3 +1,12 @@
+"""Reduce a period's Q over its action axes into that period's value.
+
+`get_max_Q_over_a` builds the dense reducer — a hard max, or the EV1 smoothed
+maximum when the regime declares taste shocks. `get_streaming_max_Q_over_a` is
+the blockwise route that never materializes the whole action product, and
+`get_argmax_and_max_Q_over_a` the variant simulation needs, which returns the
+winning action alongside the value.
+"""
+
 import functools
 import inspect
 import math

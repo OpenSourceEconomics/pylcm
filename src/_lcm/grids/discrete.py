@@ -1,3 +1,9 @@
+"""`DiscreteGrid`: the outcome space of one categorical variable.
+
+It holds the category class whose codes index that variable's axis; stochastic
+movement over those codes is declared with `MarkovTransition`, not here.
+"""
+
 import jax.numpy as jnp
 from beartype import beartype
 

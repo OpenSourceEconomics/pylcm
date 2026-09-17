@@ -1,5 +1,10 @@
 ## Architecture
 
+The full source map — every package under `src/lcm` and `src/_lcm` with its
+responsibility, the execution-planning layer, and the forward-simulation vocabulary —
+is [Internal Architecture](../docs/explanations/architecture.md). This page is the
+short form an agent needs before editing.
+
 ### Core Components
 
 **Model Definition (`src/lcm/model.py`, `src/lcm/regime.py`)**
@@ -104,16 +109,33 @@
 
 **Solution (`src/_lcm/solution/`)**
 
-- `backward_induction.py`: Brute force dynamic programming solver using backward
-  induction
+- `backward_induction.py`: the backward-induction loop that drives whichever solver each
+  regime declares. It dispatches that solver's core programs, rolls published values and
+  continuation artifacts up a period, and releases a buffer once its last declared
+  consumer has returned.
+- `contract.py`: the seam every solver meets the loop through. The shipped solvers are
+  GridSearch, EGM, DC-EGM, NEGM, NB-EGM and N-NB-EGM (`shipped_solvers.py`).
 - Entry point: `model.solve()` method
 
 **Simulation (`src/_lcm/simulation/`)**
 
 - `simulate.py`: Forward simulation of solved models
+- `programs.py` / `runtime.py`: the per-regime work declared as planner-owned programs,
+  and the lowering and dispatch of it. Subject parallelism is an explicit
+  `SubjectShardable` declaration, never inferred from a leading extent: a gate fold
+  declares no subject argument and is replicated, a gate route declares five and is
+  partitioned.
 - `SimulationResult` (`src/lcm/result.py`): result object with deferred DataFrame
   computation
 - Entry point: Model methods (`solve()`, `simulate()`)
+
+**Execution planning (`src/_lcm/execution/`)**
+
+- Resolves the public `ExecutionConfig` against what the model declares, before anything
+  compiles: per-regime submesh placement, the six-kind transfer catalogue for declared
+  value reads, remaining-consumer liveness and donation, the wave schedule, the
+  device-memory budget (request capped by each device's pool limit less its headroom
+  fraction), and the workspace widths that fit inside it.
 
 **Grid System (`src/_lcm/grids/`, `src/_lcm/processes/`)**
 
@@ -153,8 +175,18 @@ regime names to transition functions for target-dependent transitions.
 
 1. User defines `Regime`(s) with grids, functions, states/actions
 1. User creates `Model` from a dict of regimes with `ages` and `regime_id_class`
-1. `process_regimes()` converts user-facing `Regime` instances into canonical
-   `_lcm.engine.Regime` objects and pre-compiles optimization functions
+1. `finalize_regimes()` merges the model-level slots into each regime, injects the
+   Koopmans aggregator and certainty equivalent, and validates completeness; the result
+   is still a plain `lcm.regime.Regime`, which the params template reads
+1. `prune_broadcast_variables()` weeds the broadcast states and actions per regime by
+   DAG reachability, closing both phase slices jointly to one fixed point
+1. `normalize_regime_phases()` expands every slot into per-phase `RegimePhaseSpec`
+   slices, then `canonicalize_regimes()` rewrites each slice's laws and regime
+   transition into the canonical target-granular form
+1. `process_regimes()` converts the canonical spec into `_lcm.engine.Regime` objects and
+   pre-compiles optimization functions
+1. Execution planning (`_lcm/execution/`) resolves `ExecutionConfig` into placement,
+   transfers, the device-memory budget and the workspace widths admission allows
 1. `model.solve()` performs backward induction using dynamic programming
 1. `model.simulate()` performs forward simulation using solved policy functions
 1. `SimulationResult.to_dataframe()` creates flat DataFrame output
@@ -173,4 +205,11 @@ regime names to transition functions for target-dependent transitions.
 - `tests/solution/`: Tests for solution algorithms
 - `tests/simulation/`: Tests for simulation functionality
 - `tests/regime_building/`: Tests for regime compilation pipeline
+- `tests/execution/`: Tests for placement, transfers, liveness and admission
+- `tests/egm/`: Tests for the EGM family's kernels, envelopes and outer search
+- `tests/constraints/`: Tests for declared constraints and their routes
+- `tests/params/`: Tests for params templating and canonicalization
+- `tests/ci/`: The collection-time execution-policy markers and their validation
+- `tests/candidate_certificate/`: Source seals and the certificate corridors
+- `tests/conformance_solver/`: The out-of-tree solver exercising the public contract
 - `tests/data/`: Analytical solutions and regression test data
