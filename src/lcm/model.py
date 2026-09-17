@@ -2798,11 +2798,19 @@ def _fail_if_a_sharded_state_is_pruned(
     pruned_variables: Mapping[RegimeName, frozenset[str]],
     sharded_states: frozenset[StateName],
 ) -> None:
-    """Refuse a sharded state whose axis a non-terminal regime does not carry.
+    """Refuse a sharded state that no regime at all carries.
 
-    The device axis a sharded state defines has to exist wherever a value is
-    stored, so a regime whose DAG never reads the state would publish a value
-    with no such axis.
+    Sharding is per regime. A regime whose DAG reads the state carries its grid
+    axis and takes the submesh that axis defines; a regime that never reads it
+    publishes a value without the axis and is placed on a single device, and the
+    values crossing between the two placements move through the planner's
+    transfer catalogue. So a state being dropped from a regime — terminal or
+    not — is an ordinary plan, and only a state every regime drops is refused:
+    it defines no device axis anywhere, so nothing would be spread over devices.
+
+    The continuous sharding route is narrower and checks its own requirement
+    that the state be retained in every regime; see
+    `_validate_sharded_state_capability`.
 
     Args:
         user_regimes: Immutable mapping of regime names to finalized regimes.
@@ -2811,19 +2819,22 @@ def _fail_if_a_sharded_state_is_pruned(
         sharded_states: State names the configuration spreads over devices.
 
     Raises:
-        ExecutionPlanningError: A named state is pruned from a non-terminal
-            regime.
+        ExecutionPlanningError: A named state is pruned from every regime.
 
     """
-    for regime_name, regime in user_regimes.items():
-        if regime.terminal:
-            continue
-        offenders = sorted(sharded_states & set(pruned_variables.get(regime_name, ())))
-        if offenders:
-            msg = (
-                f"ExecutionConfig.sharded_states names {offenders!r}, which "
-                f"reachability pruned from non-terminal regime {regime_name!r} — "
-                "its DAG never reads them, so the sharded V-array axis would "
-                "disappear there. Drop the name, or make the regime use the state."
-            )
-            raise ExecutionPlanningError(msg)
+    unread = sorted(
+        name
+        for name in sharded_states
+        if all(
+            name in pruned_variables.get(regime_name, ())
+            for regime_name in user_regimes
+        )
+    )
+    if unread:
+        msg = (
+            f"ExecutionConfig.sharded_states names {unread!r}, but no regime "
+            "retains them: reachability pruned each one everywhere, because no "
+            "regime's DAG reads them. There is no grid axis left to spread over "
+            "devices. Drop the name, or make some regime use the state."
+        )
+        raise ExecutionPlanningError(msg)

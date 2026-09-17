@@ -957,9 +957,9 @@ def test_one_source_reading_a_target_leaves_its_transfer_unshared(
 @_skip_pytest_parallel
 def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
     """A sharded value read by a single-device core is copied onto that device."""
-    # Distributed states are model-level declarations, and construction rejects a
-    # nonterminal source that prunes one, so no model reaches this direction. The
-    # catalogue still names it, rather than leaving the pair unclassified.
+    # A regime that prunes a sharded state runs on one device, so a model does
+    # reach this direction. This check pins the catalogue entry itself, so the
+    # pair stays classified independently of which models produce it.
     target_sharding = NamedSharding(
         jax.make_mesh((4,), ("type1",)),
         PartitionSpec("type1"),

@@ -5,6 +5,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Sharding follows pruning, regime by regime
+
+- A state named in `ExecutionConfig.sharded_states` may be dropped from any regime whose
+  DAG never reads it, not only from a terminal one. The regimes that read the state
+  carry its grid axis and keep the submesh that axis defines; the regimes that prune it
+  publish a value without the axis, are placed as single-device regimes, and exchange
+  values with the sharded regimes through the existing transfer catalogue. A wage shock
+  read through working life and dropped entirely in retirement therefore shards the
+  expensive working-life regimes without forcing the retirement regimes to carry it.
+  Only a state that every regime prunes is refused, because no grid axis is then left to
+  spread over devices; continuous sharding keeps its stricter requirement that the state
+  be retained in every regime.
+
 ### Entry laws survive broadcast pruning
 
 - A regime that does not read a model-level state keeps the `state_transitions` entry

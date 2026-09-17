@@ -54,6 +54,17 @@ class ExecutionConfig:
     sharded_states: tuple[StateName, ...] = ()
     """States whose grid axis is spread over the regime's devices.
 
+    Sharding is resolved per regime, from the state the regime actually carries:
+
+    - A regime whose DAG reads the state carries its grid axis and runs on the
+      submesh that axis defines.
+    - A regime that never reads the state — so reachability prunes it there —
+      publishes a value without the axis and runs on a single device. This is
+      an ordinary plan for a terminal and a non-terminal regime alike, and the
+      values crossing between the two placements are moved by the planner.
+
+    A state every regime prunes leaves no axis to spread and is refused.
+
     A discrete state always qualifies. A continuous state qualifies only on a
     narrow route: it must be the sole sharded state, a model-level
     `LinSpacedGrid` retained in every regime, solved everywhere with

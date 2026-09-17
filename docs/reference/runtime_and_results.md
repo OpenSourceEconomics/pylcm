@@ -60,8 +60,15 @@ Its fields:
   driver context, fragmentation. It is a policy, not a measured requirement; `0.0`
   admits against the whole pool.
 - `sharded_states` names supported model-level states whose grid axes are spread over
-  the devices their regimes are placed on. A continuous grid cannot be sharded merely
-  because its extent divides the number of devices.
+  the devices their regimes are placed on. Sharding is resolved per regime: a regime
+  whose DAG reads the state carries its axis and runs on the mesh that axis defines,
+  while a regime that never reads it — so reachability prunes it there — publishes a
+  value without the axis and runs on a single device. That holds for a non-terminal
+  regime as much as for a terminal one, so a shock read through working life and dropped
+  in retirement shards the working-life regimes alone. A state every regime prunes
+  leaves no axis to spread and is refused. A continuous grid cannot be sharded merely
+  because its extent divides the number of devices, and the continuous route
+  additionally requires the state in every regime.
 - `axis_widths` fixes the compiled width of one named planner axis, leaving the rest to
   the planner; see [Fix a planner axis width](../user_guide/tuning.md). Every key must
   be an axis some core program declares.
@@ -215,8 +222,9 @@ On several devices every regime is placed before anything is compiled:
 - a regime with a state named in `ExecutionConfig.sharded_states` runs on a mesh of as
   many devices as the largest divisor of that state's extent that fits — a three-valued
   type on four devices runs on three;
-- a regime without one runs on one device, taking a device the meshes leave idle in the
-  periods it is active, or else the device with the smallest planned footprint;
+- a regime without one — including a regime that prunes a state other regimes shard —
+  runs on one device, taking a device the meshes leave idle in the periods it is active,
+  or else the device with the smallest planned footprint;
 - regimes of one period that read nothing of each other within the period and sit on
   disjoint devices are dispatched together.
 

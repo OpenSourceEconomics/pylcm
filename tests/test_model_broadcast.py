@@ -292,19 +292,20 @@ def test_broadcast_state_read_only_through_age_specialized_function_survives() -
     assert "bonus_base" not in model.pruned_variables["work"]
 
 
-def test_sharded_state_from_execution_config_pruned_anywhere_raises() -> None:
-    """A state in `sharded_states` must survive pruning in every non-terminal regime."""
-    with pytest.raises(ExecutionPlanningError, match="skill"):
-        _build_model(
-            states={"skill": DiscreteGrid(category_class=_Skill)},
-            state_transitions={"skill": fixed_transition("skill")},
-            regimes={
-                "work": _work_regime(),
-                "retired": _retired_regime(),  # does not read skill
-                "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
-            },
-            execution_config=ExecutionConfig(sharded_states=("skill",)),
-        )
+def test_sharded_state_may_be_pruned_from_a_regime_that_does_not_read_it() -> None:
+    """Sharding follows pruning: only the regimes carrying the state get its axis."""
+    model = _build_model(
+        states={"skill": DiscreteGrid(category_class=_Skill)},
+        state_transitions={"skill": fixed_transition("skill")},
+        regimes={
+            "work": _work_regime(),
+            "retired": _retired_regime(),  # does not read skill
+            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+        },
+        execution_config=ExecutionConfig(sharded_states=("skill",)),
+    )
+
+    assert "skill" in model.pruned_variables["retired"]
 
 
 def test_sharded_state_must_be_declared_at_model_level() -> None:
