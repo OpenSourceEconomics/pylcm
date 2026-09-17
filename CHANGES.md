@@ -5,6 +5,22 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### A value read across regime meshes is planned from where it is stored
+
+- A regime reading another regime's stored value — a gated edge's
+  `ProjectedRegimeValue` fallback is the case that reaches this most often — now has
+  that read planned from the layout the value is actually stored on. Two regimes that
+  retain differently named sharded states run on meshes with different axis names, and
+  the reading core's own partition spec describes its own axes and its own rank, not
+  the other regime's; applying it to the stored value refused a solve that is well
+  defined, with a bare "source sharding is incompatible with value shape" at solve
+  time. Such a value is delivered to the reading core as a replica on that core's mesh
+  and classified by the transfer catalogue from the two concrete layouts, so a model
+  sharding one discrete state in one group of regimes and another in a second group
+  solves. Reads between regimes on one mesh are unchanged, and a pair of meshes that
+  overlap without either containing the other — which no single operator serves — is
+  refused while planning, naming both regimes and both device axes.
+
 ### Sharding follows pruning, regime by regime
 
 - A state named in `ExecutionConfig.sharded_states` may be dropped from any regime whose

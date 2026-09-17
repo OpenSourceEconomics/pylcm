@@ -4792,6 +4792,8 @@ def _resolve_value_input_transfer_plan(
                 require_full_next_value
                 and read.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
             ),
+            target_regime=read.target.regime,
+            source_regime=read.source.source_regime,
         )
         result.append(
             resolve_value_transfer(
@@ -4810,8 +4812,26 @@ def _resolve_value_transfer_layout(
     stored_sharding: object,
     source_execution_sharding: jax.sharding.Sharding,
     require_full_replica: bool = False,
+    target_regime: RegimeName | None = None,
+    source_regime: RegimeName | None = None,
 ) -> tuple[ValueTransferKind, jax.sharding.Sharding]:
-    """Choose the required value layout and name the operator that reaches it."""
+    """Choose the required value layout and name the operator that reaches it.
+
+    Args:
+        stored_sharding: Concrete layout the target regime's value is stored on.
+        source_execution_sharding: Concrete layout the reading core runs on.
+        require_full_replica: Whether the read consumes the complete target line
+            and so needs a replica of it on the source mesh.
+        target_regime: Regime owning the stored value, named in a refusal.
+        source_regime: Regime whose core reads it, named in a refusal.
+
+    Returns:
+        Tuple of the operator and the layout the read is delivered on.
+
+    Raises:
+        ExecutionPlanningError: No single operator serves the two layouts.
+
+    """
     if not isinstance(stored_sharding, jax.sharding.Sharding):
         msg = "A stored target value must expose a concrete JAX sharding."
         raise TypeError(msg)
@@ -4838,31 +4858,73 @@ def _resolve_value_transfer_layout(
         # representation. Its rank-specific partition spec need not equal the source
         # core's own output spec.
         source_sharding = stored_sharding
-    elif isinstance(stored_sharding, jax.sharding.SingleDeviceSharding) and isinstance(
-        source_execution_sharding, jax.NamedSharding
-    ):
-        # A partially distributed model moves the unsharded target onto the source
-        # mesh as a replicated input. Reusing the source output's rank-specific spec
-        # would give an unrelated target value the wrong axis interpretation.
+    elif isinstance(source_execution_sharding, jax.NamedSharding):
+        # A value stored anywhere but the source core's own mesh — on one device,
+        # or on the mesh of a regime that retains a different sharded state — is
+        # moved onto that mesh as a replicated input. The source core's output
+        # spec names that core's own axes and rank, neither of which a value read
+        # from elsewhere shares, so reusing it would give the value the wrong axis
+        # interpretation or no representable one at all.
         source_sharding = jax.NamedSharding(
             mesh=source_execution_sharding.mesh,
             spec=jax.P(),
             memory_kind=source_execution_sharding.memory_kind,
         )
     else:
-        # Every remaining pair is delivered on the source core's own execution
-        # placement, which reuses that core's rank-specific output spec. This is
-        # a placeholder: it stands until the scheduler supplies the required
-        # layout per node, and no route in the repository reaches it before then.
+        # A source core running on one device collects the whole value there.
         source_sharding = source_execution_sharding
 
-    return (
-        classify_value_transfer(
+    try:
+        kind = classify_value_transfer(
             stored_sharding=stored_sharding,
             required_sharding=source_sharding,
-        ),
-        source_sharding,
+        )
+    except ExecutionPlanningError as refusal:
+        raise _unsupported_value_route(
+            target_regime=target_regime,
+            source_regime=source_regime,
+            stored_sharding=stored_sharding,
+            source_sharding=source_sharding,
+            reason=str(refusal),
+        ) from refusal
+    return kind, source_sharding
+
+
+def _unsupported_value_route(
+    *,
+    target_regime: RegimeName | None,
+    source_regime: RegimeName | None,
+    stored_sharding: jax.sharding.Sharding,
+    source_sharding: jax.sharding.Sharding,
+    reason: str,
+) -> ExecutionPlanningError:
+    """Name both regimes and their device axes on a route no operator serves."""
+    target = (
+        "the stored value" if target_regime is None else f"regime {target_regime!r}"
     )
+    source = (
+        "the reading core" if source_regime is None else f"regime {source_regime!r}"
+    )
+    return ExecutionPlanningError(
+        f"{source} cannot read the value of {target}: "
+        f"{target} is {_device_axis_description(sharding=stored_sharding)}, "
+        f"{source} is {_device_axis_description(sharding=source_sharding)}, and "
+        f"no planned transfer serves that pair. {reason}"
+    )
+
+
+def _device_axis_description(*, sharding: jax.sharding.Sharding) -> str:
+    """Describe one endpoint by the device axes it holds and the devices it spans."""
+    device_ids = sorted(device.id for device in sharding.device_set)
+    if isinstance(sharding, jax.NamedSharding):
+        axes = ", ".join(
+            f"{name}={size}"
+            for name, size in zip(
+                sharding.mesh.axis_names, sharding.mesh.devices.shape, strict=True
+            )
+        )
+        return f"sharded over ({axes}) on devices {device_ids}"
+    return f"held on devices {device_ids} with no named axis"
 
 
 def _program_identity(
