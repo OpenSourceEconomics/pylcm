@@ -403,7 +403,7 @@ _SOURCE_SEALS = {
     CORE_PROGRAM_SOURCE: "924a99cdcd6eef3b4d3d4085b59fa0a6b487994395715385af689df207942305",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
     VALUE_TRANSFER_SOURCE: "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6",
-    FOOTPRINT_SOURCE: "b18bdf62be85a0061e75beb39ce62089e20081d651c3efff8e18fca7f23185df",
+    FOOTPRINT_SOURCE: "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
@@ -421,7 +421,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "b9d42222e09c77f14ce9f579f5e418ffc97eed5f37f9efdd67e5fdb82737af54",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "096e9a1f74c38af000ce8c4283be270dd6a02c04ad1d375839b35c7961efdd21",
+    BACKWARD_INDUCTION_SOURCE: "bd503042c3c06a1fcc5accfaf4ecc95508d112924917c645b339ae1066b71199",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "daf16daa43dfa0aa5b832442e8cc87cf6709b8579a658de9dbabdf0cbedd1ecb",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
@@ -3352,12 +3352,12 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     FOOTPRINT_SOURCE: (
-        "d09f1066bdd73567c6c4724353061b85e6f5af70058297031c5c2c49022a5112",
+        "4dd2b67234f6ef9bb384b35e338d4bcb67bd3d4ccc8c2e8444a39940e6ea5f58",
         {
             "ArtifactFootprint.__post_init__": "508bd37bbb30d5e0511ddb2de9d98f6c1c2318ab928635b73b413c942d72a4a7",
             "ScheduledUnit.__post_init__": "2c144891456c3626aaf1b62591a35e6c004e5d182b1ceb12dab4ce10d0b4d7d5",
             "ResidentInventory.__post_init__": "75124f4adb54bfbfc0347d29218b4a83835ac800fe30a53f4008ab55f13df35d",
-            "ResidentInventory.resident_bytes": "1e9d28abeedf020a8023d58fad6a15ea4b891dcdd32c159d54290ec6c8f02e99",
+            "ResidentInventory.resident_bytes": "f3aeaf93e4e584e9cbe96b3cce8f6e0b49daf95e202bbba0dce89e7ae0a98aa7",
             "concrete_device_bytes": "14a88daf386078b838eacdf48a33e3c9894b3e958894e6973be7f823b6ffaab0",
             "plan_resident_bytes": "e9c46841e6663fe1e7b33a952b2bd7c08335e87e70ca813cd0e3314068ab985f",
             "plan_resident_inventory": "ad8c2a316cade31c67c6ee4ccfcb13d93334971bcac34a9bddb65b39473ece8a",
@@ -3887,11 +3887,11 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "07388b0bbb90c468edaa47054fc7a0a45c2e327657eb2512d703b518ac9fba07",
+        "704adf05fb11622048f9a1c2a05b794e39f5d1cf73f93bf5d34c8b8adee8c268",
         {
-            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_compile_all_functions": "f46df6a8b4c2b2af24c819c8c318673554436a235f9d7fc273403fff567aab25",
+            "_compile_all_functions": "81716273b2551a1c04ff6e31617c3f23e6e54d1477c745ed84c279e0808824ea",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -3971,9 +3971,9 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "07388b0bbb90c468edaa47054fc7a0a45c2e327657eb2512d703b518ac9fba07",
+        "704adf05fb11622048f9a1c2a05b794e39f5d1cf73f93bf5d34c8b8adee8c268",
         {
-            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "solve": "caa95220392e0168fe7e938fcad8fa81ece3b692c60f2194e5fad6ee5878067e",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
@@ -4240,9 +4240,9 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "07388b0bbb90c468edaa47054fc7a0a45c2e327657eb2512d703b518ac9fba07",
+        "704adf05fb11622048f9a1c2a05b794e39f5d1cf73f93bf5d34c8b8adee8c268",
         {
-            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_prepare_abstract_program": "e52dc8d942166c76985f13cf7cacb53041b1cfe2bedf72a67f23f1d4d90dad93",
         },
@@ -4434,7 +4434,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="backward output-layout transport",
         contracts={
-            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_evaluate_edge_fold": "1da268a4d4b0f6b5499bd8522803f916d0a194b8cd3be02b190e0797bb9a28ff",
             "_lower_and_compile_wave": "5861fc4d596eafe76732a20b20a831e2abe1b55a24b3d1c19968b5bc89e821ff",
@@ -4442,7 +4442,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "f46df6a8b4c2b2af24c819c8c318673554436a235f9d7fc273403fff567aab25",
+            "_compile_all_functions": "81716273b2551a1c04ff6e31617c3f23e6e54d1477c745ed84c279e0808824ea",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
             "_resolve_output_layouts_and_lowering_keys": "52337a240e326511fd44a9a94ba234126f301a39032a94d836aa77aaa1e9e15c",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
@@ -4461,7 +4461,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_attach_resolved_output_layout": "f707999431091164dc9aaa784b89560044f95c11c9cf3fe9631cb094952f9944",
             "_publish_kernel_value": "df201c75574aab5280bc841d51cfb143c6a2939a65cc5e8bdee8884760d3e2d2",
             "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
-            "_resident_inventory_by_triple": "2d2d2d73e47e5dede8ae324bb767649124c7201e637b314c5db2205e9af4b5bb",
+            "_resident_inventory_by_triple": "62b94dba3601033214595d6964060fbe5c0562de7029e60b500664afa73333c0",
             "_candidate_resident_bytes": "e0c819f129b362a5490302b8e758bce8c655df753bcb3476f2a511bcd2fc517d",
             "_compiler_reads_source": "20c00aa592517ee03fba67359c951a15152129e96f3d7ccbf38415506f2fa60e",
             "_period_copy_reservations": "b5ffa438a989ee6e746686b0553ffb90708d4be519dcf19235cddd8cd4623651",
@@ -4473,7 +4473,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "07388b0bbb90c468edaa47054fc7a0a45c2e327657eb2512d703b518ac9fba07"
+        != "704adf05fb11622048f9a1c2a05b794e39f5d1cf73f93bf5d34c8b8adee8c268"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6328,15 +6328,15 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "07388b0bbb90c468edaa47054fc7a0a45c2e327657eb2512d703b518ac9fba07",
+        "704adf05fb11622048f9a1c2a05b794e39f5d1cf73f93bf5d34c8b8adee8c268",
         {
-            "_period_transfer_scratch_reservations": "a0a2ba1e409649ce146e12a8472709b14c6ee36aab8af4b807fd4dbc76c2e18c",
+            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "solve": "caa95220392e0168fe7e938fcad8fa81ece3b692c60f2194e5fad6ee5878067e",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
             "_iter_edge_topologies": "de3078515a59f624e07889c6f3e05c8ac948472416c81a993c8d02f29905789b",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "f46df6a8b4c2b2af24c819c8c318673554436a235f9d7fc273403fff567aab25",
+            "_compile_all_functions": "81716273b2551a1c04ff6e31617c3f23e6e54d1477c745ed84c279e0808824ea",
             "_resolve_output_layouts_and_lowering_keys": "52337a240e326511fd44a9a94ba234126f301a39032a94d836aa77aaa1e9e15c",
         },
     ),

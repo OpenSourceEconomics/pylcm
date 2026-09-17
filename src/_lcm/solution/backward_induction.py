@@ -2702,7 +2702,6 @@ def _resident_inventory_by_triple(
     templates: SolveInputMappings,
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
-    reserve_transfer_scratch: bool = False,
     fixed_bytes: Mapping[int, int] = MappingProxyType({}),
 ) -> MappingProxyType[_CoreTriple, ResidentInventory]:
     """Predict, per core triple, the live inventory at its scheduled position.
@@ -2715,9 +2714,14 @@ def _resident_inventory_by_triple(
 
     The snapshot retains every live alias group. Only a candidate's own aligned
     reads surviving compiler pruning may later be excluded from its resident
-    bytes. Stored sources of copies remain charged. Concrete fixed owners and
-    whole-period shared-copy reservations add conservative per-device burdens;
-    they may overlap compiler storage and do not predict exact allocator peaks.
+    bytes. Stored sources of copies remain charged. Concrete fixed owners,
+    whole-period shared-copy reservations and the declared transfer-operator
+    scratch add conservative per-device burdens; they may overlap compiler
+    storage and do not predict exact allocator peaks.
+
+    Every route charges that scratch, on every endpoint device of every planned
+    transfer operator, so a cell whose reads cross a mesh boundary is admitted on
+    the complete footprint of the copy and not only on what it delivers.
 
     Sizes come from the solve-lifetime templates, which are period-invariant,
     so an artifact of any period finds the template of what it names.
@@ -2756,30 +2760,19 @@ def _resident_inventory_by_triple(
         period: _period_copy_reservations(period=period, metadata=program_metadata)
         for period in range(_model_n_periods(regimes=regimes))
     }
-    scratch_by_period = (
-        {
-            period: _period_transfer_scratch_reservations(
-                period=period, metadata=program_metadata, device_ids=device_ids
-            )
-            for period in range(_model_n_periods(regimes=regimes))
-        }
-        if reserve_transfer_scratch
-        else {}
-    )
-    if reserve_transfer_scratch and any(
-        inventory.device_ids != device_ids for inventory in resident.values()
-    ):
-        raise ExecutionPlanningError(
-            "Continuous transfer scratch requires every cell to use "
-            "the admission devices."
+    scratch_by_period = {
+        period: _period_transfer_scratch_reservations(
+            period=period, metadata=program_metadata, device_ids=device_ids
         )
+        for period in range(_model_n_periods(regimes=regimes))
+    }
     return MappingProxyType(
         {
             (regime_name, period, core_key): dataclasses.replace(
                 resident[(period, regime_name)],
                 fixed_bytes=fixed_bytes,
                 shared_copies=copies_by_period[period],
-                transfer_scratch_bytes=scratch_by_period.get(period, {}),
+                transfer_scratch_bytes=scratch_by_period[period],
             )
             for (regime_name, period), core_keys in program_keys_by_cell.items()
             for core_key in core_keys
@@ -2821,13 +2814,20 @@ def _period_transfer_scratch_reservations(
     metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
     device_ids: tuple[int, ...],
 ) -> Mapping[int, int]:
-    """Bound all pending copy scratch for one validated continuous-route period.
+    """Bound all pending copy scratch on every endpoint device of one period.
+
+    An operator's declared temporary bytes are what it holds beyond its result,
+    on each device it touches — for a copy onto another mesh, a second whole
+    value, charged on the stored value's devices as well as the reader's. The
+    charge lands on every endpoint, so a device that only sources a copy is
+    admitted on the stored shards plus that scratch rather than escaping the
+    comparison because no kernel of the cell runs there.
 
     This deliberately overlaps every copy miss with every core's compiler peak;
     it is a declared conservative envelope, not measured allocator scratch.
     Shared artifact/layout copies count once, while unshared occurrences can all
-    be pending simultaneously. Endpoint equality keeps this narrow route within
-    the devices whose resident and concurrent-output burdens were planned.
+    be pending simultaneously. An endpoint outside the admission devices has no
+    planned ceiling to be compared against, so it is refused rather than charged.
     """
     scratch: dict[int, int] = {}
     shared: set[Hashable] = set()
@@ -2838,11 +2838,13 @@ def _period_transfer_scratch_reservations(
             if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:
                 continue
             cost = transfer.cost
-            if cost.devices != device_ids:
-                raise ExecutionPlanningError(
-                    "Continuous transfer scratch requires transfer endpoints to "
-                    "equal the admission devices."
+            unplanned = sorted(frozenset(cost.devices) - frozenset(device_ids))
+            if unplanned:
+                msg = (
+                    f"A planned transfer of {transfer.target} has endpoints "
+                    f"{unplanned} outside the admission devices."
                 )
+                raise ExecutionPlanningError(msg)
             if transfer.reused_by_several_consumers:
                 key = (transfer.target, transfer.source_sharding)
                 if key in shared:
@@ -3141,6 +3143,7 @@ def _width_selection_failure(
     *,
     triple: _CoreTriple,
     resident_bytes: int,
+    transfer_scratch_bytes: Mapping[int, int],
     budget_bytes: int,
     execution: ResolvedExecution,
     error: ExecutionPlanningError,
@@ -3148,13 +3151,19 @@ def _width_selection_failure(
     """Name the cell a workspace refusal belongs to and what it competed with.
 
     The budget named here is the effective one, so the message also states the
-    request it came from whenever the devices capped it.
+    request it came from whenever the devices capped it. The resident bytes
+    already contain the transfer charge; it is named separately because a cell
+    refused over a copy it only reads is otherwise indistinguishable from one
+    refused over its own stored values.
     """
     regime_name, period, core_key = triple
+    scratch = max(transfer_scratch_bytes.values(), default=0)
     msg = (
         f"Regime {regime_name!r} at period {period} cannot select a workspace "
         f"width for core {core_key!r}: the plan keeps {resident_bytes} bytes "
-        f"resident on its busiest device against a {budget_bytes}-byte budget."
+        f"resident on its busiest device against a {budget_bytes}-byte budget, "
+        f"of which the period's transfer operators reserve up to {scratch} bytes "
+        f"on a single device."
         f"{execution.device_memory_cap_note()} {error}"
     )
     return ExecutionPlanningError(msg)
@@ -3445,7 +3454,6 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             program_metadata=representative_metadata,
             device_ids=execution.device_ids,
             fixed_bytes=fixed_bytes,
-            reserve_transfer_scratch=execution.continuous_sharded_state is not None,
         )
     )
     if budget_bytes is not None:
@@ -3677,6 +3685,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             raise _width_selection_failure(
                 triple=triple,
                 resident_bytes=resident_bytes_by_triple[triple],
+                transfer_scratch_bytes=resident_inventory[
+                    triple
+                ].transfer_scratch_bytes,
                 budget_bytes=budget_bytes,
                 execution=execution,
                 error=error,

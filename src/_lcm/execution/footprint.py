@@ -85,7 +85,12 @@ class ResidentInventory:
     """Array-free snapshot of the allocations present at one scheduled cell."""
 
     device_ids: tuple[int, ...]
-    """Devices on which this cell's workspace must fit."""
+    """Devices on which this cell's workspace must fit.
+
+    Admission also covers every device a planned transfer operator touches, even
+    one this cell never runs a kernel on: the source of a copy holds its stored
+    shards and the operator's own scratch while the copy is in flight.
+    """
 
     live: Mapping[frozenset[Hashable], Mapping[Hashable, ArtifactFootprint]]
     """Ledger alias groups and each live name's per-device size claim."""
@@ -105,7 +110,12 @@ class ResidentInventory:
     """Whole-period reservations for one destination per shared transfer key."""
 
     transfer_scratch_bytes: Mapping[int, int] = dataclasses.field(default_factory=dict)
-    """Declared whole-period transfer scratch bound, never compiler-excludable."""
+    """Declared whole-period transfer scratch bound, never compiler-excludable.
+
+    Keyed by every endpoint device of the period's transfer operators, source
+    and destination alike, so a device named here that is not a workspace device
+    still enters the admission maximum.
+    """
 
     internal_bytes: int = 0
     """Conservative per-device runtime internal-output reservation for this cell."""
@@ -138,6 +148,14 @@ class ResidentInventory:
         it grants every declared exclusion and therefore returns a lower bound.
         The immutable inventory can answer each width without walking the schedule
         again, and never owns concrete arrays or executable-specific residency.
+
+        The maximum runs over the workspace devices together with every device a
+        transfer operator is charged on, so a source-only endpoint is admitted on
+        what it actually holds. Two burdens belong to the running kernel and are
+        therefore charged on workspace devices only:
+
+        - `peer_bytes`, the outputs of the units dispatched alongside this one
+        - `internal_bytes`, the cell's runtime internal-output reservation
         """
         consumed = frozenset(self.declared_inputs if consumes is None else consumes)
         copies = (
@@ -145,11 +163,15 @@ class ResidentInventory:
             if consumed_copies is None
             else consumed_copies
         )
+        workspace = frozenset(self.device_ids)
         return max(
             _device_bytes(live=self.live, device=device, consumed=consumed)
-            + self.peer_bytes[device]
+            + (
+                self.peer_bytes[device] + self.internal_bytes
+                if device in workspace
+                else 0
+            )
             + self.fixed_bytes.get(device, 0)
-            + self.internal_bytes
             + self.transfer_scratch_bytes.get(device, 0)
             + temporary_bytes.get(device, 0)
             + sum(
@@ -157,7 +179,14 @@ class ResidentInventory:
                 for key, footprint in self.shared_copies.items()
                 if key not in copies and device in footprint.device_ids
             )
-            for device in self.device_ids
+            for device in self.admission_device_ids
+        )
+
+    @property
+    def admission_device_ids(self) -> tuple[int, ...]:
+        """Return every device this cell's admission is decided on, ascending."""
+        return tuple(
+            sorted(frozenset(self.device_ids) | frozenset(self.transfer_scratch_bytes))
         )
 
 

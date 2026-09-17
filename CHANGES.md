@@ -5,6 +5,25 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Every route charges a transfer operator's own storage on every device it touches
+
+- Budgeted admission now reserves a planned transfer's declared temporary bytes — what
+  the operator holds beyond the value it delivers, which for a copy onto another
+  regime's mesh is a second whole value — whenever a solve plans a copy, rather than
+  only on the route that shards a continuous state. The charge lands on each endpoint
+  of the copy, the devices the stored value sits on as well as the reader's, and a
+  device that only sources a copy therefore enters the admission maximum on the stored
+  shards plus that storage instead of escaping the comparison because no kernel of the
+  cell runs there. An endpoint outside the plan's devices has no ceiling to be compared
+  against and is refused by name. Both admission comparisons see the complete figure:
+  the position gate that decides whether a core is compiled at all, and the
+  reservation-plus-residency test that selects its workspace width. A refusal names the
+  transfer charge alongside the regime, period, core and resident bytes, so a cell
+  refused over a copy it only reads is distinguishable from one refused over its own
+  values. Plans whose reads all arrive in their stored layout are unaffected; a plan
+  that copies is admitted at a strictly larger, and now complete, footprint, so a
+  budget that previously admitted it may refuse it.
+
 ### A gated edge may project a sharded state onto the referenced regime's grid
 
 - A gated edge's `ProjectedRegimeValue` — a gate reference or a leg fallback — may now

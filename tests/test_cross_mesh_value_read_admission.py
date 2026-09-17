@@ -30,11 +30,11 @@ test only exist where several devices do, and a topology is pinned before JAX
 initializes a backend.
 """
 
+import dataclasses
 import json
 import re
 import subprocess
 import sys
-from collections.abc import Hashable
 from pathlib import Path
 from typing import Any
 
@@ -501,75 +501,142 @@ def report_solution_round_trip(*, decimal: int) -> dict[str, Any]:
     }
 
 
-def report_admission() -> dict[str, Any]:
-    """Report what the cross-mesh read reserves and the budget that refuses it."""
-    from _lcm.execution.footprint import (  # noqa: PLC0415
-        ArtifactFootprint,
-        ResidentInventory,
+def _capture_reading_inventory(*, model: Model) -> tuple[Any, Any, Any]:
+    """Solve one model and return the admission inventory of its cross-mesh read.
+
+    The residency builder is observed, never replaced: the solve that produces
+    the inventory is the budgeted one the model would run anyway, so the
+    quantities reported are the ones admission actually compared.
+
+    Args:
+        model: The budgeted model to solve.
+
+    Returns:
+        Tuple of the reading core's triple, its planned transfer and the
+        inventory admission consulted at that core's scheduled position.
+
+    """
+    from _lcm.solution import backward_induction  # noqa: PLC0415
+
+    captured: list[tuple[Any, Any]] = []
+    original = backward_induction._resident_inventory_by_triple
+
+    def observe(**kwargs: Any) -> Any:
+        inventories = original(**kwargs)
+        captured.append((kwargs["program_metadata"], inventories))
+        return inventories
+
+    with pytest.MonkeyPatch.context() as probe:
+        probe.setattr(
+            backward_induction, "_resident_inventory_by_triple", observe, raising=True
+        )
+        model.solve(params=_PARAMS, log_level="off")
+
+    for metadata, inventories in captured:
+        for triple, program in metadata.items():
+            for transfer in program.input_transfer_plan:
+                if str(transfer.kind) == "cross_mesh_copy":
+                    return triple, transfer, inventories[triple]
+    raise AssertionError("No planned core reads across the two regime meshes.")
+
+
+def _endpoint_bytes(*, inventory: Any, device: int, scratch_bytes: int) -> int:
+    """Charge one endpoint device, with the transfer scratch set to a given size.
+
+    Nothing is excluded: no compiler pruning, no consumed destination copy. The
+    number is the declared envelope that device carries while the copy is in
+    flight, so passing zero yields the same envelope with the operator's own
+    storage left out.
+    """
+    restricted = dataclasses.replace(
+        inventory,
+        device_ids=(device,) if device in inventory.device_ids else (),
+        transfer_scratch_bytes={device: scratch_bytes},
     )
-    from _lcm.solution.backward_induction import _triples_within_budget  # noqa: PLC0415
+    return restricted.resident_bytes(consumes=(), consumed_copies=frozenset())
+
+
+def _refusal_at(*, budget_bytes: int) -> str:
+    """Return the two-axis model's refusal at one budget, empty if it solves."""
     from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
-
-    model = build_model(devices=tuple(range(_N_DEVICES)), sharded=("a", "b"))
-    _, captured = _solve_capturing_transfers(model=model)
-    crossings = [
-        transfer
-        for core in captured
-        for transfer in core.input_transfer_plan
-        if str(transfer.kind) == "cross_mesh_copy"
-    ]
-    transfer = crossings[0]
-    cost = transfer.cost
-    destination_devices = tuple(
-        sorted(device.id for device in transfer.source_sharding.device_set)
-    )
-
-    # One shared destination is reserved for the whole period it is read in,
-    # at the bytes the required layout holds on each device it lands on.
-    reservation: dict[Hashable, ArtifactFootprint] = {
-        (transfer.target, transfer.source_sharding): ArtifactFootprint(
-            bytes_per_device=cost.per_device_bytes, device_ids=destination_devices
-        )
-    }
-    inventory = ResidentInventory(
-        device_ids=destination_devices,
-        live={},
-        peer_bytes=dict.fromkeys(destination_devices, 0),
-        declared_inputs=(),
-        shared_copies=reservation,
-    )
-    boundary = inventory.resident_bytes(consumes=(), consumed_copies=frozenset())
-    triple = (transfer.source.source_regime, transfer.target.period, "core")
-    admitted = {
-        offset: bool(
-            _triples_within_budget(
-                candidates_by_triple={triple: ()},
-                resident_bytes_by_triple={triple: boundary},
-                budget_bytes=boundary + offset,
-            )
-        )
-        for offset in (-1, 0, 1)
-    }
 
     try:
         build_model(
             devices=tuple(range(_N_DEVICES)),
             sharded=("a", "b"),
-            device_memory_bytes=_IMPOSSIBLE_BUDGET_BYTES,
+            device_memory_bytes=budget_bytes,
         ).solve(params=_PARAMS, log_level="off")
     except ExecutionPlanningError as refusal:
-        budgeted_refusal = str(refusal)
-    else:
-        budgeted_refusal = ""
-    resident = re.search(r"keeps (\d+) bytes resident", budgeted_refusal)
+        return str(refusal)
+    return ""
 
-    budgeted = build_model(
+
+def _refusal_without_transfer_scratch(*, budget_bytes: int) -> str:
+    """Return the same refusal with the operator's own storage left uncharged.
+
+    The control an accounting claim needs: an inventory that omits the declared
+    temporary bytes has to reach a different verdict at the same budget, or the
+    budget never tested them.
+    """
+    from _lcm.solution import backward_induction  # noqa: PLC0415
+
+    original = backward_induction._resident_inventory_by_triple
+
+    def without_scratch(**kwargs: Any) -> Any:
+        return {
+            triple: dataclasses.replace(inventory, transfer_scratch_bytes={})
+            for triple, inventory in original(**kwargs).items()
+        }
+
+    with pytest.MonkeyPatch.context() as probe:
+        probe.setattr(
+            backward_induction,
+            "_resident_inventory_by_triple",
+            without_scratch,
+            raising=True,
+        )
+        return _refusal_at(budget_bytes=budget_bytes)
+
+
+def _refused_before_compiling(*, message: str) -> bool:
+    """Whether a refusal came from the position gate rather than from a width.
+
+    A core whose scheduled position already fills the budget is left out of the
+    compilation waves and refused by name; one that passes that gate is refused
+    only after every candidate width has been compiled and priced.
+    """
+    return "resident at the node's position" in message
+
+
+def report_admission() -> dict[str, Any]:
+    """Report what the cross-mesh read reserves and the budget that refuses it."""
+    model = build_model(
         devices=tuple(range(_N_DEVICES)),
         sharded=("a", "b"),
         device_memory_bytes=_AMPLE_BUDGET_BYTES,
     )
+    triple, transfer, inventory = _capture_reading_inventory(model=model)
+    cost = transfer.cost
+    destination_devices = tuple(
+        sorted(device.id for device in transfer.source_sharding.device_set)
+    )
+    endpoints = inventory.admission_device_ids
+    scratch = inventory.transfer_scratch_bytes
+
+    # The position gate compares this exact number against the budget, so the
+    # budget one byte above it is the first at which the core is compiled at all.
+    boundary = inventory.resident_bytes()
+    refusals = {
+        offset: _refusal_at(budget_bytes=boundary + offset) for offset in (-1, 0, 1)
+    }
+    mutant_refusal = _refusal_without_transfer_scratch(budget_bytes=boundary)
+
+    budgeted_refusal = _refusal_at(budget_bytes=_IMPOSSIBLE_BUDGET_BYTES)
+    resident = re.search(r"keeps (\d+) bytes resident", budgeted_refusal)
+    mutant_resident = re.search(r"keeps (\d+) bytes resident", mutant_refusal)
+
     reference = _reference_model()
-    budgeted_solution = budgeted.solve(params=_PARAMS, log_level="off")
+    budgeted_solution = model.solve(params=_PARAMS, log_level="off")
     reference_solution = reference.solve(params=_PARAMS, log_level="off")
     ample_mismatches = [
         f"period {period}, {regime_name}"
@@ -585,6 +652,7 @@ def report_admission() -> dict[str, Any]:
 
     return {
         "kind": str(transfer.kind),
+        "reading_regime": triple[0],
         "expected_shape": list(transfer.expected_shape),
         "logical_bytes": cost.logical_bytes,
         "per_device_bytes": cost.per_device_bytes,
@@ -596,10 +664,34 @@ def report_admission() -> dict[str, Any]:
         ),
         "destination_devices": list(destination_devices),
         "required_spec": str(transfer.source_sharding.spec),
+        "workspace_devices": list(inventory.device_ids),
+        "admission_devices": list(endpoints),
+        "transfer_scratch_bytes": {
+            str(device): reserved for device, reserved in scratch.items()
+        },
+        "endpoint_bytes": {
+            str(device): _endpoint_bytes(
+                inventory=inventory, device=device, scratch_bytes=scratch[device]
+            )
+            for device in endpoints
+        },
+        "endpoint_bytes_without_scratch": {
+            str(device): _endpoint_bytes(
+                inventory=inventory, device=device, scratch_bytes=0
+            )
+            for device in endpoints
+        },
         "boundary_bytes": boundary,
-        "admitted_below": admitted[-1],
-        "admitted_at": admitted[0],
-        "admitted_above": admitted[1],
+        "admitted_below": not _refused_before_compiling(message=refusals[-1]),
+        "admitted_at": not _refused_before_compiling(message=refusals[0]),
+        "admitted_above": not _refused_before_compiling(message=refusals[1]),
+        "refusal_at_boundary": refusals[0],
+        "mutant_admitted_at_boundary": not _refused_before_compiling(
+            message=mutant_refusal
+        ),
+        "mutant_resident_bytes": (
+            int(mutant_resident.group(1)) if mutant_resident else 0
+        ),
         "budgeted_refusal": budgeted_refusal,
         "budgeted_resident_bytes": int(resident.group(1)) if resident else 0,
         "ample_budget_matches_reference": not ample_mismatches,
@@ -902,32 +994,91 @@ def test_the_stored_value_and_its_replica_occupy_different_devices(
     assert not set(admission["stored_devices"]) & set(admission["destination_devices"])
 
 
-def test_the_reserved_destination_bytes_are_the_replicas_own_size(
+def test_admission_covers_every_device_the_copy_touches(
     admission: dict[str, Any],
 ) -> None:
-    """The whole-period reservation charges each reading device the full value."""
-    assert admission["boundary_bytes"] == admission["per_device_bytes"]
+    """A device that only sources the copy is compared against the budget too."""
+    assert admission["admission_devices"] == admission["operator_devices"]
 
 
-def test_a_budget_below_the_reserved_replica_admits_no_core(
+def test_a_device_that_only_sources_the_copy_is_no_workspace_device(
     admission: dict[str, Any],
 ) -> None:
-    """A device with less room than the replica needs hosts no workspace."""
+    """The reading core runs on its own mesh; the stored value sits on another."""
+    assert not set(admission["stored_devices"]) & set(admission["workspace_devices"])
+
+
+@pytest.mark.parametrize("endpoint", ["source", "destination"])
+def test_every_endpoint_device_is_charged_the_operators_own_storage(
+    *, admission: dict[str, Any], endpoint: str
+) -> None:
+    """Each device the copy touches carries a second whole value while it runs."""
+    key = "stored_devices" if endpoint == "source" else "destination_devices"
+    charged = [
+        admission["endpoint_bytes"][str(device)]
+        - admission["endpoint_bytes_without_scratch"][str(device)]
+        for device in admission[key]
+    ]
+    assert charged == [admission["temporary_bytes"]] * len(admission[key])
+
+
+def test_a_source_device_is_charged_its_shard_and_the_operators_storage(
+    admission: dict[str, Any],
+) -> None:
+    """Sourcing a copy costs the stored shard plus the whole value in flight."""
+    shard = admission["logical_bytes"] // len(admission["stored_devices"])
+    source = admission["stored_devices"][0]
+    assert admission["endpoint_bytes"][str(source)] >= (
+        shard + admission["temporary_bytes"]
+    )
+
+
+def test_a_budget_below_the_planned_position_admits_no_core(
+    admission: dict[str, Any],
+) -> None:
+    """A device with less room than the plan already keeps hosts no workspace."""
     assert admission["admitted_below"] is False
 
 
-def test_a_budget_equal_to_the_reserved_replica_admits_no_core(
+def test_a_budget_equal_to_the_planned_position_admits_no_core(
     admission: dict[str, Any],
 ) -> None:
-    """A budget the reservation exhausts leaves nothing for a workspace."""
+    """A budget the position exhausts leaves nothing for a workspace."""
     assert admission["admitted_at"] is False
 
 
-def test_a_budget_above_the_reserved_replica_admits_the_core(
+def test_a_budget_above_the_planned_position_admits_the_core(
     admission: dict[str, Any],
 ) -> None:
-    """One byte of room beyond the reservation is what admission asks for."""
+    """One byte of room beyond the position is what admission asks for."""
     assert admission["admitted_above"] is True
+
+
+def test_the_admitting_boundary_counts_the_operators_own_storage(
+    admission: dict[str, Any],
+) -> None:
+    """Leaving the declared temporary bytes out moves the boundary by their size."""
+    assert (
+        admission["boundary_bytes"] - admission["mutant_resident_bytes"]
+        == (admission["temporary_bytes"])
+    )
+
+
+def test_an_inventory_without_the_operators_storage_admits_the_refused_core(
+    admission: dict[str, Any],
+) -> None:
+    """The budget that refuses the complete footprint passes the incomplete one."""
+    assert admission["mutant_admitted_at_boundary"] is True
+
+
+def test_the_refusal_names_the_transfer_charge_it_counted(
+    admission: dict[str, Any],
+) -> None:
+    """A cell refused over a copy says how much of its budget the copy took."""
+    assert (
+        f"transfer operators reserve up to {admission['temporary_bytes']} bytes"
+        in admission["refusal_at_boundary"]
+    )
 
 
 def test_a_budget_too_small_for_the_cross_mesh_solve_is_refused_by_name(
