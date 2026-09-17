@@ -35,6 +35,18 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   overlap without either containing the other — which no single operator serves — is
   refused while planning, naming both regimes and both device axes.
 
+- What such a read costs is stated where the layout is chosen. The replica is charged
+  at its own size — the whole value on every device of the reading mesh, not a shard —
+  with the stored value still charged on its own devices, the operator's scratch
+  charged at the same size again, and every device either end touches named on the
+  planned transfer. A device whose budget the reservation exhausts hosts no workspace
+  and is refused by regime and period. A partitioned delivery is refused rather than
+  chosen even when the reading mesh carries an axis of the stored value's own name and
+  extent, because a value read consumes the complete value on every device: an entry
+  law puts probability on every category of a discrete axis and interpolation spans the
+  whole continuous line, so splitting the value would move the missing pieces into
+  compiled work as a collective the plan does not name.
+
 ### The resolved simulation execution plan is logged
 
 - `Model.simulate` now reports, once per call, the resolved execution plan: the

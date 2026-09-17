@@ -4865,6 +4865,16 @@ def _resolve_value_transfer_layout(
         # spec names that core's own axes and rank, neither of which a value read
         # from elsewhere shares, so reusing it would give the value the wrong axis
         # interpretation or no representable one at all.
+        #
+        # A partitioned delivery would be cheaper, and is refused rather than
+        # chosen, even where the reading mesh happens to carry an axis of the
+        # stored value's own name and extent. Splitting the value over that axis
+        # is valid only for a read each device can answer from its own slice, and
+        # a value read is not such a read: a state transition puts probability on
+        # every category of the axis and interpolation spans the whole continuous
+        # line, so each device consumes the complete value. Partitioning it would
+        # move the missing pieces inside compiled work, as a collective the plan
+        # does not name and admission never charged.
         source_sharding = jax.NamedSharding(
             mesh=source_execution_sharding.mesh,
             spec=jax.P(),
