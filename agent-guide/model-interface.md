@@ -168,6 +168,13 @@ model's actual core programs declare.
   (`off < warning < progress < debug`). It governs all runtime validation: `"off"` skips
   it, `"warning"` / `"progress"` warn and continue, `"debug"` raises. Start projects at
   `"debug"`.
+- `model.validate_initial_conditions(initial_conditions=..., params=...)` and
+  `model.initial_conditions_feasibility(initial_conditions=..., params=...)` check a
+  population without solving or simulating; the second returns a per-subject boolean
+  mask in caller order. They take the `simulate` input forms (mapping or DataFrame), no
+  `log_level`, always raise on malformed structure, and run eagerly on one device
+  without memory admission or padding. Unsupported checks (age-specialized constraint
+  ancestors with subjects at several ages) raise `UnsupportedOperationError`.
 
 ### Derived Categoricals
 

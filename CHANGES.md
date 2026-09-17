@@ -5,6 +5,25 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Initial-condition validation without simulating
+
+- `Model.validate_initial_conditions(initial_conditions=..., params=...)` and
+  `Model.initial_conditions_feasibility(initial_conditions=..., params=...)` check a
+  population without solving or simulating. Both accept the `simulate` input forms (a
+  mapping of arrays or a DataFrame with regime names, ages and categorical labels) and
+  ordinary user parameters. The first raises `InvalidInitialConditionsError` with the
+  simulation diagnostics; the second returns a one-dimensional boolean mask in caller
+  order, `True` exactly for the subjects admitting a jointly feasible action combination
+  on the declared action grids. Malformed inputs raise from both. The checks run eagerly
+  on one device without device-memory admission or subject padding and take no
+  `log_level`.
+- Subjects of a regime without actions are now checked against that regime's state-only
+  constraints, in `simulate` as well. Populations that previously simulated from such
+  rows raise `InvalidInitialConditionsError` when a state-only constraint fails.
+- A constraint depending on an age-specialized function while subjects start away from
+  the regime's representative age now raises `UnsupportedOperationError` instead of
+  `InvalidInitialConditionsError`, and `simulate` never downgrades it to a warning.
+
 ### Documentation for the execution and certification layers
 
 - `docs/explanations/architecture.md` now describes the execution layer as built:
