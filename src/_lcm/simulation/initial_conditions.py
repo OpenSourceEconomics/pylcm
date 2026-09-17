@@ -72,7 +72,15 @@ from lcm.exceptions import (
     PyLCMError,
     UnsupportedOperationError,
 )
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserInitialConditions
+from lcm.typing import (
+    Bool1D,
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    UserInitialConditions,
+)
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
 # instead of -1 so that JAX indexing produces obviously wrong values rather than
@@ -804,12 +812,119 @@ def validate_initial_conditions(
             age, so that feasibility cannot be evaluated for them.
 
     """
+    initial_states, regime_arr = _admitted_initial_states(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+    )
+    feasibility_errors = _collect_feasibility_errors(
+        initial_states=initial_states,
+        regime_id_arr=regime_arr,
+        regime_names_to_ids=regime_names_to_ids,
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        process_grid_resolver=process_grid_resolver,
+        action_grid_resolver=action_grid_resolver,
+        memory=memory,
+    )
+    if feasibility_errors:
+        raise InvalidInitialConditionsError(format_messages(feasibility_errors))
+
+
+def initial_conditions_feasibility_mask(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> Bool1D:
+    """Return the per-subject feasibility mask of canonical initial conditions.
+
+    Structural and discrete-state validity are preconditions of the mask and
+    raise; feasibility itself is reported per subject. A subject is feasible
+    when at least one combination of its regime's declared action-grid points
+    satisfies every constraint jointly, or, in an action-free regime, when
+    every state-only constraint holds. The mask is computed eagerly on the
+    default device without device-memory admission or subject padding.
+
+    Args:
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
+        regimes: Immutable mapping of regime names to internal regime
+            instances.
+        regime_names_to_ids: Immutable mapping of regime names to integer IDs.
+        flat_params: Immutable mapping of regime names to flat parameter mappings.
+        ages: AgeGrid for the model.
+        process_grid_resolver: Resolver for runtime-generated process grids.
+
+    Returns:
+        Boolean array of shape `(n_subjects,)`, `True` exactly for the feasible
+        subjects, in the order of the supplied rows.
+
+    Raises:
+        InvalidInitialConditionsError: If the regime IDs, state names, shapes,
+            ages or discrete codes are invalid.
+        UnsupportedOperationError: If a constraint depends on an age-specialized
+            function while subjects start away from the regime's representative
+            age, so that feasibility cannot be evaluated for them.
+
+    """
+    initial_states, regime_arr = _admitted_initial_states(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+    )
+    mask = np.ones(int(regime_arr.shape[0]), dtype=bool)
+    for regime_name, regime in regimes.items():
+        subject_indices = np.flatnonzero(
+            np.asarray(regime_arr) == int(regime_names_to_ids[regime_name])
+        ).tolist()
+        if not subject_indices:
+            continue
+        verdict = _regime_feasibility_mask(
+            regime=regime,
+            regime_name=regime_name,
+            initial_states=initial_states,
+            subject_indices=subject_indices,
+            regime_params=_merged_regime_params(
+                regime=regime, regime_name=regime_name, flat_params=flat_params
+            ),
+            ages=ages,
+            process_grid_resolver=process_grid_resolver,
+        )
+        # Without a summary the producer always returns a verdict.
+        assert verdict is not None  # noqa: S101
+        mask[subject_indices] = np.asarray(verdict.feasible)
+    return jnp.asarray(mask)
+
+
+def _admitted_initial_states(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    ages: AgeGrid,
+) -> tuple[Mapping[StateName, FloatND | IntND], Int1D]:
+    """Return the initial states and regime IDs once their structure is admitted.
+
+    Checks, in order, that `"regime_id"` is present and holds valid IDs, that
+    every subject's regime states are supplied with no extras and equal
+    lengths at ages on the grid where the regime is active, and that discrete
+    states hold valid codes.
+
+    Raises:
+        InvalidInitialConditionsError: If any of these checks fails.
+
+    """
     # Build reverse lookup from regime IDs to names. `regime_names_to_ids`
     # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict
     # keys directly; `invert_regime_ids` coerces them to Python `int`.
     regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
-    # Extract regime array
     regime_arr = initial_conditions.get("regime_id")
     if regime_arr is None:
         raise InvalidInitialConditionsError(
@@ -854,28 +969,23 @@ def validate_initial_conditions(
     if structural_errors:
         raise InvalidInitialConditionsError(format_messages(structural_errors))
 
-    # Validate discrete state values
     _validate_discrete_state_values(
         initial_states=initial_states,
         regimes=regimes,
         regime_id_arr=regime_arr,
         regime_names_to_ids=regime_names_to_ids,
     )
+    return initial_states, regime_arr
 
-    # Validate feasibility
-    feasibility_errors = _collect_feasibility_errors(
-        initial_states=initial_states,
-        regime_id_arr=regime_arr,
-        regime_names_to_ids=regime_names_to_ids,
-        regimes=regimes,
-        flat_params=flat_params,
-        ages=ages,
-        process_grid_resolver=process_grid_resolver,
-        action_grid_resolver=action_grid_resolver,
-        memory=memory,
-    )
-    if feasibility_errors:
-        raise InvalidInitialConditionsError(format_messages(feasibility_errors))
+
+def _merged_regime_params(
+    *, regime: Regime, regime_name: RegimeName, flat_params: FlatParams
+) -> dict[str, object]:
+    """Merge a regime's fixed and runtime parameters; the runtime value binds."""
+    return {
+        **regime.resolved_fixed_params,
+        **dict(flat_params.get(regime_name, MappingProxyType({}))),
+    }
 
 
 def _format_missing_states_message(*, missing: set[str], required: set[str]) -> str:
@@ -1111,17 +1221,14 @@ def _collect_feasibility_errors(
         if not subject_indices:
             continue
 
-        regime_params = {
-            **regime.resolved_fixed_params,
-            **dict(flat_params.get(regime_name, MappingProxyType({}))),
-        }
-
         msg = _check_regime_feasibility(
             regime=regime,
             regime_name=regime_name,
             initial_states=initial_states,
             subject_indices=subject_indices,
-            regime_params=regime_params,
+            regime_params=_merged_regime_params(
+                regime=regime, regime_name=regime_name, flat_params=flat_params
+            ),
             ages=ages,
             cohorts=cohorts,
             summary=summary,
@@ -1407,7 +1514,23 @@ def _age_specialized_feasibility_message(
     )
 
 
-def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _RegimeFeasibility:
+    """Per-subject verdict of one regime plus the operands its diagnostics reuse."""
+
+    feasible: Bool1D
+    """`True` for each subject of the regime admitting an action, in `idx_arr` order."""
+    subject_states: Mapping[str, FloatND | IntND]
+    """Per-subject state arrays read by the regime's feasibility function."""
+    flat_actions: Mapping[ActionName, FloatND | IntND]
+    """Flat action grid the verdict was evaluated on; empty without actions."""
+    idx_arr: Int1D | _HostIntArray
+    """Subject indices of the regime, in verdict order."""
+    state_names: tuple[StateName, ...]
+    """State names of the regime's simulation phase."""
+
+
+def _check_regime_feasibility(
     *,
     regime: Regime,
     regime_name: RegimeName,
@@ -1421,7 +1544,11 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
 ) -> str | None:
-    """Check whether all subjects in a regime have at least one feasible action.
+    """Explain which subjects of a regime lack every feasible action.
+
+    The verdict comes from `_regime_feasibility_mask`; this function only turns
+    it into a diagnostic message, evaluating per-constraint admission for the
+    subjects the mask marked infeasible.
 
     Args:
         regime: The internal regime instance.
@@ -1430,9 +1557,96 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
         subject_indices: Indices of subjects starting in this regime.
         regime_params: Merged fixed and runtime parameters for this regime.
         ages: AgeGrid for the model.
+        cohorts: Host cohort metadata of the summary route.
+        summary: Reduced validation summary of the summary route, which
+            records a flag instead of returning a message.
+        process_grid_resolver: Resolver for runtime-generated process grids.
+        action_grid_resolver: Admitted preflight action grids.
+        memory: Simulation memory budget of the budgeted route.
 
     Returns:
         An error message string if any subjects are infeasible, or None.
+
+    """
+    verdict = _regime_feasibility_mask(
+        regime=regime,
+        regime_name=regime_name,
+        initial_states=initial_states,
+        subject_indices=subject_indices,
+        regime_params=regime_params,
+        ages=ages,
+        cohorts=cohorts,
+        summary=summary,
+        process_grid_resolver=process_grid_resolver,
+        action_grid_resolver=action_grid_resolver,
+        memory=memory,
+    )
+    if verdict is None:
+        return None
+    infeasible_mask = np.logical_not(np.asarray(verdict.feasible))
+    infeasible_indices = np.asarray(verdict.idx_arr)[infeasible_mask].tolist()
+    if not infeasible_indices:
+        return None
+
+    per_constraint_admits_any = _per_constraint_feasibility(
+        regime=regime,
+        subject_states=verdict.subject_states,
+        regime_params=regime_params,
+        flat_actions=verdict.flat_actions,
+        idx_arr=verdict.idx_arr,
+        infeasible_indices=infeasible_indices,
+        memory=memory,
+    )
+
+    return _format_infeasibility_message(
+        infeasible_indices=infeasible_indices,
+        regime=regime,
+        regime_name=regime_name,
+        initial_states=initial_states,
+        state_names=verdict.state_names,
+        per_constraint_admits_any=per_constraint_admits_any,
+    )
+
+
+def _regime_feasibility_mask(  # noqa: C901, PLR0912
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    initial_states: Mapping[StateName, FloatND | IntND],
+    subject_indices: list[int],
+    regime_params: Mapping[str, object],
+    ages: AgeGrid,
+    cohorts: _InitialCohorts | None = None,
+    summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
+    action_grid_resolver: PreflightActionGrids | None = None,
+    memory: SimulationMemory | None = None,
+) -> _RegimeFeasibility | None:
+    """Decide for each subject of a regime whether some action combination is feasible.
+
+    Args:
+        regime: The internal regime instance.
+        regime_name: Name of the regime.
+        initial_states: Mapping of state names to arrays (includes "age").
+        subject_indices: Indices of subjects starting in this regime.
+        regime_params: Merged fixed and runtime parameters for this regime.
+        ages: AgeGrid for the model.
+        cohorts: Host cohort metadata of the summary route.
+        summary: Reduced validation summary of the summary route. When given,
+            the reduced flag is appended to it and no subject-sized verdict is
+            retained.
+        process_grid_resolver: Resolver for runtime-generated process grids.
+        action_grid_resolver: Admitted preflight action grids.
+        memory: Simulation memory budget of the budgeted route.
+
+    Returns:
+        The per-subject verdict with the operands diagnostics reuse, or `None`
+        when the verdict was reduced into `summary`.
+
+    Raises:
+        UnsupportedOperationError: If a constraint depends on an age-specialized
+            function while subjects start away from the regime's representative
+            age.
 
     """
     age_specialized_message = _age_specialized_feasibility_message(
@@ -1568,8 +1782,7 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
                 arguments={"feasible": any_feasible},
             )
             return None
-        infeasible_mask = np.logical_not(np.asarray(any_feasible))
-        infeasible_indices = np.asarray(idx_arr)[infeasible_mask].tolist()
+        feasible = jnp.asarray(any_feasible, dtype=bool)
     else:
         # No per-subject varying states: feasibility is identical for all subjects.
         result = _evaluate_constant_feasibility(
@@ -1584,29 +1797,17 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912, PLR0915
                 arguments={"feasible": result},
             )
             return None
-        infeasible_indices = [] if np.any(np.asarray(result)) else subject_indices
+        feasible = jnp.full(
+            len(subject_indices), bool(np.any(np.asarray(result))), dtype=bool
+        )
 
-    if not infeasible_indices:
-        return None
-
-    # The summary route returned before diagnostics, leaving the serial index array.
-    per_constraint_admits_any = _per_constraint_feasibility(
-        regime=regime,
+    # The summary route returned above, so the serial index array is present.
+    return _RegimeFeasibility(
+        feasible=feasible,
         subject_states=subject_states,
-        regime_params=regime_params,
         flat_actions=flat_actions,
         idx_arr=cast("Int1D | _HostIntArray", idx_arr),
-        infeasible_indices=infeasible_indices,
-        memory=memory,
-    )
-
-    return _format_infeasibility_message(
-        infeasible_indices=infeasible_indices,
-        regime=regime,
-        regime_name=regime_name,
-        initial_states=initial_states,
-        state_names=state_names,
-        per_constraint_admits_any=per_constraint_admits_any,
+        state_names=tuple(state_names),
     )
 
 

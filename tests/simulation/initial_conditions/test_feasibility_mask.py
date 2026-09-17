@@ -5,7 +5,10 @@ import pytest
 
 from _lcm.params.processing import process_params
 from _lcm.simulation import initial_conditions as preflight
-from _lcm.simulation.initial_conditions import validate_initial_conditions
+from _lcm.simulation.initial_conditions import (
+    initial_conditions_feasibility_mask,
+    validate_initial_conditions,
+)
 from lcm import IrregSpacedGrid, LinSpacedGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from tests.simulation.initial_conditions._models import (
@@ -290,3 +293,56 @@ def test_budgeted_simulate_accepts_action_free_regime_without_serial_validation(
     )
 
     assert result.to_dataframe()["wealth"].tolist() == [1.0, 5.0]
+
+
+def test_feasibility_mask_marks_each_subject_in_caller_order() -> None:
+    """The mask is `True` exactly for subjects admitting an action, in input order."""
+    model = make_constraint_model(
+        wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
+    )
+    flat_params = process_params(
+        params={
+            "discount_factor": 0.95,
+            "working_life": {"next_regime": {"final_age_alive": 1}},
+        },
+        params_template=model._params_template,
+    )
+    _working_life = model.regime_names_to_ids["working_life"]
+
+    mask = initial_conditions_feasibility_mask(
+        initial_conditions={
+            "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
+            "wealth": jnp.array([0.25, 5.0, 0.3, 7.0]),
+            "regime_id": jnp.array([_working_life] * 4),
+        },
+        regimes=model._regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+        flat_params=flat_params,
+        ages=model.ages,
+    )
+
+    assert mask.tolist() == [False, True, False, True]
+
+
+def test_feasibility_mask_scatters_regime_verdicts_into_interleaved_rows() -> None:
+    """Subjects of different regimes keep their own verdicts at their own rows."""
+    model = make_state_only_constraint_model()
+    flat_params = process_params(
+        params={"discount_factor": 0.95}, params_template=model._params_template
+    )
+    _alive = model.regime_names_to_ids["alive"]
+    _dead = model.regime_names_to_ids["dead"]
+
+    mask = initial_conditions_feasibility_mask(
+        initial_conditions={
+            "age": jnp.array([0.0, 2.0, 1.0, 2.0]),
+            "wealth": jnp.array([0.5, -1.0, 60.0, 5.0]),
+            "regime_id": jnp.array([_alive, _dead, _alive, _dead]),
+        },
+        regimes=model._regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+        flat_params=flat_params,
+        ages=model.ages,
+    )
+
+    assert mask.tolist() == [False, False, True, True]
