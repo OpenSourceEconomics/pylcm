@@ -416,14 +416,14 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "4f628c5f1be6ed7db690b7f91bcc0232e8059fe9ea6f74cdbbac05948a1bcea6",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "90ef5ed68e0e0cacdbde3464ca2f293143a03964452a9eb4c7648ddb6f568499",
+    SIMULATION_SOURCE: "1d3383ea8d035eaf7ee0eb1e17f39417d401973ecdf9804a42005d5443d6b2ac",
     SIMULATION_TRANSITIONS_SOURCE: "76ba02db6b40070033d1c6b3fd5769a675ff8c1d27e2bb8b179246c06be8066e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "06a34c7a7d35656dac696052848dc2175be5d121045c3eb3de465c7441780aac",
+    MODEL_SOURCE: "8b55ea9c9faec1ec1d53c060b779cf4ad5a4effae2d499295317a5320a3e907a",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "568cc6c5769f64cf115c7c2c26714c39470b519ec4fc9522fdd760094d9eec31",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
-    INITIAL_CONDITIONS_SOURCE: "841440a0042a8aba7a78c59c2d869d769b03d4bb44087fc93bdc1b957be6b45c",
+    INITIAL_CONDITIONS_SOURCE: "567cf1ecaf670aca5c8484aba0b936c478fcf16fbdf5fdd2f0d021efb5e53118",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
@@ -3173,7 +3173,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     """
     contracts = {
         SIMULATION_SOURCE: (
-            "46e0b4d121f1f59e9600b4fdcf5d74c20fc865b8c1efff8718ba2ad0fdde6b93",
+            "4952db4e59610cb6110bfd68f9f9e6ff4217d49917933e2aee510ac197adbcc7",
             {
                 "_simulate_regime_in_period": "4bb984cc3b7aac7cc82a31eb5863853ca026fb7863755d8c303458821bda13f9",
                 "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
@@ -3295,17 +3295,18 @@ _SIMULATION_ADAPTER_CONTRACTS = {
     # The entry coordinator preserves both validation families and passes the
     # real retained inventory to each newly profiled summary allocation.
     INITIAL_CONDITIONS_SOURCE: (
-        "7bc819f70f2257c8193b13de0455296e1185fef3069ac5611cd70d86ff49d03e",
+        "485de990e0aac1418b404d973143bb0540b965cab19b1a656f3627babf525e6d",
         {
             "validate_simulation_inputs": "6b7880b6ec88446e26432af74c947b8ab6cb6948426d54db2589b6151bc18096",
             "_preflight_memory": "24af3b888fd7f85f2f580b19b08c0ed565ed2bc3da34ed883c4e7982f5bc5caf",
             "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
             "_pack_initial_summary": "504e89911be3016190066e13c8acebdb890328a4a7d40c4f9e8afd6a6f0b748a",
             "_read_initial_cohorts": "c2de600ad5640aabae10671db6123ec1dcd7dac80b9bf50a8a21e022d30838ad",
-            "validate_initial_conditions": "72d30bb8911db80e74da07e9d2d1daf1241f76addee51cca49acea63c14adcae",
+            "validate_initial_conditions": "c4ce9c80052f493775d61fd3ab7b8e5af8967a5816ff2dfded8d246dbbee7f04",
             "_collect_feasibility_errors": "44069ec69fdb5195f039c09ee4354c8667a217666ff0418cea4e8753b1f93c9f",
             "_age_specialized_feasibility_message": "1eefe701cada0b668ab2eab2e404120b47d2c65ff390afeb1e726ae420fde174",
             "_check_regime_feasibility": "6d08d0a147ab6ec009f5be36d224fb436537f8ba426faac3f3c772e4da7e7e0a",
+            "_regime_feasibility_mask": "1c07f9d4adb0e6fa625a70a92e1c9a5b4fbfbbfe79a1578c693c0cc9c2d8aa25",
             "_run_profiled_feasibility": "7d26c0b25de59dc7402148d72e4a95b9cca6c4999c1c36fcb79351fe7074139e",
             "_FeasibilityCompiler.__call__": "4c1ea17d3d5b511d3299af73798c6bfc6868dd32112e6e89497f80c8bc25f57b",
             "_batched_feasibility_check": "455041410a3c2ecb1b8795c834e0dbc9624bab239e2a19d1dee2c2ae02d70e8d",
@@ -3834,7 +3835,7 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/simulate.py": (
-        "46e0b4d121f1f59e9600b4fdcf5d74c20fc865b8c1efff8718ba2ad0fdde6b93",
+        "4952db4e59610cb6110bfd68f9f9e6ff4217d49917933e2aee510ac197adbcc7",
         {
             "simulate": "7541ae0aa5cdbae1332b56224b37c61afcd04fc84602bfdb0ed2a7a37b992a92",
             "_simulate_regime_in_period": "4bb984cc3b7aac7cc82a31eb5863853ca026fb7863755d8c303458821bda13f9",
@@ -4248,11 +4249,10 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/simulate.py": (
-        "46e0b4d121f1f59e9600b4fdcf5d74c20fc865b8c1efff8718ba2ad0fdde6b93",
+        "4952db4e59610cb6110bfd68f9f9e6ff4217d49917933e2aee510ac197adbcc7",
         {
             "_compute_starting_periods": "33feb11da04e05bfb34b8a2302530eae0746ccd14b94af5575bcefad850c411c",
             "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
-            "_initial_own_stakeholder": "ed1ce36c6c2b26aa9f4787bd8133a1646138d2ad8e01a85f4809140a9e729278",
             "_validate_period_values": "ef665fe0964c3f4354973ab54b2f38c51a6c88c17922b000ce2419a8a18cea8d",
             "_validate_simulated_value": "f67171b240995b23a980791e4218f373eaee7fad34d32106777fea5b099cb9d3",
         },
@@ -4291,12 +4291,13 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "7bc819f70f2257c8193b13de0455296e1185fef3069ac5611cd70d86ff49d03e",
+        "485de990e0aac1418b404d973143bb0540b965cab19b1a656f3627babf525e6d",
         {
             "_CarrierWriter.__call__": "697bae0eaa97d3806c3079466e8c3de66ce08eec331d66402da3fa02958a573e",
             "_build_admitted_initial_states": "ca3e5c754d9c86385c7302441e2199c338239d89edde06c5620874793afc68ec",
             "_cast_carrier": "5a08758007268730f195c44800937e9274ee44167d6ca2ae6ea00dd75ea4800b",
             "_fill_carrier": "0045c72197d9e16fd510a8530d9c0866327182129a2383e902a9619030be4844",
+            "_initial_own_stakeholder": "ed1ce36c6c2b26aa9f4787bd8133a1646138d2ad8e01a85f4809140a9e729278",
             "build_initial_states": "6bc9d8948f600be8b4099ad779be639d6a30c8a66e4612562cc700d9050144c2",
             "trim_pad_from_raw_results": "cbd171f98bdfb340441ebf055920a21b0ba2b88d1740ca7eff9448002f7e2e2e",
         },
@@ -6312,16 +6313,17 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "7bc819f70f2257c8193b13de0455296e1185fef3069ac5611cd70d86ff49d03e",
+        "485de990e0aac1418b404d973143bb0540b965cab19b1a656f3627babf525e6d",
         {
             "validate_simulation_inputs": "6b7880b6ec88446e26432af74c947b8ab6cb6948426d54db2589b6151bc18096",
-            "validate_initial_conditions": "72d30bb8911db80e74da07e9d2d1daf1241f76addee51cca49acea63c14adcae",
+            "validate_initial_conditions": "c4ce9c80052f493775d61fd3ab7b8e5af8967a5816ff2dfded8d246dbbee7f04",
             "_collect_feasibility_errors": "44069ec69fdb5195f039c09ee4354c8667a217666ff0418cea4e8753b1f93c9f",
             "_check_regime_feasibility": "6d08d0a147ab6ec009f5be36d224fb436537f8ba426faac3f3c772e4da7e7e0a",
+            "_regime_feasibility_mask": "1c07f9d4adb0e6fa625a70a92e1c9a5b4fbfbbfe79a1578c693c0cc9c2d8aa25",
         },
     ),
     "src/_lcm/simulation/simulate.py": (
-        "46e0b4d121f1f59e9600b4fdcf5d74c20fc865b8c1efff8718ba2ad0fdde6b93",
+        "4952db4e59610cb6110bfd68f9f9e6ff4217d49917933e2aee510ac197adbcc7",
         {
             "simulate": "7541ae0aa5cdbae1332b56224b37c61afcd04fc84602bfdb0ed2a7a37b992a92",
             "_simulate_subject_chunk": "d7b200529fd1f8740c7641277628be3fb2b2e7cec4a03e386295de2947f95150",
@@ -6730,12 +6732,13 @@ _ACTION_GRID_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/initial_conditions.py": (
-        "7bc819f70f2257c8193b13de0455296e1185fef3069ac5611cd70d86ff49d03e",
+        "485de990e0aac1418b404d973143bb0540b965cab19b1a656f3627babf525e6d",
         {
             "validate_simulation_inputs": "6b7880b6ec88446e26432af74c947b8ab6cb6948426d54db2589b6151bc18096",
-            "validate_initial_conditions": "72d30bb8911db80e74da07e9d2d1daf1241f76addee51cca49acea63c14adcae",
+            "validate_initial_conditions": "c4ce9c80052f493775d61fd3ab7b8e5af8967a5816ff2dfded8d246dbbee7f04",
             "_collect_feasibility_errors": "44069ec69fdb5195f039c09ee4354c8667a217666ff0418cea4e8753b1f93c9f",
             "_check_regime_feasibility": "6d08d0a147ab6ec009f5be36d224fb436537f8ba426faac3f3c772e4da7e7e0a",
+            "_regime_feasibility_mask": "1c07f9d4adb0e6fa625a70a92e1c9a5b4fbfbbfe79a1578c693c0cc9c2d8aa25",
             "_build_flat_action_grid": "65b4591dd17c07ed9e30c5ddf8f89ead9a2899c2af663b9a1d1286fb9e990e0a",
         },
     ),

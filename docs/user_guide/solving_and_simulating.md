@@ -331,10 +331,11 @@ constraint jointly (or, in a regime without actions, where every state-only cons
 holds). `validate_initial_conditions` raises `InvalidInitialConditionsError` exactly
 when that mask contains a `False`, with the diagnostics `simulate(log_level="debug")`
 would print. A malformed structure — unknown regime, missing or extra state, unequal
-lengths, off-grid age, inactive regime, unknown categorical label — raises from both
-methods rather than being counted as infeasible. Neither method takes a `log_level`:
-they always raise. A constraint that depends on an age-specialized function while
-subjects start at different ages cannot be evaluated and raises
+lengths, off-grid age, inactive regime, unknown categorical label, a collective start
+without its `own_stakeholder` — raises from both methods rather than being counted as
+infeasible, so a population they accept is one `simulate` accepts. Neither method takes
+a `log_level`: they always raise. A constraint that depends on an age-specialized
+function while subjects start at different ages cannot be evaluated and raises
 `UnsupportedOperationError`.
 
 ### Further arguments

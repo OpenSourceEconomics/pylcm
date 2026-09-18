@@ -14,9 +14,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   ordinary user parameters. The first raises `InvalidInitialConditionsError` with the
   simulation diagnostics; the second returns a one-dimensional boolean mask in caller
   order, `True` exactly for the subjects admitting a jointly feasible action combination
-  on the declared action grids. Malformed inputs raise from both. The checks run eagerly
-  on one device without device-memory admission or subject padding and take no
-  `log_level`.
+  on the declared action grids. Malformed inputs raise from both, and so does a
+  collective start without the `own_stakeholder` declaration `simulate` demands, so a
+  population the methods accept is one `simulate` accepts. The checks take no
+  `log_level`; at present they run in one eager pass on one device without device-memory
+  admission or subject padding, which does not affect the verdict.
 - Subjects of a regime without actions are now checked against that regime's state-only
   constraints, in `simulate` as well. Populations that previously simulated from such
   rows raise `InvalidInitialConditionsError` when a state-only constraint fails.

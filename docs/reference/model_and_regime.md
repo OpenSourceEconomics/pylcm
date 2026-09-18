@@ -61,11 +61,13 @@ or a DataFrame with a `"regime_name"` column, ages and categorical labels — an
 
 A subject is feasible when at least one combination of its regime's declared action-grid
 points satisfies every constraint jointly or, in a regime without actions, when every
-state-only constraint holds. Both methods run eagerly on the default device, without
-device-memory admission or subject padding, and take no `log_level`: they always raise.
-A constraint that depends on an age-specialized function while subjects start away from
-the regime's representative age raises `UnsupportedOperationError`, from these methods
-and from `simulate` alike.
+state-only constraint holds. Both methods apply every initial-condition check `simulate`
+applies, including the `own_stakeholder` declaration a collective start needs, and take
+no `log_level`: they always raise. The verdict does not depend on how the check is
+executed; at present both run in one eager pass on the default device, without
+device-memory admission or subject padding. A constraint that depends on an
+age-specialized function while subjects start away from the regime's representative age
+raises `UnsupportedOperationError`, from these methods and from `simulate` alike.
 
 `model._regimes` is private canonical engine state.
 

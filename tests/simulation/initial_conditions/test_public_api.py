@@ -20,6 +20,13 @@ from lcm.exceptions import (
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.regime_building.test_collective_regime_simulate import (
+    _DISSOLUTION_PARAMS as DISSOLUTION_PARAMS,
+)
+from tests.regime_building.test_collective_regime_simulate import DissolutionRegimeId
+from tests.regime_building.test_collective_regime_simulate import (
+    _make_dissolution_regimes as make_dissolution_regimes,
+)
 from tests.simulation.initial_conditions._models import (
     make_asymmetric_state_model,
     make_constraint_model,
@@ -297,7 +304,12 @@ def test_unknown_categorical_label_raises(method: str) -> None:
 
 
 def test_runtime_supplied_grid_points_are_used() -> None:
-    """Runtime-supplied irregular grid points bound the feasible set."""
+    """A state grid declared with runtime points can be checked through the public path.
+
+    The runtime `wealth` points must reach `state_action_space` for the grid to be
+    built at all; the verdict itself follows from the consumption grid's minimum
+    against the supplied wealth values, not from the wealth grid.
+    """
     model = make_constraint_model(wealth_grid=IrregSpacedGrid(n_points=15))
     working_life = model.regime_names_to_ids["working_life"]
 
@@ -544,3 +556,39 @@ def test_budget_is_irrelevant_to_the_public_mask_but_not_to_simulate() -> None:
     )
 
     assert result.to_dataframe()["wealth"].tolist() == [5.0, 8.0]
+
+
+def _collective_population_without_roles(model: Model) -> dict[str, jnp.ndarray]:
+    married = model.regime_names_to_ids["married"]
+    return {
+        "wage": jnp.asarray((1.0, 2.0, 3.0)),
+        "age": jnp.zeros(3),
+        "regime_id": jnp.full(3, married, dtype=jnp.int32),
+    }
+
+
+@pytest.mark.parametrize(
+    "method", ["validate_initial_conditions", "initial_conditions_feasibility"]
+)
+def test_collective_start_without_roles_is_rejected_like_simulate(method: str) -> None:
+    """A population `simulate` refuses for a missing role is refused by both methods."""
+    model = Model(
+        regimes=make_dissolution_regimes(),
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=DissolutionRegimeId,
+    )
+    initial = _collective_population_without_roles(model)
+
+    with pytest.raises(InvalidInitialConditionsError) as from_simulate:
+        model.simulate(
+            params=DISSOLUTION_PARAMS,
+            initial_conditions=initial,
+            log_level="debug",
+            seed=0,
+        )
+    with pytest.raises(
+        InvalidInitialConditionsError, match="own_stakeholder"
+    ) as from_method:
+        getattr(model, method)(initial_conditions=initial, params=DISSOLUTION_PARAMS)
+
+    assert str(from_method.value) == str(from_simulate.value)

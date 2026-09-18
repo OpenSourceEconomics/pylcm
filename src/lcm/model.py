@@ -2591,9 +2591,12 @@ class Model:
 
         Accepts the same inputs as `simulate`: a mapping of arrays with
         `"regime_id"` codes, or a DataFrame with a `"regime_name"` column, ages
-        and categorical labels. The check runs eagerly on the default device,
-        without device-memory admission or subject padding, and always raises;
-        there is no `log_level` that downgrades a failure to a warning.
+        and categorical labels. It applies every initial-condition check
+        `simulate` applies, including the role declaration a collective start
+        needs, and always raises; there is no `log_level` that downgrades a
+        failure to a warning. The verdict does not depend on how the check is
+        executed: at present it runs in one eager pass on the default device,
+        without device-memory admission or subject padding.
 
         Args:
             initial_conditions: Starting regime and states, one entry per
@@ -2603,8 +2606,10 @@ class Model:
         Raises:
             InvalidInitialConditionsError: If the structure is malformed
                 (unknown regime, missing or extra state, unequal lengths,
-                off-grid age, inactive regime, invalid categorical code) or if
-                some subject admits no jointly feasible action combination.
+                off-grid age, inactive regime, invalid categorical code), if
+                some subject admits no jointly feasible action combination, or
+                if subjects start in a collective regime without declaring
+                their role where routing needs one.
             UnsupportedOperationError: If a constraint depends on an
                 age-specialized function while subjects start away from the
                 regime's representative age.
@@ -2633,11 +2638,13 @@ class Model:
 
         A subject is feasible when at least one combination of its regime's
         declared action-grid points satisfies every constraint jointly, or, in
-        an action-free regime, when every state-only constraint holds. The
-        check runs eagerly on the default device, without device-memory
-        admission or subject padding. Malformed inputs raise rather than being
-        reported infeasible; `validate_initial_conditions` succeeds exactly
-        when this mask is all `True`.
+        an action-free regime, when every state-only constraint holds.
+        Malformed inputs, including a collective start without the role
+        declaration `simulate` demands, raise rather than being reported
+        infeasible; `validate_initial_conditions` succeeds exactly when this
+        mask is all `True`. The verdict does not depend on how the check is
+        executed: at present it runs in one eager pass on the default device,
+        without device-memory admission or subject padding.
 
         Args:
             initial_conditions: Starting regime and states, one entry per
@@ -2649,7 +2656,8 @@ class Model:
             feasible subjects, in the order of the supplied rows.
 
         Raises:
-            InvalidInitialConditionsError: If the structure is malformed.
+            InvalidInitialConditionsError: If the structure is malformed or a
+                collective start lacks its role declaration.
             UnsupportedOperationError: If a constraint depends on an
                 age-specialized function while subjects start away from the
                 regime's representative age.
