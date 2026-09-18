@@ -139,6 +139,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_solution_metadata,
     snapshot_value_store,
 )
+from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -893,24 +894,36 @@ class Model:
         """
         self._sealed_bindings.fail_if_moved()
         log = get_logger(log_level=log_level)
-        flat_params = self._process_params(params)
-        validate_transitions(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-            logger=log,
-            process_grid_resolver=None,
-        )
-        return self._solve_from_flat_params(
-            flat_params=flat_params,
-            params=params,
-            log=log,
-            retention=retention,
-            max_compilation_workers=max_compilation_workers,
-            log_path=log_path,
-            log_keep_n_latest=log_keep_n_latest,
-            process_grid_resolver=None,
-        )
+        call_id = new_call_id()
+        with solve_phase(name="public_solve", logger=log, call_id=call_id):
+            with solve_phase(name="params_validation", logger=log, call_id=call_id):
+                flat_params = self._process_params(params)
+                validate_transitions(
+                    regimes=self._regimes,
+                    flat_params=flat_params,
+                    ages=self.ages,
+                    logger=log,
+                    process_grid_resolver=None,
+                )
+            result = self._solve_from_flat_params(
+                flat_params=flat_params,
+                params=params,
+                log=log,
+                retention=retention,
+                max_compilation_workers=max_compilation_workers,
+                log_path=log_path,
+                log_keep_n_latest=log_keep_n_latest,
+                process_grid_resolver=None,
+                call_id=call_id,
+            )
+            jax.block_until_ready(
+                [
+                    value
+                    for period_values in result.values.values()  # noqa: PD011
+                    for value in period_values.values()
+                ]
+            )
+        return result
 
     def _solve_from_flat_params(
         self,
@@ -924,6 +937,7 @@ class Model:
         log_keep_n_latest: int,
         retained_input_arrays: object = (),
         process_grid_resolver: ProcessGridResolver | None = None,
+        call_id: CallId | None = None,
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
@@ -931,24 +945,27 @@ class Model:
         with the same grid support; the solve's generated replay facts are
         bound into a copy that belongs to this result alone.
         """
-        declared_authority = self._declared_solution_authority(
-            flat_params=flat_params, process_grid_resolver=process_grid_resolver
-        )
-        retain_all_persistable = retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
-        persistable_artifact_refs = (
-            frozenset(
-                ref
-                for ref, artifact_authority in declared_authority.artifacts.items()
-                if artifact_authority.applicable
-                and artifact_authority.descriptor.persistence
-                is PersistencePolicy.MODEL_VERIFIABLE
+        with solve_phase(name="authority_fingerprint", logger=log, call_id=call_id):
+            declared_authority = self._declared_solution_authority(
+                flat_params=flat_params, process_grid_resolver=process_grid_resolver
             )
-            if retain_all_persistable
-            else frozenset()
-        )
-        model_fingerprint = self._model_fingerprint(
-            flat_params=flat_params, process_grid_resolver=process_grid_resolver
-        )
+            retain_all_persistable = (
+                retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+            )
+            persistable_artifact_refs = (
+                frozenset(
+                    ref
+                    for ref, artifact_authority in declared_authority.artifacts.items()
+                    if artifact_authority.applicable
+                    and artifact_authority.descriptor.persistence
+                    is PersistencePolicy.MODEL_VERIFIABLE
+                )
+                if retain_all_persistable
+                else frozenset()
+            )
+            model_fingerprint = self._model_fingerprint(
+                flat_params=flat_params, process_grid_resolver=process_grid_resolver
+            )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
             model_fingerprint=model_fingerprint,
@@ -964,24 +981,26 @@ class Model:
             collect_solver_diagnostics=True,
             retained_input_arrays=retained_input_arrays,
             process_grid_resolver=process_grid_resolver,
+            call_id=call_id,
         )
-        authority = bind_generated_solution_authority(
-            authority=declared_authority,
-            internal_result=internal_result,
-            regimes=self._regimes,
-            flat_params=flat_params,
-        )
-        return build_solution_result(
-            internal_result=internal_result,
-            retention=retention,
-            regimes=self._regimes,
-            user_regimes=self.user_regimes,
-            n_periods=self.n_periods,
-            model_instance_id=self._solution_model_instance_id,
-            params_fingerprint=self._params_fingerprint(flat_params=flat_params),
-            model_fingerprint=model_fingerprint,
-            authority=authority,
-        )
+        with solve_phase(name="result_assembly", logger=log, call_id=call_id):
+            authority = bind_generated_solution_authority(
+                authority=declared_authority,
+                internal_result=internal_result,
+                regimes=self._regimes,
+                flat_params=flat_params,
+            )
+            return build_solution_result(
+                internal_result=internal_result,
+                retention=retention,
+                regimes=self._regimes,
+                user_regimes=self.user_regimes,
+                n_periods=self.n_periods,
+                model_instance_id=self._solution_model_instance_id,
+                params_fingerprint=self._params_fingerprint(flat_params=flat_params),
+                model_fingerprint=model_fingerprint,
+                authority=authority,
+            )
 
     def _solve_compiled(
         self,
@@ -1000,6 +1019,7 @@ class Model:
         collect_solver_diagnostics: bool = False,
         retained_input_arrays: object = (),
         process_grid_resolver: ProcessGridResolver | None = None,
+        call_id: CallId | None = None,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -1043,6 +1063,7 @@ class Model:
                 persistable_artifact_refs=persistable_artifact_refs,
                 retained_input_arrays=retained_input_arrays,
                 process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
