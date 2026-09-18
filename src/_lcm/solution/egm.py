@@ -37,6 +37,11 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
+from _lcm.solution.continuation_reads import (
+    continuation_leaf_reads,
+    published_continuation_template,
+    with_continuation_leaf_reads,
+)
 from _lcm.solution.continuation_target import (
     period_to_continuation_target,
     target_period_grid,
@@ -65,9 +70,16 @@ from _lcm.typing import (
     FlatParams,
     RegimeName,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, KernelOutput
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
+    ArtifactKey,
+    ContinuationCapabilities,
+    KernelOutput,
+)
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -92,6 +104,25 @@ class EGM(OneMarginSolver):
     finite difference of a coarse value array), so each period both reads its
     continuation's marginal and publishes its own.
     """
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration="ConsumptionSavingsRegime with one LiquidMargin",
+            problem_shape="Smooth concave one-state/one-action cash-on-hand problem",
+            prerequisites=(
+                "One continuous state and action; no discrete/process axes; identity "
+                "resources; additive continuation; provable post-decision lower bound"
+            ),
+            main_tradeoff="Narrow structural contract with no upper envelope",
+            reduced_axes=(),
+            tiled_axes=(),
+            host_axes=(),
+            host_driven_programs=(),
+            supports_ev1_taste_shocks=False,
+            supports_nonlinear_certainty_equivalent=False,
+        )
 
     savings_grid: ContinuousGrid
     """Exogenous post-decision savings grid; its lower bound is the borrowing limit.
@@ -118,6 +149,13 @@ class EGM(OneMarginSolver):
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
         return frozenset({EGM_CONTINUATION})
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """The EGM step reads the target's value and its marginal in resources."""
+        return ContinuationCapabilities(
+            value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
 
     def validate_model(  # noqa: C901, PLR0912, PLR0915
         self, *, context: SolverModelContext
@@ -443,6 +481,12 @@ class EGM(OneMarginSolver):
                 )
                 raise ModelInitializationError(msg)
 
+    def declare_continuation_reads(
+        self, *, kernels: SolutionKernels, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Declare the three carry rows each period's arguments carry."""
+        return declare_egm_carry_reads(kernels=kernels, context=context)
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one 1-D EGM period adapter per active period.
 
@@ -477,6 +521,7 @@ class EGM(OneMarginSolver):
         cores: dict[Hashable, Callable] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
+        period_group_keys: dict[int, Hashable] = {}
         # The target's own name for its single continuous state. It is read off
         # that regime: the value grid it is tabulated on and the namespace its
         # transition params live under are both facts about the target, so
@@ -514,6 +559,7 @@ class EGM(OneMarginSolver):
                     target_state=target_state,
                     variable_names=variable_names,
                 )
+            period_group_keys[period] = group_key
             period_kernels[period] = _build_egm_period_kernel(
                 core=cores[group_key],
                 declared_law=laws[group_key],
@@ -531,6 +577,7 @@ class EGM(OneMarginSolver):
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
+            period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=EGMContinuationSpec(
                 template=_build_one_asset_carry_template(liquid_grid=liquid_grid),
                 layout=self.egm_continuation_layout,
@@ -561,9 +608,70 @@ class _BoundEGM(EGM):
     """Name of the function giving the savings the exogenous grid spans."""
 
 
-# Why the one-row EGM program executes dense: it has no product axis to stream
-# over, and its continuation is read from the target's carry alone.
-_EGM_DENSE_REASON = "deliberately_dense:egm_one_row_no_product_axis"
+# The carry rows `_EGMArgumentBuilder.__call__` flattens into named program
+# arguments, keyed by the leaf path each row occupies in the target's payload.
+_EGM_ARGUMENT_BY_LEAF: MappingProxyType[tuple[str, ...], str] = MappingProxyType(
+    {
+        ("endog_grid",): "next_liquid_grid",
+        ("value",): "next_value",
+        ("marginal_utility",): "next_marginal",
+    }
+)
+
+
+def declare_egm_carry_reads(
+    *, kernels: SolutionKernels, context: SolverBuildContext
+) -> SolutionKernels:
+    """Attach each one-row EGM period's declared carry reads to its program.
+
+    The one-row argument builder flattens its target's carry into three named
+    arguments, so each period declares one read per named row, addressed by the
+    argument holding it. Shared by every solver that builds this adapter. A
+    period whose adapter is a different graph, and a target publishing no
+    readable payload, declare nothing.
+    """
+    return replace(
+        kernels,
+        period_kernels=MappingProxyType(
+            {
+                period: _with_declared_carry_reads(
+                    kernel=kernel, context=context, period=period
+                )
+                for period, kernel in kernels.period_kernels.items()
+            }
+        ),
+    )
+
+
+def _with_declared_carry_reads(
+    *, kernel: PeriodKernel, context: SolverBuildContext, period: int
+) -> PeriodKernel:
+    """Return one period's adapter with its three carry-row reads declared."""
+    if not isinstance(kernel, _EGMPeriodKernel):
+        return kernel
+    template = published_continuation_template(
+        continuation_specs=context.continuation_specs,
+        target=kernel.continuation_target,
+    )
+    if template is None:
+        return kernel
+    return replace(
+        kernel,
+        _core_programs=with_continuation_leaf_reads(
+            programs=kernel.core_programs(),
+            reads_by_core_key={
+                "main": continuation_leaf_reads(
+                    template=template,
+                    artifact_key=EGM_CONTINUATION,
+                    target=kernel.continuation_target,
+                    source_regime=kernel.regime_name,
+                    source_period=period,
+                    core_key="main",
+                    argument_by_leaf=_EGM_ARGUMENT_BY_LEAF,
+                )
+            },
+        ),
+    )
 
 
 def _build_egm_period_kernel(
@@ -587,6 +695,10 @@ def _build_egm_period_kernel(
     only state is the liquid axis the rows sit on. `publishes_breakpoints` says
     whether the core's carry carries a breakpoints row (a single-liquid NB-EGM
     core with feasibility boundaries does; the plain EGM core does not).
+
+    The program's continuation-leaf reads are attached later, by
+    `declare_egm_carry_reads`: which rows the target publishes is known only
+    once every regime is built.
     """
     argument_builder = _EGMArgumentBuilder(
         regime_name=regime_name,
@@ -612,8 +724,7 @@ def _build_egm_period_kernel(
                 policy=None,
             ),
         ),
-        disposition=CoreExecutionDisposition.DENSE,
-        disposition_reason=_EGM_DENSE_REASON,
+        disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
     )
     return _EGMPeriodKernel(
@@ -672,6 +783,7 @@ class _EGMArgumentBuilder:
             context.next_regime_to_continuation[self.continuation_target],
         )
         next_carry = cast("EGMCarry", next_carry)
+        leaves = next_carry.leaves()
         (
             effective_savings_grid,
             next_liquid,
@@ -680,19 +792,19 @@ class _EGMArgumentBuilder:
             boundary_next_liquid,
         ) = self._law_readings(
             flat_params=flat_params,
-            next_breakpoints=next_carry.breakpoints,
+            next_breakpoints=leaves.get(("breakpoints",)),
         )
         return MappingProxyType(
             {
                 "liquid": state_action_space.states[self.liquid_state],
-                "next_liquid_grid": next_carry.endog_grid,
+                "next_liquid_grid": leaves[("endog_grid",)],
                 "next_liquid": next_liquid,
                 "marginal_return": marginal_return,
                 "effective_savings_grid": effective_savings_grid,
                 "boundary_savings_targets": boundary_savings_targets,
                 "boundary_next_liquid": boundary_next_liquid,
-                "next_value": next_carry.value,
-                "next_marginal": next_carry.marginal_utility,
+                "next_value": leaves[("value",)],
+                "next_marginal": leaves[("marginal_utility",)],
                 **union_free_params(
                     flat_params=flat_params,
                     regime_name=self.regime_name,
@@ -779,14 +891,15 @@ class _EGMArgumentBuilder:
 
 @dataclass(frozen=True, kw_only=True)
 class _EGMPeriodKernel:
-    """The 1-D EGM period kernel: one native dense program around the shared core.
+    """The 1-D EGM period kernel: one native program around the shared core.
 
     `main` runs `egm_one_asset_step` for the period and publishes the value
     array and the marginal-value carry a parent EGM regime interpolates. The
-    one-row kernel has no product axis to stream over and reads its continuation
-    from the target's carry alone, so the program is deliberately dense and
-    declares no target value access. Calling the kernel builds the program's
-    arguments through its declared builder and returns a public `KernelOutput`.
+    one-row kernel reads its continuation from the target's carry alone and
+    declares no target value access; its regime carries no stochastic state, so
+    it declares no streamed axis either and the plan owns nothing to widen.
+    Calling the kernel builds the program's arguments through its declared
+    builder and returns a public `KernelOutput`.
     """
 
     _core_programs: Mapping[str, CoreProgram]

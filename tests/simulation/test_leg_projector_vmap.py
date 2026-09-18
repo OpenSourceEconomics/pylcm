@@ -217,6 +217,7 @@ def _solve_fixture():
     )
     flat_params = _flat_params()
     solution = solve(
+        model_fingerprint="test_leg_projector_vmap",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,

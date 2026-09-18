@@ -1,3 +1,11 @@
+"""Container helpers the engine uses to keep its own data immutable.
+
+`ensure_containers_are_immutable` and its inverse convert nested mappings and
+sequences between the frozen and mutable forms. The remaining helpers —
+`find_duplicates`, `invert_regime_ids`, `first_non_none` — are the small
+lookups several build stages share.
+"""
+
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import fields

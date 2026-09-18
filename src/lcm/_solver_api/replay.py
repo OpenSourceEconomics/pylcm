@@ -23,12 +23,17 @@ from lcm._solver_api.identity import (
     ReplayRouteIdentity,
     SolverIdentity,
 )
-from lcm.typing import FloatND, IntND, RegimeName
+from lcm.typing import FloatND, IntND, RegimeName, StateName
 
 
 @dataclass(frozen=True, kw_only=True)
 class ReplayRouteSnapshot:
-    """One immutable, preflighted cell passed unchanged to a replay route."""
+    """One immutable cell passed unchanged from validation to reader construction.
+
+    Whole-result preflight validates stored-layout cells before forward execution.
+    Simulation places a cell's arrays on its subject devices, then validates that
+    exact placed snapshot and context again immediately before building its reader.
+    """
 
     artifacts: Mapping[ArtifactKey, object]
     """Materialized payloads of the cell, keyed by artifact key."""
@@ -173,6 +178,11 @@ DISSOLUTION_FLAG = ArtifactKey(
 )
 SOLVER_DIAGNOSTICS = ArtifactKey(type_id="pylcm.solver.diagnostics", schema_version=1)
 
+# The coordinate an EGM carry's rows are tabulated on. It is also the state such
+# a carry's marginal is taken with respect to, so a solver demanding that
+# marginal and a payload publishing it name one string.
+EGM_ENDOGENOUS_COORDINATE: StateName = "resources"
+
 
 @runtime_checkable
 class ReplayRoute(Protocol):
@@ -259,7 +269,12 @@ class ExecutableReplayRoute(ReplayRoute, Protocol):
         snapshot: ReplayRouteSnapshot,
         context: SimulationBuildContext,
     ) -> None:
-        """Check solver-specific mathematical invariants before simulation."""
+        """Check invariants during whole-result preflight and period placement.
+
+        Validation may run more than once per cell. It must preserve the immutable
+        snapshot, authority metadata and context, and not depend on invocation count.
+        The period reader receives exactly the last validated snapshot and context.
+        """
         ...
 
     def build_reader(
@@ -283,6 +298,59 @@ class ContinuationArtifact(Protocol):
     @property
     def artifact_key(self) -> ArtifactKey:
         """Versioned identity of the payload's schema."""
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContinuationCapabilities:
+    """What a continuation payload can answer about itself."""
+
+    value: bool = False
+    """Whether the payload can return a continuation value at a query."""
+
+    marginal_states: frozenset[StateName] = frozenset()
+    """States the payload can differentiate its value with respect to."""
+
+    exact_candidate_identity: bool = False
+    """Whether the payload names which candidate owns a query point."""
+
+    discontinuities: bool = False
+    """Whether the payload locates its own one-sided boundaries."""
+
+
+@runtime_checkable
+class ContinuationReader(Protocol):
+    """What a parent may ask its target's published continuation.
+
+    A reader answers at a query rather than exposing its storage, so a parent
+    that needs a value or a marginal is independent of how the target tabulated
+    it. `leaves()` is the addressable content of the payload: the transfer
+    catalogue plans one transfer per leaf a consumer declares.
+    """
+
+    @property
+    def capabilities(self) -> ContinuationCapabilities:
+        """Return what this payload can answer."""
+        ...
+
+    def value_at(self, *, query: FloatND) -> FloatND:
+        """Return the continuation value at `query`."""
+        ...
+
+    def marginal_at(self, *, query: FloatND, state: StateName) -> FloatND:
+        """Return the marginal of the continuation in `state` at `query`."""
+        ...
+
+    def leaves(self) -> Mapping[tuple[str, ...], FloatND]:
+        """Return every published array by its pytree path, by identity.
+
+        The engine addresses a payload's buffers through the objects this
+        returns: it registers them with the buffer registry, locates a released
+        one among them, and substitutes a template leaf for it. A payload that
+        answers with a fresh view of its storage rather than the stored object
+        registers a buffer that expires at once, and fails loudly at the first
+        release rather than freeing anything under a live reader.
+        """
         ...
 
 

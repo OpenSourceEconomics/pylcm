@@ -1,3 +1,9 @@
+"""Argmax and max over the trailing action axes of a Q array.
+
+`argmax_and_max` flattens the requested number of trailing axes, reduces over
+the flat axis, and returns the winning flat index alongside its value.
+"""
+
 import jax.numpy as jnp
 
 from lcm.typing import BoolND, FloatND, IntND

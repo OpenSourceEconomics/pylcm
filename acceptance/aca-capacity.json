@@ -1,0 +1,70 @@
+{
+  "H_all_retained_device_owners_peak_bytes": null,
+  "H_retained_bank_per_device_bytes": 183881340,
+  "P_compiler_peak_bytes": null,
+  "R_peak_simultaneous_replicas_bytes": null,
+  "R_single_full_replica_bytes": 29548800,
+  "T_single_replica_scratch_bytes": 29548800,
+  "T_transfers_bytes": null,
+  "admitted": false,
+  "compiler_peak_bytes": null,
+  "derivation": {
+    "native_capacity_receipt_sha256": "c0e70663561cf9d242cbfc95b9a10c19fe92372523f48ab121d13c17fc6d970c",
+    "native_job_id": "27535505",
+    "native_phase_inventory_sha256": "54d5a3ec94ba67a6d786b059f2881cb183cbf3bd3c24901b862abafcee42cc86",
+    "source_delta": "Native factory snapshot predates capability-helper refactor; source hashes identify executed bytes. This schema correction makes no current-head execution or admission claim.",
+    "status": "static arithmetic and schema correction from existing native shape receipt; no native rerun"
+  },
+  "dtype": "float32",
+  "external_owner_bytes": null,
+  "formula": "max(retained horizon values / 8, one-artifact 17S/8); overlaps are not added",
+  "host_assembly_bytes": null,
+  "host_completed_chunks_bytes": null,
+  "host_owned_inputs_bytes": null,
+  "inputs_sha256": {
+    "environment_constants.pkl": "ea182fd39e40b8489a6989bbf3917af2977becce68b405d8c568bd6d2cd174f3",
+    "hcc_insurer_params.pkl": "b31961a8732ef60d336720d7d6b7e24ff56a67841181cdde4d0597bc69ce7eec",
+    "health_insurance_params.pkl": "27667d5e41da1e5a46aee424be6a8225407fcae349912e106f5568733600a984",
+    "initial_conditions.pkl": "8313fa20ad9c08cf8682933747188c1ee46dea9d675edbddf5626bcd368d61f7",
+    "pension_params.pkl": "32ecc360e575c03e5eb2d4d4b0b9cb3f382adbe2bc232bf64ed8a839fb29dc08",
+    "preference_start_values.pkl": "90745c4dba36f07cc251463fce6ca3709039e8523bea0b5d1e799e3f1a704869",
+    "social_security_params.pkl": "7d42cf457123cad8115aa2e5b32b84fb669c0d502e7c129d8619a5727864d349",
+    "ssi_medicaid_params.pkl": "4d1f35682283a04843a078e393533096ce17c3b1993036d2d18b0da33efa6638",
+    "tax_params.pkl": "a9ac3cab1e9cf92a9ec108fddc48bc352db24b1025ef42c7abaa882134a932d6",
+    "transition_probs.pkl": "d13d3f5e6cce5cf6a90f6791ec87356a3fcc6ce962bcdf86376905e7e8af3118",
+    "wage_params.pkl": "42be6e95c924d179cde6d685a2a144090f8fddf8eb34975be5adcc73b0c0ee16"
+  },
+  "largest_single_full_value_replica_bytes": 29548800,
+  "limitations": [
+    "No numerical solve or simulation",
+    "No GPU allocator measurement",
+    "No replay or compiler profiling",
+    "No complete P/H/R/T admission accounting",
+    "P is compiler storage; H is retained device owners; host memory is separate",
+    "Single-replica R/T terms are not peak concurrent phase requirements"
+  ],
+  "lower_bound_screen_passed": null,
+  "n_assets_shards": 8,
+  "necessary_per_device_lower_bound_bytes": 183881340,
+  "one_artifact_source_destination_scratch_lower_bound": {
+    "artifact_global_bytes_S": 29548800,
+    "destination_full_replica_bytes_S": 29548800,
+    "per_device_bytes_17S_over_8": 62791200,
+    "scope": "One retained eight-way sharded artifact and its full destination/scratch; not a global concurrent total",
+    "scratch_bytes_S": 29548800,
+    "source_shard_bytes_S_over_8": 3693600
+  },
+  "pending_outputs_bytes": null,
+  "phase_inventory_driver_sha256": "137429f93656c87755ffc35599ee850fc9bbdf1200d9c9f8ab5c21e036701303",
+  "replay_artifacts_bytes": null,
+  "retained_horizon_value_bytes_global": 1471050720,
+  "retained_horizon_value_bytes_per_device": 183881340,
+  "schema_version": 2,
+  "selected_allocator_limit_bytes": null,
+  "source_python_tree_sha256": {
+    "aca-model": "e52486a6b64cbb13cb1f8450904f1848744aa2b2749e403f07ae9aac71dc0861",
+    "aca-slurm": "38f03a2cc01b77324506603262ce6daf6f06cb64b2e01c59142e2d74773c83b0",
+    "pylcm": "d895a32934b8a34251304931bf5e908e68e5d21742f7f78edbabcdb539c38d07"
+  },
+  "status": "necessary-lower-bound-only"
+}

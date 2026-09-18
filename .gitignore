@@ -83,3 +83,8 @@ reports/
 
 # Local review-tool config, per checkout rather than repository content.
 .roborev.toml
+
+# Root Markdown working files; tracked instruction files remain tracked.
+/*.md
+!/README.md
+!/CHANGES.md

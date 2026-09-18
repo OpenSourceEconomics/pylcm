@@ -13,21 +13,50 @@ adapter or automatic migration across versions is not implied.
 
 ## What a solver owes the engine
 
-A solver is a class deriving from `Solver` with one abstract method to implement,
-`build_period_kernels`. The shipped solvers are frozen dataclasses because they carry
-numerical configuration; a solver with no configuration needs no fields. Between them, a
-solver and its kernels answer three questions.
+A solver derives from `Solver` and implements the `capabilities` property and
+`build_period_kernels` method. The shipped solvers are frozen dataclasses because they
+carry numerical configuration; a solver with no configuration needs no fields. Solver
+API version 3 requires both declarations. Between them, a solver and its kernels answer
+the following questions.
+
+- **What can this configuration execute?** `capabilities` returns frozen
+  `SolverExecutionCapabilities` describing prerequisites, tradeoffs, potential reduced,
+  tiled and host axes, repeated program keys and supported preference features. A
+  concrete model accepts only axes declared by its built programs; the capability
+  description does not authorize additional widths or bypass structural validation.
 
 - **Which continuations do I read?** `required_continuation_keys` returns a frozenset of
   `ArtifactKey`. Model building checks every key against what each reachable target
   regime publishes and refuses the model, naming both regimes and the demanded version,
   before anything compiles. Grid search returns the empty set; every endogenous-grid
   solver returns `{EGM_CONTINUATION}`.
+
 - **What does a period compute?** `build_period_kernels(context=...)` returns
   `SolutionKernels` holding one period kernel per active period, and optionally a
   `ContinuationSpec` naming the artifact those kernels publish.
+
+- **Which periods did I build alike?** Publish each period's group key in
+  `SolutionKernels.period_group_keys`. The engine folds that key into the compiled
+  program's identity beside its own per-period signature, so two periods share one
+  executable only when both groupings agree. Whenever you build per period, publish a
+  per-period key — `(your_solver_name, period)` will do; the engine's signature is free
+  to merge periods your builds separate (a terminal regime's signature is the same at
+  every period), and handing it an identity coarser than your own specialization is what
+  the refusal below is about. Reserve the empty mapping for the two cases where you have
+  nothing to add: one build serves every period, or the engine's own signature already
+  separates your builds. The key has to be **durable**: build it from declared
+  signatures, names, and literals, never from `id()`, because it is compared across
+  model constructions. Publishing a key too coarse for what the solver actually
+  specialized is refused at build time with an `ExecutionPlanningError`, naming both
+  colliding programs, rather than running one period's closure in another period's
+  place. The periods you group under one key must also reach **one callable object**:
+  building a fresh, equivalent closure per period — or a `functools.partial` over
+  equal-but-distinct bound values — is refused by that same `ExecutionPlanningError`, so
+  a grouping solver builds once and hands every period in the group the object it built.
+
 - **What does one period publish?** Each kernel declares a native core-program graph
   through `core_programs()` and returns a `KernelOutput` from its call.
+
 - **How is my decision replayed?** `SolutionKernels.replay_route` names how simulation
   obtains the solved decision: an `ExecutableReplayRoute`, or one of the two
   `DeclaredReplay` values. Leaving it unset is a build error for any solver outside the
@@ -55,6 +84,7 @@ from lcm.solvers import (
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    SolverExecutionCapabilities,
     SolverIdentity,
 )
 from lcm.typing import Float1D
@@ -105,6 +135,15 @@ class WealthSolver(Solver):
     """Publishes the wealth grid as the value in every active period."""
 
     @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="One wealth-grid value per state",
+            prerequisites="A wealth state; no optimization",
+            main_tradeoff="Dense identity computation for this example",
+        )
+
+    @property
     def identity(self) -> SolverIdentity:
         """Return the package-owned compatibility identity."""
         return SolverIdentity(
@@ -135,37 +174,270 @@ class WealthSolver(Solver):
         )
 ```
 
-A program declares its disposition explicitly, and the two cases are mutually exclusive
+A program declares its disposition explicitly, and the cases are mutually exclusive
 rather than a default plus an override. `DENSE` means the solver, not the planner, owns
 the width its body runs at, and it must carry a non-blank `disposition_reason` saying
-why. `PLANNED` hands that choice to the engine and must *not* carry a reason; declaring
-one is refused. A planned program declares whichever action axes the engine may stream,
-together with the reduction each performs, and a solver whose body streams nothing
-declares an empty set — the shipped NB-EGM graph does exactly that.
+why. `HOST_DRIVEN` means the same, and adds that a host loop dispatches the compiled
+program a data-dependent number of times — the driver that owns the loop also owns the
+results it caches between dispatches — so it too must carry a reason. `PLANNED` hands
+the width choice to the engine and must *not* carry a reason; declaring one is refused.
+A planned program declares whichever axes the engine may stream — `reduced_axes` for an
+axis folded by a reduction, `tiled_axes` for one whose tiles are concatenated — and a
+solver whose body streams nothing declares an empty set; the shipped NB-EGM graph does
+exactly that. Only a planned program may declare a compiled execution axis.
 
-## Reading stored values
+`CoreExecutionRequirements.host_axis_names` names configurable host loops around
+individual program dispatches. These names have no static coordinate extent and no
+compiled width keyword: the solver reads the configured widths from
+`SolverBuildContext.axis_widths` and applies them to its loop. Such a loop may surround
+a `PLANNED` core or own a `HOST_DRIVEN` core; `DENSE` programs cannot declare host axes.
+The configurable `axis_names` include both compiled and host axes, while `axes` contains
+only the compiled axes the workspace planner schedules.
 
-A core that prices a continuation reads the value functions the engine has already
-stored for the next period's reachable regimes. It reads them through the
-`next_regime_to_V_arr` channel of `CoreBuildContext`, one array per target regime in
-that regime's own published layout, and it declares every such read in
-`CoreExecutionRequirements.target_value_accesses`. Each `TargetValueAccess` pairs the
-stored artifact with the exact argument leaf the core reads it through:
+`CoreProgram.compiler_options` records fixed compiler choices already bound by the
+program's function, such as `(("scan_unroll", 1),)`. It is an immutable tuple of
+uniquely named integer settings. The engine preserves it through planning and includes
+it in the lowering key; these settings never enter the function's numerical arguments.
 
-- `ValueArtifactAddress` names the artifact: `ValueArtifactKind.REGIME_VALUE` with the
-  target regime and the period its value was solved for (the source period plus one), or
-  `GATED_CONTINUATION` for a gated edge's folded continuation;
-- `ValueConsumerAddress` names the leaf: the source period, regime, and program name,
-  the `ValueInputChannel` the array enters through, and the path of the leaf inside that
-  channel's argument, whose first segment is the target regime.
+A `ReducedAxis` is the Cartesian product of the coordinates its `coordinate_names`
+address — each names a program argument holding that coordinate's 1-D values, whether a
+declared grid or an engine-only transport key such as the outer nodes NEGM sweeps —
+counted in `canonical_order`, and folded to a single result by its `reduction`. A
+`TiledOutputAxis` is an output axis over the states in `state_names`: its tiles are
+concatenated, never folded, so the published array is the same whatever width the tiles
+run at. Both name the planner-visible axis in `name`, take the compiled width through
+`width_keyword`, and constrain the widths the planner may pick with `minimum_width` and
+`alignment`: the widths an axis admits are its full extent, whatever the alignment
+divides, plus every multiple of `alignment` between `minimum_width` and that extent. A
+proposal is rounded down onto that set, and one that falls through it — below the floor,
+or below the alignment and so at zero — is lifted to the narrowest width the set holds,
+which is the extent when no multiple of the alignment reaches the floor without passing
+it. `ACTION_PRODUCT_AXIS` is the name the shipped `GridSearch` gives its action product,
+and `OUTER_CANDIDATE_AXIS` the name a nested outer search gives its exogenous
+post-decision candidates; each is the name to pass when fixing that solver's width.
 
-The declaration is what lets the engine transfer each array into the program's layout,
-check its shape and dtype against the argument the builder produced, and track when the
-stored value is no longer live. A program whose builder reads a stored value it does not
-declare, or declares one its builder does not read, is refused when the program is
-materialized. `SolverBuildContext.solution_reachability.targets(period=..., source=...)`
-returns the target regimes to declare for one period; the last period of the horizon has
-none. The conformance fixture's `TargetValueSolver` is the reference shape.
+`ExecutionConfig(axis_widths=...)` fixes the compiled or host-dispatch width of a
+declared axis by its name. It is hardware-local: it changes execution, never what is
+published, and never enters the durable model fingerprint. A width above an axis's
+extent is taken as the extent, and a name no program of the model declares is refused
+with the declared names listed, so a typo cannot pass as a tuning choice.
+
+A reduced axis names its reduction at one of two levels. `ReductionDeclaration` is the
+contract: a stable `semantic_key`, which enters static program identity so two programs
+folding the same axis differently never share a compiled executable, and an `exactness`
+— `"exact"` when block order cannot move the published value, `"tolerance_equivalent"`
+when results agree to the working format's rounding. That pair is what the axis
+references and what the engine validates, and it is all a solver owes when the fold
+kernel belongs to the solver's own body: the planner's width reaches such a kernel
+through the axis's `width_keyword`, as it does for any streamed core.
+
+`ReductionSemantics` is a declaration that also publishes the fold itself, so the
+planner may drive it block by block: `initialize` builds one accumulator from a value
+template, `add` folds one block of candidates into it, `merge` combines two accumulators
+covering disjoint blocks, and `finalize` turns an accumulator into the published result.
+A reduction at this level publishes the same value whichever partition the planner
+picks, and carries the dense argmax identity — for the hard maxes, the winner is the
+candidate at the first canonical position attaining the maximum, whatever the block
+boundaries are.
+
+`WeightedExpectationReduction` (a probability-weighted sum over stochastic nodes) and
+`IntervalEnvelopeReduction` (an upper envelope over candidate intervals) are
+declarations: each names a contract that a solver's own kernel fulfils.
+`HardMaxWithCarryReduction` publishes the full fold over an `OuterCandidateAccumulator`,
+whose state is the running winner's value, its global candidate id and the payload that
+winner carries; `add` folds a block of values, a driver that owns a payload per
+candidate merges that block's state in so the carry travels with the winner it belongs
+to, and `finalize` publishes a `HardMaxWithCarryResult` with the same three rows. The
+reductions the shipped `GridSearch` body owns — the hard max over the action product,
+its collective counterpart, and the logsumexp under taste shocks — publish their fold
+too, so the planner can drive them directly. `EXACTNESS_VALUES` holds the two spellings
+an `exactness` may take, so a custom reduction can be checked against the published set
+rather than against a literal.
+
+`donation_candidates` names arguments the engine may donate to the compiled program. An
+argument is donated when every artifact it carries by a declared `ValueRead` addressed
+to it by name:
+
+- is not the solve-lifetime template, the one input whose declared period lies beyond
+  the model's last period;
+- has this dispatch as its sole remaining reader;
+- is not retained by the result;
+- is not pinned by an undeclared reader;
+- shares its buffer with no other key;
+- reaches the program on its stored layout rather than as a transferred copy.
+
+A donated input is unreadable after the call, so a builder must not keep a reference to
+it.
+
+(internal-outputs)=
+
+## Internal outputs
+
+A kernel that publishes more than one program can hand one program's output to another
+as an argument, instead of lowering the consumer against a stand-in it fills in later.
+The producer declares what it publishes and the consumer declares what it reads:
+
+```{code-block} python
+producer = CoreProgram(
+    name="keeper",
+    function=keeper_body,
+    argument_builder=build_keeper_arguments,
+    requirements=CoreExecutionRequirements(),
+    output_roles=(VALUE, {"carry": VALUE}),
+    disposition=CoreExecutionDisposition.DENSE,
+    disposition_reason="one_row_per_state_node",
+    internal_outputs=(
+        InternalOutputSpec(label="value", path=(0,)),
+        InternalOutputSpec(label="carry", path=(1,)),
+    ),
+)
+consumer = CoreProgram(
+    name="outer_sweep",
+    function=sweep_body,
+    argument_builder=build_sweep_arguments,
+    requirements=CoreExecutionRequirements(
+        internal_inputs={
+            "keeper_value": InternalInputRef(producer="keeper", label="value"),
+            "keeper_carry": InternalInputRef(producer="keeper", label="carry"),
+        }
+    ),
+    output_roles=VALUE,
+    disposition=CoreExecutionDisposition.DENSE,
+    disposition_reason="one_row_per_outer_node",
+)
+```
+
+`InternalOutputSpec.path` is a pytree path into the producer's raw output, so a label
+may name a whole subtree rather than a single leaf. `InternalInputRef` is keyed by the
+consumer's own argument name, which may not collide with a name its argument builder
+already supplies.
+
+The engine reads these declarations at three moments:
+
+- **When the graph is built.** Every reference must name a program of the same graph and
+  a label that program declares, labels within one producer must be unique, and the
+  references must not form a cycle.
+- **When a retention selects the graph's programs.** A retention that keeps a consumer
+  must also keep every producer it reads, so a producer and its consumers belong in
+  scopes that are selected together.
+- **When the period is lowered.** The engine visits producers before consumers and
+  traces each producer once with everything it is lowered with — the arguments its
+  builder returned, the templates of the internal inputs it reads itself, and the widths
+  the execution planner owns — then lowers the consumer against the exact shapes, dtypes
+  and weak typing of the subtrees its references select. Weak typing belongs in that
+  template because equal shapes and dtypes can still promote differently in a consumer:
+  a weakly typed leaf takes the other operand's dtype, a strongly typed one forces its
+  own. Those templates are part of the program's compilation identity, so two cells that
+  differ only in an internal input's shape do not share an executable. A producer whose
+  published subtree would change with the width the planner selects is refused while the
+  period is planned: its consumers are lowered before that selection is made.
+
+A typed internal edge is the route between two programs the engine lowers together. A
+`HOST_DRIVEN` program is dispatched by the solver's own host loop, so a driver that
+feeds one program's result into the next dispatch holds that result on the host and
+passes it through its argument builder; the engine plans nothing for it and there is no
+internal reference to declare.
+
+At dispatch the compiled core refuses an internal input that is missing, or whose shape,
+dtype, or weak typing departs from the template it was lowered against, naming the
+program and the argument.
+
+(reading-a-stored-value)=
+
+## Reading a stored value
+
+Every array a program reads across a regime-period boundary is declared rather than
+discovered. A `ValueRead` names both ends independently: the stored artifact it reads
+through a `ValueArtifactAddress`, and the argument leaf that receives it through a
+`ValueConsumerAddress`. A program declares its reads on its requirements.
+
+```{code-block} python
+from lcm.solvers import (
+    CoreExecutionRequirements,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+    ValueRead,
+)
+
+
+def wealth_requirements(
+    *, regime_name: str, target: str, period: int
+) -> CoreExecutionRequirements:
+    """Declare that this core reads one target regime's next-period value."""
+    return CoreExecutionRequirements(
+        value_reads=(
+            ValueRead(
+                target=ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE,
+                    period=period + 1,
+                    regime=target,
+                ),
+                source=ValueConsumerAddress(
+                    source_period=period,
+                    source_regime=regime_name,
+                    core_key="main",
+                    channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                    path=(target,),
+                ),
+            ),
+        )
+    )
+```
+
+An economic dependency points from a source regime to a target regime, while the stored
+value moves the other way during backward induction, so the two addresses carry
+different coordinates: the artifact's `period` is the target's solved period, and the
+consumer's `source_period` is the period of the core that reads it. The artifact's
+`kind` is `ValueArtifactKind.REGIME_VALUE` for a regime's solved value and
+`ValueArtifactKind.GATED_CONTINUATION` for a gated edge's folded continuation.
+
+The engine then names one operator per declared read, from the layout the value is
+stored in to the layout the consuming program requires:
+
+| stored layout              | required layout                             | operator                           |
+| -------------------------- | ------------------------------------------- | ---------------------------------- |
+| equal                      | equal                                       | `ALIGNED_LOCAL`                    |
+| either side not mesh-named | any different placement                     | `COPY_TO_SOURCE_LAYOUT`            |
+| sharded on named axis      | replicated                                  | `ALL_GATHER`                       |
+| replicated                 | sharded on named axis                       | `LOCAL_SLICE`                      |
+| sharded on axis `a`        | sharded on axis `b`                         | `RESHARD`                          |
+| one mesh, given axes       | same mesh and axes, different `memory_kind` | `RESHARD`                          |
+| any                        | different mesh (disjoint or nested submesh) | `CROSS_MESH_COPY`                  |
+| any                        | overlapping but unequal meshes              | refused (`ExecutionPlanningError`) |
+
+"Mesh-named" is a layout that names a device mesh and a partition spec over it; a value
+pinned to one device is not, so any read whose two ends are not both mesh-named is a
+copy onto the required placement, whether the stored value was sharded or not. A pair
+that agrees on mesh and axes while differing in some other attribute takes the
+conservative reading — a recorded representation change, not a silent no-op.
+
+The table is total over the layout pairs the planner produces, so a declared read always
+has exactly one operator. The last row is the one pair no single collective serves: two
+meshes sharing devices while neither contains the other are refused while the period is
+planned, naming both device sets, rather than moved through a placement the plan does
+not record.
+
+Lowering and dispatch apply the same immutable plan. An `ALIGNED_LOCAL` read hands the
+stored array to the program unchanged; every other operator is one recorded copy onto
+the required layout, and the compiled program refuses a value whose shape, dtype, or
+layout departs from what was planned.
+
+The engine declares the reads of its own gated-edge fold the same way a solver declares
+a core's. Folding one declared edge onto its target's grid reads that period's target
+value and every reference regime's value, so each is a `ValueRead` whose consumer names
+the fold — the source regime, the folded period, and the edge's target — and the fold is
+one dispatch of the solve alongside the period's cores. What a fold reads is therefore
+counted, not merely retained.
+
+A program whose builder reads a stored value it does not declare, or declares one its
+builder does not read, is refused when the program is materialized.
+`SolverBuildContext.solution_reachability.targets(period=..., source=...)` returns the
+target regimes to declare for one period; the last period of the horizon has none. The
+conformance fixture's `TargetValueSolver` is the reference shape.
+
+(publishing-a-continuation)=
 
 ## Publishing a continuation
 
@@ -174,6 +446,15 @@ artifact is any type satisfying the `ContinuationArtifact` protocol, which asks 
 property: `artifact_key`, the versioned identity under which the payload is published.
 The engine stores and rolls the artifact without reading its fields, so a solver family
 can carry whatever its own parents need.
+
+Before publishing a template, call `context.place_on_regime_devices(template=template)`.
+Array leaves whose leading shape matches the regime's stored-value state axes (excluding
+folded states) are partitioned along its sharded states; trailing axes stay unsharded.
+Scalars and arrays with another leading shape replicate over the regime's submesh. An
+unsharded regime uses its assigned single device. The method preserves values, non-array
+leaves, and the pytree structure. Model construction refuses a continuation template if
+any array leaf uses a different device set, with an error naming this public placement
+method.
 
 Three declarations must agree, and each is checked at a different moment, so a mistake
 surfaces as early as it can be seen.
@@ -195,6 +476,84 @@ key is `EGM_CONTINUATION`, and it adds the layout properties a reading EGM paren
 The engine synthesizes a closed-form carry for a grid-search target only under
 `EGM_CONTINUATION`; a solver family that invents its own key publishes it from its own
 kernels in every regime it reads.
+
+### What a reader answers
+
+A parent asks its target's payload what the continuation is worth at a query rather than
+interpolating the target's storage itself, so the two are coupled by a question, not by
+a row layout. A payload that answers such questions satisfies `ContinuationReader`:
+
+```{code-block} python
+@runtime_checkable
+class ContinuationReader(Protocol):
+    @property
+    def capabilities(self) -> ContinuationCapabilities: ...
+    def value_at(self, *, query: FloatND) -> FloatND: ...
+    def marginal_at(self, *, query: FloatND, state: StateName) -> FloatND: ...
+    def leaves(self) -> Mapping[tuple[str, ...], FloatND]: ...
+```
+
+`capabilities` is the payload's own statement of what it can answer:
+
+- `value` — whether `value_at` returns a continuation value.
+- `marginal_states` — the states `marginal_at` accepts; any other state is refused.
+- `exact_candidate_identity` — whether the payload names which candidate owns a query
+  point.
+- `discontinuities` — whether the payload locates its own one-sided boundaries.
+
+A parent states what it needs of its targets in `required_continuation_capabilities`,
+which defaults to `ContinuationCapabilities()` — asking nothing, so the payload is
+rolled opaquely and the parent reads its fields itself. Every endogenous-grid solver in
+pylcm demands the value and the marginal in `EGM_ENDOGENOUS_COORDINATE`, the coordinate
+an EGM carry's rows are tabulated on. Model building compares each demand against every
+reachable target's published payload, so a target of a querying parent that publishes no
+reader at all, or one answering less than that parent asks, is named while the model
+builds rather than during the solve.
+
+`leaves()` is the addressable content of the payload: every published array under its
+own pytree path.
+
+### Declaring the leaves you read
+
+A solver that reads its targets' carries cannot name the rows it reads while its own
+kernels are being built: no regime has published a template yet, and the templates are
+what say which rows exist. `Solver.declare_continuation_reads` is the second call for
+exactly that:
+
+```{code-block} python
+class MySolver(Solver):
+    def declare_continuation_reads(
+        self, *, kernels: SolutionKernels, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Attach the reads each period's programs make on its targets' rows."""
+        return attach_my_reads(kernels=kernels, context=context)
+```
+
+The engine calls it once per regime whose `required_continuation_keys` is non-empty,
+after every regime in the model is built, with `context.continuation_specs` mapping each
+regime name to the continuation it publishes. A regime absent from that mapping
+publishes none. The default implementation returns `kernels` unchanged, so a solver that
+reads no continuation — or one content to be pinned conservatively — implements nothing.
+
+The contract is deliberately narrow. The hook may only attach `value_reads` to the core
+programs its kernels already publish: the same programs under the same names, with the
+same argument builders and the same compiled functions. Building kernels a second time
+here would re-run every build-time consumer the model author declared — a compiled
+constraint boundary, a boundary plan — and consume each of them twice. The result must
+depend only on the arguments, so two builds of one model declare the same reads.
+
+Only the `period_kernels` of the returned container are honoured. A container whose
+`period_group_keys`, `continuation_spec`, `artifact_authorities`, `replay_route` or
+`param_checks` differ from the ones the engine handed over is refused while the model
+builds, naming the regime, the solver and the field — as is a declaration by a solver
+whose regime publishes no continuation of its own, because the engine wraps such a
+regime's kernels in the adapter that publishes one and the declarations would name
+programs that adapter does not publish.
+
+The shipped endogenous-grid solvers build one `ValueRead` per published leaf, addressed
+either inside the rolling `next_regime_to_continuation` mapping or, where the argument
+builder flattens the rows into named arguments, by the argument holding each row. A
+period-`t` read names the target's carry at `t + 1` and the consumer at `t`.
 
 ## Declared replay routes
 
@@ -256,10 +615,16 @@ tokens to compile a sealed construction plan. Later materialization copies numer
 leaves into private buffers and reconstructs fresh exact tuples or structurally closed
 dataclass records from that plan without calling either plugin callback.
 PyTree-represented static metadata is validated; callback-injected instance state is
-canonicalized to the declared plan. The resulting owned snapshot is supplied to the
-route's `validate` and `build_reader` methods. This ownership boundary does not sandbox
-installed plugin validation or reader code, and a route cannot authorize itself from a
-descriptor copied out of the result.
+canonicalized to the declared plan. The resulting owned snapshots all pass the route's
+`validate` before any forward execution. Simulation then places each period's payload
+and coordinate arrays on its actual subject devices and calls `validate` again with that
+exact rebuilt snapshot and context immediately before `build_reader`. Both calls receive
+the same objects; their authority and descriptive metadata are preserved from preflight.
+A validator must leave its immutable inputs unchanged and tolerate repeated validation
+of a cell. Copies belong only to the consuming period; preflight does not replicate all
+periods' payloads. This ownership boundary does not sandbox installed plugin validation
+or reader code, and a route cannot authorize itself from a descriptor copied out of the
+result.
 
 `ReplayModelContext` and `SimulationBuildContext` expose the same period-specific
 solve-grid view: `state_names` and `action_names` are the canonical solution axes, and
@@ -319,10 +684,10 @@ contract:
    recomputation, or an explicit refusal — and read stored next-period values only
    through declared target-value accesses;
 1. publish retention-specialized `PLANNED` programs with a named `candidate`
-   `StreamableProductAxis`, a custom reduction semantic key, exact
-   `retained_artifact_keys`, an exact `retained_artifact_payload_types` entry for every
-   retained key, an explicit `replaces_program` link from replay to values, and
-   `StateAxesLeading` output roles, plus an additive artifact-only scratch program;
+   `ReducedAxis`, a custom reduction semantic key, exact `retained_artifact_keys`, an
+   exact `retained_artifact_payload_types` entry for every retained key, an explicit
+   `replaces_program` link from replay to values, and `StateAxesLeading` output roles,
+   plus an additive artifact-only scratch program;
 1. return `KernelOutput` with a non-EGM `Counter` continuation declared `NOT_PERSISTED`
    and a scratch auxiliary declared `MODEL_VERIFIABLE`;
 1. publish a registered plugin-defined PyTree as a `MODEL_VERIFIABLE` replay artifact

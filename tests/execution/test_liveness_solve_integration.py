@@ -13,7 +13,7 @@ from tests.solution.test_grid_search_streaming_production_path import (
     _solve_target,
 )
 
-type _Dispatch = tuple[int, RegimeName]
+type _Dispatch = tuple[int, RegimeName] | tuple[int, RegimeName, RegimeName]
 type _Ledger = PlannedInputLiveness[_Dispatch, ValueArtifactAddress]
 
 

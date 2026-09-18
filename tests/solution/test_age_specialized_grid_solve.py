@@ -13,7 +13,7 @@ Contracts tested here:
   it avoids the `-inf`/`NaN` poisoning a fixed grid would suffer (the feature's point);
 - the solved policy is economically sensible (V and consumption increase in wealth);
 - simulation runs and yields finite, positive consumption;
-- the shape-invariance contract is enforced: same class, `batch_size`, points mode and
+- the shape-invariance contract is enforced: same class, points mode and
   resolved node shape/dtype at every active age — validated on the grid's actual
   `to_jax()` array, since `n_points` is not part of the `Grid` base contract;
 - program sharing across periods is keyed on the explicit `AgeSpecializedGrid.signature`

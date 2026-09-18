@@ -62,5 +62,10 @@ from lcm_examples.mahler_yum_2024 import MAHLER_YUM_MODEL
 grid_search_baseline = MAHLER_YUM_MODEL
 ```
 
+Use `create_model(execution_config=execution_config)` from the same module to build
+this grid-search model with explicit [execution controls](../reference/runtime_and_results.md).
+Calling `create_model()` preserves the exported model's default execution policy.
+Both forms use the same regimes, grids, equations, and fixed parameters.
+
 Do not substitute this baseline when the paper-mode specialized declaration is the
 object being studied.

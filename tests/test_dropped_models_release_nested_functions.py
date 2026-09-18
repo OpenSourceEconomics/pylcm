@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 import _lcm
+import lcm
 from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
 from lcm.solvers import AdaptiveOuterMesh, GridSearch, MSSEnvelope
@@ -33,21 +34,9 @@ from tests.test_models.deterministic.regression import (
     working_life,
 )
 
-_ENGINE_SOURCE_ROOT = Path(_lcm.__file__).resolve().parent
-# Sources that still define a function per call, and why:
-# - the candidate certificate pins the reducer builders' bodies verbatim, nested
-#   definitions included, so their shape changes with that certificate or not at all;
-# - the remaining three are converted together with the execution work that rewrites
-#   the same call sites.
-_EXEMPT_SOURCES = frozenset(
-    _ENGINE_SOURCE_ROOT / relative
-    for relative in (
-        Path("regime_building/max_Q_over_a.py"),
-        Path("regime_building/collective.py"),
-        Path("solution/negm.py"),
-        Path("solution/nnbegm.py"),
-        Path("regime_building/processing.py"),
-    )
+_ENGINE_SOURCE_ROOTS = (
+    Path(_lcm.__file__).resolve().parent,
+    Path(lcm.__file__).resolve().parent,
 )
 _TOY_PARAMS: UserParams = {"discount_factor": 0.95}
 _requires_exact_kernel = pytest.mark.requires_exact_affine_kernel(
@@ -55,8 +44,8 @@ _requires_exact_kernel = pytest.mark.requires_exact_affine_kernel(
 )
 
 
-def _live_nested_functions(*, source_root: Path) -> int:
-    """Count the per-call nested functions under `source_root` still reachable.
+def _live_nested_functions(*, source_roots: tuple[Path, ...]) -> int:
+    """Count the per-call nested functions under `source_roots` still reachable.
 
     A function defined inside another function carries `<locals>` in its qualified
     name; one that is still alive after the call that created it has been pinned by
@@ -79,8 +68,9 @@ def _live_nested_functions(*, source_root: Path) -> int:
         # An annotated function also owns a deferred annotation thunk; it lives
         # and dies with its function, so counting it would double every survivor.
         and not obj.__qualname__.endswith(".__annotate__")
-        and Path(obj.__code__.co_filename).is_relative_to(source_root)
-        and Path(obj.__code__.co_filename) not in _EXEMPT_SOURCES
+        and any(
+            Path(obj.__code__.co_filename).is_relative_to(root) for root in source_roots
+        )
     )
 
 
@@ -118,10 +108,26 @@ def _toy_model(*, variant: str, outer_search: AdaptiveOuterMesh | None = None) -
     )
 
 
-def _mss_model(*, arithmetic: ComparisonArithmetic) -> Model:
-    """Build the DC-EGM twin on a coarse savings grid under one MSS arithmetic."""
+_MSS_SAVINGS_GRID_POINTS_DEFAULT = 8
+_MSS_SAVINGS_GRID_POINTS_FULL = 40
+
+
+def _mss_model(
+    *,
+    arithmetic: ComparisonArithmetic,
+    n_points: int = _MSS_SAVINGS_GRID_POINTS_DEFAULT,
+) -> Model:
+    """Build the DC-EGM twin on a savings grid under one MSS arithmetic.
+
+    The default 8-point grid retains both endpoints and interior points; it
+    creates the same engine-function families as the original 40-point grid
+    (see the test-suite cleanup ledger, W8, for the adequacy trace) and is
+    used on the GitHub lane. The `slow`-marked `_MSS_SAVINGS_GRID_POINTS_FULL`
+    variant keeps the original dense-grid stress coverage for the full
+    (Marvin/default) battery.
+    """
     return dcegm_paper_twin.build_dcegm_model(
-        savings_grid=LinSpacedGrid(start=0.0, stop=50.0, n_points=40),
+        savings_grid=LinSpacedGrid(start=0.0, stop=50.0, n_points=n_points),
         envelope=MSSEnvelope(arithmetic=arithmetic),
     )
 
@@ -154,12 +160,38 @@ _FAMILIES: dict[str, tuple[Callable[[], Model], Callable[[], UserParams]]] = {
         lambda: _mss_model(arithmetic="ordinary"),
         dcegm_paper_twin.get_params,
     ),
+    "mss_certified_full_grid": (
+        lambda: _mss_model(
+            arithmetic="certified", n_points=_MSS_SAVINGS_GRID_POINTS_FULL
+        ),
+        dcegm_paper_twin.get_params,
+    ),
+    "mss_ordinary_full_grid": (
+        lambda: _mss_model(
+            arithmetic="ordinary", n_points=_MSS_SAVINGS_GRID_POINTS_FULL
+        ),
+        dcegm_paper_twin.get_params,
+    ),
 }
+# `mss_certified*` families require the exact affine kernel; the `_full_grid`
+# variants additionally keep the original dense 40-point grid and are `slow`
+# (dropped on the Windows/macOS lanes, retained in the full Linux/Marvin
+# battery). Everything else runs unmarked on every lane.
+_SLOW_FAMILIES = frozenset({"mss_certified_full_grid", "mss_ordinary_full_grid"})
+_EXACT_KERNEL_FAMILIES = frozenset({"mss_certified", "mss_certified_full_grid"})
+
+
+def _family_marks(family: str) -> tuple[pytest.MarkDecorator, ...]:
+    marks: list[pytest.MarkDecorator] = []
+    if family in _EXACT_KERNEL_FAMILIES:
+        marks.append(_requires_exact_kernel)
+    if family in _SLOW_FAMILIES:
+        marks.append(pytest.mark.slow)
+    return tuple(marks)
+
+
 _FAMILY_CASES = [
-    pytest.param(family, marks=_requires_exact_kernel)
-    if family == "mss_certified"
-    else family
-    for family in _FAMILIES
+    pytest.param(family, marks=_family_marks(family)) for family in _FAMILIES
 ]
 
 
@@ -175,13 +207,14 @@ def test_a_dropped_model_and_solution_leave_no_nested_engine_function_behind(
     family: str,
 ) -> None:
     """A second build-and-solve of a family pins no nested engine function."""
-    assert _ENGINE_SOURCE_ROOT.is_relative_to(Path(__file__).resolve().parents[1])
+    project_root = Path(__file__).resolve().parents[1]
+    assert all(root.is_relative_to(project_root) for root in _ENGINE_SOURCE_ROOTS)
     _build_solve_and_drop(family)
-    before = _live_nested_functions(source_root=_ENGINE_SOURCE_ROOT)
+    before = _live_nested_functions(source_roots=_ENGINE_SOURCE_ROOTS)
 
     _build_solve_and_drop(family)
 
-    assert _live_nested_functions(source_root=_ENGINE_SOURCE_ROOT) == before
+    assert _live_nested_functions(source_roots=_ENGINE_SOURCE_ROOTS) == before
 
 
 def test_the_nested_function_probe_survives_a_dead_weak_reference() -> None:
@@ -197,7 +230,7 @@ def test_the_nested_function_probe_survives_a_dead_weak_reference() -> None:
         """Something a proxy can outlive."""
 
     source_root = Path(__file__).resolve().parent
-    baseline = _live_nested_functions(source_root=source_root)
+    baseline = _live_nested_functions(source_roots=(source_root,))
 
     proxy = weakref.proxy(_Referent())
     gc.collect()
@@ -205,16 +238,16 @@ def test_the_nested_function_probe_survives_a_dead_weak_reference() -> None:
     with pytest.raises(ReferenceError):
         proxy.__class__  # noqa: B018
 
-    assert _live_nested_functions(source_root=source_root) == baseline
+    assert _live_nested_functions(source_roots=(source_root,)) == baseline
 
 
 def test_the_nested_function_probe_counts_a_live_nested_function() -> None:
     """The probe reports a nested function of the source tree it is pointed at."""
     source_root = Path(__file__).resolve().parent
-    baseline = _live_nested_functions(source_root=source_root)
+    baseline = _live_nested_functions(source_roots=(source_root,))
 
     def _pinned_nested_function() -> None:
         """Stay alive for the rest of this test so the probe has one to find."""
 
-    assert _live_nested_functions(source_root=source_root) == baseline + 1
+    assert _live_nested_functions(source_roots=(source_root,)) == baseline + 1
     _pinned_nested_function()

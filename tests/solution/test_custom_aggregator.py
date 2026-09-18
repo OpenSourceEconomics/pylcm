@@ -13,6 +13,7 @@ from lcm import (
     AgeGrid,
     CESAggregator,
     DiscreteGrid,
+    ExecutionConfig,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
@@ -124,7 +125,7 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
     """Create a simple model, optionally with a custom `W` and pref_type state.
 
     When `with_pref_type=True`, the working-life regime gains a
-    `pref_type` discrete state (`batch_size=1`, three categories) and
+    `pref_type` discrete state (three categories) and
     wires `discount_factor` as a DAG function that indexes
     `discount_factor_by_type` by the state. This exercises the
     "DAG output feeds `W`" path in pylcm's Q_and_F — and relies on
@@ -147,11 +148,9 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
     }
     dead_states: dict = {}
     if with_pref_type:
-        working_life_states["pref_type"] = DiscreteGrid(
-            category_class=PrefType, batch_size=1
-        )
+        working_life_states["pref_type"] = DiscreteGrid(category_class=PrefType)
         working_life_state_transitions["pref_type"] = fixed_transition("pref_type")
-        dead_states["pref_type"] = DiscreteGrid(category_class=PrefType, batch_size=1)
+        dead_states["pref_type"] = DiscreteGrid(category_class=PrefType)
 
     working_life_regime = UserRegime(
         actions={
@@ -191,6 +190,7 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         regimes={"working_life": working_life_regime, "dead": dead_regime},
         ages=AgeGrid(start=START_AGE, stop=FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
+        execution_config=ExecutionConfig(axis_widths={"cell": 1}),
     )
 
 

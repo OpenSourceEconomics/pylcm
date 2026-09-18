@@ -41,16 +41,11 @@ import _lcm.utils.functools as functools_declarations
 import _lcm.zero_safe as zero_safe_declarations
 import lcm.exceptions as lcm_exceptions
 import lcm.koopmans_aggregation as koopmans_declarations
-import lcm.processes as process_declarations
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
-from _lcm.solution.dcegm import DCEGM, ExactEnvelope, FUESEnvelope
-from _lcm.solution.grid_search import GridSearch
-from _lcm.solution.nbegm import NBEGM
-from _lcm.solution.negm import NEGM
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
 from lcm.case_piece import (
@@ -92,31 +87,6 @@ _PYTHON_IMPLEMENTATION_SEAL = (
     tuple(sys.implementation.version),
     sys.implementation.cache_tag,
 )
-# These names are execution policy only for pylcm's own implementations. The
-# predicate below deliberately scopes them by owner type: a plugin or user
-# callable is free to give a mathematically meaningful field the same name.
-_GRID_EXECUTION_FIELDS = frozenset({"batch_size", "distributed"})
-_BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ...] = (
-    (AdaptiveOuterMesh, frozenset({"batch_size"})),
-    (FiniteOuterGrid, frozenset({"batch_size"})),
-    (DCEGM, frozenset({"stochastic_node_batch_size"})),
-    (ExactEnvelope, frozenset({"cell_batch_size"})),
-    (FUESEnvelope, frozenset({"scan_unroll"})),
-    (GridSearch, frozenset({"action_block_width"})),
-    (
-        NBEGM,
-        frozenset(
-            {
-                "branch_batch_size",
-                "cell_block_size",
-                "envelope_segment_block_size",
-                "interval_batch_size",
-                "stochastic_node_batch_size",
-            }
-        ),
-    ),
-    (NEGM, frozenset({"outer_batch_size"})),
-)
 _BUILTIN_TYPE_OBJECTS = frozenset(
     value for value in vars(builtins).values() if isinstance(value, type)
 )
@@ -143,12 +113,6 @@ _TRUSTED_GRID_TYPE_OBJECTS = frozenset(
     value
     for name in grid_declarations.__all__
     if isinstance(value := getattr(grid_declarations, name), type)
-    and issubclass(value, Grid)
-)
-_TRUSTED_GRID_EXECUTION_TYPE_OBJECTS = _TRUSTED_GRID_TYPE_OBJECTS | frozenset(
-    value
-    for name in process_declarations.__all__
-    if isinstance(value := getattr(process_declarations, name), type)
     and issubclass(value, Grid)
 )
 _TRUSTED_CONSTRAINT_TYPE_OBJECTS = frozenset(
@@ -385,7 +349,10 @@ def project_solution_params(
 
 
 def fingerprint_solution_support(
-    *, regimes: Mapping[RegimeName, Regime], flat_params: FlatParams
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    flat_params: FlatParams,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> str:
     """Hash what the model-owned solution authority reads from a parameter vector.
 
@@ -401,7 +368,11 @@ def fingerprint_solution_support(
         ("pylcm-solution-support", 1),
         {
             name: (
-                _grid_support(regime=regime, regime_params=flat_params[name]),
+                _grid_support(
+                    regime=regime,
+                    regime_params=flat_params[name],
+                    process_grid_resolver=process_grid_resolver,
+                ),
                 {
                     param_name: _param_shape_signature(value)
                     for param_name, value in flat_params[name].items()
@@ -480,7 +451,6 @@ def _walk_parameter_usage(  # noqa: PLR0911
                     seen=seen, current=getattr(current, declaration.name)
                 )
                 for declaration in dataclasses.fields(current)
-                if not _exclude_field(owner=current, field_name=declaration.name)
             )
             if not callable(current):
                 return field_names, field_unknown
@@ -536,6 +506,7 @@ def fingerprint_model(
     flat_params: FlatParams,
     structure: str | None = None,
     projection: SolutionParamProjection | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> str:
     """Hash the model facts that determine stored mathematical interpretation.
 
@@ -565,7 +536,11 @@ def fingerprint_model(
         ("pylcm-model-fingerprint", 6),
         structure_digest,
         {
-            name: _grid_support(regime=regime, regime_params=flat_params[name])
+            name: _grid_support(
+                regime=regime,
+                regime_params=flat_params[name],
+                process_grid_resolver=process_grid_resolver,
+            )
             for name, regime in regimes.items()
         },
         project_solution_params(
@@ -677,11 +652,15 @@ def fingerprint_model_structure(
 
 
 def _grid_support(
-    *, regime: Regime, regime_params: Mapping[str, object]
+    *,
+    regime: Regime,
+    regime_params: Mapping[str, object],
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> MappingProxyType[str, object]:
     """Return one regime's concrete support under a canonical parameter vector."""
     state_action_space = regime.solution.state_action_space(
-        regime_params=cast("Any", regime_params)
+        regime_params=cast("Any", regime_params),
+        process_grid_resolver=process_grid_resolver,
     )
     return MappingProxyType(
         {
@@ -1012,7 +991,7 @@ class _SemanticHasher:
                 self.visit(value=value.func)
                 self.visit(value=value.args)
                 self.visit(value=value.keywords or {})
-                self._visit_named_state(owner=value, state=value.__dict__)
+                self._visit_named_state(state=value.__dict__)
                 self.frame(label="partial-end")
                 return
             if inspect.ismethod(value):
@@ -1053,8 +1032,8 @@ class _SemanticHasher:
                     label="object-state-start",
                     payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
                 )
-                self._visit_named_state(owner=value, state=state or {})
-                self._visit_named_state(owner=value, state=slots)
+                self._visit_named_state(state=state or {})
+                self._visit_named_state(state=slots)
                 self.frame(label="object-state-end")
                 return
             msg = (
@@ -1443,7 +1422,7 @@ class _SemanticHasher:
             for name, member in function.__dict__.items()
             if name not in redundant_metadata
         }
-        self._visit_named_state(owner=function, state=function_state)
+        self._visit_named_state(state=function_state)
         self.frame(label="function-end")
 
     @staticmethod
@@ -1673,8 +1652,6 @@ class _SemanticHasher:
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
         for declaration in dataclasses.fields(cast("Any", value)):
-            if _exclude_field(owner=value, field_name=declaration.name):
-                continue
             self.frame(label="field", payload=declaration.name.encode())
             self.visit(value=getattr(value, declaration.name))
         # Exact pylcm declarations have their implementation sealed by the
@@ -1711,8 +1688,8 @@ class _SemanticHasher:
             for name, member in (getattr(value, "__dict__", {}) or {}).items()
             if name not in {"__annotations__", "__signature__"}
         }
-        self._visit_named_state(owner=value, state=dictionary_state)
-        self._visit_named_state(owner=value, state=_slot_state(value))
+        self._visit_named_state(state=dictionary_state)
+        self._visit_named_state(state=_slot_state(value))
         call = inspect.getattr_static(type(value), "__call__", None)
         if not inspect.isfunction(call):
             self._raise_uninspectable_callable(value)
@@ -1750,15 +1727,11 @@ class _SemanticHasher:
         self.visit(value=identity)
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
             for declaration in dataclasses.fields(cast("Any", value)):
-                if _exclude_field(owner=value, field_name=declaration.name):
-                    continue
                 self.frame(label="solver-field", payload=declaration.name.encode())
                 self.visit(value=getattr(value, declaration.name))
         else:
-            self._visit_named_state(
-                owner=value, state=getattr(value, "__dict__", {}) or {}
-            )
-            self._visit_named_state(owner=value, state=_slot_state(value))
+            self._visit_named_state(state=getattr(value, "__dict__", {}) or {})
+            self._visit_named_state(state=_slot_state(value))
         self.frame(label="solver-end")
 
     def _visit_certainty_equivalent(self, value: object) -> bool:
@@ -1772,8 +1745,8 @@ class _SemanticHasher:
             label="certainty-equivalent-start",
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
-        self._visit_named_state(owner=value, state=getattr(value, "__dict__", {}) or {})
-        self._visit_named_state(owner=value, state=_slot_state(value))
+        self._visit_named_state(state=getattr(value, "__dict__", {}) or {})
+        self._visit_named_state(state=_slot_state(value))
 
         # Shipped implementations are sealed by the exact pylcm version checked
         # alongside every durable solution. User implementations have no package
@@ -1814,31 +1787,13 @@ class _SemanticHasher:
         self.frame(label="certainty-equivalent-end")
         return True
 
-    def _visit_named_state(self, *, owner: object, state: Mapping[str, object]) -> None:
-        entries = {
-            name: member
-            for name, member in state.items()
-            if not _exclude_field(owner=owner, field_name=name)
-        }
+    def _visit_named_state(self, *, state: Mapping[str, object]) -> None:
+        entries = state
         self.frame(label="state-start", payload=str(len(entries)).encode())
         for name in sorted(entries):
             self.frame(label="state-field", payload=name.encode())
             self.visit(value=entries[name])
         self.frame(label="state-end")
-
-
-def _exclude_field(*, owner: object, field_name: str) -> bool:
-    """Whether one field is non-semantic for this precise owner type."""
-    owner_type = type(owner)
-    if (
-        _has_exact_type(value=owner, candidates=_TRUSTED_GRID_EXECUTION_TYPE_OBJECTS)
-        and field_name in _GRID_EXECUTION_FIELDS
-    ):
-        return True
-    for registered_type, fields in _BUILTIN_EXECUTION_FIELDS_BY_TYPE:
-        if owner_type is registered_type:
-            return field_name in fields
-    return False
 
 
 def _is_shipped_pylcm_module_name(name: str) -> bool:

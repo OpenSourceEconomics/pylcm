@@ -74,7 +74,6 @@ def get_model(
     n_periods: int = 5,
     wealth_n_points: int = 20,
     consumption_n_points: int = 20,
-    n_subjects: int | None = None,
 ) -> Model:
     """Build the marriage-market model.
 
@@ -82,8 +81,6 @@ def get_model(
         n_periods: Number of lifecycle periods. The last one is terminal.
         wealth_n_points: Nodes on every regime's wealth grid.
         consumption_n_points: Nodes on every regime's consumption grid.
-        n_subjects: Batch size to compile simulation for ahead of time, or
-            `None` to compile at runtime.
 
     Returns:
         The model, ready to `solve()` with `get_params()`.
@@ -277,7 +274,6 @@ def get_model(
         },
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
-        n_subjects=n_subjects,
     )
 
 

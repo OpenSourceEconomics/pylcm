@@ -1,0 +1,100 @@
+--- test_continuous_assets_sharding.py
++++ gpu_assets.py
+@@ -10,0 +11,6 @@
++import os
++
++SCALING_DEVICES = int(os.environ["SCALING_DEVICES"])
++assert SCALING_DEVICES in (1, 3, 4, 6, 8)
++PADDED_ROWS = ((17 + SCALING_DEVICES - 1) // SCALING_DEVICES) * SCALING_DEVICES
++ASSET_BLOCK = 24 // SCALING_DEVICES
+@@ -208,2 +214,3 @@
+-    if jax.default_backend() != "cpu" or jax.device_count() != 8:
+-        pytest.skip("Requires a fresh eight-device CPU process")
++    assert jax.default_backend() == "gpu"
++    assert jax.device_count() == jax.local_device_count() == 8
++    assert all(device.platform == "gpu" and "A40" in device.device_kind for device in jax.devices())
+@@ -217 +224,2 @@
+-    assert len(shards) == 8
++    assert len(shards) == SCALING_DEVICES
++    assert {device.id for device in value.sharding.device_set} == set(range(SCALING_DEVICES))
+@@ -223 +231 @@
+-        assert shard.data.shape == (3, 3, 3)
++        assert shard.data.shape == (3, 3, ASSET_BLOCK)
+@@ -226 +234 @@
+-            got, global_ids[:, :, 3 * position : 3 * (position + 1)]
++            got, global_ids[:, :, ASSET_BLOCK * position : ASSET_BLOCK * (position + 1)]
+@@ -288 +296 @@
+-    model = _model(devices=tuple(range(8)), widths=widths)
++    model = _model(devices=tuple(range(SCALING_DEVICES)), widths=widths)
+@@ -299 +307 @@
+-            assert len(copied.sharding.device_set) == 8
++            assert len(copied.sharding.device_set) == SCALING_DEVICES
+@@ -428,2 +436,2 @@
+-                assert value.shape[0] == 24
+-                assert len(value.addressable_shards) == 8
++                assert value.shape[0] == PADDED_ROWS
++                assert len(value.addressable_shards) == SCALING_DEVICES
+@@ -432,2 +440,2 @@
+-                    indices = np.arange(24)[shard.index[0]]
+-                    assert len(indices) == 3
++                    indices = np.arange(PADDED_ROWS)[shard.index[0]]
++                    assert len(indices) == PADDED_ROWS // SCALING_DEVICES
+@@ -435,2 +443,2 @@
+-                assert sorted(rows) == list(range(24))
+-                placed_counts.append(24)
++                assert sorted(rows) == list(range(PADDED_ROWS))
++                placed_counts.append(PADDED_ROWS)
+@@ -504,3 +512,3 @@
+-        assert call["n_subjects"] == 24
+-        assert result["r0"][0].V_arr.shape[0] == 24
+-        padded_calls.append(24)
++        assert call["n_subjects"] == PADDED_ROWS
++        assert result["r0"][0].V_arr.shape[0] == PADDED_ROWS
++        padded_calls.append(PADDED_ROWS)
+@@ -549 +557 @@
+-    assert padded_calls == [24, 24]
++    assert padded_calls == [PADDED_ROWS, PADDED_ROWS]
+@@ -568 +576 @@
+-    solution = _model(devices=tuple(range(8)), identity=True).solve(
++    solution = _model(devices=tuple(range(SCALING_DEVICES)), identity=True).solve(
+@@ -584 +592 @@
+-            devices=tuple(range(8)),
++            devices=tuple(range(SCALING_DEVICES)),
+@@ -597 +605 @@
+-    sufficient = _model(devices=tuple(range(8)))
++    sufficient = _model(devices=tuple(range(SCALING_DEVICES)))
+@@ -605 +613 @@
+-    constrained = _model(devices=tuple(range(8)), budget=216 * itemsize // 2)
++    constrained = _model(devices=tuple(range(SCALING_DEVICES)), budget=216 * itemsize // 2)
+@@ -646 +654 @@
+-    mesh_devices = tuple(reversed(jax.devices()))
++    mesh_devices = tuple(reversed(jax.devices()[:SCALING_DEVICES]))
+@@ -656 +664 @@
+-            global_ids[:, :, 3 * position : 3 * (position + 1)],
++            global_ids[:, :, ASSET_BLOCK * position : ASSET_BLOCK * (position + 1)],
+@@ -697 +705 @@
+-            devices=tuple(reversed(range(8))),
++            devices=tuple(reversed(range(SCALING_DEVICES))),
+@@ -718,2 +726,2 @@
+-            ) == tuple(range(8))
+-            assert len(actual.addressable_shards) == 8
++            ) == tuple(range(SCALING_DEVICES))
++            assert len(actual.addressable_shards) == SCALING_DEVICES
+@@ -722 +730 @@
+-                assert shard.data.shape == (3, 3, 3)
++                assert shard.data.shape == (3, 3, ASSET_BLOCK)
+@@ -725 +733 @@
+-                    cells[shard.index], cells[:, :, 3 * position : 3 * (position + 1)]
++                    cells[shard.index], cells[:, :, ASSET_BLOCK * position : ASSET_BLOCK * (position + 1)]
+@@ -739 +747 @@
+-    original = _model(devices=tuple(range(8)), widths=(3, 9))
++    original = _model(devices=tuple(range(SCALING_DEVICES)), widths=(3, 9))
+@@ -741 +749 @@
+-    assert original.execution_devices == renamed.execution_devices == tuple(range(8))
++    assert original.execution_devices == renamed.execution_devices == tuple(range(SCALING_DEVICES))
+@@ -816 +824 @@
+-    model = _model(devices=tuple(range(8)), widths=(3, 9))
++    model = _model(devices=tuple(range(SCALING_DEVICES)), widths=(1, 1))
+@@ -844 +852 @@
+-            assert len(copied.addressable_shards) == 8
++            assert len(copied.addressable_shards) == SCALING_DEVICES

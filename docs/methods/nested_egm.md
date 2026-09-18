@@ -35,10 +35,12 @@ levels. This is nesting, not a coupled two-dimensional Euler inversion
 
 `NEGM(inner=DCEGM(...), outer_grid=...)` performs one complete inner `DCEGM` solve for
 each outer-grid node and compares those candidates with the keeper. The outer solution
-is exact relative to that finite candidate set. `outer_batch_size` limits how many
-candidate values are evaluated at once. It can reduce temporary evaluation memory, but
-it does not cap the candidate bank retained for the exact later comparison. Peak memory
-can therefore still grow with the complete outer candidate set.
+is exact relative to that finite candidate set. The sweep declares the candidates as the
+`outer_candidate` execution axis, so how many are evaluated at once is a width the
+planner owns (`ExecutionConfig(axis_widths={"outer_candidate": k})` fixes it). A narrow
+width reduces temporary evaluation memory, but it does not cap the candidate bank
+retained for the exact later comparison. Peak memory can therefore still grow with the
+complete outer candidate set.
 
 Use it when the liquid problem has ordinary discrete-continuous non-concavity and the
 outer action can be represented by a fixed grid.

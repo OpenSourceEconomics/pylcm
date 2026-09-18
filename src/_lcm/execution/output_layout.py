@@ -10,18 +10,24 @@ solve loop reads the period value from that position without knowing the rest of
 the tree.
 """
 
-from collections.abc import Callable, Hashable
-from dataclasses import dataclass
+from collections.abc import Callable, Hashable, Mapping
+from dataclasses import dataclass, field
 from enum import Enum, auto
+from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
 
+from _lcm.execution.internal_outputs import assert_internal_inputs
+from _lcm.execution.pending_work import PendingSolveWork, execute_with_pending_work
+from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
+    TransferCache,
     apply_value_transfer_plan,
 )
 from _lcm.typing import StateName
+from lcm.exceptions import ExecutionPlanningError
 
 
 class OutputRole(Enum):
@@ -377,7 +383,9 @@ def _assert_output_leaf(
         expected_dtype=expected.dtype,
     )
     actual = getattr(output, "sharding", None)
-    if actual != expected.sharding:
+    if not runtime_shardings_match(
+        actual=actual, expected=expected.sharding, ndim=getattr(output, "ndim", 0)
+    ):
         msg = (
             f"planned output sharding mismatch at {path} ({expected.label}): "
             f"expected {expected.sharding}, got {actual}. The output must be born "
@@ -418,26 +426,93 @@ class PlannedCore:
 
     compiled: Callable
     layout: ResolvedOutputLayout
+    tile_widths: Mapping[str, int]
+    """Width this core was lowered at, per execution axis of its program."""
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
+    internal_input_templates: Mapping[str, object] = MappingProxyType({})
+    """Abstract template per internal input this core was lowered against."""
+    transfer_cache: TransferCache | None = None
+    """Per-period store shared transfers are served from, or `None` to copy."""
+    pending_work: PendingSolveWork | None = field(
+        default=None, compare=False, repr=False
+    )
+    """Call-local completion owner on transient budgeted solve wrappers only."""
+    donated_arguments: tuple[str, ...] = ()
+    """Arguments the executable was lowered to donate, in declaration order."""
+    name: str
+    """Graph key of the program this core was compiled for."""
 
     def __post_init__(self) -> None:
-        """Snapshot and validate the resolved input transfer plan."""
+        """Snapshot the exact lowering widths and resolved input transfer plan."""
+        widths = dict(self.tile_widths)
+        if any(not isinstance(name, str) or not name for name in widths):
+            msg = "PlannedCore tile-width names must be non-empty strings."
+            raise TypeError(msg)
+        if any(type(width) is not int for width in widths.values()):
+            msg = "PlannedCore tile widths must be integers."
+            raise TypeError(msg)
+        if any(width <= 0 for width in widths.values()):
+            msg = "PlannedCore tile widths must be positive."
+            raise ValueError(msg)
+        object.__setattr__(self, "tile_widths", MappingProxyType(widths))
+
         plan = tuple(self.input_transfer_plan)
         if any(not isinstance(item, ResolvedValueTransfer) for item in plan):
             msg = "PlannedCore input_transfer_plan must contain resolved transfers."
             raise TypeError(msg)
         object.__setattr__(self, "input_transfer_plan", plan)
 
+        templates = dict(self.internal_input_templates)
+        if any(not isinstance(name, str) or not name for name in templates):
+            msg = "PlannedCore internal-input names must be non-empty strings."
+            raise TypeError(msg)
+        object.__setattr__(
+            self, "internal_input_templates", MappingProxyType(templates)
+        )
+
+        if self.transfer_cache is not None and not isinstance(
+            self.transfer_cache, TransferCache
+        ):
+            msg = "PlannedCore transfer_cache must be a TransferCache or None."
+            raise TypeError(msg)
+
     def __call__(self, *args: object, **kwargs: object) -> object:
         """Execute and enforce the layout contract at the compiled-core seam."""
+        if self.internal_input_templates:
+            assert_internal_inputs(
+                arguments=kwargs,
+                templates=self.internal_input_templates,
+                label=self.name,
+            )
         if self.input_transfer_plan and args:
             msg = (
                 "A PlannedCore with input transfers accepts dynamic arguments "
                 "only by keyword."
             )
             raise TypeError(msg)
+        if self.pending_work is not None:
+            if args or not isinstance(self.compiled, jax.stages.Compiled):
+                msg = (
+                    "Budgeted solve completion requires an actual compiled executable "
+                    "with dynamic arguments supplied by keyword."
+                )
+                raise ExecutionPlanningError(msg)
+            output = execute_with_pending_work(
+                owner=self.pending_work,
+                compiled=self.compiled,
+                arguments=kwargs,
+                transfers=self.input_transfer_plan,
+                cache=self.transfer_cache,
+                donates=bool(self.donated_arguments),
+            )
+            assert_output_layout(output=output, layout=self.layout)
+            return output
         planned_kwargs = (
-            apply_value_transfer_plan(arguments=kwargs, plan=self.input_transfer_plan)
+            apply_value_transfer_plan(
+                arguments=kwargs,
+                plan=self.input_transfer_plan,
+                cache=self.transfer_cache,
+            )
             if self.input_transfer_plan
             else kwargs
         )

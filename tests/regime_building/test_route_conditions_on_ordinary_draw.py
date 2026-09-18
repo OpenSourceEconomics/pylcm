@@ -357,6 +357,7 @@ def _solve_dual_edge(*, edge_order: tuple[str, str]):
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_route_conditions_on_ordinary_draw",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,

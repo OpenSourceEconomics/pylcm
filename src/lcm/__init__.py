@@ -1,3 +1,12 @@
+"""pylcm: finite-horizon discrete-continuous dynamic choice models in JAX.
+
+Importing this package is what installs the runtime perimeter: JAX's allocation
+and persistent-compilation-cache settings, the beartype claw over both `lcm` and
+the private `_lcm` package, and `MappingProxyType` as a JAX pytree. It then
+re-exports the public surface, so a user writes `from lcm import Model, Regime`.
+Exceptions are reached through `lcm.exceptions` rather than from here.
+"""
+
 import contextlib
 import os
 from pathlib import Path
@@ -122,6 +131,7 @@ from lcm.consumption_savings_regime import (  # noqa: E402
     outer_unchanged,
     post_decision_lower_bound,
 )
+from lcm.execution import ExecutionConfig  # noqa: E402
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -198,6 +208,7 @@ __all__ = [
     "Condition",
     "ConsumptionSavingsRegime",
     "DiscreteGrid",
+    "ExecutionConfig",
     "ExtremeValueTasteShocks",
     "GridBreakpoint",
     "IrregSpacedGrid",

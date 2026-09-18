@@ -208,6 +208,7 @@ def test_repeating_self_loop_solves_with_its_fallback_inactive_in_the_unread_per
         }
     )
     solution = solve(
+        model_fingerprint="test_gated_edge_fold_availability",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,

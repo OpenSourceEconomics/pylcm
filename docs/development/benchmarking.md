@@ -104,26 +104,29 @@ parity. The harness also requires non-empty HLO and compiler-memory status for e
 compiled core, host high-water-mark evidence, and measured peak device memory on GPU
 (with an explicit not-applicable record on CPU). It verifies the native execution
 declaration for every named target: singleton hard max, distributed co-map, and folded
-hard max are planned and streamed; EV1 is deliberately dense to preserve canonical
-reduction order; and collective GridSearch is deliberately dense because streaming is
-resource-adverse. It also rejects communication collectives in the distributed co-map
-head. Raw timings, compiler and device memory, HLO files and digests, layout manifests,
-and the base/head ratios are retained under the output directory; `summary.json` is the
-entry point for review.
+hard max stream `action_product`; EV1 and collective GridSearch keep canonical dense
+action reducers while the planner tiles their state cells. The reported `streamed` flag
+means action reduction, so a planned core can have `streamed=False`. It also rejects
+communication collectives in the distributed co-map head. Raw timings, compiler and
+device memory, HLO files and digests, layout manifests, and the base/head ratios are
+retained under the output directory; `summary.json` is the entry point for review.
 
 ## Benchmark Scenarios
 
-| File                             | What it benchmarks                                                                                    |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `bench_precautionary_savings.py` | Solve (varying grid sizes), simulate (varying subjects), solve+simulate, lin vs irreg grid comparison |
-| `bench_mahler_yum.py`            | Mahler & Yum (2024) replication (GPU only)                                                            |
-| `bench_aca_baseline.py`          | ACA baseline (18 regimes) end-to-end simulate on benchmark-sized grids (GPU only)                     |
+| File                             | What it benchmarks                                                                                          |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `bench_precautionary_savings.py` | Solve (varying grid sizes), simulate (varying subjects), solve+simulate, lin vs irreg grid comparison       |
+| `bench_mahler_yum.py`            | Mahler & Yum (2024) replication, configured fp64 GPU series `capacity-half-a64-c4096-v1`                    |
+| `bench_aca_baseline.py`          | Reduced ACA benchmark: 18 regimes, tiny continuous grids, 2 preference types, and 1,000 subjects (GPU only) |
 
-Each benchmark tracks three metrics:
+The reduced ACA benchmark preserves the 18-regime structure while using its benchmark
+profile. Production ACA runs use the production grid configuration and 3 preference
+types.
 
-- **`time_*`** — execution time (after JIT warmup)
-- **`peakmem_*`** — peak memory usage
-- **`track_warmup`** — JIT compilation time
+The ACA report labels its timing measurements as follows:
+
+- **Warm solve + simulate** — reuses compiled code
+- **Cold solve + simulate** — first run, including compilation
 
 ## Publishing Results
 

@@ -18,6 +18,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.solution.fingerprint import fingerprint_model
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
@@ -347,8 +348,16 @@ def _solve_internal(
     backward induction, and a retained replay policy holds arrays for an
     unrelated reason, so leaving it on would blur what is being measured.
     """
+    flat_params = model._process_params(params)
     return model._solve_compiled(
-        flat_params=model._process_params(params),
+        flat_params=flat_params,
+        model_fingerprint=fingerprint_model(
+            ages=model.ages,
+            regimes=model._regimes,
+            user_regimes=model.user_regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+            flat_params=flat_params,
+        ),
         params=params,
         log=get_logger(log_level="off"),
         log_path=None,

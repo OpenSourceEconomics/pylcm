@@ -15,6 +15,7 @@ base call sees both.
 
 import functools
 from collections.abc import Mapping
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -41,6 +42,7 @@ from tests.test_models import n_nbegm_toy as toy
 _ROUTES = {"finite": None, "adaptive": _MESH}
 
 
+@functools.cache
 def _kernel(route: str) -> tuple[Any, dict[str, Any]]:
     model = toy.build_model(variant="n_nbegm", n_periods=3, outer_search=_ROUTES[route])
     return ride_along_kernel(model=model, params=_PARAMS)
@@ -111,13 +113,82 @@ def test_the_graph_republishes_every_inner_program_under_role_prefixes():
             assert program.disposition is CoreExecutionDisposition.PLANNED
             assert program.disposition_reason is None
             assert program.function is inner.function
-            assert program.requirements == inner.requirements
+            assert replace(
+                program.requirements, value_reads=(), host_axis_names=()
+            ) == replace(inner.requirements, value_reads=())
             assert program.output_roles == inner.output_roles
             assert program.donation_candidates == inner.donation_candidates
     assert graph["keeper:main"].scope is ProgramScope.VALUES_ONLY
     assert graph["keeper:replay"].scope is ProgramScope.REPLAY
     assert graph["keeper:replay"].replaces_program == "keeper:main"
     assert graph["adjuster:replay"].replaces_program == "adjuster:main"
+
+
+def test_the_adaptive_kernel_keeps_its_inner_programs_planned():
+    """Adaptive host scheduling retains inner planner axes and input transfers."""
+    kernel, _ = _kernel("adaptive")
+    graph = core_program_graph(kernel=kernel)
+
+    assert set(graph) == {
+        "keeper:main",
+        "keeper:replay",
+        "adjuster:main",
+        "adjuster:replay",
+    }
+    for program in graph.values():
+        assert program.disposition is CoreExecutionDisposition.PLANNED
+        assert program.disposition_reason is None
+
+
+def test_the_host_scheduled_adjuster_declares_its_continuation_reads():
+    """The adaptive adjuster names every target whose carry its host loop reads.
+
+    The captured period's only reachable target publishing a carry is the terminal
+    regime, so that one target is the whole declaration.
+    """
+    kernel, _ = _kernel("adaptive")
+    program = core_program_graph(kernel=kernel)["adjuster:main"]
+
+    assert {read.target.regime for read in program.requirements.value_reads} == {"dead"}
+
+
+@pytest.mark.parametrize("route", ["finite", "adaptive"])
+def test_the_nested_keeper_declares_the_carry_leaves_it_reads(*, route: str) -> None:
+    """The keeper names its targets' published carry leaves on either outer route.
+
+    The keeper's argument builder hands it the whole rolling payload, so the
+    leaves it reads are those the captured period's reachable targets publish.
+    """
+    kernel, _ = _kernel(route)
+    program = core_program_graph(kernel=kernel)["keeper:main"]
+
+    assert {read.target.regime for read in program.requirements.value_reads} == {"dead"}
+
+
+def test_the_host_scheduled_adjuster_reads_are_keyed_by_the_program_that_runs_them():
+    """Each republished adjuster program owns its reads under its own graph key."""
+    kernel, _ = _kernel("adaptive")
+    graph = core_program_graph(kernel=kernel)
+
+    assert {
+        name: {read.source.core_key for read in program.requirements.value_reads}
+        for name, program in graph.items()
+        if name.startswith("adjuster:")
+    } == {
+        "adjuster:main": {"adjuster:main"},
+        "adjuster:replay": {"adjuster:replay"},
+    }
+
+
+def test_every_republished_program_declares_the_leaves_its_role_reads():
+    """No program of a nested period is left without a declaration of its reads."""
+    kernel, _ = _kernel("finite")
+    graph = core_program_graph(kernel=kernel)
+
+    assert all(
+        {read.target.regime for read in program.requirements.value_reads} == {"dead"}
+        for program in graph.values()
+    )
 
 
 @pytest.mark.parametrize(

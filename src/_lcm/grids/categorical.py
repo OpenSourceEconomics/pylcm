@@ -1,3 +1,10 @@
+"""The `@categorical` decorator and the validation of the classes it builds.
+
+`categorical(ordered=...)` turns an annotated class into a category set with
+auto-assigned `ScalarInt` codes; `validate_category_class` is the check
+`DiscreteGrid` runs on whatever class it is handed.
+"""
+
 import functools
 from collections.abc import Callable
 from dataclasses import dataclass, field, is_dataclass

@@ -1,0 +1,16 @@
+{
+  "contract_version": "1",
+  "digest": "9949d584371c98f758dbc1f4200f6265e07186e5c2f552b8ff08f270cb71b4c4",
+  "profiles": {
+    "balanced": {
+      "applicability": "required",
+      "candidate_assessed_by": "refinement_oracle",
+      "candidate_max_regret": null,
+      "candidate_on_unavailable": "block",
+      "candidate_source": null,
+      "candidate_source_digest": null,
+      "structural_bound_value": null
+    }
+  },
+  "target": "Eight-way continuous-state GridSearch solve sharding"
+}

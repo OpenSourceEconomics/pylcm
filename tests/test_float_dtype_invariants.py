@@ -165,7 +165,12 @@ def test_simulate_state_pool_dtype_stable_across_periods(x64_disabled: None):
     names the offending state and its observed dtypes.
     """
     n_periods = 4
-    model = get_model(n_periods=n_periods)
+    # Grid dtype is fixed at construction, so build these inside x64_disabled.
+    model = get_model(
+        n_periods=n_periods,
+        wealth_grid=LinSpacedGrid(start=1, stop=400, n_points=100),
+        consumption_grid=LinSpacedGrid(start=1, stop=400, n_points=500),
+    )
     params = get_params(n_periods=n_periods)
     initial = {
         "wealth": jnp.asarray([20.0, 50.0, 80.0]),
@@ -190,7 +195,12 @@ def test_simulate_state_pool_dtype_stable_across_periods(x64_disabled: None):
 
 def test_solve_V_arrays_at_canonical_float_dtype(x64_disabled: None):
     """Every V-array returned by `model.solve()` is at `canonical_float_dtype()`."""
-    model = get_model(n_periods=3)
+    # The shared fixture's default grids may predate this precision scope.
+    model = get_model(
+        n_periods=3,
+        wealth_grid=LinSpacedGrid(start=1, stop=400, n_points=100),
+        consumption_grid=LinSpacedGrid(start=1, stop=400, n_points=500),
+    )
     period_to_regime_to_V_arr = model.solve(
         log_level="debug", params=get_params(n_periods=3)
     ).values

@@ -4,7 +4,7 @@ import dataclasses
 import functools
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Self, cast
+from typing import Literal, Self, cast
 
 import jax
 import jax.numpy as jnp
@@ -31,6 +31,7 @@ from lcm.solver_api import (
     ReplayRouteRequirements,
     ReplayRouteSnapshot,
     SimulationBuildContext,
+    SolverExecutionCapabilities,
     SolverIdentity,
 )
 from lcm.solvers import (
@@ -42,17 +43,17 @@ from lcm.solvers import (
     DeclaredReplay,
     OutputRole,
     ProgramScope,
+    ReducedAxis,
     SolutionKernels,
     Solver,
     SolverBuildContext,
     StateActionSpace,
     StateAxesLeading,
-    StreamableProductAxis,
-    TargetValueAccess,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
     ValueInputChannel,
+    ValueRead,
 )
 from lcm.typing import Float1D, FloatND, RegimeName
 
@@ -154,6 +155,11 @@ class _MiddleTieReduction:
     def semantic_key(self) -> tuple[str, int]:
         """Return the stable numerical identity of this reduction."""
         return ("middle-tie-maximum", 1)
+
+    @property
+    def exactness(self) -> Literal["exact"]:
+        """Return `"exact"`: the fold is order independent."""
+        return "exact"
 
 
 MIDDLE_TIE_REDUCTION = _MiddleTieReduction()
@@ -342,6 +348,16 @@ class TerminalCounterSolver(Solver):
     """Publish the scalar zero boundary required by ``ReferenceSolver``."""
 
     @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
+    @property
     def identity(self) -> SolverIdentity:
         """Return the shared external plugin's durable identity."""
         return _PLUGIN_IDENTITY
@@ -349,7 +365,7 @@ class TerminalCounterSolver(Solver):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one dense terminal program and its counter authority."""
         zero = jnp.asarray(0.0)
-        counter_template = Counter(count=zero)
+        counter_template = context.place_on_regime_devices(template=Counter(count=zero))
         counter_authority = _counter_authority(template=counter_template)
         program = CoreProgram(
             name="values",
@@ -407,12 +423,50 @@ class _ReferenceReader:
         )
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _SnapshotObservation:
+    """Host-only evidence of immutable authority and exact transported values."""
+
+    metadata_identity: int
+    authority_identities: tuple[tuple[ArtifactKey, int], ...]
+    payload_type: type
+    values: np.ndarray
+    device_ids: tuple[int, ...]
+
+
+def _observe_snapshot(snapshot: ReplayRouteSnapshot) -> _SnapshotObservation:
+    """Read the reference route's one policy without retaining device copies."""
+    policy = cast("Policy", snapshot.artifacts[POLICY_KEY])
+    return _SnapshotObservation(
+        metadata_identity=id(snapshot.metadata),
+        authority_identities=tuple(
+            (key, id(authority)) for key, authority in snapshot.authorities.items()
+        ),
+        payload_type=type(policy),
+        values=np.array(policy.values, copy=True),
+        device_ids=(
+            tuple(device.id for device in policy.values.sharding.mesh.devices.flat)
+            if isinstance(policy.values, jax.Array)
+            and isinstance(policy.values.sharding, jax.NamedSharding)
+            else tuple(device.id for device in policy.values.devices())
+            if isinstance(policy.values, jax.Array)
+            else ()
+        ),
+    )
+
+
 @dataclasses.dataclass(kw_only=True)
 class _RouteAudit:
     """Record object identities without participating in compiled execution."""
 
     validated_snapshots: list[int] = dataclasses.field(default_factory=list)
     reader_snapshots: list[int] = dataclasses.field(default_factory=list)
+    validated_contents: list[_SnapshotObservation] = dataclasses.field(
+        default_factory=list
+    )
+    reader_contents: list[_SnapshotObservation] = dataclasses.field(
+        default_factory=list
+    )
     requirement_contexts: list[ReplayModelContext] = dataclasses.field(
         default_factory=list
     )
@@ -493,6 +547,7 @@ class ReferenceReplayRoute(ExecutableReplayRoute):
         if context.state_names != ("wealth", "productivity"):
             raise ValueError("The replay validation context has wrong state roles.")
         self.audit.validated_snapshots.append(id(snapshot))
+        self.audit.validated_contents.append(_observe_snapshot(snapshot))
         self.audit.validation_contexts.append(context)
         self.audit.validation_artifact_keys.append(tuple(snapshot.artifacts))
         policy = cast("Policy", snapshot.artifacts[POLICY_KEY])
@@ -517,6 +572,7 @@ class ReferenceReplayRoute(ExecutableReplayRoute):
                 "The reference route requires exactly the consumption action."
             )
         self.audit.reader_snapshots.append(id(snapshot))
+        self.audit.reader_contents.append(_observe_snapshot(snapshot))
         self.audit.reader_contexts.append(context)
         self.audit.reader_artifact_keys.append(tuple(snapshot.artifacts))
         return _ReferenceReader(
@@ -527,6 +583,16 @@ class ReferenceReplayRoute(ExecutableReplayRoute):
 
 class ReferenceSolver(Solver):
     """Value solver with a custom continuation, replay route, and artifact ledger."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     @property
     def identity(self) -> SolverIdentity:
@@ -595,7 +661,9 @@ class ReferenceSolver(Solver):
             axis_names=("wealth", "productivity"),
         )
 
-        counter_template = Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
+        counter_template = context.place_on_regime_devices(
+            template=Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
+        )
         counter_authority = _counter_authority(
             template=counter_template,
         )
@@ -662,8 +730,8 @@ class ReferenceSolver(Solver):
 
         argument_builder = _ArgumentBuilder(regime_name=context.regime_name)
         requirements = CoreExecutionRequirements(
-            streamable_axes=(
-                StreamableProductAxis(
+            reduced_axes=(
+                ReducedAxis(
                     name="candidate",
                     coordinate_names=("consumption",),
                     coordinate_extents=(int(action_nodes.shape[0]),),
@@ -844,11 +912,21 @@ class _TargetValueArgumentBuilder:
 class TargetValueSolver(Solver):
     """Read every reachable target's stored value through declared accesses.
 
-    Each period's program declares one `TargetValueAccess` per next-period
+    Each period's program declares one `ValueRead` per next-period
     target, pairing the stored regime value with the exact argument leaf the
     core reads it through, so the planner can transfer the array and track its
     liveness without inspecting the core.
     """
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
 
     @property
     def identity(self) -> SolverIdentity:
@@ -863,7 +941,9 @@ class TargetValueSolver(Solver):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one values program per period with its target-value accesses."""
         state_nodes = context.state_action_space.states["wealth"]
-        counter_template = Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
+        counter_template = context.place_on_regime_devices(
+            template=Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
+        )
         counter_authority = _counter_authority(template=counter_template)
         last_period = context.solution_reachability.n_periods - 1
         kernels: dict[int, _PeriodKernel] = {}
@@ -883,8 +963,8 @@ class TargetValueSolver(Solver):
                     target_regimes=target_regimes,
                 ),
                 requirements=CoreExecutionRequirements(
-                    target_value_accesses=tuple(
-                        TargetValueAccess(
+                    value_reads=tuple(
+                        ValueRead(
                             target=ValueArtifactAddress(
                                 kind=ValueArtifactKind.REGIME_VALUE,
                                 period=period + 1,

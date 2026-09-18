@@ -28,7 +28,6 @@ Skips until the kernel exists.
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from _lcm.egm.upper_envelope import fues
 from tests.conftest import X64_ENABLED
@@ -477,29 +476,20 @@ def test_vmap_over_rows_matches_per_row_calls():
         )
 
 
-@pytest.mark.parametrize("scan_unroll", [2, 4, 8])
-def test_scan_unroll_leaves_the_refined_envelope_unchanged(scan_unroll):
-    """`scan_unroll` is a pure performance knob: the output is bit-identical.
-
-    Unrolling the candidate `lax.scan` only changes how the loop is lowered, not
-    what it computes, so the refined `(grid, policy, value)` and the kept count
-    must match the default `scan_unroll=1` run exactly.
-    """
+def test_candidate_scan_uses_a_fixed_unroll_factor() -> None:
+    """Every FUES candidate scan lowers with the same compiler unroll setting."""
     grid, policy, value = _crossing_segments_candidates()
-    baseline = fues.refine_envelope(
-        endog_grid=grid, policy=policy, value=value, n_refined=12
-    )
-    unrolled = fues.refine_envelope(
-        endog_grid=grid,
-        policy=policy,
-        value=value,
-        n_refined=12,
-        scan_unroll=scan_unroll,
-    )
-    for baseline_arr, unrolled_arr in zip(baseline, unrolled, strict=True):
-        np.testing.assert_array_equal(
-            np.asarray(unrolled_arr), np.asarray(baseline_arr)
+    jaxpr = jax.make_jaxpr(
+        lambda grid, policy, value: fues.refine_envelope(
+            endog_grid=grid, policy=policy, value=value, n_refined=12
         )
+    )(grid, policy, value)
+    unroll_factors = [
+        equation.params["unroll"]
+        for equation in jaxpr.jaxpr.eqns
+        if equation.primitive.name == "scan"
+    ]
+    assert unroll_factors == [1]
 
 
 def test_overflow_is_reported_via_n_kept():

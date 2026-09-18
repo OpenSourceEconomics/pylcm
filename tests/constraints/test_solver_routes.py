@@ -27,6 +27,7 @@ from _lcm.engine import VariableInfo, Variables
 from _lcm.solution.contract import ConstraintRouteContext, SolutionKernels
 from _lcm.typing import EconFunctionsMapping
 from lcm import ref
+from lcm.solver_api import SolverExecutionCapabilities
 from lcm.solvers import DCEGM, EGM, GridSearch, Solver
 from lcm.typing import BoolND, ContinuousState
 from tests.test_models import dcegm_paper_twin, negm_kinked_toy
@@ -287,6 +288,16 @@ def test_a_solver_that_has_not_declared_its_routes_declares_nothing() -> None:
     from _lcm.solution.contract import Solver, SolverBuildContext  # noqa: PLC0415
 
     class _Undeclared(Solver):
+        @property
+        def capabilities(self) -> SolverExecutionCapabilities:
+            """Describe the fixture's narrowly scoped reference computation."""
+            return SolverExecutionCapabilities(
+                required_declaration="Regime",
+                problem_shape="Reference fixture computation",
+                prerequisites="Fixture-specific model contract",
+                main_tradeoff="Reference implementation for contract tests",
+            )
+
         def build_period_kernels(
             self,
             *,

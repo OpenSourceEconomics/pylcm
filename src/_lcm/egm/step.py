@@ -151,6 +151,7 @@ from _lcm.egm.continuation import (
     _is_runtime_process,
     build_continuation_plan,
     get_egm_continuation_targets,
+    stochastic_node_axes,
 )
 from _lcm.egm.continuation_grids import (
     continuation_grid_signature,
@@ -168,11 +169,11 @@ from _lcm.egm.step_core import (
     CONSTRAINED_OFFSET_FRACTION,
     _EgmKernelPieces,
     _get_solve_one_combo,
+    tile_block_size,
 )
 from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope
 from _lcm.egm.validation import savings_stage_reads_euler_state
 from _lcm.engine import StateActionSpace
-from _lcm.grids import ContinuousGrid, Grid
 from _lcm.logsum import logsum_and_softmax
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_normalization import (
@@ -182,7 +183,7 @@ from _lcm.regime_building.age_normalization import (
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
-from _lcm.solution.dcegm import EGMStepBuild, _BoundDCEGM
+from _lcm.solution.dcegm import EGMStepBuild, ExactEnvelope, _BoundDCEGM
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -291,18 +292,7 @@ def build_egm_step_functions(
 
     """
     n_pad = compute_egm_carry_length(solver=solver)
-    # `batch_size` on the Euler-state grid splays the per-asset-node solve into
-    # blocks (`lax.map`) to shed peak working-set memory; 0 keeps the fused
-    # vmap. Only the asset-row kernel has a per-node axis to splay.
-    euler_grid = cast(
-        "ContinuousGrid", user_regimes[regime_name].states[solver.continuous_state]
-    )
-    euler_batch_size = euler_grid.batch_size
-    # `batch_size` on the exogenous savings grid splays the inner per-savings-node
-    # continuation computation into `lax.map` blocks, shedding the dominant
-    # egm_step working buffer (savings x child-stochastic mesh x combos); 0 keeps
-    # the fused vmap. The upper envelope still runs on the gathered full grid.
-    savings_batch_size = solver.savings_grid.batch_size
+    n_savings_nodes = int(solver.savings_grid.to_jax().shape[0])
     own_v_info = regime_to_v_interpolation_info[regime_name]
     # Any savings-stage Euler-state read (the Euler law's residual, regime
     # transition probabilities, stochastic transition weights, non-Euler
@@ -321,10 +311,10 @@ def build_egm_step_functions(
     # single-post-state kernel the carry *is* the refined envelope, so its
     # length stays `n_pad`.
     n_carry_rows = n_pad
+    n_euler_nodes = int(
+        own_v_info.continuous_states[solver.continuous_state].to_jax().shape[0]
+    )
     if asset_row_mode:
-        n_euler_nodes = int(
-            own_v_info.continuous_states[solver.continuous_state].to_jax().shape[0]
-        )
         n_pad = max(n_pad, n_euler_nodes)
         n_carry_rows = n_euler_nodes
     own_discrete_state_names = _get_discrete_state_names(
@@ -346,16 +336,6 @@ def build_egm_step_functions(
         for name in _get_process_state_names(v_interpolation_info=own_v_info)
         if _is_runtime_process(own_v_info.discrete_states[name])
     )
-    # `batch_size` on a discrete-state, process, or passive-state grid splays
-    # that combo axis (per-axis `productmap` blocks) to shed memory; 0 keeps
-    # the fused vmap. Discrete-action axes are never split (the discrete-action
-    # logsum needs every action value at once), so they map to 0.
-    combo_state_batch_sizes = MappingProxyType(
-        {
-            name: cast("Grid", user_regimes[regime_name].states[name]).batch_size
-            for name in own_discrete_state_names + own_passive_state_names
-        }
-    )
     # Canonical position of the Euler axis in the published V array: after
     # the discrete-state axes, at its slot within the continuous-state order.
     euler_axis_in_V = len(own_discrete_state_names) + tuple(
@@ -372,6 +352,7 @@ def build_egm_step_functions(
         )
         + tuple(int(v.shape[0]) for v in own_discrete_action_values.values())
     )
+    n_cell_axes = len(own_discrete_state_names) + len(own_passive_state_names)
     carry_template = build_template_egm_carry(
         n_rows=n_carry_rows, leading_shape=leading_shape
     )
@@ -422,6 +403,7 @@ def build_egm_step_functions(
         ).append(period)
 
     built: dict[_EGMGroupKey, EGMStepFunction] = {}
+    node_axes_by_group: dict[_EGMGroupKey, tuple[tuple[StateName, int], ...]] = {}
     for group_key, group_periods in configs.items():
         stateful_targets, scalar_targets, _ = group_key
         # Every period in the group shares a continuation-grid signature and the
@@ -483,24 +465,41 @@ def build_egm_step_functions(
             has_taste_shocks=has_taste_shocks,
             regime_to_v_interpolation_info=group_v_interp,
             asset_row_mode=asset_row_mode,
-            euler_batch_size=euler_batch_size,
-            savings_batch_size=savings_batch_size,
-            combo_state_batch_sizes=combo_state_batch_sizes,
         )
         built[group_key] = kernel
+        # Each group owns a distinct numerical core and its child mesh. A
+        # target active at another age may carry the same state name on a
+        # different domain; that does not change this group's expectation.
+        node_axes_by_group[group_key] = stochastic_node_axes(
+            plan=cast("_EGMStep", kernel).pieces.continuation_plan
+        )
 
     result: dict[int, EGMStepFunction] = {}
+    group_keys: dict[int, _EGMGroupKey] = {}
     for key, periods in configs.items():
         for period in periods:
             result[period] = built[key]
+            group_keys[period] = key
 
     return EGMStepBuild(
         steps=MappingProxyType(dict(sorted(result.items()))),
+        step_group_keys=MappingProxyType(dict(sorted(group_keys.items()))),
         carry_template=carry_template,
         stateful_targets=stateful_targets_union,
         row_discrete_state_names=own_discrete_state_names,
         row_passive_state_names=own_passive_state_names,
         row_discrete_action_names=tuple(own_discrete_action_values),
+        stochastic_node_axes_by_period=MappingProxyType(
+            {period: node_axes_by_group[key] for period, key in group_keys.items()}
+        ),
+        cell_extent=math.prod(leading_shape[:n_cell_axes]),
+        savings_point_extent=n_savings_nodes,
+        euler_point_extent=n_euler_nodes if asset_row_mode else 0,
+        envelope_cell_extent=(
+            solver.n_constrained_points + n_savings_nodes - 1
+            if isinstance(solver.envelope, ExactEnvelope)
+            else 0
+        ),
     )
 
 
@@ -548,19 +547,14 @@ def _get_egm_step(
     has_taste_shocks: bool,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     asset_row_mode: bool,
-    euler_batch_size: int,
-    savings_batch_size: int,
-    combo_state_batch_sizes: MappingProxyType[StateName, int],
 ) -> EGMStepFunction:
     """Build the EGM kernel for one continuation-target configuration.
 
     `asset_row_mode` selects the per-combo computation at build time: the
     per-exogenous-asset-node solve when any savings-stage function reads the
-    current Euler state, the single-post-state default otherwise.
-
-    `euler_batch_size` (the Euler grid's `batch_size`) splays the asset-row
-    per-node solve into `lax.map` blocks to shed peak memory; it has no effect
-    in the single-post-state (non-asset-row) kernel, which has no per-node axis.
+    current Euler state, the single-post-state default otherwise. Only the
+    asset-row kernel runs a per-node loop, so only it reads the `euler_point`
+    tile width.
     """
     get_solve_one_combo = (
         _get_solve_one_combo_asset_rows if asset_row_mode else _get_solve_one_combo
@@ -600,9 +594,6 @@ def _get_egm_step(
         own_passive_state_names=own_passive_state_names,
         own_discrete_action_values=own_discrete_action_values,
         own_runtime_process_names=own_runtime_process_names,
-        euler_batch_size=euler_batch_size,
-        savings_batch_size=savings_batch_size,
-        combo_state_batch_sizes=combo_state_batch_sizes,
     )
 
 
@@ -646,25 +637,32 @@ class _EGMStep:
     own_runtime_process_names: tuple[StateName, ...]
     """Process states whose grids are resolved at runtime."""
 
-    euler_batch_size: int
-    """The Euler grid's `batch_size` (asset-row kernel only)."""
-
-    savings_batch_size: int
-    """The savings grid's `batch_size`."""
-
-    combo_state_batch_sizes: MappingProxyType[StateName, int]
-    """Per combo-state `batch_size` (0 keeps the axis fused)."""
-
     def __call__(
         self,
         *,
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
+        _lcm_stochastic_node_width: int | None = None,
+        _lcm_cell_width: int | None = None,
+        _lcm_savings_point_width: int | None = None,
+        _lcm_euler_point_width: int | None = None,
+        _lcm_envelope_cell_width: int = 1,
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         """Run the DC-EGM step and publish V on the exogenous grid.
 
         Args:
             next_regime_to_continuation: The next period's EGM carries.
+            _lcm_stochastic_node_width: Block width the execution plan folds
+                the child stochastic-node expectation at; `None` folds the
+                whole node mesh in one block.
+            _lcm_cell_width: Tile width the plan runs the output state-cell
+                loop at; `None` runs the whole product in one tile.
+            _lcm_savings_point_width: Tile width the plan runs the
+                per-savings-node loop at; `None` runs it in one tile.
+            _lcm_euler_point_width: Tile width the plan runs the asset-row
+                per-node loop at; `None` runs it in one tile.
+            _lcm_envelope_cell_width: Number of exact-envelope node cells the
+                plan resolves together; defaults to a serial scan.
             **kwargs: The regime's state grids, flat params, `period`, and
                 `age`.
 
@@ -700,8 +698,10 @@ class _EGMStep:
             pool=pool,
             state_grid=state_grid,
             next_regime_to_continuation=next_regime_to_continuation,
-            euler_batch_size=self.euler_batch_size,
-            savings_batch_size=self.savings_batch_size,
+            euler_point_width=_lcm_euler_point_width,
+            savings_point_width=_lcm_savings_point_width,
+            envelope_cell_width=_lcm_envelope_cell_width,
+            stochastic_node_width=_lcm_stochastic_node_width,
             resolved_process_grids=resolved_process_grids,
         )
 
@@ -718,12 +718,11 @@ class _EGMStep:
             )
 
             # Map the per-combo solve over the Cartesian product of the combo
-            # axes: a discrete state / process / passive grid's `batch_size`
-            # splays its axis (shedding memory), actions stay fused (the
-            # discrete-action logsum needs every value at once). Splayed axes
-            # share one `lax.map` (one scan carry) rather than nesting one per
-            # axis. Outputs come back with the combo axes in `combo_var_names`
-            # order, preserving whole discrete axes for the carry.
+            # axes. The state part of that product is the tiled `cell` axis;
+            # actions stay fused, because the discrete-action aggregation needs
+            # every action's value at once. Outputs come back with the combo
+            # axes in `combo_var_names` order, preserving whole discrete axes
+            # for the carry.
             combo_axis_values = {
                 **{
                     name: jnp.asarray(kwargs[name])
@@ -746,10 +745,9 @@ class _EGMStep:
                 func=solve_one_combo_over_axes,
                 combo_var_names=combo_var_names,
                 combo_axis_values=combo_axis_values,
-                batch_sizes={
-                    **dict(self.combo_state_batch_sizes),
-                    **dict.fromkeys(self.own_discrete_action_values, 0),
-                },
+                state_names=self.own_discrete_state_names
+                + self.own_passive_state_names,
+                cell_width=_lcm_cell_width,
             )
             n_state_axes = len(self.own_discrete_state_names) + len(
                 self.own_passive_state_names
@@ -843,39 +841,36 @@ def _map_combo_product(
     func: Callable[..., tuple[Float1D | ScalarBool, ...]],
     combo_var_names: tuple[StateOrActionName, ...],
     combo_axis_values: dict[StateOrActionName, FloatND | IntND],
-    batch_sizes: dict[StateOrActionName, int],
+    state_names: tuple[StateName, ...],
+    cell_width: int | None,
 ) -> tuple[FloatND | BoolND, ...]:
     """Map the per-combo solve over the Cartesian product of the combo axes.
 
     `func` has a `combo_var_names` keyword signature and returns one tuple of
     per-combo outputs (1-D float arrays plus the scalar read-support flag).
-    Each combo axis with `batch_size == 0` is vmapped;
-    axes with `batch_size > 0` are splayed (run in `lax.map` blocks) to shed
-    peak memory. Returns the stacked outputs with the combo axes as leading
-    dims in `combo_var_names` order (the canonical carry layout).
+    `state_names` are the combo axes forming the tiled `cell` axis — the output
+    state cells — and everything else is vmapped. Returns the stacked outputs
+    with the combo axes as leading dims in `combo_var_names` order (the
+    canonical carry layout).
 
-    With ≤1 splayed axis this is plain `productmap` (one `lax.map`, no
-    nesting). With ≥2 splayed axes, `productmap` would nest one `lax.map`
-    per axis and stack a scan carry per level; instead the splayed axes are
-    flattened into a *single* `lax.map` (one carry) with the unsplayed axes
-    vmapped within each step, then the result is transposed back into
-    `combo_var_names` order. Numerically identical to the nested form — only
-    the schedule (and its peak resident) differs.
+    A `cell_width` covering the whole state product is plain `productmap` with
+    every axis vmapped. A narrower one runs a *single* `lax.map` (one scan
+    carry) over the flattened state product, vmapping the action axes within
+    each step, then transposes the result back into `combo_var_names` order.
+    The two schedules name the same result: tiles are concatenated, never
+    folded.
     """
-    splayed = tuple(name for name in combo_var_names if batch_sizes[name] > 0)
-    vmapped = tuple(name for name in combo_var_names if batch_sizes[name] == 0)
-
-    if len(splayed) <= 1:
-        mapped = productmap(
+    extent = math.prod(int(combo_axis_values[name].shape[0]) for name in state_names)
+    block = tile_block_size(width=cell_width, extent=extent)
+    if not block:
+        return productmap(
             func=func,  # ty: ignore[invalid-argument-type]
             variables=combo_var_names,
-            batch_sizes=batch_sizes,
-        )
-        return mapped(**combo_axis_values)
+            batch_sizes=dict.fromkeys(combo_var_names, 0),
+        )(**combo_axis_values)
 
-    # One `lax.map` over the flattened splayed product, unsplayed axes vmapped
-    # within each step (all-`batch_size=0` `productmap` lowers to nested vmaps,
-    # no scan carry).
+    splayed = tuple(name for name in combo_var_names if name in state_names)
+    vmapped = tuple(name for name in combo_var_names if name not in state_names)
     inner = productmap(
         func=func,  # ty: ignore[invalid-argument-type]
         variables=vmapped,
@@ -885,9 +880,6 @@ def _map_combo_product(
     splayed_dims = tuple(int(combo_axis_values[name].shape[0]) for name in splayed)
     mesh = jnp.meshgrid(*(combo_axis_values[name] for name in splayed), indexing="ij")
     flat_splayed = tuple(grid.ravel() for grid in mesh)
-    block = 1
-    for name in splayed:
-        block *= batch_sizes[name]
 
     stacked = jax.lax.map(
         functools.partial(
@@ -973,7 +965,6 @@ def _build_kernel_pieces(
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=solver.post_decision_function,
-        stochastic_node_batch_size=solver.stochastic_node_batch_size,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
     return _EgmKernelPieces(

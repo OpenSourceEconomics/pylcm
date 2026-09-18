@@ -10,8 +10,10 @@ from threading import RLock
 from types import GetSetDescriptorType, MappingProxyType, MemberDescriptorType
 from typing import (
     Any,
+    Protocol,
     SupportsIndex,
     cast,
+    runtime_checkable,
 )
 
 import jax
@@ -42,6 +44,7 @@ from lcm._solver_api.identity import (
     _ContainerRuntimeTypesBoundary,
     _LeafAuthoritiesBoundary,
 )
+from lcm.exceptions import ExecutionPlanningError
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -692,7 +695,18 @@ def _payload_has_runtime_type(*, payload: object, expected: type[object]) -> boo
     )
 
 
-def _copy_artifact_array_leaf(*, leaf: object, label: str) -> jax.Array:
+@runtime_checkable
+class _ArrayCopier(Protocol):
+    """Call-local physical copy dependency; never retained by a public store."""
+
+    def __call__(self, *, leaf: jax.Array, label: str) -> jax.Array:
+        """Return one independent array preserving exact dtype, shape and layout."""
+        ...
+
+
+def _copy_artifact_array_leaf(
+    *, leaf: object, label: str, array_copier: _ArrayCopier | None = None
+) -> jax.Array:
     """Make one independent exact JAX buffer for an owned artifact graph."""
     if not isinstance(leaf, jax.Array):
         raise TypeError(f"{label} is not a JAX array.")
@@ -702,8 +716,12 @@ def _copy_artifact_array_leaf(*, leaf: object, label: str) -> jax.Array:
         source_shape = tuple(leaf.shape)
         source_dtype = np.dtype(leaf.dtype)
         source_sharding = leaf.sharding
-        copied = jax.numpy.array(leaf, copy=True)
-    except TypeError:
+        copied = (
+            jax.numpy.array(leaf, copy=True)
+            if array_copier is None
+            else array_copier(leaf=leaf, label=label)
+        )
+    except TypeError, ExecutionPlanningError:
         raise
     except Exception as error:
         raise TypeError(f"{label} cannot be copied safely.") from error

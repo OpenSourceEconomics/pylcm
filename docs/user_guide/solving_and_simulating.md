@@ -161,6 +161,15 @@ The full behaviour of every `log_level` × `log_path` combination:
 meaningless result rather than an exception; use this to keep an estimation loop
 running, but read the warnings.
 
+`simulate()` adds one further record to the console output: the resolved execution plan
+it dispatched --- the forward route, the subject devices and their backend, the resolved
+planner axis widths by regime, the chunk count and admitted widths, and the budget mode
+with its effective device-memory bytes. A one-line summary appears at `"progress"` and
+`"debug"`, the complete record at `"debug"` only, and neither at `"warning"` or `"off"`.
+It is diagnostic only, and the same record is available as
+`SimulationResult.plan_summary`. See
+[Inspect the resolved execution plan](debugging.md#inspect-the-resolved-execution-plan).
+
 See [Debugging](debugging.md) for details on snapshots.
 
 ## Simulating
@@ -312,8 +321,53 @@ for the full rules.
 - `seed=None`: Random seed for stochastic simulations (int). Collective dissolution
   gates consume their addressed replay artifacts from `solution`; the automatic-solve
   path retains and threads them itself.
+- `taste_shock_seed=None`: Optional independent seed for common taste shocks across
+  counterfactual models. Omit it to keep the ordinary `seed` behavior.
 - `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
+- `max_compilation_workers=None`: Maximum number of threads for parallel XLA
+  compilation. Used only on the automatic-solve path, i.e. when `solution` is omitted.
+  `None` uses the number of physical CPU cores.
+
+### Common taste shocks across counterfactuals
+
+Pass the same `taste_shock_seed` to compare policies using the same standardized EV1
+shocks, while choosing the ordinary `seed` independently:
+
+```python
+baseline = baseline_model.simulate(
+    params=baseline_params,
+    initial_conditions=initial_conditions,
+    seed=100,
+    taste_shock_seed=200,
+    log_level="debug",
+)
+counterfactual = counterfactual_model.simulate(
+    params=counterfactual_params,
+    initial_conditions=initial_conditions,
+    seed=101,
+    taste_shock_seed=200,
+    log_level="debug",
+)
+```
+
+A draw corresponds to an exact age, a subject's row position in the initial conditions,
+and an ordered discrete-action domain. Regime names, policy parameters, horizon
+endpoints, subject chunks and padding do not identify the draw. Keep people in
+corresponding input rows; DataFrame index labels do not provide subject identity.
+Changing the policy can change choices and state paths even with common shocks.
+
+The discrete domain includes the ordered action names and each action's ordered category
+labels and codes. Renaming, reordering or resizing it changes the stream; individual
+categories are not matched across incompatible domains. Continuous-action grids do not
+enter the address. Changing a taste-shock scale multiplies the same standardized draw,
+so equal scaled shocks additionally require equal scales.
+
+The independent stream uses Threefry and requires matching numerical precision, backend
+and JAX random configuration for exact comparisons. It does not alter the ordinary
+key-chain advancement directly. `taste_shock_seed=None` uses the existing ordinary
+stream, and the optional seed changes neither solutions nor their compatibility
+fingerprints.
 
 ### Heterogeneous initial ages
 
@@ -413,6 +467,14 @@ result.n_subjects  # 1000
 - `simulated_data.arrow` — a `feather` dump of `to_dataframe`, ready for downstream
   consumers that want the flat per-subject view without re-instantiating a
   `SimulationResult`.
+
+Two keywords select what that Feather table holds; neither affects the other three
+artifacts. `save(directory=..., df_additional_targets=...)` is passed through to
+`to_dataframe`: `None` (the default) writes only the base columns (states, actions,
+regime, age, period, `V_arr`), a list of target names bakes those DAG outputs in, and
+`"all"` includes every available target --- which can grow the file by an order of
+magnitude on a model with many DAG leaves. `df_use_labels=True` (the default) stores
+discrete variables as pandas `Categorical` labels; `False` stores integer codes.
 
 `save()` consumes the in-memory result by clearing its value-function arrays and
 compiled regimes. Reload the saved directory before further access that needs either.

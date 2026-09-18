@@ -212,19 +212,12 @@ def test_simulate_decides_on_imputed_but_accounts_on_true_pension() -> None:
     np.testing.assert_allclose(wealth.loc[(1, 1)] - wealth.loc[(0, 1)], 15.0 - 5.0)
 
 
-def test_simulate_aot_compiled_carries_carried_state() -> None:
-    """A carried state survives the AOT-compiled simulate path.
-
-    Setting `n_subjects` AOT-compiles every simulate program for that batch.
-    The compiled `next_state` program reads the carried simulate-only state,
-    so its lower-args must seed that state — otherwise compilation fails
-    before the first period runs.
-    """
+def test_simulate_compiled_runtime_carries_carried_state() -> None:
+    """Compiled next-state dispatch consumes the seeded simulation-only state."""
     model = Model(
         regimes={"working": _build_pension_regime(), "dead": _DEAD},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=RegimeId,
-        n_subjects=2,
     )
     params = cast("dict[str, Any]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95

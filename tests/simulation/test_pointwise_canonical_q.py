@@ -11,12 +11,15 @@ reports is comparable with the grid winner's value.
 
 import dataclasses
 from types import MappingProxyType
+from typing import cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import _lcm.simulation.simulate as simulate_module
+from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import _lookup_values_from_indices
 from lcm import AgeGrid, DiscreteGrid, LogSpacedGrid, Model, categorical
 from lcm.regime import Regime as UserRegime
@@ -25,6 +28,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    IntND,
     ScalarInt,
 )
 from tests.envelope_configs import envelope_config
@@ -127,14 +131,25 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     )
     next_regime_to_V_arr = MappingProxyType(dict(period_to_regime_to_V_arr[period + 1]))
 
-    grid_indices, grid_values = regime.simulation.argmax_and_max_Q_over_a[period](
-        wealth=wealth,
-        **action_grids,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        **flat_params,
-        period=jnp.int32(period),
-        age=age,
+    executor = SimulationRuntime(
+        execution=model._execution,
+        enable_jit=model.enable_jit,
+        subject_devices=(jax.devices()[0],),
     )
+    dispatched = executor.dispatch(
+        program=regime.simulation.programs.decision[period],
+        period=period,
+        n_subjects=len(wealth),
+        arguments={
+            "wealth": wealth,
+            **action_grids,
+            "next_regime_to_V_arr": next_regime_to_V_arr,
+            **flat_params,
+            "period": jnp.int32(period),
+            "age": age,
+        },
+    )
+    grid_indices, grid_values = cast("tuple[IntND, FloatND]", dispatched)
     grid_actions = _lookup_values_from_indices(
         flat_indices=grid_indices, grids=action_grids
     )

@@ -54,13 +54,6 @@ class FiniteOuterGrid(OuterSearch):
     grid: ContinuousGrid
     """Exogenous candidate grid for the outer post-decision margin."""
 
-    batch_size: int = 0
-    """Grid nodes solved per chunk before folding into the running maximum;
-    `0` solves every node at once. A memory knob only — value-invariant."""
-
-    def __post_init__(self) -> None:
-        _fail_if_batch_size_negative(batch_size=self.batch_size, field="batch_size")
-
 
 @dataclass(frozen=True, kw_only=True)
 class AdaptiveOuterMesh(OuterSearch):
@@ -90,10 +83,6 @@ class AdaptiveOuterMesh(OuterSearch):
 
     max_refinement_rounds: int = 6
     """Hard cap on midpoint-insertion rounds."""
-
-    batch_size: int = 0
-    """Mesh nodes solved per chunk; `0` solves every node at once. A memory
-    knob only — value-invariant."""
 
     # Actual-vs-interpolated candidate refinement.
     value_atol: float = 1e-10
@@ -148,7 +137,6 @@ class AdaptiveOuterMesh(OuterSearch):
     An inference release gate over those is the caller's to build."""
 
     def __post_init__(self) -> None:
-        _fail_if_batch_size_negative(batch_size=self.batch_size, field="batch_size")
         if self.max_nodes < 2:  # noqa: PLR2004
             msg = f"max_nodes must be >= 2, got {self.max_nodes}."
             raise RegimeInitializationError(msg)
@@ -177,9 +165,3 @@ class AdaptiveOuterMesh(OuterSearch):
                 f"{self.outer_lipschitz_bound}."
             )
             raise RegimeInitializationError(msg)
-
-
-def _fail_if_batch_size_negative(*, batch_size: int, field: str) -> None:
-    if batch_size < 0:
-        msg = f"{field} must be >= 0, got {batch_size}."
-        raise RegimeInitializationError(msg)

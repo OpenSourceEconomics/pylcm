@@ -30,6 +30,7 @@ from _lcm.regime_building.ndimage import map_coordinates
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     categorical,
@@ -351,7 +352,7 @@ def _build_alive_dead_model(
         functions={"utility": _alive_utility},
         states={
             "assets": LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
-            "pref_type": DiscreteGrid(category_class=PrefType, batch_size=1),
+            "pref_type": DiscreteGrid(category_class=PrefType),
         },
         state_transitions={
             "assets": _next_assets,
@@ -367,7 +368,7 @@ def _build_alive_dead_model(
         functions={"utility": _crra_bequest},
         states={
             "assets": LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
-            "pref_type": DiscreteGrid(category_class=PrefType, batch_size=1),
+            "pref_type": DiscreteGrid(category_class=PrefType),
         },
         active=lambda _age: True,
     )
@@ -375,6 +376,7 @@ def _build_alive_dead_model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=AliveDeadRegimeId,
+        execution_config=ExecutionConfig(axis_widths={"cell": 1}),
     )
     cw_arr = jnp.asarray(consumption_weight)
     params = {

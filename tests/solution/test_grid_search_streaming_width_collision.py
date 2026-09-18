@@ -180,8 +180,8 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
     assert isinstance(kernel, CoreProgramGraphAware)
     program = kernel.core_programs()["main"]
 
-    assert len(program.requirements.streamable_axes) == 1
-    axis = program.requirements.streamable_axes[0]
+    assert len(program.requirements.axes) == 1
+    axis = program.requirements.reduced_axes[0]
     assert axis.coordinate_names == tuple(actions)
     assert axis.width_keyword == expected_width_keyword
     assert axis.width_keyword not in actions

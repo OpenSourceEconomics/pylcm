@@ -16,7 +16,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgramGraphAware,
     ProgramScope,
-    TargetValueAccess,
+    ValueRead,
 )
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.value_transfer import (
@@ -41,7 +41,7 @@ _SOLVES: dict[str, Callable[[], None]] = {
 def test_every_shipped_period_kernel_is_core_program_graph_aware(
     *, case: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Each built-in kernel publishes its own graph of planned or dense programs."""
+    """Each built-in kernel publishes its own graph of declared programs."""
     kernels: list[object] = []
     original = backward_induction.core_program_graph
 
@@ -62,6 +62,7 @@ def test_every_shipped_period_kernel_is_core_program_graph_aware(
     assert dispositions <= {
         CoreExecutionDisposition.PLANNED,
         CoreExecutionDisposition.DENSE,
+        CoreExecutionDisposition.HOST_DRIVEN,
     }
 
 
@@ -93,18 +94,20 @@ def test_every_compiled_core_is_a_planned_core(
 
 
 def _metadata(
-    *, accesses: tuple[TargetValueAccess, ...] = ()
+    *,
+    disposition: CoreExecutionDisposition,
+    accesses: tuple[ValueRead, ...] = (),
 ) -> _ProgramExecutionMetadata:
     return _ProgramExecutionMetadata(
-        requirements=CoreExecutionRequirements(target_value_accesses=accesses),
-        disposition=CoreExecutionDisposition.DENSE,
+        requirements=CoreExecutionRequirements(value_reads=accesses),
+        disposition=disposition,
         input_transfer_plan=(),
         scope=ProgramScope.ANY,
     )
 
 
-def _access() -> TargetValueAccess:
-    return TargetValueAccess(
+def _access() -> ValueRead:
+    return ValueRead(
         target=ValueArtifactAddress(
             kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="target"
         ),
@@ -118,21 +121,35 @@ def _access() -> TargetValueAccess:
     )
 
 
-def test_dense_programs_without_declared_accesses_stay_conservatively_pinned() -> None:
-    """A dense program that declares no value reads pins every reachable value."""
-    planned, exact, has_unknown = _classify_dispatch_value_artifacts(
-        programs={"main": _metadata()}
+_UNPLANNED_DISPOSITIONS = [
+    CoreExecutionDisposition.DENSE,
+    CoreExecutionDisposition.HOST_DRIVEN,
+]
+
+
+@pytest.mark.parametrize("disposition", _UNPLANNED_DISPOSITIONS)
+def test_unplanned_programs_without_declared_accesses_declare_no_reads(
+    *, disposition: CoreExecutionDisposition
+) -> None:
+    """A program the engine does not plan and that declares no value reads is
+    flagged so the caller pins whatever it may reach conservatively."""
+    declared, declares_no_reads = _classify_dispatch_value_artifacts(
+        programs={"main": _metadata(disposition=disposition)}
     )
 
-    assert (planned, exact, has_unknown) == ((), (), True)
+    assert (declared, declares_no_reads) == ((), True)
 
 
-def test_dense_programs_with_declared_accesses_pin_exactly_those_values() -> None:
-    """A dense program's declared value reads are pinned exactly, nothing else."""
+@pytest.mark.parametrize("disposition", _UNPLANNED_DISPOSITIONS)
+def test_unplanned_programs_with_declared_accesses_declare_exactly_those_values(
+    *, disposition: CoreExecutionDisposition
+) -> None:
+    """An unplanned program's declared value reads are counted exactly, nothing
+    else, and no undeclared-read flag is raised."""
     access = _access()
 
-    planned, exact, has_unknown = _classify_dispatch_value_artifacts(
-        programs={"main": _metadata(accesses=(access,))}
+    declared, declares_no_reads = _classify_dispatch_value_artifacts(
+        programs={"main": _metadata(disposition=disposition, accesses=(access,))}
     )
 
-    assert (planned, exact, has_unknown) == ((), (access.target,), False)
+    assert (declared, declares_no_reads) == ((access.target,), False)

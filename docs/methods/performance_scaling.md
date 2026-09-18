@@ -74,25 +74,29 @@ so model names never force a dense fallback. Blockwise action evaluation preserv
 full represented support; its runtime and memory effect remains empirical.
 
 Before lowering a planned GridSearch core, the engine resolves every declared value read
-to one of two private transfer operations. `ALIGNED_LOCAL` passes an array through when
-it is already resident on the source core's mesh, retaining the value's own
-rank-specific partitioning. `COPY_TO_SOURCE_LAYOUT` makes an explicit copy into the
-supported layout on the source core's mesh. The exact same resolved plan transforms the
-lowering arguments and the runtime arguments; unexpected shape, dtype, sharding,
-address, or conversion combinations fail closed.
+to exactly one of six private transfer operations: `ALIGNED_LOCAL`,
+`COPY_TO_SOURCE_LAYOUT`, `ALL_GATHER`, `LOCAL_SLICE`, `RESHARD` and `CROSS_MESH_COPY`.
+The classification is total over stored and required layouts, and fails closed on the
+one pair no single collective can serve — two meshes that partially overlap with neither
+containing the other. The catalogue's row-by-row contract is the
+[transfer-operator table](../reference/custom_solvers.md). The exact same resolved plan
+transforms the lowering arguments and the runtime arguments; unexpected shape, dtype,
+sharding, address, or conversion combinations fail closed.
 
 Each planned read also authenticates its declared
 `(source_regime, source_period, core_key)` against the actual compiled core before its
 channel and argument-tree path are resolved. Agreement among declarations cannot make a
 different source node authoritative.
 
-The exact declarations also support conservative remaining-consumer accounting. A
-logical artifact is counted once per planned dispatch and its count is committed only
-after that dispatch returns successfully. Reaching zero means only that an unpinned
-artifact is eligible for a later scheduler decision. The current planner does not
-physically release, donate, or offload arrays. Dense compatibility routes and consumers
-without a complete plan remain pinned, so this bookkeeping is not a graph-wide
-peak-memory claim.
+The exact declarations also support remaining-consumer accounting. A logical artifact is
+counted once per planned dispatch and its count is committed only after that dispatch
+returns successfully. The solve scheduler releases eligible closed continuation buffers
+after the period's outputs are ready; published values remain owned by the solution.
+Eligible standalone NB-EGM programs can donate an exclusively owned marginal input, with
+an ordinary fallback admitted alongside it. Retained or aliased inputs and consumers
+without a complete plan remain protected. See
+[buffer release, donation and placement](../reference/runtime_and_results.md#solve-execution-lifetime)
+for the eligibility rules and the limits of the memory accounting.
 
 A large GPU should not be treated as a faster small GPU automatically. Independent
 tests, regimes, branches, subjects, or candidate chunks can improve occupancy, but only

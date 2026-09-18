@@ -107,8 +107,16 @@ def _dotted_name(node: ast.expr) -> str | None:
 
 
 def _documentation_pages() -> list[Path]:
-    """List the tracked documentation pages, excluding build output."""
-    return [p for p in sorted(_DOCS.rglob("*.md")) if "_build" not in p.parts]
+    """List the documentation pages, excluding build output and ignored scratch.
+
+    `docs/superpowers` holds git-ignored planning notes that describe interfaces
+    before they exist, so it is not documentation of the tree.
+    """
+    return [
+        p
+        for p in sorted(_DOCS.rglob("*.md"))
+        if "_build" not in p.parts and "superpowers" not in p.parts
+    ]
 
 
 def _documented_calls() -> list[tuple[Path, str, str]]:

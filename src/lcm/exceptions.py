@@ -1,3 +1,13 @@
+"""Every project-specific exception, all deriving from `PyLCMError`.
+
+They split into initialization errors, which map a beartype violation on a
+user-facing constructor onto a project-typed error, and runtime errors, which
+fire from the transition, value, params, execution-planning and
+solution-archive checks. Reach them through `lcm.exceptions`; the top-level
+package does not re-export them.
+"""
+
+
 class PyLCMError(Exception):
     """Base class for all PyLCM exceptions."""
 
@@ -62,6 +72,10 @@ class SolutionIntegrityError(PyLCMError):
 
 class IncompatibleSolutionError(PyLCMError):
     """Raised when a solution uses an unsupported schema or plugin version."""
+
+
+class ExecutionPlanningError(PyLCMError):
+    """Raised when the requested execution policy cannot produce a valid plan."""
 
 
 class UnsupportedOperationError(PyLCMError):

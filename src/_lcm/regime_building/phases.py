@@ -540,15 +540,7 @@ def _normalize_phased_state(
         )
     elif callable(solve_side) and simulate_is_grid:
         grid = cast("Grid", simulate_side)
-        if grid.batch_size > 0 or grid.distributed:
-            message = (
-                f"states['{name}']: the grid of a carried state is the "
-                f"simulate-phase domain of a per-subject value — `batch_size` "
-                f"and `distributed` apply only to solve grid axes and must "
-                f"not be set on it."
-            )
-        else:
-            return cast("UserFunction", solve_side), grid, []
+        return cast("UserFunction", solve_side), grid, []
     elif callable(solve_side) and callable(simulate_side):
         message = (
             f"states['{name}']: a function derived in both phases belongs in "

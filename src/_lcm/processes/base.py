@@ -1,3 +1,11 @@
+"""The base every stochastic process extends, and the quadrature they share.
+
+`_ContinuousStochasticProcess` fixes what a process owes the engine — a node
+grid, and the weights of moving onto it — while the Gauss-Hermite and
+normal-mixture helpers build those nodes and weights for the leaf classes.
+`StateConditioned` marks a process parameter that varies with another state.
+"""
+
 import math
 from abc import abstractmethod
 from collections.abc import Mapping
@@ -118,7 +126,7 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"n_points", "batch_size", "distributed", "state_conditioned"}
+        {"n_points", "state_conditioned"}
     )
     """Dataclass field names that are not distribution parameters.
 

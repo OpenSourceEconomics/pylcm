@@ -3,6 +3,7 @@
 # ruff: noqa: SLF001
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -29,7 +30,6 @@ def test_combined_measurement_uses_one_cold_and_one_warm_execution(
     clock: Iterator[float] = iter((10.0, 13.0, 20.0, 22.0))
     monkeypatch.setattr(_gpu_mem.time, "perf_counter", lambda: next(clock))
     monkeypatch.setattr(_gpu_mem, "_get_cpu_peak_bytes", lambda: 123_000)
-    monkeypatch.setattr(_gpu_mem, "_get_gpu_peak_bytes", lambda: 456_000)
 
     result = _gpu_mem._collect_combined_measurements(benchmark)
 
@@ -39,28 +39,30 @@ def test_combined_measurement_uses_one_cold_and_one_warm_execution(
         "compilation_time": 3.0,
         "execution_time": 2.0,
         "peak_cpu_mem": 123_000,
-        "peak_gpu_mem": 456_000,
     }
 
 
-def test_aca_asv_surface_contains_only_shared_result_trackers(
+def test_aca_timing_asv_surface_contains_only_the_combined_trackers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ASV sees four cheap readers backed by one setup-cache measurement."""
+    """The timing class no longer pays for the three-phase GPU-memory profile."""
     measured = {
         "compilation_time": 3.0,
         "execution_time": 2.0,
         "peak_cpu_mem": 123_000,
-        "peak_gpu_mem": 456_000,
     }
-    calls: list[str] = []
+    combined_calls: list[str] = []
 
     def _measure(*, bench_module: str, bench_class: str) -> dict[str, float]:
         assert bench_module == "benchmarks.asv.bench_aca_baseline"
-        calls.append(bench_class)
+        combined_calls.append(bench_class)
         return measured
 
+    def _refuse_profile(**_: object) -> dict[str, int]:
+        pytest.fail("selecting the timing class must not run the GPU-memory profile")
+
     monkeypatch.setattr(_gpu_mem, "measure_combined", _measure)
+    monkeypatch.setattr(_gpu_mem, "measure_gpu_memory_profile", _refuse_profile)
 
     for cls in (
         bench_aca_baseline.AcaBaseline,
@@ -72,7 +74,6 @@ def test_aca_asv_surface_contains_only_shared_result_trackers(
         assert instance.track_compilation_time() == 3.0
         assert instance.track_execution_time() == 2.0
         assert instance.track_peak_cpu_mem() == 123_000
-        assert instance.track_peak_gpu_mem() == 456_000
 
         metric_names = {
             name
@@ -83,7 +84,145 @@ def test_aca_asv_surface_contains_only_shared_result_trackers(
             "track_compilation_time",
             "track_execution_time",
             "track_peak_cpu_mem",
-            "track_peak_gpu_mem",
         }
 
-    assert calls == ["AcaBaseline", "AcaBaselineDebugLog"]
+    assert combined_calls == ["AcaBaseline", "AcaBaselineDebugLog"]
+
+
+def test_aca_gpu_peak_mem_asv_surface_has_exact_phase_trackers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The memory-profile class no longer pays for the combined timing subprocess."""
+    profile = {
+        _gpu_mem.AUTOMATIC_SOLVE_SIMULATE: 101_000,
+        _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE: 202_000,
+        _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE: 303_000,
+    }
+    profile_calls: list[str] = []
+
+    def _measure_profile(
+        *, bench_module: str, bench_class: str, phases: tuple[str, ...]
+    ) -> dict[str, int]:
+        assert bench_module == "benchmarks.asv.bench_aca_baseline"
+        assert phases == _gpu_mem.GPU_MEMORY_PHASES
+        profile_calls.append(bench_class)
+        return profile
+
+    def _refuse_combined(**_: object) -> dict[str, float]:
+        pytest.fail(
+            "selecting the memory-profile class must not run the timing subprocess"
+        )
+
+    monkeypatch.setattr(_gpu_mem, "measure_gpu_memory_profile", _measure_profile)
+    monkeypatch.setattr(_gpu_mem, "measure_combined", _refuse_combined)
+
+    for cls, expected_bench_class in (
+        (bench_aca_baseline.AcaBaselineGpuPeakMem, "AcaBaseline"),
+        (bench_aca_baseline.AcaBaselineDebugLogGpuPeakMem, "AcaBaselineDebugLog"),
+    ):
+        instance = cls()
+        cache = instance.setup_cache()
+        instance.setup(cache)
+        assert instance.track_peak_gpu_mem_automatic_solve_simulate() == 101_000
+        assert instance.track_peak_gpu_mem_solve_save_all_persistable() == 202_000
+        assert instance.track_peak_gpu_mem_load_supplied_solution_simulate() == 303_000
+
+        metric_names = {
+            name
+            for name in dir(cls)
+            if name.startswith(("time_", "peakmem_", "track_"))
+        }
+        assert metric_names == {
+            "track_peak_gpu_mem_automatic_solve_simulate",
+            "track_peak_gpu_mem_solve_save_all_persistable",
+            "track_peak_gpu_mem_load_supplied_solution_simulate",
+        }
+        assert cls.bench_class == expected_bench_class
+
+    assert profile_calls == ["AcaBaseline", "AcaBaselineDebugLog"]
+
+
+class _FakeSolution:
+    def __init__(self) -> None:
+        self.saved_paths: list[Path] = []
+
+    def save(self, *, path: Path) -> None:
+        self.saved_paths.append(path)
+
+
+class _FakeModel:
+    def __init__(self, solution: _FakeSolution) -> None:
+        self.solution = solution
+        self.solve_calls: list[dict[str, object]] = []
+        self.simulate_calls: list[dict[str, object]] = []
+
+    def solve(self, **kwargs: object) -> _FakeSolution:
+        self.solve_calls.append(kwargs)
+        return self.solution
+
+    def simulate(self, **kwargs: object) -> object:
+        self.simulate_calls.append(kwargs)
+        return object()
+
+
+def test_aca_gpu_memory_phases_dispatch_exact_workloads(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The three child phases exercise automatic, persistence, and replay paths."""
+    saved = _FakeSolution()
+    loaded = _FakeSolution()
+    model = _FakeModel(saved)
+    benchmark = bench_aca_baseline.AcaBaseline()
+    benchmark.model = model
+    benchmark.model_params = {"p": 1}
+    benchmark.initial_conditions = {"state": object()}
+    archive = tmp_path / "solution.h5"
+    load_calls: list[Path] = []
+
+    def _load_solution(*, path: Path) -> _FakeSolution:
+        load_calls.append(path)
+        return loaded
+
+    monkeypatch.setattr("lcm.persistence.load_solution", _load_solution)
+
+    benchmark.execute_gpu_memory_phase(
+        phase=_gpu_mem.AUTOMATIC_SOLVE_SIMULATE,
+        archive_path=archive,
+    )
+    assert model.simulate_calls[-1].get("solution") is None
+    assert model.simulate_calls[-1]["seed"] == 0
+
+    benchmark.execute_gpu_memory_phase(
+        phase=_gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE,
+        archive_path=archive,
+    )
+    from lcm.solver_api import ResultRetention
+
+    assert (
+        model.solve_calls[-1]["retention"] is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+    )
+    assert saved.saved_paths == [archive]
+
+    benchmark.execute_gpu_memory_phase(
+        phase=_gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE,
+        archive_path=archive,
+    )
+    assert load_calls == [archive]
+    assert model.simulate_calls[-1]["solution"] is loaded
+    assert model.simulate_calls[-1]["seed"] == 0
+
+    with pytest.raises(ValueError, match="Unknown GPU memory profile phase"):
+        benchmark.execute_gpu_memory_phase(
+            phase="not-a-phase",
+            archive_path=archive,
+        )
+
+
+def test_aca_asv_version_identifies_fixed_forward_simulation_seed() -> None:
+    """ACA timing and memory observations identify the deterministic series."""
+    assert bench_aca_baseline.AcaBaseline.version == "2"
+    assert bench_aca_baseline.AcaBaselineDebugLog.version == "2"
+    assert bench_aca_baseline.AcaBaselineGpuPeakMem.version == "2"
+    assert bench_aca_baseline.AcaBaselineDebugLogGpuPeakMem.version == "2"

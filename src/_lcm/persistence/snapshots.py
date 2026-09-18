@@ -154,11 +154,10 @@ def _strip_V_arr_from_result(
 
     `period_to_regime_to_V_arr` is dropped to avoid storing it both in the
     pickle and in the HDF5 file. `_regimes` is overwritten with the
-    model's lazy-path `_regimes`: when `Model(n_subjects=N)` is set
-    the result carries the AOT-compiled regimes, whose
-    `jax.stages.Compiled` callables hold a `LoadedExecutable` that cannot
-    be pickled. The lazy regimes carry the same metadata and cloud-pickle
-    cleanly (model.pkl uses the same set). The consumed solution is dropped
+    model's canonical `_regimes`, so call-local runtime executors and their
+    compiled programs cannot enter the pickle. The canonical regimes carry
+    the same metadata and cloud-pickle cleanly (model.pkl uses the same set).
+    The consumed solution is dropped
     too: its value arrays are the ones already in the HDF5 file, and a
     solution read back from an archive holds lazy entries and a cache lock
     that cannot be pickled.

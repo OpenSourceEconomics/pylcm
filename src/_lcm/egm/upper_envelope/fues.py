@@ -159,7 +159,6 @@ def refine_envelope(
     n_points_to_scan: int | None = None,
     segment_id: Float1D | None = None,
     savings: Float1D | None = None,
-    scan_unroll: int = 1,
 ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
     """Refine a candidate value correspondence to its upper envelope.
 
@@ -213,9 +212,6 @@ def refine_envelope(
             the implied difference, which protects same-source ties against
             rounding but can mask a real cross-source decrease when the resources
             dwarf the savings span.
-        scan_unroll: Loop-unroll factor for the sequential `jax.lax.scan` over
-            candidates. Unrolling trades compile time for fewer loop-carry round
-            trips on accelerators; the refined output is identical across values.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each
@@ -297,7 +293,7 @@ def refine_envelope(
     )
     indices = jnp.arange(1, n_input, dtype=jnp.int32)
     carry_final, (block_grid, block_policy, block_value, block_count) = jax.lax.scan(
-        step, carry_init, indices, unroll=scan_unroll
+        step, carry_init, indices, unroll=1
     )
 
     # Compact the per-step blocks: route each valid block row to its position
@@ -432,7 +428,6 @@ def refine_to_bracket(
     n_points_to_scan: int | None = None,
     segment_id: Float1D | None = None,
     savings: Float1D | None = None,
-    scan_unroll: int = 1,
 ) -> QueryBracket:
     """Refine to the two envelope nodes bracketing a single query.
 
@@ -477,9 +472,6 @@ def refine_to_bracket(
         savings: Optional per-candidate exogenous source savings (see
             `refine_envelope`); the savings-monotonicity clause compares true
             sources when supplied, else the noise floor.
-        scan_unroll: Loop-unroll factor for the sequential `jax.lax.scan` over
-            candidates (see `refine_envelope`); the bracket is identical across
-            values.
 
     Returns:
         The query bracket and the kept-point count.
@@ -494,7 +486,6 @@ def refine_to_bracket(
         n_points_to_scan=n_points_to_scan,
         segment_id=segment_id,
         savings=savings,
-        scan_unroll=scan_unroll,
     )
 
     # Locate the query bracket exactly as the dense read does:
