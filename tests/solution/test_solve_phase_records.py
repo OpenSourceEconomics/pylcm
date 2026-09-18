@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.solution import backward_induction
+from benchmarks.warm_solve_phases import parse_phase_records
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -24,6 +25,7 @@ from lcm.typing import FloatND, ScalarInt
 _PHASES = (
     "params_validation",
     "authority_fingerprint",
+    "solver_param_checks",
     "state_action_spaces",
     "continuation_templates",
     "program_graphs",
@@ -144,9 +146,19 @@ def test_children_open_and_close_in_order_inside_public_solve(
 def test_every_phase_end_reports_ok_and_a_nonnegative_duration(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A solve that returns closes every phase with `ok` and a duration."""
+    """A solve that returns closes every phase with `ok` and a duration.
+
+    The guard is that every phase of the vocabulary, plus the public bracket,
+    is present: `all()` over an empty list would otherwise hold whether or not
+    a single record was written.
+    """
     ends = [m for m in _solve(caplog=caplog) if m["edge"] == "end"]
-    assert all(m["status"] == "ok" and float(m["seconds"]) >= 0.0 for m in ends)
+    assert [
+        m["name"] for m in ends if m["status"] == "ok" and float(m["seconds"]) >= 0.0
+    ] == [
+        *_PHASES,
+        "public_solve",
+    ]
 
 
 def test_two_calls_carry_two_distinct_call_ids(
@@ -187,6 +199,23 @@ def test_a_raising_phase_ends_with_status_error(
         model.solve(params=get_params(model=model), log_level="progress")
     statuses = {m["name"]: m["status"] for m in _records(caplog) if m["edge"] == "end"}
     assert statuses["continuation_templates"] == "error"
+
+
+def test_parse_phase_records_reports_a_phase_without_an_end_as_incomplete() -> None:
+    """A phase whose `begin` has no matching `end` comes back as `incomplete`."""
+    call_id = "0123456789ab"
+    lines = [
+        f"solve call {call_id} phase public_solve begin",
+        f"solve call {call_id} phase params_validation begin",
+        f"solve call {call_id} phase params_validation end status=ok seconds=0.500000",
+        f"solve call {call_id} phase backward_induction begin",
+    ]
+    (call,) = parse_phase_records(lines=lines)
+    assert [(p.name, p.status, p.seconds) for p in call.phases] == [
+        ("public_solve", "incomplete", None),
+        ("params_validation", "ok", 0.5),
+        ("backward_induction", "incomplete", None),
+    ]
 
 
 def test_off_carries_no_phase_records(caplog: pytest.LogCaptureFixture) -> None:

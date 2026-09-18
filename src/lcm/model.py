@@ -1039,13 +1039,14 @@ class Model:
         NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
-        check_solver_params(regimes=self._regimes, flat_params=flat_params)
-        check_pareto_weights(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-            process_grid_resolver=process_grid_resolver,
-        )
+        with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
+            check_solver_params(regimes=self._regimes, flat_params=flat_params)
+            check_pareto_weights(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                ages=self.ages,
+                process_grid_resolver=process_grid_resolver,
+            )
         try:
             internal_result = solve(
                 flat_params=flat_params,

@@ -7,6 +7,26 @@ call and keep the remainder as an explicit residual.
 
 A phase entered without a call id emits nothing, so an internal entry point
 reached outside a public call stays silent while its code path is shared.
+
+The phases a public solve passes through, in emission order, all nested
+inside `public_solve`:
+
+- `params_validation` — processing the user's parameters and the transitions
+- `authority_fingerprint` — the declared solution authority and the model's
+  durable fingerprint
+- `solver_param_checks` — each regime's solver parameters and Pareto weights
+- `state_action_spaces` — the base state-action spaces and the collision fence
+- `continuation_templates` — the continuation and value templates
+- `program_graphs` — every kernel's native program, narrowed to the retention
+- `structural_resolution` — output layouts, lowering keys and fallback binding
+- `residency_inventory` — what the plan already keeps on each device
+- `compilation_waves` — lowering and compiling each wave of candidates
+- `workspace_selection` — the planner's width choice per core
+- `backward_induction` — the period loop, as host wall including every wait
+- `result_assembly` — binding the generated authority and building the result
+
+A reader reconciles the children against `public_solve` and reports what is
+left over as an explicit residual rather than normalising it away.
 """
 
 import contextlib

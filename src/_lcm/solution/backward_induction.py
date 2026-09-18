@@ -682,9 +682,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         # downstream consumer — the parents' cores and the AOT-lowered
                         # simulate programs are both compiled against the per-regime V
                         # topology — so a kernel value must leave its compiled
-                        # program on
-                        # the template's placement; it is asserted here, never
-                        # re-placed.
+                        # program on the template's placement; it is asserted
+                        # here, never re-placed.
                         V_arr = _publish_kernel_value(
                             value=V_arr,
                             compiled_cores=compiled_functions[(regime_name, period)],
@@ -713,8 +712,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 }
                             )
                         # A policy is kept only where the regime's declared
-                        # simulation route
-                        # reads it; replay authority travels with its policy.
+                        # simulation route reads it; replay authority travels
+                        # with its policy.
                         if (
                             result.simulation_policy is not None
                             and regime_retains_replay
@@ -807,9 +806,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         # produce. The inputs are read the way the dispatch reads them —
                         # through the same period-axis overlay — so an age-specialized
                         # axis is compared as the dispatch actually saw it, and
-                        # including
-                        # this period's own values, which a same-period-ref regime
-                        # reads.
+                        # including this period's own values, which a
+                        # same-period-ref regime reads.
                         buffer_registry.declare_passed_through(
                             inputs=(
                                 _states_for_period(
@@ -830,9 +828,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         # independent runs only once the period is finished — after the
                         # releases below, and for the dissolution flags not at all. Two
                         # channels carrying one array is enough for a release
-                        # addressed at
-                        # one of them to reach the other, so every retained channel is
-                        # declared before this period's first release.
+                        # addressed at one of them to reach the other, so every
+                        # retained channel is declared before this period's first
+                        # release.
                         buffer_registry.declare_not_produced(
                             tree=(
                                 period_retained_continuations,

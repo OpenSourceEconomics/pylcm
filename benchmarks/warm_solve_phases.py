@@ -45,6 +45,7 @@ MODEL_NAMES = ("precautionary_savings", "iskhakov", "aca_reduced")
 PHASE_NAMES = (
     "params_validation",
     "authority_fingerprint",
+    "solver_param_checks",
     "state_action_spaces",
     "continuation_templates",
     "program_graphs",
@@ -57,6 +58,10 @@ PHASE_NAMES = (
 )
 
 PUBLIC_PHASE = "public_solve"
+
+# Verbosity every measured call runs at. The planner's `candidate evaluation`
+# record is written at DEBUG, so anything below it observes none.
+LOG_LEVEL = "progress"
 
 _RECORD = re.compile(
     r"^solve call (?P<call>[0-9a-f]+) phase (?P<name>[a-z_]+) "
@@ -160,8 +165,13 @@ class CallReport:
     """Trace, lowering, and backend compile requests of the call."""
     lower_or_compile_records: int
     """`lowering` / `compiling` records the engine wrote during the call."""
-    candidate_evaluations: int
-    """`candidate evaluation` records the planner wrote during the call."""
+    candidate_evaluations: int | None
+    """`candidate evaluation` records the planner wrote during the call.
+
+    The planner writes that record at DEBUG, so a call made at any lower
+    verbosity observes none whatever the planner did, and the count is `None`
+    rather than zero.
+    """
 
 
 def _build_precautionary_savings() -> tuple[object, object]:
@@ -240,29 +250,43 @@ def _collecting_lcm_records() -> Iterator[list[str]]:
 
 
 def _run_calls(
-    *, model: object, params: object, n_calls: int, release_previous: bool
+    *,
+    model: object,
+    params: object,
+    n_calls: int,
+    release_previous: bool,
+    log_level: str = LOG_LEVEL,
 ) -> tuple[CallReport, ...]:
     """Solve `n_calls` times, reading each call's phases and counters back."""
     reports: list[CallReport] = []
     retained: list[object] = []
-    for _ in range(n_calls):
+    for index in range(n_calls):
         if release_previous:
             retained.clear()
             gc.collect()
         with _collecting_lcm_records() as lines, count_compile_requests() as counts:
-            result = model.solve(params=params, log_level="progress")  # ty: ignore[unresolved-attribute]
+            result = model.solve(params=params, log_level=log_level)  # ty: ignore[unresolved-attribute]
         retained.append(result)
-        (phases,) = parse_phase_records(lines=lines)
+        calls = parse_phase_records(lines=lines)
+        if len(calls) != 1:
+            msg = (
+                f"Call {index} wrote phase records for {len(calls)} public calls; "
+                "exactly one was expected. A count of zero means the solve emitted "
+                'no records at all — check that it ran above `log_level="off"`.'
+            )
+            raise RuntimeError(msg)
         reports.append(
             CallReport(
-                phases=phases,
+                phases=calls[0],
                 counts=dataclasses.replace(counts),
                 lower_or_compile_records=sum(
                     bool(_LOWERING_RECORD.match(line) or _COMPILING_RECORD.match(line))
                     for line in lines
                 ),
-                candidate_evaluations=sum(
-                    bool(_CANDIDATE_RECORD.match(line)) for line in lines
+                candidate_evaluations=(
+                    sum(bool(_CANDIDATE_RECORD.match(line)) for line in lines)
+                    if log_level == "debug"
+                    else None
                 ),
             )
         )
@@ -274,7 +298,7 @@ def _time_without_handler(*, model: object, params: object, n_calls: int) -> flo
     """Return the total seconds of `n_calls` solves with nothing attached."""
     start = time.monotonic()
     for _ in range(n_calls):
-        model.solve(params=params, log_level="progress")  # ty: ignore[unresolved-attribute]
+        model.solve(params=params, log_level=LOG_LEVEL)  # ty: ignore[unresolved-attribute]
     return time.monotonic() - start
 
 
@@ -296,7 +320,12 @@ def _print_report(*, reports: Sequence[CallReport]) -> None:
             print(f"    {name:<22} {rendered}{share}")
         residual = report.phases.residual_seconds()
         print(f"    {'residual':<22} {residual:>10.6f}s")
-        print(f"  candidate evaluations        {report.candidate_evaluations}")
+        candidates = (
+            "not observed (record is DEBUG)"
+            if report.candidate_evaluations is None
+            else report.candidate_evaluations
+        )
+        print(f"  candidate evaluations        {candidates}")
         print(f"  lower/compile records        {report.lower_or_compile_records}")
         print(f"  trace requests               {report.counts.trace_requests}")
         print(f"  lowering requests            {report.counts.lowering_requests}")
