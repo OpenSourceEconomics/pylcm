@@ -97,6 +97,8 @@ platforms = [
 ]
 [tool.pixi.dependencies]
 asv = "*"
+hatch-vcs = "*"
+hatchling = "*"
 python = "~=3.14.0"
 cloudpickle = ">=3.1.2,<4"
 h5py = ">=3.12"
@@ -113,6 +115,13 @@ snakeviz = "*"
 jax = ">=0.11.1"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
+[tool.pixi.pypi-options]
+# The native kernel is compiled against the XLA FFI headers of the jax the environment
+# runs, so the editable build must see that jax instead of resolving `jax>=0.11.1`
+# afresh from PyPI in an isolated build environment. The isolated build picked up
+# jax 0.11.2 the day it was released while the lock held 0.11.1, and the installed
+# native manifest then never matched the runtime, on every platform and every PR.
+no-build-isolation = [ "pylcm" ]
 [tool.pixi.tasks]
 test = { cmd = "python -m tests.ci.policy_launcher", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 asv-compare = "asv compare"
