@@ -25,10 +25,12 @@ from lcm import (
     Model,
     Phased,
     categorical,
-    fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.simulation.initial_conditions._models import (
+    make_heterogeneous_health_model,
+)
 from tests.test_models.basic_discrete import (
     Health,
 )
@@ -125,78 +127,9 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
         _build_discrete_grid_lookup(regimes)
 
 
-@categorical(ordered=True)
-class HealthWithDisability:
-    disabled: ScalarInt
-    bad: ScalarInt
-    good: ScalarInt
-
-
-@categorical(ordered=False)
-class _HetRegimeId:
-    pre65: ScalarInt
-    post65: ScalarInt
-    dead: ScalarInt
-
-
-def _het_next_regime() -> ScalarInt:
-    return _HetRegimeId.dead
-
-
-def _het_utility(*, wealth: float, health: int, bonus: float) -> float:
-    return wealth + health + bonus
-
-
-def _het_next_wealth(wealth: float) -> float:
-    return wealth
-
-
-def _het_dead_utility() -> float:
-    return 0.0
-
-
-def _get_heterogeneous_health_model() -> Model:
-    """Model where 'health' has different categories per regime."""
-    pre65 = UserRegime(
-        transition=_het_next_regime,
-        active=lambda age: age < 65,
-        states={
-            "health": DiscreteGrid(category_class=HealthWithDisability),
-            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-        },
-        state_transitions={
-            "health": fixed_transition("health"),
-            "wealth": _het_next_wealth,
-        },
-        functions={"utility": _het_utility},
-    )
-    post65 = UserRegime(
-        transition=_het_next_regime,
-        active=lambda age: 65 <= age < 80,
-        states={
-            "health": DiscreteGrid(category_class=Health),
-            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-        },
-        state_transitions={
-            "health": fixed_transition("health"),
-            "wealth": _het_next_wealth,
-        },
-        functions={"utility": _het_utility},
-    )
-    dead = UserRegime(
-        transition=None,
-        functions={"utility": _het_dead_utility},
-    )
-    return Model(
-        regimes={"pre65": pre65, "post65": post65, "dead": dead},
-        ages=AgeGrid(start=50, stop=80, step="10Y"),
-        regime_id_class=_HetRegimeId,
-    )
-
-
 def test_convert_series_heterogeneous_grids() -> None:
     """convert_series_in_params handles per-regime grid lookup."""
-    model = _get_heterogeneous_health_model()
+    model = make_heterogeneous_health_model()
     ages = model.ages.exact_values
     sr = pd.Series([1.0, 2.0, 3.0, 4.0], index=pd.Index(ages, name="age"))
     # Should not raise despite heterogeneous health grids
@@ -260,7 +193,7 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
 
 def test_heterogeneous_health_solve_simulate() -> None:
     """Solve and simulate with heterogeneous discrete grids, check DataFrame output."""
-    model = _get_heterogeneous_health_model()
+    model = make_heterogeneous_health_model()
     df = pd.DataFrame(
         {
             "regime_name": ["pre65", "pre65", "post65", "post65"],
@@ -299,7 +232,7 @@ def test_heterogeneous_health_solve_simulate() -> None:
 
 def test_heterogeneous_health_simulate_use_labels_false() -> None:
     """With use_labels=False, health column contains raw integer codes."""
-    model = _get_heterogeneous_health_model()
+    model = make_heterogeneous_health_model()
     df = pd.DataFrame(
         {
             "regime_name": ["pre65", "post65"],

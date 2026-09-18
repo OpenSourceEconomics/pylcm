@@ -16,6 +16,10 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.simulation.initial_conditions._models import (
+    HetRegimeId,
+    make_heterogeneous_health_model,
+)
 from tests.test_models.basic_discrete import (
     Health,
 )
@@ -26,7 +30,6 @@ from tests.test_models.basic_discrete import (
     get_model as get_basic_model,
 )
 from tests.test_models.processes import get_model as get_process_model
-from tests.test_pandas_utils import _get_heterogeneous_health_model, _HetRegimeId
 
 
 def test_regime_name_column_maps_to_regime_id_codes():
@@ -330,7 +333,7 @@ def test_round_trip_with_discrete_model():
 
 def test_initial_conditions_heterogeneous_health_grids() -> None:
     """Handle regimes with different categories for the same state."""
-    model = _get_heterogeneous_health_model()
+    model = make_heterogeneous_health_model()
     df = pd.DataFrame(
         {
             "regime_name": ["pre65", "pre65", "post65", "post65"],
@@ -352,10 +355,10 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
         result["regime_id"],
         jnp.array(
             [
-                _HetRegimeId.pre65,
-                _HetRegimeId.pre65,
-                _HetRegimeId.post65,
-                _HetRegimeId.post65,
+                HetRegimeId.pre65,
+                HetRegimeId.pre65,
+                HetRegimeId.post65,
+                HetRegimeId.post65,
             ]
         ),
     )

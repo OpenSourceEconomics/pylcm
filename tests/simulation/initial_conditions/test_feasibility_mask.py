@@ -112,7 +112,7 @@ def test_on_grid_initial_states_accepted():
 
 
 def test_irreg_spaced_grid_with_runtime_points():
-    """Feasibility check works when grid points are supplied at runtime via params."""
+    """Runtime-supplied grid points reach the feasibility check, which then rejects."""
     model = make_constraint_model(wealth_grid=IrregSpacedGrid(n_points=15))
     params = {
         "discount_factor": 0.95,
@@ -122,11 +122,12 @@ def test_irreg_spaced_grid_with_runtime_points():
         },
     }
     _working_life = model.regime_names_to_ids["working_life"]
-    with pytest.raises(InvalidInitialConditionsError):
+    with pytest.raises(InvalidInitialConditionsError, match="infeasible for 1 subject"):
         model.simulate(
             log_level="debug",
             params=params,
             initial_conditions={
+                "age": jnp.array([0.0]),
                 "wealth": jnp.array([0.3]),
                 "regime_id": jnp.array([_working_life]),
             },
@@ -231,18 +232,28 @@ def test_action_free_regime_state_only_constraint_accepts_satisfying_subjects() 
         params={"discount_factor": 0.95}, params_template=model._params_template
     )
     _dead = model.regime_names_to_ids["dead"]
+    initial = {
+        "age": jnp.array([2.0, 2.0]),
+        "wealth": jnp.array([1.0, 5.0]),
+        "regime_id": jnp.array([_dead, _dead]),
+    }
 
     validate_initial_conditions(
-        initial_conditions={
-            "age": jnp.array([2.0, 2.0]),
-            "wealth": jnp.array([1.0, 5.0]),
-            "regime_id": jnp.array([_dead, _dead]),
-        },
+        initial_conditions=initial,
         regimes=model._regimes,
         regime_names_to_ids=model.regime_names_to_ids,
         flat_params=flat_params,
         ages=model.ages,
     )
+    mask = initial_conditions_feasibility_mask(
+        initial_conditions=initial,
+        regimes=model._regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+        flat_params=flat_params,
+        ages=model.ages,
+    )
+
+    assert mask.tolist() == [True, True]
 
 
 @pytest.mark.parametrize("device_memory_bytes", [None, 2**24])

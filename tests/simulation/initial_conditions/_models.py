@@ -2,7 +2,14 @@
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model, categorical
+from lcm import (
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.ages import AgeGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
@@ -15,6 +22,7 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
 )
+from tests.test_models.basic_discrete import Health
 
 
 def make_minimal_model() -> Model:
@@ -404,4 +412,77 @@ def make_joint_constraint_model() -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
+    )
+
+
+@categorical(ordered=True)
+class HealthWithDisability:
+    disabled: ScalarInt
+    bad: ScalarInt
+    good: ScalarInt
+
+
+@categorical(ordered=False)
+class HetRegimeId:
+    pre65: ScalarInt
+    post65: ScalarInt
+    dead: ScalarInt
+
+
+def _het_next_regime() -> ScalarInt:
+    return HetRegimeId.dead
+
+
+def _het_utility(*, wealth: float, health: int, bonus: float) -> float:
+    return wealth + health + bonus
+
+
+def _het_next_wealth(wealth: float) -> float:
+    return wealth
+
+
+def _het_dead_utility() -> float:
+    return 0.0
+
+
+def make_heterogeneous_health_model() -> Model:
+    """Create a model whose `health` state has different categories per regime.
+
+    `pre65` uses `HealthWithDisability` (three labels), `post65` uses `Health` (two),
+    and `dead` has no states; ages 50, 60, 70 in steps of ten years.
+    """
+    pre65 = UserRegime(
+        transition=_het_next_regime,
+        active=lambda age: age < 65,
+        states={
+            "health": DiscreteGrid(category_class=HealthWithDisability),
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+        },
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _het_next_wealth,
+        },
+        functions={"utility": _het_utility},
+    )
+    post65 = UserRegime(
+        transition=_het_next_regime,
+        active=lambda age: 65 <= age < 80,
+        states={
+            "health": DiscreteGrid(category_class=Health),
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+        },
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": _het_next_wealth,
+        },
+        functions={"utility": _het_utility},
+    )
+    dead = UserRegime(
+        transition=None,
+        functions={"utility": _het_dead_utility},
+    )
+    return Model(
+        regimes={"pre65": pre65, "post65": post65, "dead": dead},
+        ages=AgeGrid(start=50, stop=80, step="10Y"),
+        regime_id_class=HetRegimeId,
     )
