@@ -23,6 +23,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A constraint depending on an age-specialized function while subjects start away from
   the regime's representative age now raises `UnsupportedOperationError` instead of
   `InvalidInitialConditionsError`, and `simulate` never downgrades it to a warning.
+- Coverage now measures the child Python processes the test suite spawns
+  (`[tool.coverage.run] patch = ["subprocess"]`), so the execution and sharding code
+  those tests exercise is reported as covered instead of missing from every diff.
 
 ### Documentation for the execution and certification layers
 

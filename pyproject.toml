@@ -505,6 +505,16 @@ ini_options.filterwarnings = [
   "error:Explicitly requested dtype.*:UserWarning",
 ]
 
+[tool.coverage.run]
+# Thirty-odd test modules exercise the execution and sharding code in child Python
+# processes. `patch = subprocess` hands every child the parent's coverage configuration
+# through the environment so the `.pth` hook coverage installs starts measuring at
+# interpreter startup, and pytest-cov combines the children's data files with the
+# parent's. `sigterm` flushes a child that a timeout kills. Without this the heaviest
+# code in a change runs only in children and is reported as uncovered.
+patch = [ "subprocess" ]
+sigterm = true
+
 [tool.yamlfix]
 line_length = 88
 none_representation = "null"
