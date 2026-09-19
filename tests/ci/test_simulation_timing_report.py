@@ -8,6 +8,10 @@ import pytest
 from tests.ci.check_simulation_timing_report import check_report
 from tests.ci.simulation_timings import UNSTABLE_HOST_MARKER
 
+_PREFLIGHT_CONTRACT_MODULE = (
+    "tests.simulation.initial_conditions.test_admission_preflight_contract"
+)
+
 
 def _drop_every_case(suite: ET.Element) -> None:
     """Leave a report with no timing case at all."""
@@ -22,7 +26,7 @@ def _drop_one_case(suite: ET.Element) -> None:
 def _drop_the_preflight_family(suite: ET.Element) -> None:
     """Leave only the four cases the report carried before the preflight row."""
     for case in tuple(suite):
-        if case.get("classname") == "tests.simulation.test_preflight_contract":
+        if case.get("classname") == _PREFLIGHT_CONTRACT_MODULE:
             suite.remove(case)
 
 
@@ -174,7 +178,7 @@ def _report() -> ET.Element:
         ET.SubElement(
             suite,
             "testcase",
-            classname="tests.simulation.test_preflight_contract",
+            classname=_PREFLIGHT_CONTRACT_MODULE,
             name=(
                 "test_unstubbed_warm_full_call_progress_meets_existing_time_bar"
                 f"[{witness}]"

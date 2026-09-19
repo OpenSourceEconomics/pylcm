@@ -44,6 +44,31 @@ Public inspection attributes include:
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 
+Two methods check initial conditions without solving or simulating. Both accept the same
+`initial_conditions` forms as `simulate` — a mapping of arrays with `"regime_id"` codes,
+or a DataFrame with a `"regime_name"` column, ages and categorical labels — and the same
+`params`:
+
+- `validate_initial_conditions(*, initial_conditions, params) -> None` raises
+  `InvalidInitialConditionsError` for a malformed structure (unknown regime, missing or
+  extra state, unequal lengths, off-grid age, inactive regime, invalid categorical code)
+  or for a subject admitting no jointly feasible action combination, with the same
+  diagnostics `simulate(log_level="debug")` reports.
+- `initial_conditions_feasibility(*, initial_conditions, params) -> Bool1D` returns a
+  one-dimensional boolean mask, `True` exactly for the feasible subjects in the order
+  supplied. A malformed structure raises rather than being reported infeasible;
+  `validate_initial_conditions` succeeds exactly when the mask is all `True`.
+
+A subject is feasible when at least one combination of its regime's declared action-grid
+points satisfies every constraint jointly or, in a regime without actions, when every
+state-only constraint holds. Both methods apply every initial-condition check `simulate`
+applies, including the `own_stakeholder` declaration a collective start needs, and take
+no `log_level`: they always raise. The verdict does not depend on how the check is
+executed; at present both run in one eager pass on the default device, without
+device-memory admission or subject padding. A constraint that depends on an
+age-specialized function while subjects start away from the regime's representative age
+raises `UnsupportedOperationError`, from these methods and from `simulate` alike.
+
 `model._regimes` is private canonical engine state.
 
 (api-regime)=

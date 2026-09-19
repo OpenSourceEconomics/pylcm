@@ -31,7 +31,10 @@ from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.workspace_planning import plan_workspace
 from _lcm.grids import DiscreteGrid
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.reachability import PhaseReachability
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.Q_and_F import _get_feasibility
+from _lcm.simulation import population_operations
 from _lcm.simulation.action_grids import PreflightActionGrids
 from _lcm.simulation.assembly import slice_array
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
@@ -70,8 +73,17 @@ from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidInitialConditionsError,
     PyLCMError,
+    UnsupportedOperationError,
 )
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserInitialConditions
+from lcm.typing import (
+    Bool1D,
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    UserInitialConditions,
+)
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
 # instead of -1 so that JAX indexing produces obviously wrong values rather than
@@ -174,10 +186,12 @@ def validate_simulation_inputs(
                     process_grid_resolver=process_grid_resolver,
                 )
                 accepted = summary.valid()
+            except UnsupportedOperationError:
+                raise
             except ExecutionPlanningError, MemoryError, jax.errors.JaxRuntimeError:
                 raise
-            # Re-evaluate user-law failures in legacy order; resource failures above
-            # must never enter this diagnostic retry.
+            # Re-evaluate user-law failures in legacy order; resource failures and
+            # unsupported checks above must never enter this diagnostic retry.
             except Exception:  # noqa: BLE001
                 accepted = False
         finally:
@@ -782,6 +796,9 @@ def validate_initial_conditions(
     3. All arrays have the same length
     4. Discrete state values are valid codes
     5. Each subject has at least one feasible action combination
+    6. Subjects starting in a collective regime declare the role they occupy
+       wherever a reachable gated edge routes by stakeholder, exactly as
+       `simulate` demands it
 
     Args:
         initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
@@ -793,6 +810,131 @@ def validate_initial_conditions(
 
     Raises:
         InvalidInitialConditionsError: If any validation check fails.
+        UnsupportedOperationError: If a constraint depends on an age-specialized
+            function while subjects start away from the regime's representative
+            age, so that feasibility cannot be evaluated for them.
+
+    """
+    initial_states, regime_arr = _admitted_initial_states(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+    )
+    feasibility_errors = _collect_feasibility_errors(
+        initial_states=initial_states,
+        regime_id_arr=regime_arr,
+        regime_names_to_ids=regime_names_to_ids,
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        process_grid_resolver=process_grid_resolver,
+        action_grid_resolver=action_grid_resolver,
+        memory=memory,
+    )
+    if feasibility_errors:
+        raise InvalidInitialConditionsError(format_messages(feasibility_errors))
+    # `simulate` demands each collective start's role right after this preflight;
+    # asking here keeps the validator's verdict the simulation's.
+    _initial_own_stakeholder(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        memory=memory,
+    )
+
+
+def initial_conditions_feasibility_mask(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> Bool1D:
+    """Return the per-subject feasibility mask of canonical initial conditions.
+
+    Structural and discrete-state validity, and the role declaration a
+    collective start needs, are preconditions of the mask and raise;
+    feasibility itself is reported per subject. A subject is feasible
+    when at least one combination of its regime's declared action-grid points
+    satisfies every constraint jointly, or, in an action-free regime, when
+    every state-only constraint holds. The mask is computed eagerly on the
+    default device without device-memory admission or subject padding.
+
+    Args:
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
+        regimes: Immutable mapping of regime names to internal regime
+            instances.
+        regime_names_to_ids: Immutable mapping of regime names to integer IDs.
+        flat_params: Immutable mapping of regime names to flat parameter mappings.
+        ages: AgeGrid for the model.
+        process_grid_resolver: Resolver for runtime-generated process grids.
+
+    Returns:
+        Boolean array of shape `(n_subjects,)`, `True` exactly for the feasible
+        subjects, in the order of the supplied rows.
+
+    Raises:
+        InvalidInitialConditionsError: If the regime IDs, state names, shapes,
+            ages or discrete codes are invalid.
+        UnsupportedOperationError: If a constraint depends on an age-specialized
+            function while subjects start away from the regime's representative
+            age, so that feasibility cannot be evaluated for them.
+
+    """
+    initial_states, regime_arr = _admitted_initial_states(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+    )
+    _initial_own_stakeholder(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+    )
+    mask = np.ones(int(regime_arr.shape[0]), dtype=bool)
+    for regime_name, regime in regimes.items():
+        subject_indices = np.flatnonzero(
+            np.asarray(regime_arr) == int(regime_names_to_ids[regime_name])
+        ).tolist()
+        if not subject_indices:
+            continue
+        verdict = _regime_feasibility_mask(
+            regime=regime,
+            regime_name=regime_name,
+            initial_states=initial_states,
+            subject_indices=subject_indices,
+            regime_params=_merged_regime_params(
+                regime=regime, regime_name=regime_name, flat_params=flat_params
+            ),
+            ages=ages,
+            process_grid_resolver=process_grid_resolver,
+        )
+        # Without a summary the producer always returns a verdict.
+        assert verdict is not None  # noqa: S101
+        mask[subject_indices] = np.asarray(verdict.feasible)
+    return jnp.asarray(mask)
+
+
+def _admitted_initial_states(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    ages: AgeGrid,
+) -> tuple[Mapping[StateName, FloatND | IntND], Int1D]:
+    """Return the initial states and regime IDs once their structure is admitted.
+
+    Checks, in order, that `"regime_id"` is present and holds valid IDs, that
+    every subject's regime states are supplied with no extras and equal
+    lengths at ages on the grid where the regime is active, and that discrete
+    states hold valid codes.
+
+    Raises:
+        InvalidInitialConditionsError: If any of these checks fails.
 
     """
     # Build reverse lookup from regime IDs to names. `regime_names_to_ids`
@@ -800,7 +942,6 @@ def validate_initial_conditions(
     # keys directly; `invert_regime_ids` coerces them to Python `int`.
     regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
-    # Extract regime array
     regime_arr = initial_conditions.get("regime_id")
     if regime_arr is None:
         raise InvalidInitialConditionsError(
@@ -845,28 +986,204 @@ def validate_initial_conditions(
     if structural_errors:
         raise InvalidInitialConditionsError(format_messages(structural_errors))
 
-    # Validate discrete state values
     _validate_discrete_state_values(
         initial_states=initial_states,
         regimes=regimes,
         regime_id_arr=regime_arr,
         regime_names_to_ids=regime_names_to_ids,
     )
+    return initial_states, regime_arr
 
-    # Validate feasibility
-    feasibility_errors = _collect_feasibility_errors(
-        initial_states=initial_states,
-        regime_id_arr=regime_arr,
-        regime_names_to_ids=regime_names_to_ids,
-        regimes=regimes,
-        flat_params=flat_params,
-        ages=ages,
-        process_grid_resolver=process_grid_resolver,
-        action_grid_resolver=action_grid_resolver,
-        memory=memory,
+
+def _regimes_reachable_from(
+    *, start: RegimeName, reachability: PhaseReachability
+) -> frozenset[RegimeName]:
+    """Return `start` and every regime a subject starting there can end up in.
+
+    The walk is over the construction-time graph's period-union, so a regime
+    stays in the closure when any period retains the edge that leads to it.
+    That is the conservative direction for a question about what a subject
+    might yet encounter.
+
+    Args:
+        start: The regime a subject begins in.
+        reachability: The simulate phase's static regime graph.
+
+    Returns:
+        Frozen set of reachable regime names, including `start` itself.
+
+    """
+    closure = {start}
+    frontier = [start]
+    while frontier:
+        for target in reachability.union_targets(source=frontier.pop()):
+            if target not in closure:
+                closure.add(target)
+                frontier.append(target)
+    return frozenset(closure)
+
+
+def _initial_own_stakeholder(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    memory: SimulationMemory | None = None,
+) -> Int1D:
+    """Read and validate each subject's seeded role.
+
+    A subject starting in a collective regime IS one of that regime's
+    stakeholders, and which one decides where its row goes when the household
+    ends. Nothing in the model answers that — a cohort of wives and a cohort of
+    husbands are the same states in the same regime — so it is declared, and a
+    collective start without it is refused rather than defaulted to whichever
+    stakeholder happens to be declared first.
+
+    The seed is demanded exactly where the answer turns on it, which is a
+    property of the starting regime rather than of the model:
+
+    - A role selects among a gated edge's legs, so it is read only where some
+      regime the cohort can still arrive at declares an edge with more than one
+      leg. A row keeps its role across an ordinary regime transition, so the
+      question is asked over the start's forward closure, not over its own
+      edges alone.
+    - A collective start whose closure contains no such edge has no route,
+      regime or state projection that can differ by role, and needs no seed —
+      a role-routing regime elsewhere in the model decides nothing for it.
+    - A subject starting in a singleton regime occupies no role either.
+
+    Both unseeded cases default to `NO_ROLE`.
+
+    Args:
+        initial_conditions: The user's flat initial conditions.
+        regimes: Immutable mapping of regime names to canonical regimes.
+        regime_names_to_ids: Immutable mapping of regime names to codes.
+
+    Returns:
+        Each subject's role code.
+
+    Raises:
+        InvalidInitialConditionsError: A subject starts with no role in a
+            collective regime that can reach one routing by role, or carries a
+            code the model's vocabulary does not define.
+    """
+    regime_ids = initial_conditions["regime_id"]
+    role_ids = next(
+        (regime.stakeholder_names_to_ids for regime in regimes.values()),
+        MappingProxyType({}),
     )
-    if feasibility_errors:
-        raise InvalidInitialConditionsError(format_messages(feasibility_errors))
+    collective_names = [
+        name for name, regime in regimes.items() if regime.stakeholders is not None
+    ]
+    role_routing = frozenset(
+        name
+        for name, regime in regimes.items()
+        if any(len(edge.legs) > 1 for edge in regime.gated_edges.values())
+    )
+    reachability = next(iter(regimes.values())).simulation.reachability
+    starts_needing_a_role = {
+        name: sorted(
+            _regimes_reachable_from(start=name, reachability=reachability)
+            & role_routing
+        )
+        for name in collective_names
+    }
+    starts_needing_a_role = {
+        name: routes for name, routes in starts_needing_a_role.items() if routes
+    }
+
+    declared = initial_conditions.get("own_stakeholder")
+    if declared is None:
+        occupied = sorted(
+            name
+            for name in starts_needing_a_role
+            if bool(
+                run_simulation_operation(
+                    memory=memory,
+                    function=population_operations.regime_is_occupied,
+                    arguments={
+                        "regime_ids": regime_ids,
+                        "regime_id": regime_names_to_ids[name],
+                    },
+                    subject_arg_names=("regime_ids",),
+                )
+            )
+        )
+        if occupied:
+            reachable_routes = sorted(
+                {name for start in occupied for name in starts_needing_a_role[start]}
+            )
+            msg = (
+                f"Subjects starting in the collective regime(s) {occupied} need "
+                "an `own_stakeholder` entry in `initial_conditions`, naming the "
+                f"role each one occupies (one of {dict(role_ids)}). They can "
+                f"reach the collective regime(s) {reachable_routes}, which "
+                "declare a gated edge whose legs differ by stakeholder, and "
+                "which partner a row is decides which of them it takes — so it "
+                "is a modelling decision rather than something the engine may "
+                "pick."
+            )
+            raise InvalidInitialConditionsError(msg)
+        return run_simulation_operation(
+            memory=memory,
+            function=population_operations.default_roles,
+            arguments={"regime_ids": regime_ids},
+            subject_arg_names=("regime_ids",),
+            subject_outputs=True,
+        )
+
+    own_stakeholder, roles_known = run_simulation_operation(
+        memory=memory,
+        function=population_operations.canonical_roles,
+        arguments={"declared": declared, "known_role_ids": tuple(role_ids.values())},
+        subject_arg_names=("declared",),
+    )
+    if not bool(roles_known):
+        msg = (
+            f"`own_stakeholder` carries codes outside the model's role "
+            f"vocabulary {dict(role_ids)} (the no-role sentinel {NO_ROLE} is "
+            f"also accepted): {own_stakeholder.tolist()}."
+        )
+        raise InvalidInitialConditionsError(msg)
+
+    # The vocabulary is model-wide, so a code being in it does not make it a
+    # role of the regime the subject starts in. Checking against that regime's
+    # own stakeholders is what establishes the invariant routing then keeps:
+    # every row in a collective regime carries one of ITS roles, so the leg
+    # selection always has a leg to find.
+    for name in collective_names:
+        mismatch = run_simulation_operation(
+            memory=memory,
+            function=population_operations.role_mismatch,
+            arguments={
+                "roles": own_stakeholder,
+                "regime_ids": regime_ids,
+                "regime_id": regime_names_to_ids[name],
+                "role_ids": tuple(
+                    role_ids[s] for s in regimes[name].stakeholders or ()
+                ),
+            },
+            subject_arg_names=("roles", "regime_ids"),
+        )
+        if bool(mismatch):
+            msg = (
+                f"Subjects starting in the collective regime {name!r} carry an "
+                "`own_stakeholder` that is not one of its stakeholders "
+                f"{regimes[name].stakeholders}. Roles are model-wide codes, so "
+                "a valid code may still name a role this regime does not have."
+            )
+            raise InvalidInitialConditionsError(msg)
+    return own_stakeholder
+
+
+def _merged_regime_params(
+    *, regime: Regime, regime_name: RegimeName, flat_params: FlatParams
+) -> dict[str, object]:
+    """Merge a regime's fixed and runtime parameters; the runtime value binds."""
+    return {
+        **regime.resolved_fixed_params,
+        **dict(flat_params.get(regime_name, MappingProxyType({}))),
+    }
 
 
 def _format_missing_states_message(*, missing: set[str], required: set[str]) -> str:
@@ -1102,17 +1419,14 @@ def _collect_feasibility_errors(
         if not subject_indices:
             continue
 
-        regime_params = {
-            **regime.resolved_fixed_params,
-            **dict(flat_params.get(regime_name, MappingProxyType({}))),
-        }
-
         msg = _check_regime_feasibility(
             regime=regime,
             regime_name=regime_name,
             initial_states=initial_states,
             subject_indices=subject_indices,
-            regime_params=regime_params,
+            regime_params=_merged_regime_params(
+                regime=regime, regime_name=regime_name, flat_params=flat_params
+            ),
             ages=ages,
             cohorts=cohorts,
             summary=summary,
@@ -1249,7 +1563,7 @@ def _batched_feasibility_check(
         )
 
     n_subjects = len(next(iter(subject_states.values())))
-    n_action_combos = max(len(v) for v in flat_actions.values())
+    n_action_combos = max((len(v) for v in flat_actions.values()), default=1)
     batch_size = max(
         1,
         _TARGET_BATCH_BYTES // max(n_action_combos * _BYTES_PER_ACTION_ELEMENT, 1),
@@ -1398,7 +1712,23 @@ def _age_specialized_feasibility_message(
     )
 
 
-def _check_regime_feasibility(  # noqa: C901, PLR0912
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _RegimeFeasibility:
+    """Per-subject verdict of one regime plus the operands its diagnostics reuse."""
+
+    feasible: Bool1D
+    """`True` for each subject of the regime admitting an action, in `idx_arr` order."""
+    subject_states: Mapping[str, FloatND | IntND]
+    """Per-subject state arrays read by the regime's feasibility function."""
+    flat_actions: Mapping[ActionName, FloatND | IntND]
+    """Flat action grid the verdict was evaluated on; empty without actions."""
+    idx_arr: Int1D | _HostIntArray
+    """Subject indices of the regime, in verdict order."""
+    state_names: tuple[StateName, ...]
+    """State names of the regime's simulation phase."""
+
+
+def _check_regime_feasibility(
     *,
     regime: Regime,
     regime_name: RegimeName,
@@ -1412,7 +1742,11 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
 ) -> str | None:
-    """Check whether all subjects in a regime have at least one feasible action.
+    """Explain which subjects of a regime lack every feasible action.
+
+    The verdict comes from `_regime_feasibility_mask`; this function only turns
+    it into a diagnostic message, evaluating per-constraint admission for the
+    subjects the mask marked infeasible.
 
     Args:
         regime: The internal regime instance.
@@ -1421,9 +1755,96 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
         subject_indices: Indices of subjects starting in this regime.
         regime_params: Merged fixed and runtime parameters for this regime.
         ages: AgeGrid for the model.
+        cohorts: Host cohort metadata of the summary route.
+        summary: Reduced validation summary of the summary route, which
+            records a flag instead of returning a message.
+        process_grid_resolver: Resolver for runtime-generated process grids.
+        action_grid_resolver: Admitted preflight action grids.
+        memory: Simulation memory budget of the budgeted route.
 
     Returns:
         An error message string if any subjects are infeasible, or None.
+
+    """
+    verdict = _regime_feasibility_mask(
+        regime=regime,
+        regime_name=regime_name,
+        initial_states=initial_states,
+        subject_indices=subject_indices,
+        regime_params=regime_params,
+        ages=ages,
+        cohorts=cohorts,
+        summary=summary,
+        process_grid_resolver=process_grid_resolver,
+        action_grid_resolver=action_grid_resolver,
+        memory=memory,
+    )
+    if verdict is None:
+        return None
+    infeasible_mask = np.logical_not(np.asarray(verdict.feasible))
+    infeasible_indices = np.asarray(verdict.idx_arr)[infeasible_mask].tolist()
+    if not infeasible_indices:
+        return None
+
+    per_constraint_admits_any = _per_constraint_feasibility(
+        regime=regime,
+        subject_states=verdict.subject_states,
+        regime_params=regime_params,
+        flat_actions=verdict.flat_actions,
+        idx_arr=verdict.idx_arr,
+        infeasible_indices=infeasible_indices,
+        memory=memory,
+    )
+
+    return _format_infeasibility_message(
+        infeasible_indices=infeasible_indices,
+        regime=regime,
+        regime_name=regime_name,
+        initial_states=initial_states,
+        state_names=verdict.state_names,
+        per_constraint_admits_any=per_constraint_admits_any,
+    )
+
+
+def _regime_feasibility_mask(  # noqa: C901, PLR0912
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    initial_states: Mapping[StateName, FloatND | IntND],
+    subject_indices: list[int],
+    regime_params: Mapping[str, object],
+    ages: AgeGrid,
+    cohorts: _InitialCohorts | None = None,
+    summary: _ValidationSummary | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
+    action_grid_resolver: PreflightActionGrids | None = None,
+    memory: SimulationMemory | None = None,
+) -> _RegimeFeasibility | None:
+    """Decide for each subject of a regime whether some action combination is feasible.
+
+    Args:
+        regime: The internal regime instance.
+        regime_name: Name of the regime.
+        initial_states: Mapping of state names to arrays (includes "age").
+        subject_indices: Indices of subjects starting in this regime.
+        regime_params: Merged fixed and runtime parameters for this regime.
+        ages: AgeGrid for the model.
+        cohorts: Host cohort metadata of the summary route.
+        summary: Reduced validation summary of the summary route. When given,
+            the reduced flag is appended to it and no subject-sized verdict is
+            retained.
+        process_grid_resolver: Resolver for runtime-generated process grids.
+        action_grid_resolver: Admitted preflight action grids.
+        memory: Simulation memory budget of the budgeted route.
+
+    Returns:
+        The per-subject verdict with the operands diagnostics reuse, or `None`
+        when the verdict was reduced into `summary`.
+
+    Raises:
+        UnsupportedOperationError: If a constraint depends on an age-specialized
+            function while subjects start away from the regime's representative
+            age.
 
     """
     age_specialized_message = _age_specialized_feasibility_message(
@@ -1435,9 +1856,7 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
         cohorts=cohorts,
     )
     if age_specialized_message is not None:
-        if summary is not None:
-            raise _SerialValidationRequired
-        return age_specialized_message
+        raise UnsupportedOperationError(age_specialized_message)
 
     feasibility_func = _get_feasibility(
         functions=regime.simulation.functions,
@@ -1446,8 +1865,6 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
     accepted = get_union_of_args([feasibility_func])
 
     action_names = list(regime.solution.action_names)
-    if not action_names:
-        return None
 
     # Build the state-action space with runtime-supplied grid points
     # substituted. The base grid's `to_jax()` raises for runtime-supplied
@@ -1466,17 +1883,21 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
     }
-    flat_actions = (
-        _build_flat_action_grid(
+    # An action-free regime has exactly one (empty) action combination, so its
+    # constraints are evaluated on states and parameters alone.
+    flat_actions: Mapping[ActionName, FloatND | IntND]
+    if not action_names:
+        flat_actions = {}
+    elif action_grid_resolver is None:
+        flat_actions = _build_flat_action_grid(
             action_names=action_names, grids=MappingProxyType(action_grids)
         )
-        if action_grid_resolver is None
-        else action_grid_resolver.resolve(
+    else:
+        flat_actions = action_grid_resolver.resolve(
             action_names=tuple(action_names),
             grids=MappingProxyType(action_grids),
             retained_arrays=(state_action_space.states, state_action_space.actions),
         )
-    )
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
     # Simulate state set: a carried pair state is a leaf of the feasibility
@@ -1559,8 +1980,7 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
                 arguments={"feasible": any_feasible},
             )
             return None
-        infeasible_mask = np.logical_not(np.asarray(any_feasible))
-        infeasible_indices = np.asarray(idx_arr)[infeasible_mask].tolist()
+        feasible = jnp.asarray(any_feasible, dtype=bool)
     else:
         # No per-subject varying states: feasibility is identical for all subjects.
         result = _evaluate_constant_feasibility(
@@ -1575,29 +1995,17 @@ def _check_regime_feasibility(  # noqa: C901, PLR0912
                 arguments={"feasible": result},
             )
             return None
-        infeasible_indices = [] if np.any(np.asarray(result)) else subject_indices
+        feasible = jnp.full(
+            len(subject_indices), bool(np.any(np.asarray(result))), dtype=bool
+        )
 
-    if not infeasible_indices:
-        return None
-
-    # The summary route returned before diagnostics, leaving the serial index array.
-    per_constraint_admits_any = _per_constraint_feasibility(
-        regime=regime,
+    # The summary route returned above, so the serial index array is present.
+    return _RegimeFeasibility(
+        feasible=feasible,
         subject_states=subject_states,
-        regime_params=regime_params,
         flat_actions=flat_actions,
         idx_arr=cast("Int1D | _HostIntArray", idx_arr),
-        infeasible_indices=infeasible_indices,
-        memory=memory,
-    )
-
-    return _format_infeasibility_message(
-        infeasible_indices=infeasible_indices,
-        regime=regime,
-        regime_name=regime_name,
-        initial_states=initial_states,
-        state_names=state_names,
-        per_constraint_admits_any=per_constraint_admits_any,
+        state_names=tuple(state_names),
     )
 
 

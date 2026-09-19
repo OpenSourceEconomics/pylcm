@@ -46,8 +46,6 @@ from _lcm.engine import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.reachability import PhaseReachability
-from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
@@ -75,6 +73,7 @@ from _lcm.simulation.gated_routing import (
     gated_route_candidates,
 )
 from _lcm.simulation.initial_conditions import (
+    _initial_own_stakeholder,
     build_initial_states,
     trim_pad_from_raw_results,
 )
@@ -165,7 +164,6 @@ from _lcm.utils.logging import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExecutionPlanningError,
-    InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     UnrepresentableOuterCandidateError,
@@ -3957,187 +3955,6 @@ def _lookup_values_from_indices(
 vmapped_unravel_index = jax.jit(
     vmap(jnp.unravel_index, in_axes=(0, None)), static_argnums=1
 )
-
-
-def _regimes_reachable_from(
-    *, start: RegimeName, reachability: PhaseReachability
-) -> frozenset[RegimeName]:
-    """Return `start` and every regime a subject starting there can end up in.
-
-    The walk is over the construction-time graph's period-union, so a regime
-    stays in the closure when any period retains the edge that leads to it.
-    That is the conservative direction for a question about what a subject
-    might yet encounter.
-
-    Args:
-        start: The regime a subject begins in.
-        reachability: The simulate phase's static regime graph.
-
-    Returns:
-        Frozen set of reachable regime names, including `start` itself.
-
-    """
-    closure = {start}
-    frontier = [start]
-    while frontier:
-        for target in reachability.union_targets(source=frontier.pop()):
-            if target not in closure:
-                closure.add(target)
-                frontier.append(target)
-    return frozenset(closure)
-
-
-def _initial_own_stakeholder(
-    *,
-    initial_conditions: InitialConditions,
-    regimes: MappingProxyType[RegimeName, Regime],
-    regime_names_to_ids: RegimeNamesToIds,
-    memory: SimulationMemory | None = None,
-) -> Int1D:
-    """Read and validate each subject's seeded role.
-
-    A subject starting in a collective regime IS one of that regime's
-    stakeholders, and which one decides where its row goes when the household
-    ends. Nothing in the model answers that — a cohort of wives and a cohort of
-    husbands are the same states in the same regime — so it is declared, and a
-    collective start without it is refused rather than defaulted to whichever
-    stakeholder happens to be declared first.
-
-    The seed is demanded exactly where the answer turns on it, which is a
-    property of the starting regime rather than of the model:
-
-    - A role selects among a gated edge's legs, so it is read only where some
-      regime the cohort can still arrive at declares an edge with more than one
-      leg. A row keeps its role across an ordinary regime transition, so the
-      question is asked over the start's forward closure, not over its own
-      edges alone.
-    - A collective start whose closure contains no such edge has no route,
-      regime or state projection that can differ by role, and needs no seed —
-      a role-routing regime elsewhere in the model decides nothing for it.
-    - A subject starting in a singleton regime occupies no role either.
-
-    Both unseeded cases default to `NO_ROLE`.
-
-    Args:
-        initial_conditions: The user's flat initial conditions.
-        regimes: Immutable mapping of regime names to canonical regimes.
-        regime_names_to_ids: Immutable mapping of regime names to codes.
-
-    Returns:
-        Each subject's role code.
-
-    Raises:
-        InvalidInitialConditionsError: A subject starts with no role in a
-            collective regime that can reach one routing by role, or carries a
-            code the model's vocabulary does not define.
-    """
-    regime_ids = initial_conditions["regime_id"]
-    role_ids = next(
-        (regime.stakeholder_names_to_ids for regime in regimes.values()),
-        MappingProxyType({}),
-    )
-    collective_names = [
-        name for name, regime in regimes.items() if regime.stakeholders is not None
-    ]
-    role_routing = frozenset(
-        name
-        for name, regime in regimes.items()
-        if any(len(edge.legs) > 1 for edge in regime.gated_edges.values())
-    )
-    reachability = next(iter(regimes.values())).simulation.reachability
-    starts_needing_a_role = {
-        name: sorted(
-            _regimes_reachable_from(start=name, reachability=reachability)
-            & role_routing
-        )
-        for name in collective_names
-    }
-    starts_needing_a_role = {
-        name: routes for name, routes in starts_needing_a_role.items() if routes
-    }
-
-    declared = initial_conditions.get("own_stakeholder")
-    if declared is None:
-        occupied = sorted(
-            name
-            for name in starts_needing_a_role
-            if bool(
-                run_simulation_operation(
-                    memory=memory,
-                    function=population_operations.regime_is_occupied,
-                    arguments={
-                        "regime_ids": regime_ids,
-                        "regime_id": regime_names_to_ids[name],
-                    },
-                    subject_arg_names=("regime_ids",),
-                )
-            )
-        )
-        if occupied:
-            reachable_routes = sorted(
-                {name for start in occupied for name in starts_needing_a_role[start]}
-            )
-            msg = (
-                f"Subjects starting in the collective regime(s) {occupied} need "
-                "an `own_stakeholder` entry in `initial_conditions`, naming the "
-                f"role each one occupies (one of {dict(role_ids)}). They can "
-                f"reach the collective regime(s) {reachable_routes}, which "
-                "declare a gated edge whose legs differ by stakeholder, and "
-                "which partner a row is decides which of them it takes — so it "
-                "is a modelling decision rather than something the engine may "
-                "pick."
-            )
-            raise InvalidInitialConditionsError(msg)
-        return run_simulation_operation(
-            memory=memory,
-            function=population_operations.default_roles,
-            arguments={"regime_ids": regime_ids},
-            subject_arg_names=("regime_ids",),
-            subject_outputs=True,
-        )
-
-    own_stakeholder, roles_known = run_simulation_operation(
-        memory=memory,
-        function=population_operations.canonical_roles,
-        arguments={"declared": declared, "known_role_ids": tuple(role_ids.values())},
-        subject_arg_names=("declared",),
-    )
-    if not bool(roles_known):
-        msg = (
-            f"`own_stakeholder` carries codes outside the model's role "
-            f"vocabulary {dict(role_ids)} (the no-role sentinel {NO_ROLE} is "
-            f"also accepted): {own_stakeholder.tolist()}."
-        )
-        raise InvalidInitialConditionsError(msg)
-
-    # The vocabulary is model-wide, so a code being in it does not make it a
-    # role of the regime the subject starts in. Checking against that regime's
-    # own stakeholders is what establishes the invariant routing then keeps:
-    # every row in a collective regime carries one of ITS roles, so the leg
-    # selection always has a leg to find.
-    for name in collective_names:
-        mismatch = run_simulation_operation(
-            memory=memory,
-            function=population_operations.role_mismatch,
-            arguments={
-                "roles": own_stakeholder,
-                "regime_ids": regime_ids,
-                "regime_id": regime_names_to_ids[name],
-                "role_ids": tuple(
-                    role_ids[s] for s in regimes[name].stakeholders or ()
-                ),
-            },
-            subject_arg_names=("roles", "regime_ids"),
-        )
-        if bool(mismatch):
-            msg = (
-                f"Subjects starting in the collective regime {name!r} carry an "
-                "`own_stakeholder` that is not one of its stakeholders "
-                f"{regimes[name].stakeholders}. Roles are model-wide codes, so "
-                "a valid code may still name a role this regime does not have."
-            )
-            raise InvalidInitialConditionsError(msg)
-    return own_stakeholder
 
 
 def _compute_starting_periods(

@@ -69,7 +69,7 @@ class _Requests:
 def requests(monkeypatch: pytest.MonkeyPatch) -> _Requests:
     """Wrap the real host-array property and live preflight entry point."""
     source = Path(_lcm.__file__).resolve()
-    assert source.is_relative_to(Path(__file__).resolve().parents[2] / "src")
+    assert source.is_relative_to(Path(__file__).resolve().parents[3] / "src")
     capture = _Requests()
     original = ArrayImpl._value
 

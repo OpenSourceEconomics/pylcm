@@ -82,8 +82,12 @@ from _lcm.simulation.entry_inputs import capture_simulation_entry_inputs
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
+    initial_conditions_feasibility_mask,
     pad_initial_conditions_to_multiple,
     validate_simulation_inputs,
+)
+from _lcm.simulation.initial_conditions import (
+    validate_initial_conditions as validate_canonical_initial_conditions,
 )
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.result_metadata import _get_output_dtypes
@@ -140,6 +144,7 @@ from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
     FlatParams,
     FunctionName,
+    InitialConditions,
     ParamsTemplate,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
@@ -205,6 +210,7 @@ from lcm.solver_api import (
 )
 from lcm.solvers import GridSearch
 from lcm.typing import (
+    Bool1D,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -2573,6 +2579,121 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
             )
         return result
+
+    @beartype(conf=PARAMS_CONF)
+    def validate_initial_conditions(
+        self,
+        *,
+        initial_conditions: UserInitialConditions | pd.DataFrame,
+        params: UserParams,
+    ) -> None:
+        """Validate initial conditions without solving or simulating.
+
+        Accepts the same inputs as `simulate`: a mapping of arrays with
+        `"regime_id"` codes, or a DataFrame with a `"regime_name"` column, ages
+        and categorical labels. It applies every initial-condition check
+        `simulate` applies, including the role declaration a collective start
+        needs, and always raises; there is no `log_level` that downgrades a
+        failure to a warning. The verdict does not depend on how the check is
+        executed: at present it runs in one eager pass on the default device,
+        without device-memory admission or subject padding.
+
+        Args:
+            initial_conditions: Starting regime and states, one entry per
+                subject.
+            params: User parameters, processed exactly as for `simulate`.
+
+        Raises:
+            InvalidInitialConditionsError: If the structure is malformed
+                (unknown regime, missing or extra state, unequal lengths,
+                off-grid age, inactive regime, invalid categorical code), if
+                some subject admits no jointly feasible action combination, or
+                if subjects start in a collective regime without declaring
+                their role where routing needs one.
+            UnsupportedOperationError: If a constraint depends on an
+                age-specialized function while subjects start away from the
+                regime's representative age.
+            ModelSealError: If a binding captured at `Model(...)` has moved.
+
+        """
+        canonical, flat_params = self._canonical_feasibility_inputs(
+            initial_conditions=initial_conditions, params=params
+        )
+        validate_canonical_initial_conditions(
+            initial_conditions=canonical,
+            regimes=self._regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            flat_params=flat_params,
+            ages=self.ages,
+        )
+
+    @beartype(conf=PARAMS_CONF)
+    def initial_conditions_feasibility(
+        self,
+        *,
+        initial_conditions: UserInitialConditions | pd.DataFrame,
+        params: UserParams,
+    ) -> Bool1D:
+        """Return the per-subject feasibility mask without solving or simulating.
+
+        A subject is feasible when at least one combination of its regime's
+        declared action-grid points satisfies every constraint jointly, or, in
+        an action-free regime, when every state-only constraint holds.
+        Malformed inputs, including a collective start without the role
+        declaration `simulate` demands, raise rather than being reported
+        infeasible; `validate_initial_conditions` succeeds exactly when this
+        mask is all `True`. The verdict does not depend on how the check is
+        executed: at present it runs in one eager pass on the default device,
+        without device-memory admission or subject padding.
+
+        Args:
+            initial_conditions: Starting regime and states, one entry per
+                subject, in the same forms `simulate` accepts.
+            params: User parameters, processed exactly as for `simulate`.
+
+        Returns:
+            Boolean array of shape `(n_subjects,)`, `True` exactly for the
+            feasible subjects, in the order of the supplied rows.
+
+        Raises:
+            InvalidInitialConditionsError: If the structure is malformed or a
+                collective start lacks its role declaration.
+            UnsupportedOperationError: If a constraint depends on an
+                age-specialized function while subjects start away from the
+                regime's representative age.
+            ModelSealError: If a binding captured at `Model(...)` has moved.
+
+        """
+        canonical, flat_params = self._canonical_feasibility_inputs(
+            initial_conditions=initial_conditions, params=params
+        )
+        return initial_conditions_feasibility_mask(
+            initial_conditions=canonical,
+            regimes=self._regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            flat_params=flat_params,
+            ages=self.ages,
+        )
+
+    def _canonical_feasibility_inputs(
+        self,
+        *,
+        initial_conditions: UserInitialConditions | pd.DataFrame,
+        params: UserParams,
+    ) -> tuple[InitialConditions, FlatParams]:
+        """Canonicalize public feasibility inputs without allocation accounting."""
+        self._sealed_bindings.fail_if_moved()
+        flat_params = self._process_params(params)
+        if isinstance(initial_conditions, pd.DataFrame):
+            initial_conditions = initial_conditions_from_dataframe(
+                df=initial_conditions,
+                user_regimes=self.user_regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
+            )
+        canonical = canonicalize_initial_conditions(
+            initial_conditions=initial_conditions, regimes=self._regimes
+        )
+        return canonical, flat_params
 
     def _resolve_compile_batch_size(
         self,
