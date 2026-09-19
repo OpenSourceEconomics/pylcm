@@ -394,8 +394,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "workspace:per_candidate_residency_ignored": (
         "src/_lcm/execution/workspace_planning.py",
-        "resident_bytes_for=resident_bytes_for,",
-        "resident_bytes_for=None,",
+        "lower_bound=resident,\n            resident_bytes_for=resident_bytes_for,",
+        "lower_bound=resident,\n            resident_bytes_for=None,",
     ),
     "workspace:resident_lower_bound_bypassed": (
         "src/_lcm/execution/workspace_planning.py",
@@ -414,8 +414,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "solution_runtime:fixed_owner_inventory_omitted": (
         "src/_lcm/solution/backward_induction.py",
-        "\n            fixed_bytes=fixed_bytes,",
-        "\n            fixed_bytes={},",
+        "device_ids=execution.device_ids,\n                fixed_bytes=fixed_bytes,",
+        "device_ids=execution.device_ids,\n                fixed_bytes={},",
     ),
     "solution_runtime:shared_copy_destinations_omitted": (
         "src/_lcm/solution/backward_induction.py",

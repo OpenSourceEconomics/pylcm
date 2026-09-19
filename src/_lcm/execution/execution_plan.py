@@ -19,7 +19,7 @@ import jax
 from _lcm.execution.core_program import CoreProgram
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
-from lcm.execution import AxisWidth, ExecutionConfig
+from lcm.execution import AxisWidth, ExecutionConfig, WidthSearchPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,11 @@ class ResolvedExecution:
 
     donate_buffers: bool = True
     """Whether eligible solve inputs may be donated to a compiled executable."""
+
+    width_search: WidthSearchPolicy = dataclasses.field(
+        default_factory=WidthSearchPolicy
+    )
+    """Which width search a budgeted solve's compilation waves are driven by."""
 
     def widths_for(self, *, regime_name: RegimeName) -> MappingProxyType[str, int]:
         """Return the fixed widths one regime's programs are planned against.
@@ -258,6 +263,7 @@ def resolve_execution_config(
         device_memory_headroom_fraction=config.device_memory_headroom_fraction,
         device_pool_limit_bytes=selected_limits,
         donate_buffers=config.donate_buffers,
+        width_search=config.width_search,
         simulation_sharding=config.simulation_sharding,
     )
     if config.device_memory_bytes is not None:
