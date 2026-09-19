@@ -969,13 +969,9 @@ class Model:
                 process_grid_resolver=None,
                 call_id=call_id,
             )
-            jax.block_until_ready(
-                [
-                    value
-                    for period_values in result.values.values()  # noqa: PD011
-                    for value in period_values.values()
-                ]
-            )
+            solved = result.values  # noqa: PD011
+            if isinstance(solved, ValueStore):
+                solved._block_until_ready()  # noqa: SLF001
         return result
 
     def _solve_from_flat_params(

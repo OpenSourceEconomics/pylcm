@@ -458,11 +458,11 @@
           },
           {
             "path": "src/lcm/_solver_api/stores.py",
-            "sha256": "d7dc416f94bb09fad9dcc7df3a543935f965b4ebfb4184d621de15f0a1408d96"
+            "sha256": "c893eaa5122d7b020adb86fd7999d0fa44b87f340b725de6c300d4bf1645828c"
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "922123cfd13999d99167f73df68e9e237550eec2e5b11647717153aedb736ddc"
+            "sha256": "20c64a2723ba0482cb81236d08592117267b5837f269e93af26d99e278dc4709"
           },
           {
             "path": "src/lcm/result.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "6888a1380fd26dfe0e5d3d4a9e12c42aadff1116c18b1332345b15165856752b"
+        "source_inventory_sha256": "b7301d3dafeded1ae0b5ba68b58aac501a84e01cdfebc1b6955cc48741d6e417"
       },
       "fast": {
         "candidate_sources": [
@@ -928,11 +928,11 @@
           },
           {
             "path": "src/lcm/_solver_api/stores.py",
-            "sha256": "d7dc416f94bb09fad9dcc7df3a543935f965b4ebfb4184d621de15f0a1408d96"
+            "sha256": "c893eaa5122d7b020adb86fd7999d0fa44b87f340b725de6c300d4bf1645828c"
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "922123cfd13999d99167f73df68e9e237550eec2e5b11647717153aedb736ddc"
+            "sha256": "20c64a2723ba0482cb81236d08592117267b5837f269e93af26d99e278dc4709"
           },
           {
             "path": "src/lcm/result.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "6888a1380fd26dfe0e5d3d4a9e12c42aadff1116c18b1332345b15165856752b"
+        "source_inventory_sha256": "b7301d3dafeded1ae0b5ba68b58aac501a84e01cdfebc1b6955cc48741d6e417"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "6888a1380fd26dfe0e5d3d4a9e12c42aadff1116c18b1332345b15165856752b",
+  "source_inventory_sha256": "b7301d3dafeded1ae0b5ba68b58aac501a84e01cdfebc1b6955cc48741d6e417",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1402,11 +1402,11 @@
     },
     {
       "path": "src/lcm/_solver_api/stores.py",
-      "sha256": "d7dc416f94bb09fad9dcc7df3a543935f965b4ebfb4184d621de15f0a1408d96"
+      "sha256": "c893eaa5122d7b020adb86fd7999d0fa44b87f340b725de6c300d4bf1645828c"
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "922123cfd13999d99167f73df68e9e237550eec2e5b11647717153aedb736ddc"
+      "sha256": "20c64a2723ba0482cb81236d08592117267b5837f269e93af26d99e278dc4709"
     },
     {
       "path": "src/lcm/result.py",

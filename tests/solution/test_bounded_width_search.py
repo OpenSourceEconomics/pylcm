@@ -27,6 +27,11 @@ from tests.solution._candidate_census import (
 )
 from tests.test_models import nbegm_ride_along_toy
 
+# Every byte budget below is a census constant read at fp64: reservations and
+# residencies halve at fp32, so the budgets would refuse nothing there and the
+# tests would measure the precision rather than the search.
+pytestmark = pytest.mark.usefixtures("x64_enabled")
+
 ALIVE_0 = ("alive", 0, "main")
 DEAD_3 = ("dead", 3, "main")
 

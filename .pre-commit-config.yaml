@@ -254,6 +254,7 @@ ci:
   # every developer clone and no CI job here.
   skip:
     - candidate-certificate-seals
+    - candidate-certificate-anchors
     - keyword-only-convention
     - ty
     - pixi-lock-check
