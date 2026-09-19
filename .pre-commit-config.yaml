@@ -146,6 +146,14 @@ repos:
         language: system
         pass_filenames: false
         files: ^(src/.*\.py|tests/candidate_certificate/.*|tests/test_grid_search_candidate_certificate\.py)$
+      - id: candidate-certificate-anchors
+        name: candidate certificate mutation anchors resolve once
+        entry: >-
+          pixi run -e tests-cpu python
+          tests/candidate_certificate/check_mutation_anchors.py
+        language: system
+        pass_filenames: false
+        files: ^(src/.*\.py|tests/candidate_certificate/.*|tests/test_simulation_candidate_program_certificate\.py)$
       # `--check` re-solves and compares without writing, so it cannot dirty the
       # worktree. pre-push, not pre-commit: a mid-branch commit may legitimately
       # lag the lock, but a push with a stale lock burns a CI cycle.
