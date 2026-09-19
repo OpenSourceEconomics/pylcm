@@ -358,7 +358,7 @@
           },
           {
             "path": "src/_lcm/solution/diagnostics.py",
-            "sha256": "031dc0d584faec8d055d25b3099d71e4f76c71cbb4670ad8e85cb2a4746bbb09"
+            "sha256": "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3"
           },
           {
             "path": "src/_lcm/solution/fingerprint.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "12f49c7f6d1850fa5d6835bbfc17b35f9b9c59a77ac5504591e82542f9980156"
+        "source_inventory_sha256": "6888a1380fd26dfe0e5d3d4a9e12c42aadff1116c18b1332345b15165856752b"
       },
       "fast": {
         "candidate_sources": [
@@ -828,7 +828,7 @@
           },
           {
             "path": "src/_lcm/solution/diagnostics.py",
-            "sha256": "031dc0d584faec8d055d25b3099d71e4f76c71cbb4670ad8e85cb2a4746bbb09"
+            "sha256": "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3"
           },
           {
             "path": "src/_lcm/solution/fingerprint.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "12f49c7f6d1850fa5d6835bbfc17b35f9b9c59a77ac5504591e82542f9980156"
+        "source_inventory_sha256": "6888a1380fd26dfe0e5d3d4a9e12c42aadff1116c18b1332345b15165856752b"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "12f49c7f6d1850fa5d6835bbfc17b35f9b9c59a77ac5504591e82542f9980156",
+  "source_inventory_sha256": "6888a1380fd26dfe0e5d3d4a9e12c42aadff1116c18b1332345b15165856752b",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1302,7 +1302,7 @@
     },
     {
       "path": "src/_lcm/solution/diagnostics.py",
-      "sha256": "031dc0d584faec8d055d25b3099d71e4f76c71cbb4670ad8e85cb2a4746bbb09"
+      "sha256": "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3"
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
