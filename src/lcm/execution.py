@@ -3,6 +3,7 @@
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from types import MappingProxyType
 from typing import Literal
 
@@ -11,6 +12,132 @@ from lcm.typing import RegimeName, StateName
 # The declared width of one execution axis: one width for every regime, or one
 # width per named regime.
 type AxisWidth = int | Mapping[RegimeName, int]
+
+
+class WidthSearch(Enum):
+    """How much of the width frontier a budgeted solve is willing to compile."""
+
+    EXHAUSTIVE = "exhaustive"
+    """Walk the ranked frontier widest-first and keep the first admitted candidate."""
+    BOUNDED = "bounded"
+    """Seed, shrink and refine within one evaluation budget per core."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class WidthSearchPolicy:
+    """How a budgeted solve chooses a width when its first candidate is refused.
+
+    - `EXHAUSTIVE` walks the ranked frontier widest-first and keeps the first
+      admitted candidate: the widest feasible point, at the cost of compiling
+      every ranked candidate above it. `max_evaluations`, `refinement_share`,
+      `seed` and `hints` are ignored.
+    - `BOUNDED` evaluates a seed, shrinks decisively on refusal and refines
+      within one evaluation budget; keeps the widest admitted candidate found.
+      The result may be narrower than the widest feasible point, and the
+      refusal on exhaustion says the search, not the model, ran out.
+    """
+
+    kind: WidthSearch = WidthSearch.EXHAUSTIVE
+    """Which of the two searches a budgeted solve runs."""
+    max_evaluations: int = 24
+    """Distinct width candidates evaluated per core, cache hits included."""
+    refinement_share: int = 8
+    """Of `max_evaluations`, how many may be spent widening after admission."""
+    seed: Literal["conservative", "widest"] = "conservative"
+    """Start from the conservative bootstrap anchor, or from the widest candidate."""
+    hints: Mapping[RegimeName, Mapping[str, int]] = MappingProxyType({})
+    """Regime name to a width mapping tried first; an incompatible hint is skipped."""
+
+    def __post_init__(self) -> None:
+        """Reject unusable counts, seeds and hints at construction."""
+        _fail_if_width_search_kind_invalid(kind=self.kind)
+        _fail_if_evaluation_counts_invalid(
+            max_evaluations=self.max_evaluations,
+            refinement_share=self.refinement_share,
+        )
+        _fail_if_seed_invalid(seed=self.seed)
+        object.__setattr__(
+            self, "hints", MappingProxyType(_normalized_hints(hints=self.hints))
+        )
+
+
+def _fail_if_width_search_kind_invalid(*, kind: WidthSearch) -> None:
+    """Require one of the two declared search kinds."""
+    if not isinstance(kind, WidthSearch):
+        raise TypeError("WidthSearchPolicy.kind must be a WidthSearch member.")
+
+
+def _fail_if_evaluation_counts_invalid(
+    *, max_evaluations: int, refinement_share: int
+) -> None:
+    """Require a positive evaluation budget holding a non-negative refinement share."""
+    for label, value in (
+        ("max_evaluations", max_evaluations),
+        ("refinement_share", refinement_share),
+    ):
+        if type(value) is not int:
+            raise TypeError(f"WidthSearchPolicy.{label} must be an exact int.")
+    if max_evaluations < 1:
+        raise ValueError("WidthSearchPolicy.max_evaluations must be at least one.")
+    if refinement_share < 0:
+        raise ValueError("WidthSearchPolicy.refinement_share must not be negative.")
+    if refinement_share > max_evaluations:
+        msg = (
+            "WidthSearchPolicy.refinement_share must not exceed max_evaluations; got "
+            f"{refinement_share} of {max_evaluations}."
+        )
+        raise ValueError(msg)
+
+
+def _fail_if_seed_invalid(*, seed: str) -> None:
+    """Require one of the two declared seed rules."""
+    if type(seed) is not str:
+        raise TypeError("WidthSearchPolicy.seed must be an exact str.")
+    if seed not in ("conservative", "widest"):
+        msg = f"WidthSearchPolicy.seed must be conservative or widest; got {seed!r}."
+        raise ValueError(msg)
+
+
+def _normalized_hints(
+    *, hints: Mapping[RegimeName, Mapping[str, int]]
+) -> dict[RegimeName, Mapping[str, int]]:
+    """Validate every hinted width and freeze each regime's mapping."""
+    normalized: dict[RegimeName, Mapping[str, int]] = {}
+    for regime_name, widths in hints.items():
+        if type(regime_name) is not str or not regime_name:
+            msg = "WidthSearchPolicy.hints keys must be non-empty regime names."
+            raise TypeError(msg)
+        if not isinstance(widths, Mapping):
+            msg = (
+                f"WidthSearchPolicy.hints[{regime_name!r}] must map axis names to "
+                "widths."
+            )
+            raise TypeError(msg)
+        normalized[regime_name] = MappingProxyType(
+            _validated_hint_widths(regime_name=regime_name, widths=widths)
+        )
+    return normalized
+
+
+def _validated_hint_widths(
+    *, regime_name: RegimeName, widths: Mapping[str, int]
+) -> dict[str, int]:
+    """Require positive exact widths keyed by non-empty axis names."""
+    validated: dict[str, int] = {}
+    for axis_name, width in widths.items():
+        if type(axis_name) is not str or not axis_name:
+            msg = (
+                f"WidthSearchPolicy.hints[{regime_name!r}] keys must be non-empty "
+                "axis names."
+            )
+            raise TypeError(msg)
+        label = f"WidthSearchPolicy.hints[{regime_name!r}][{axis_name!r}]"
+        if type(width) is not int:
+            raise TypeError(f"{label} must be an exact int.")
+        if width <= 0:
+            raise ValueError(f"{label} must be positive.")
+        validated[axis_name] = width
+    return validated
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,12 +231,25 @@ class ExecutionConfig:
     donate_buffers: bool = True
     """Allow eligible owned inputs to be donated by compiled solve programs."""
 
+    width_search: WidthSearchPolicy = WidthSearchPolicy()
+    """How much of the width frontier a budgeted solve is willing to compile.
+
+    The default walks the ranked frontier widest-first, so a solve keeps the
+    widest feasible width and pays for every ranked candidate above it. The
+    bounded policy trades that guarantee for an evaluation budget per core:
+    the budgeted compilation waves take each core's next width from its search
+    instead of from the ranked frontier.
+    """
+
     def __post_init__(self) -> None:
         """Reject ambiguous or unusable values at construction."""
         _fail_if_budget_invalid(device_memory_bytes=self.device_memory_bytes)
         _fail_if_headroom_fraction_invalid(
             device_memory_headroom_fraction=self.device_memory_headroom_fraction
         )
+        if not isinstance(self.width_search, WidthSearchPolicy):
+            msg = "ExecutionConfig.width_search must be a WidthSearchPolicy."
+            raise TypeError(msg)
         if type(self.donate_buffers) is not bool:
             raise TypeError("ExecutionConfig.donate_buffers must be an exact bool.")
         if type(self.simulation_sharding) is not str:

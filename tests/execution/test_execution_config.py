@@ -2,6 +2,7 @@
 
 from dataclasses import FrozenInstanceError
 from inspect import signature
+from typing import Any, cast
 
 import cloudpickle
 import jax
@@ -12,7 +13,7 @@ import lcm
 from _lcm.execution.execution_plan import resolve_execution_config
 from lcm import Model
 from lcm.exceptions import ExecutionPlanningError
-from lcm.execution import ExecutionConfig
+from lcm.execution import ExecutionConfig, WidthSearch, WidthSearchPolicy
 from tests.test_models.processes import MultiRegimeId, get_multi_regime_model
 
 
@@ -221,3 +222,45 @@ def test_device_memory_headroom_fraction_reaches_the_resolution() -> None:
     )
 
     assert resolved.device_memory_headroom_fraction == 0.2
+
+
+def test_execution_config_defaults_to_the_exhaustive_width_search() -> None:
+    """A model that declares no policy walks the ranked frontier as before."""
+    assert ExecutionConfig().width_search.kind is WidthSearch.EXHAUSTIVE
+
+
+def test_width_search_policy_rejects_a_refinement_share_above_the_budget() -> None:
+    """A refinement share larger than the evaluation budget is unusable."""
+    with pytest.raises(ValueError, match="refinement_share"):
+        WidthSearchPolicy(max_evaluations=4, refinement_share=5)
+
+
+@pytest.mark.parametrize("max_evaluations", [0, -1])
+def test_width_search_policy_rejects_a_nonpositive_evaluation_budget(
+    *, max_evaluations: int
+) -> None:
+    """A search that may evaluate nothing cannot admit anything."""
+    with pytest.raises(ValueError, match="max_evaluations"):
+        WidthSearchPolicy(max_evaluations=max_evaluations, refinement_share=0)
+
+
+def test_width_search_policy_rejects_an_unknown_seed() -> None:
+    """Only the two declared seed rules are accepted."""
+    with pytest.raises((ValueError, BeartypeCallHintViolation), match="seed"):
+        WidthSearchPolicy(seed=cast("Any", "widest-ish"))
+
+
+def test_width_search_policy_freezes_its_hints() -> None:
+    """A later mutation of the caller's hint mapping cannot reach the policy."""
+    hints = {"working": {"action_product": 4}}
+    policy = WidthSearchPolicy(hints=hints)
+    hints["working"]["action_product"] = 8
+
+    assert policy.hints["working"]["action_product"] == 4
+
+
+def test_execution_config_accepts_the_bounded_width_search() -> None:
+    """`ExecutionConfig` keeps a bounded width search the solver dispatches on."""
+    config = ExecutionConfig(width_search=WidthSearchPolicy(kind=WidthSearch.BOUNDED))
+
+    assert config.width_search.kind is WidthSearch.BOUNDED
