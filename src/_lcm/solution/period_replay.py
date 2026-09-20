@@ -32,6 +32,8 @@ from _lcm.execution.compiler_memory import (
 )
 from _lcm.execution.core_program import (
     CoreBuildContext,
+    MaterializedCoreProgram,
+    _value_read_argument_leaf,
     core_program_graph,
     materialize_core_program,
     select_programs,
@@ -45,6 +47,11 @@ from _lcm.execution.internal_outputs import (
     topological_program_order,
 )
 from _lcm.execution.output_layout import PlannedCore, resolve_output_layout
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueTransferKind,
+    resolve_value_transfer,
+)
 from _lcm.execution.workspace_planning import (
     bootstrap_widths,
     compiler_memory_reservation,
@@ -67,6 +74,7 @@ from _lcm.solution.period_capture import (
     LeafLayoutDescriptor,
     PeriodLayouts,
     ShardingDescriptor,
+    _describe_transfer,
     describe_core,
     describe_sharding,
     rebuild_sharding,
@@ -321,6 +329,8 @@ def _compile_cores_for_one_period(
     kernel_kwargs: dict[str, Any],
     core_tile_widths: object,
     core_donations: Mapping[str, tuple[str, ...]] = MappingProxyType({}),
+    recorded_core_layouts: Mapping[str, CoreLayoutDescriptor] | None = None,
+    replay_devices_by_id: Mapping[int, jax.Device] = MappingProxyType({}),
     axis_widths: Mapping[str, int] | None = None,
     core_timings: MutableMapping[str, tuple[float, float]] | None = None,
 ) -> MappingProxyType[str, PlannedCore]:
@@ -343,7 +353,8 @@ def _compile_cores_for_one_period(
     empty unless the caller reinstates a captured lowering's donation. The
     placement it lowers against is the placement of the arrays it is handed: the
     backend's default under `replay_period`, and the recorded production layout
-    under `replay_period_on_recorded_layout`.
+    under `replay_period_on_recorded_layout`. The latter also reinstates each
+    recorded value transfer instead of inferring it from the stored input alone.
     """
     period_kernel = regime.solution.period_kernels[period]
     context = _core_build_context_for_one_period(
@@ -384,6 +395,15 @@ def _compile_cores_for_one_period(
                 kernel_kwargs["regime_name"]
             ],
             source=(kernel_kwargs["regime_name"], period, core_name),
+            input_transfer_plan=(
+                _restore_input_transfer_plan(
+                    program=materialized,
+                    recorded=recorded_core_layouts[core_name],
+                    devices_by_id=replay_devices_by_id,
+                )
+                if recorded_core_layouts is not None
+                else None
+            ),
         )
         if core_name in consumed:
             records: dict[Hashable, ResolvedProducer] = {
@@ -531,6 +551,14 @@ def replay_period_on_recorded_layout(
     device_by_recorded_id = _device_substitution(
         recorded_ids=layouts.device_ids, devices=devices
     )
+    recorded_cores = MappingProxyType(
+        {
+            name: _substitute_core_layout(
+                core=core, device_by_recorded_id=device_by_recorded_id
+            )
+            for name, core in recorded_cores.items()
+        }
+    )
     regime = payload["regime"]
     period = payload["period"]
     kernel_kwargs = _restore_recorded_layout(
@@ -544,6 +572,10 @@ def replay_period_on_recorded_layout(
         period=period,
         kernel_kwargs=kernel_kwargs,
         core_tile_widths=payload["core_tile_widths"],
+        recorded_core_layouts=recorded_cores,
+        replay_devices_by_id=MappingProxyType(
+            {int(device.id): device for device in devices}
+        ),
         core_donations=MappingProxyType(
             {
                 core_name: core.donated_arguments
@@ -639,6 +671,102 @@ def _device_substitution(
     return MappingProxyType(dict(zip(recorded_ids, given, strict=True)))
 
 
+def _substitute_sharding(
+    *,
+    descriptor: ShardingDescriptor,
+    device_by_recorded_id: Mapping[int, jax.Device],
+) -> ShardingDescriptor:
+    """Translate physical ids, preserving mesh order, axes and partition semantics."""
+    return dataclasses.replace(
+        descriptor,
+        device_ids=tuple(
+            int(device_by_recorded_id[device_id].id)
+            for device_id in descriptor.device_ids
+        ),
+    )
+
+
+def _substitute_core_layout(
+    *,
+    core: CoreLayoutDescriptor,
+    device_by_recorded_id: Mapping[int, jax.Device],
+) -> CoreLayoutDescriptor:
+    """Move every expected executable/transfer placement into the replay namespace."""
+
+    def mapped(descriptor: ShardingDescriptor) -> ShardingDescriptor:
+        return _substitute_sharding(
+            descriptor=descriptor, device_by_recorded_id=device_by_recorded_id
+        )
+
+    return dataclasses.replace(
+        core,
+        lowered_out_shardings=tuple(mapped(s) for s in core.lowered_out_shardings),
+        compiled_input_shardings=tuple(
+            (name, mapped(s)) for name, s in core.compiled_input_shardings
+        ),
+        compiled_output_shardings=tuple(
+            (name, mapped(s)) for name, s in core.compiled_output_shardings
+        ),
+        input_transfer_plan=tuple(
+            dataclasses.replace(
+                transfer,
+                stored_sharding=mapped(transfer.stored_sharding),
+                source_sharding=mapped(transfer.source_sharding),
+            )
+            for transfer in core.input_transfer_plan
+        ),
+    )
+
+
+def _restore_input_transfer_plan(
+    *,
+    program: MaterializedCoreProgram,
+    recorded: CoreLayoutDescriptor,
+    devices_by_id: Mapping[int, jax.Device],
+) -> tuple[ResolvedValueTransfer, ...]:
+    """Reinstate captured transfer intent using the materialized logical addresses.
+
+    Stored placement does not determine the required consumer placement: a
+    continuously sharded reader needs the complete line even on the same mesh.
+    Read addresses come from the current declaration, never by parsing repr
+    strings in the capture. The rebuilt operator must match every captured field.
+    """
+    reads = program.requirements.value_reads
+    if len(reads) != len(recorded.input_transfer_plan):
+        raise ValueError(
+            f"Core {recorded.name!r} declares {len(reads)} value reads but the "
+            f"capture records {len(recorded.input_transfer_plan)} transfers."
+        )
+    transfers: list[ResolvedValueTransfer] = []
+    for read, expectation in zip(reads, recorded.input_transfer_plan, strict=True):
+        if (repr(read.target), repr(read.source)) != (
+            expectation.target,
+            expectation.source,
+        ):
+            raise ValueError(
+                f"Core {recorded.name!r} declares a different value-read address "
+                "than the capture recorded."
+            )
+        transfer = resolve_value_transfer(
+            target=read.target,
+            source=read.source,
+            kind=ValueTransferKind(expectation.kind),
+            stored_template=_value_read_argument_leaf(program=program, read=read),
+            source_sharding=rebuild_sharding(
+                descriptor=expectation.source_sharding,
+                device_by_recorded_id=devices_by_id,
+            ),
+        )
+        observed = _describe_transfer(transfer=transfer)
+        if observed != expectation:
+            raise ValueError(
+                f"Core {recorded.name!r} could not restore a value transfer: "
+                f"expected {expectation!r}, got {observed!r}."
+            )
+        transfers.append(transfer)
+    return tuple(transfers)
+
+
 def _restore_recorded_layout(
     *,
     kernel_kwargs: dict[str, Any],
@@ -678,7 +806,14 @@ def _restore_recorded_layout(
             placed = leaf
         _assert_recorded_sharding(
             actual=placed.sharding,
-            recorded=descriptor.sharding,
+            recorded=(
+                _substitute_sharding(
+                    descriptor=descriptor.sharding,
+                    device_by_recorded_id=device_by_recorded_id,
+                )
+                if descriptor.committed
+                else descriptor.sharding
+            ),
             label=f"restored input {key}",
         )
         restored.append(placed)

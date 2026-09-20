@@ -422,7 +422,7 @@ _SOURCE_SEALS = {
     MODEL_SOURCE: "20c64a2723ba0482cb81236d08592117267b5837f269e93af26d99e278dc4709",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "20b3818cc5c8f3b12a7c906af32cffbd7de235d8c3815c99b934415856b89a26",
-    PERIOD_REPLAY_SOURCE: "7c8a288af761cd5edfcdcf4956aea7f3170d59363fe49c1704e3781ad5108e24",
+    PERIOD_REPLAY_SOURCE: "ae1879ebc56c90ce5a14dcdfe70f0520b61df96c786932fac7f4a9dfc22ee1be",
     INITIAL_CONDITIONS_SOURCE: "567cf1ecaf670aca5c8484aba0b936c478fcf16fbdf5fdd2f0d021efb5e53118",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -4584,7 +4584,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         label="period replay native-program transport",
         contracts={
             "replay_period": "de011de034661023087bd7a3f4d6fcbf826b14fa49da09de722779bb1aa4b778",
-            "_compile_cores_for_one_period": "cd876edc390d7015bea7979fe3df317095dfa4a8537d0eda34449e172e191d30",
+            "_compile_cores_for_one_period": "2f76565982141d1ebe793bdf7d482a475fac75a97209cf55a5fbd58279c99dc1",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
     )

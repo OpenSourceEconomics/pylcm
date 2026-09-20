@@ -67,7 +67,7 @@ def _run(*, body: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
         "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
         "JAX_PLATFORMS": "cpu",
         "CAPTURE_ROOT": str(tmp_path),
-        "PYTHONPATH": str(_REPO_ROOT),
+        "PYTHONPATH": os.pathsep.join((str(_REPO_ROOT / "src"), str(_REPO_ROOT))),
     }
     return subprocess.run(  # noqa: S603
         [sys.executable, "-c", _PRELUDE + textwrap.dedent(body)],
@@ -389,3 +389,71 @@ def test_a_recorded_donation_reaches_the_compiled_executable(tmp_path):
     print("DONATED", len(seen[0]))
     """
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "2"
+
+
+@pytest.mark.parametrize(
+    ("continuous", "dtype", "cells", "order"),
+    [
+        (False, "float64", 24, (0, 1, 2, 3)),
+        (True, "float32", 16, (0, 1, 2, 3)),
+        (True, "float64", 24, (0, 1, 2, 3)),
+        (False, "float32", 16, (0, 2, 1, 3)),
+        (False, "float64", 24, (0, 2, 1, 3)),
+        (False, "float64", 24, (0, 3, 2, 1)),
+    ],
+)
+def test_capture_preserves_consumer_layout_under_device_substitution(
+    *, tmp_path: Path, continuous: bool, dtype: str, cells: int, order: tuple[int, ...]
+) -> None:
+    """Replay genuine captures with full continuations and renamed physical devices."""
+    body = f"""
+    from dataclasses import replace
+    from lcm import (
+        DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model, fixed_transition,
+    )
+    from lcm.solvers import GridSearch
+    from tests.test_models.nbegm_common import (
+        RegimeId, feasible, make_alive_dead_model, next_liquid_from_savings,
+        savings, utility,
+    )
+
+    jax.config.update("jax_enable_x64", {dtype == "float64"!r})
+    if {continuous!r}:
+        liquid = LinSpacedGrid(start=0.1, stop=30.0, n_points={cells})
+        template = make_alive_dead_model(
+            n_periods=4, n_liquid={cells}, liquid_max=30.0, n_consumption=16,
+            alive_functions={{"utility": utility, "tax": toy.tax,
+                             "resources": toy.resources, "savings": savings}},
+            liquid_law=next_liquid_from_savings, alive_solver=GridSearch(),
+            constraints={{"feasible": feasible}},
+            extra_states={{"kind": DiscreteGrid(category_class=toy.ConsumerKind)}},
+            extra_state_transitions={{"kind": {{"alive": fixed_transition("kind")}}}},
+            liquid_grid=liquid,
+        )
+        model = Model(
+            regimes={{
+                name: replace(regime, states={{
+                    key: grid for key, grid in regime.states.items() if key != "liquid"
+                }})
+                for name, regime in template.user_regimes.items()
+            }},
+            states={{"liquid": liquid}}, ages=template.ages,
+            regime_id_class=RegimeId,
+            execution_config=ExecutionConfig(sharded_states=("liquid",)),
+        )
+    else:
+        model = toy.build_model(
+            variant="brute", n_periods=4, n_liquid={cells},
+            n_consumption=16, n_savings=32, distributed_kind=True,
+        )
+    solution = model.solve(params=toy.build_params(), log_level="off")
+    replay = period_replay.replay_period_on_recorded_layout(
+        directory=directory, devices=[jax.devices()[i] for i in {order!r}]
+    )
+    observed = np.asarray(replay.output.value)
+    assert observed.dtype == np.dtype({dtype!r})
+    np.testing.assert_array_equal(observed, np.asarray(solution.values[1]["alive"]))
+    assert replay.scope == "layout"
+    print("CONTEXT-MATCH")
+    """
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "CONTEXT-MATCH"
