@@ -1,8 +1,11 @@
 from dataclasses import make_dataclass
 from functools import partial
 from types import MappingProxyType
+from typing import Any
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from _lcm.grids import ContinuousGrid, DiscreteGrid
@@ -15,8 +18,9 @@ from _lcm.regime_building.V import (
     get_V_interpolator,
 )
 from _lcm.utils.dispatchers import productmap
-from lcm import LinSpacedGrid
+from lcm import LinSpacedGrid, NormalIIDProcess
 from lcm.typing import ScalarInt
+from tests.conftest import DECIMAL_PRECISION
 
 
 @pytest.fixture
@@ -355,3 +359,214 @@ def test_function_evaluator_performs_linear_extrapolation():
 
     got = jnp.array([func(next_wealth=jnp.asarray(w)) for w in wealth_outside_of_grid])
     assert jnp.allclose(got, expected)
+
+
+@pytest.fixture
+def mixed_corner_interpolator(
+    binary_discrete_grid: DiscreteGrid,
+) -> tuple[VInterpolationInfo, jax.Array]:
+    """A bilinear surface with distinct discrete labels and unequal grid extents."""
+    cls = make_dataclass(
+        "ThreeCategories", [(name, ScalarInt) for name in ("a", "b", "c")]
+    )
+    for index, name in enumerate(("a", "b", "c")):
+        type.__setattr__(cls, name, jnp.int32(index))
+    info = VInterpolationInfo(
+        state_names=("group", "kind", "x", "y"),
+        discrete_states=MappingProxyType(
+            {
+                "group": binary_discrete_grid,
+                "kind": DiscreteGrid(category_class=cls),
+            }
+        ),
+        continuous_states=MappingProxyType(
+            {
+                "x": LinSpacedGrid(start=0, stop=3, n_points=4),
+                "y": LinSpacedGrid(start=-2, stop=2, n_points=5),
+            }
+        ),
+    )
+    group = jnp.arange(2)[:, None, None, None]
+    kind = jnp.arange(3)[None, :, None, None]
+    x = jnp.arange(4)[None, None, :, None]
+    y = jnp.arange(-2, 3)[None, None, None, :]
+    values = 100 * group + 10 * kind + 2 * x + 3 * y + 0.5 * x * y
+    return info, values
+
+
+def _gather_slice_sizes(jaxpr: Any) -> list[tuple[int, ...]]:
+    """Read gather windows recursively from traced calls and control-flow bodies."""
+    if hasattr(jaxpr, "eqns"):
+        found = []
+        for equation in jaxpr.eqns:
+            if equation.primitive.name == "gather":
+                found.append(tuple(equation.params["slice_sizes"]))
+            found.extend(_gather_slice_sizes(equation.params))
+        return found
+    if hasattr(jaxpr, "jaxpr"):
+        return _gather_slice_sizes(jaxpr.jaxpr)
+    if isinstance(jaxpr, dict):
+        return [
+            sizes for value in jaxpr.values() for sizes in _gather_slice_sizes(value)
+        ]
+    if isinstance(jaxpr, (tuple, list)):
+        return [sizes for value in jaxpr for sizes in _gather_slice_sizes(value)]
+    return []
+
+
+@pytest.mark.parametrize("co_mapped", [False, True])
+def test_mixed_interpolator_gathers_only_corner_values(
+    *, mixed_corner_interpolator: tuple[VInterpolationInfo, jax.Array], co_mapped: bool
+) -> None:
+    """A mixed lookup reads scalar corners without retaining full continuous grids."""
+    info, values = mixed_corner_interpolator
+    evaluator = get_V_interpolator(
+        v_interpolation_info=info,
+        state_prefix="next_",
+        V_arr_name="next_V_arr",
+        co_map_state_names=("group",) if co_mapped else (),
+    )
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def point(
+        array: jax.Array,
+        group: jax.Array,
+        kind: jax.Array,
+        x: jax.Array,
+        y: jax.Array,
+    ) -> jax.Array:
+        kwargs = {"next_V_arr": array, "next_kind": kind, "next_x": x, "next_y": y}
+        if not co_mapped:
+            kwargs["next_group"] = group
+        return evaluator(**kwargs)
+
+    array = values[1] if co_mapped else values
+    traced = jax.make_jaxpr(jax.jit(jax.vmap(point, in_axes=(None, 0, 0, 0, 0))))(
+        array,
+        jnp.asarray([0, 1]),
+        jnp.asarray([0, 2]),
+        jnp.asarray([1.25, -0.5]),
+        jnp.asarray([0.5, 2.5]),
+    )
+    sizes = _gather_slice_sizes(traced)
+    assert sizes, "The traced interpolator must contain actual corner gathers"
+    assert all(all(extent == 1 for extent in window) for window in sizes), sizes
+
+
+@pytest.mark.parametrize("co_mapped", [False, True])
+def test_mixed_interpolator_preserves_bilinear_values_and_derivatives(
+    *, mixed_corner_interpolator: tuple[VInterpolationInfo, jax.Array], co_mapped: bool
+) -> None:
+    """Interior reads and extrapolation retain the labeled bilinear value and slope."""
+    info, values = mixed_corner_interpolator
+    evaluator = get_V_interpolator(
+        v_interpolation_info=info,
+        state_prefix="next_",
+        V_arr_name="next_V_arr",
+        co_map_state_names=("group",) if co_mapped else (),
+    )
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def point(x: jax.Array, y: jax.Array) -> jax.Array:
+        kwargs = {
+            "next_V_arr": values[1] if co_mapped else values,
+            "next_kind": jnp.int32(2),
+            "next_x": x,
+            "next_y": y,
+        }
+        if not co_mapped:
+            kwargs["next_group"] = jnp.int32(1)
+        return evaluator(**kwargs)
+
+    x = jnp.asarray([1.25, -0.5, 3.5])
+    y = jnp.asarray([0.5, -2.5, 2.5])
+    expected = 120 + 2 * x + 3 * y + 0.5 * x * y
+    np.testing.assert_allclose(
+        jax.jit(jax.vmap(point))(x, y),
+        expected,
+        rtol=10 ** (-DECIMAL_PRECISION),
+        atol=10 ** (-DECIMAL_PRECISION),
+    )
+    dx, dy = jax.vmap(jax.grad(point, argnums=(0, 1)))(x, y)
+    np.testing.assert_allclose(
+        dx,
+        2 + 0.5 * y,
+        rtol=10 ** (-DECIMAL_PRECISION),
+        atol=10 ** (-DECIMAL_PRECISION),
+    )
+    np.testing.assert_allclose(
+        dy,
+        3 + 0.5 * x,
+        rtol=10 ** (-DECIMAL_PRECISION),
+        atol=10 ** (-DECIMAL_PRECISION),
+    )
+
+
+def test_mixed_interpolator_ignores_zero_weight_infinite_corners(
+    mixed_corner_interpolator: tuple[VInterpolationInfo, jax.Array],
+) -> None:
+    """An exact grid-node read ignores neighboring infeasible values."""
+    info, values = mixed_corner_interpolator
+    values = jnp.full_like(values, -jnp.inf).at[1, 2, 1, 2].set(7.0)
+    evaluator = get_V_interpolator(
+        v_interpolation_info=info, state_prefix="next_", V_arr_name="next_V_arr"
+    )
+    actual = jax.jit(evaluator)(
+        next_V_arr=values,
+        next_group=jnp.int32(1),
+        next_kind=jnp.int32(2),
+        next_x=jnp.asarray(1.0),
+        next_y=jnp.asarray(0.0),
+    )
+    np.testing.assert_array_equal(actual, 7.0)
+
+
+@pytest.mark.parametrize("co_mapped", [False, True])
+def test_entered_process_between_indexed_axes_preserves_physical_coordinates(
+    *,
+    mixed_corner_interpolator: tuple[VInterpolationInfo, jax.Array],
+    co_mapped: bool,
+) -> None:
+    """An entered process interpolates physical values between indexed axes."""
+    base, _ = mixed_corner_interpolator
+    process = NormalIIDProcess(
+        n_points=3, gauss_hermite=False, mu=0.0, sigma=0.5, n_std=2.0
+    )
+    info = VInterpolationInfo(
+        state_names=("group", "shock", "kind", "x"),
+        discrete_states=MappingProxyType(
+            {
+                "group": base.discrete_states["group"],
+                "shock": process,
+                "kind": base.discrete_states["kind"],
+            }
+        ),
+        continuous_states=MappingProxyType({"x": base.continuous_states["x"]}),
+    )
+    group = jnp.arange(2.0)[:, None, None, None]
+    shock = process.to_jax()[None, :, None, None]
+    kind = jnp.arange(3.0)[None, None, :, None]
+    x = jnp.arange(4.0)[None, None, None, :]
+    values = 100 * group + 5 * shock + 10 * kind + 2 * x + shock * x
+    reader = get_V_interpolator(
+        v_interpolation_info=info,
+        state_prefix="next_",
+        V_arr_name="next_V_arr",
+        entered_process_names=("shock",),
+        co_map_state_names=("group",) if co_mapped else (),
+    )
+    kwargs = {
+        "next_V_arr": values[1] if co_mapped else values,
+        "next_kind": jnp.int32(2),
+        "next_shock": jnp.asarray(0.25),
+        "next_x": jnp.asarray(1.5),
+    }
+    if not co_mapped:
+        kwargs["next_group"] = jnp.int32(1)
+    actual = jax.jit(reader)(**kwargs)
+    np.testing.assert_allclose(
+        actual,
+        124.625,
+        rtol=10 ** (-DECIMAL_PRECISION),
+        atol=10 ** (-DECIMAL_PRECISION),
+    )

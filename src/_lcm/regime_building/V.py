@@ -196,14 +196,11 @@ def get_V_interpolator(
         if var in v_interpolation_info.discrete_states and var not in co_map_state_names
     ]
 
-    _out_name = "__interpolation_data__" if _need_interpolation else "__fval__"
-    funcs[_out_name] = _get_lookup_function(
-        array_name=V_arr_name,
-        axis_names=_discrete_axes,
-        retained_axis_names=frozenset(
-            state_prefix + var for var in entered_process_names
-        ),
-    )
+    if not _need_interpolation:
+        funcs["__fval__"] = _get_lookup_function(
+            array_name=V_arr_name,
+            axis_names=_discrete_axes,
+        )
 
     if _need_interpolation:
         for var in entered_process_names:
@@ -217,9 +214,8 @@ def get_V_interpolator(
                 grid=grid_spec,
             )
 
-        # An entered process keeps its axis in the array, and the lookup removes
-        # every indexed axis ahead of it, so the axes left to interpolate are the
-        # entered processes in state order followed by the continuous states.
+        # Integer indices join each corner's coordinates in the original array.
+        # This avoids materializing a continuous-grid slice for every query.
         _continuous_axes = [
             f"__{var}_coord__"
             for var in v_interpolation_info.state_names
@@ -227,8 +223,18 @@ def get_V_interpolator(
             or var in v_interpolation_info.continuous_states
         ]
         funcs["__fval__"] = _get_interpolator(
-            name_of_values_on_grid="__interpolation_data__",
+            name_of_values_on_grid=V_arr_name,
             axis_names=_continuous_axes,
+            indexed_axis_names=tuple(
+                (axis, state_prefix + var)
+                for axis, var in enumerate(
+                    name
+                    for name in v_interpolation_info.state_names
+                    if name not in co_map_state_names
+                )
+                if var in v_interpolation_info.discrete_states
+                and var not in entered_process_names
+            ),
         )
 
     return concatenate_functions(
@@ -572,6 +578,7 @@ def _get_interpolator(
     name_of_values_on_grid: str,
     axis_names: list[str],
     pinned_axis_names: frozenset[str] = frozenset(),
+    indexed_axis_names: tuple[tuple[int, str], ...] = (),
 ) -> Callable[..., FloatND]:
     """Create a function interpolator via named axes.
 
@@ -583,6 +590,8 @@ def _get_interpolator(
         pinned_axis_names: Names among `axis_names` whose coordinate names a
             node exactly, so the axis is read at that one node rather than
             between two.
+        indexed_axis_names: Original array positions and argument names for
+            integer-indexed axes, read directly at each interpolation corner.
 
     Returns:
         A callable that interpolates a function via named axes.
@@ -592,8 +601,19 @@ def _get_interpolator(
         name_of_values_on_grid=name_of_values_on_grid,
         axis_names=tuple(axis_names),
         pinned_axes=tuple(
-            axis for axis, var in enumerate(axis_names) if var in pinned_axis_names
+            axis
+            for axis, var in zip(
+                (
+                    i
+                    for i in range(len(axis_names) + len(indexed_axis_names))
+                    if i not in dict(indexed_axis_names)
+                ),
+                axis_names,
+                strict=True,
+            )
+            if var in pinned_axis_names
         ),
+        indexed_axis_names=indexed_axis_names,
     )
 
 
@@ -857,6 +877,8 @@ class _Interpolator:
     """Names of the axes in the data array."""
     pinned_axes: tuple[int, ...]
     """Axes read at exactly one node rather than between two."""
+    indexed_axis_names: tuple[tuple[int, str], ...] = ()
+    """Array positions and argument names for integer-indexed axes."""
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -869,7 +891,11 @@ class _Interpolator:
     @property
     def arg_names(self) -> list[str]:
         """List of the values name followed by the axis names."""
-        return [self.name_of_values_on_grid, *self.axis_names]
+        return [
+            self.name_of_values_on_grid,
+            *self.axis_names,
+            *(name for _, name in self.indexed_axis_names),
+        ]
 
     @no_type_check
     def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
@@ -879,6 +905,8 @@ class _Interpolator:
             input=kwargs[self.name_of_values_on_grid],
             coordinates=coordinates,
             pinned_axes=self.pinned_axes,
+            indexed_axes=tuple(axis for axis, _ in self.indexed_axis_names),
+            indices=tuple(kwargs[name] for _, name in self.indexed_axis_names),
         )
 
 
