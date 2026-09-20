@@ -17,7 +17,7 @@
 
 `map_coordinates` reads an array at fractional coordinates by weighting its
 neighbouring cells; the continuation's value interpolator is its only caller.
-Coordinates outside the array's extent are linearly extrapolated.
+Coordinates are clamped to the array's extent rather than extrapolated.
 """
 
 import functools
@@ -26,21 +26,18 @@ import operator
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jax import Array, jit, lax
-from jaxtyping import Integer
+from jax import jit, lax
 
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
 
-@functools.partial(jit, static_argnames=("pinned_axes", "indexed_axes"))
+@functools.partial(jit, static_argnames=("pinned_axes",))
 def map_coordinates(
     *,
     input: FloatND | IntND,  # noqa: A002
     coordinates: Sequence[FloatND | IntND] | FloatND | IntND,
     pinned_axes: tuple[int, ...] = (),
-    indexed_axes: tuple[int, ...] = (),
-    indices: tuple[Integer[Array, "..."] | int, ...] = (),  # noqa: UP037
 ) -> FloatND | IntND:
     """Map the input array to new coordinates using linear interpolation.
 
@@ -71,56 +68,35 @@ def map_coordinates(
 
     Args:
       input: N-dimensional input array from which values are interpolated.
-      coordinates: Coordinates for the non-indexed axes, in array order.
+      coordinates: length-N sequence of arrays specifying the coordinates
+        at which to evaluate the interpolated values
       pinned_axes: Tuple of axis positions whose coordinate names a node
         exactly, so the axis is read at that one node rather than
         interpolated between two.
-      indexed_axes: Array axes read by integer index at every interpolation corner.
-      indices: Integer indices paired with `indexed_axes`, using native array
-        indexing semantics. These axes do not contribute interpolation weights.
 
     Returns:
       The interpolated (extrapolated) values at the specified coordinates.
 
     """
-    if (
-        len(set(indexed_axes)) != len(indexed_axes)
-        or any(axis < 0 or axis >= input.ndim for axis in indexed_axes)
-        or len(indices) != len(indexed_axes)
-        or set(indexed_axes).intersection(pinned_axes)
-    ):
-        raise ValueError("indexed axes must be unique, valid, paired and unpinned")
-    coordinate_axes = tuple(
-        axis for axis in range(input.ndim) if axis not in indexed_axes
-    )
-    if len(coordinates) != len(coordinate_axes):
+    if len(coordinates) != input.ndim:
         raise ValueError(
-            "coordinates must be a sequence of length equal to the number "
-            "of non-indexed input axes, but "
-            f"{len(coordinates)} != {len(coordinate_axes)}"
+            "coordinates must be a sequence of length input.ndim, but "
+            f"{len(coordinates)} != {input.ndim}"
         )
-    fixed_indices = dict(zip(indexed_axes, indices, strict=True))
-    if not coordinate_axes:
-        return input[tuple(fixed_indices[axis] for axis in range(input.ndim))]
 
     interpolation_data = [
-        _compute_pinned_index_and_weight(
-            coordinate=coordinate, input_size=input.shape[axis]
-        )
+        _compute_pinned_index_and_weight(coordinate=coordinate, input_size=size)
         if axis in pinned_axes
-        else _compute_indices_and_weights(
-            coordinate=coordinate, input_size=input.shape[axis]
+        else _compute_indices_and_weights(coordinate=coordinate, input_size=size)
+        for axis, (coordinate, size) in enumerate(
+            zip(coordinates, input.shape, strict=True)
         )
-        for axis, coordinate in zip(coordinate_axes, coordinates, strict=True)
     ]
 
     interpolation_values = []
     for indices_and_weights in itertools.product(*interpolation_data):
-        corner_indices, weights = zip(*indices_and_weights, strict=True)
-        positions = fixed_indices | dict(
-            zip(coordinate_axes, corner_indices, strict=True)
-        )
-        contribution = input[tuple(positions[axis] for axis in range(input.ndim))]
+        indices, weights = zip(*indices_and_weights, strict=True)
+        contribution = input[indices]
         corner_weight = _multiply_all(weights)
         # Only a floating grid can hold the `+-inf` that makes a zero-weight
         # corner undefined, and only a floating weight has a sign bit and an
