@@ -3676,16 +3676,27 @@ def _make_liquid_probe_program(
     *, func: Callable[..., object], liquid_name: str, order: int, scalar: bool
 ) -> Callable[..., object]:
     """Construct a derivative program closing over model structure only."""
-
-    # keyword-only-exempt: library-callback=jax.grad
-    def evaluate(value: FloatND, arguments: Mapping[str, object]) -> object:
-        result = func(**{**arguments, liquid_name: value})
-        return jnp.asarray(result).reshape(()) if scalar else result
-
-    derivative = evaluate
+    derivative = _DynamicLiquidProbe(func=func, liquid_name=liquid_name, scalar=scalar)
     for _ in range(order):
         derivative = jax.grad(derivative) if scalar else jax.jacfwd(derivative)
     return jax.jit(jax.vmap(derivative, in_axes=(0, None)))
+
+
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _DynamicLiquidProbe:
+    """Bind model structure while receiving every current probe fill dynamically."""
+
+    func: Callable[..., object]
+    """The model function differentiated with respect to its liquid argument."""
+    liquid_name: str
+    """Name of the liquid argument replaced by each probe point."""
+    scalar: bool
+    """Whether to normalize the budget output to a scalar before differentiation."""
+
+    # keyword-only-exempt: library-callback=jax.grad
+    def __call__(self, value: FloatND, arguments: Mapping[str, object]) -> object:
+        result = self.func(**{**arguments, self.liquid_name: value})
+        return jnp.asarray(result).reshape(()) if self.scalar else result
 
 
 def _evaluate_liquid_probe_program(

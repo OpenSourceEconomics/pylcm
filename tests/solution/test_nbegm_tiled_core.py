@@ -24,10 +24,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
     resolve_core_program,
 )
-from _lcm.execution.workspace_planning import bootstrap_widths
-from _lcm.solution import backward_induction
 from tests.conftest import invariance_tolerances
-from tests.execution.test_axis_widths_per_regime import _capture_grouping
 from tests.solution._nbegm_direct_oracle import ride_along_kernel as _ride_along_kernel
 from tests.test_models import nbegm_ride_along_toy
 
@@ -88,28 +85,6 @@ def _run(
             **resolved.arguments
         )
     )
-
-
-def test_nbegm_keeps_its_planned_axis_widths(monkeypatch: pytest.MonkeyPatch) -> None:
-    """NB-EGM selects its ordinary bootstrap widths without an action-product axis."""
-    observed: dict[tuple[str, int, str], dict[str, int]] = {}
-    monkeypatch.setattr(
-        backward_induction,
-        "_group_cores_by_regime_period",
-        partial(
-            _capture_grouping,
-            original=backward_induction._group_cores_by_regime_period,
-            sink=observed,
-        ),
-    )
-    kernel, context = _ride_along_kernel(
-        model=_ride_model(), params=nbegm_ride_along_toy.build_params()
-    )
-    materialized = _materialize(kernel=kernel, context=context, name="main")
-    expected = bootstrap_widths(axes=materialized.requirements.axes)
-    assert expected
-    assert "action_product" not in expected
-    assert observed[("alive", context["period"], "main")] == expected
 
 
 @pytest.mark.parametrize("name", ["main", "replay"])

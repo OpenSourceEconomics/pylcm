@@ -3342,12 +3342,6 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         carrying the same plans.
 
     """
-    # GridSearch streams one action at a time unless the caller fixes its width.
-    # Other solvers declare different axes and ignore this default.
-    execution = dataclasses.replace(
-        execution,
-        axis_widths=MappingProxyType({"action_product": 1, **execution.axis_widths}),
-    )
     # Collect every kernel's native graph, narrowed to the retention's scope.
     with solve_phase(name="program_graphs", logger=logger, call_id=call_id):
         all_programs: dict[_CoreTriple, CoreProgram] = {}

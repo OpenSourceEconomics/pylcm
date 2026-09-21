@@ -630,13 +630,23 @@ def test_deferred_liquid_probes_release_programs_and_parameter_draws(
     programs = [
         weakref.ref(program) for program in check.bound["derivative_programs"].values()
     ]
+    func = weakref.ref(
+        check.bound["coh_dag"]
+        if family == "budget"
+        else check.bound["continuation_plan"].compute_regime_transition_probs
+    )
     check(flat_params=current)
     del current
     gc.collect()
     parameter_released = parameter() is None
     del check
     gc.collect()
-    assert (parameter_released, [program() is None for program in programs]) == (
+    assert (
+        parameter_released,
+        func() is None,
+        [program() is None for program in programs],
+    ) == (
+        True,
         True,
         [True] * len(programs),
     )

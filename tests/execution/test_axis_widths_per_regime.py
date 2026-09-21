@@ -97,43 +97,6 @@ def test_a_bare_integer_broadcasts_to_every_regime() -> None:
     assert _cell_widths_by_regime(observed) == {"work": {2}, "retire": {2}}
 
 
-@pytest.mark.parametrize("budget", [None, 100_000_000])
-@pytest.mark.parametrize("override", [None, 4, {"retire": 4}])
-def test_grid_search_action_width_defaults_to_one(
-    *, budget: int | None, override: Any
-) -> None:
-    """Stream every action at width one unless its regime has an explicit width."""
-    observed, solution = _solve_and_collect_widths(
-        config=ExecutionConfig(
-            device_memory_bytes=budget,
-            axis_widths={} if override is None else {"action_product": override},
-        )
-    )
-    action_widths = {
-        regime: {
-            widths["action_product"]
-            for (name, _, _), widths in observed.items()
-            if name == regime and "action_product" in widths
-        }
-        for regime in ("work", "retire")
-    }
-    assert action_widths == {
-        "work": {4 if override == 4 else 1},
-        "retire": {1 if override is None else 4},
-    }
-    _, reference = _solve_and_collect_widths(
-        config=ExecutionConfig(axis_widths={"action_product": 4})
-    )
-    for period, by_regime in reference._engine_view.values.items():
-        for regime_name, expected in by_regime.items():
-            assert_agrees_to_ulp(
-                got=solution._engine_view.values[period][regime_name],
-                expected=expected,
-                n_ulp=8,
-                operand_magnitude=float(np.abs(np.asarray(expected)).max()),
-            )
-
-
 def test_a_per_regime_width_leaves_every_other_regime_planned() -> None:
     """Pinning one regime's cell width does not narrow the other regime's."""
     planned, _ = _solve_and_collect_widths(config=ExecutionConfig())

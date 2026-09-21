@@ -204,11 +204,7 @@ class ExecutionConfig:
     axis_widths: Mapping[str, AxisWidth] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Planner axis name to the block width it is compiled at.
-
-    GridSearch defaults to `action_product=1`, with or without a memory budget.
-    This streams the complete action grid one candidate at a time. Explicit
-    widths override this default; other axes and solvers keep planned widths.
+    """Planner axis name to the block width it is compiled at; empty means planned.
 
     A width takes one of two forms, and the two may be mixed across axes:
 
