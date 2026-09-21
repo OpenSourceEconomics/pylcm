@@ -2818,6 +2818,7 @@ def _fail_if_budget_nonaffine_in_liquid(
     liquid_samples: Float1D,
     breakpoint_sources: tuple[_NBEGMSource, ...] = (),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
+    derivative_programs: Mapping[object, Callable[..., object]] | None = None,
 ) -> None:
     """Reject budgets violating affinity or required slope on any live interval.
 
@@ -2853,6 +2854,7 @@ def _fail_if_budget_nonaffine_in_liquid(
         int_sweeps=_int_code_sweeps(
             arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
         ),
+        derivative_programs=derivative_programs,
     )
     unprobeable = functools.partial(
         _fail_unprobeable,
@@ -3274,6 +3276,8 @@ class _LiquidAffinityProbe:
     """The canonical float dtype every probe value is cast to."""
     int_sweeps: tuple[MappingProxyType[str, int], ...]
     """The one-at-a-time integer-code overrides every fill is swept over."""
+    derivative_programs: Mapping[object, Callable[..., object]] | None = None
+    """Model-owned derivatives with current filled arguments supplied dynamically."""
 
     def budget_of_liquid(self, *, rung: _ProbeFillRung) -> _FilledScalarFunction:
         """The budget as a scalar function of the liquid state at one rung."""
@@ -3413,6 +3417,17 @@ class _LiquidAffinityProbe:
         given rung, so the whole rung is one compiled, vectorized call rather than
         one traced call per point.
         """
+        if self.derivative_programs is not None:
+            arguments = {
+                name: rung.argument(name=name, probe_arguments=self.probe_arguments)
+                for name in self.arg_names
+                if name != self.liquid_name
+            }
+            return _evaluate_liquid_probe_program(
+                program=self.derivative_programs[order],
+                points=points,
+                arguments=arguments,
+            )
         derivative: Callable[[FloatND], FloatND] = self.budget_of_liquid(rung=rung)
         for _ in range(order):
             derivative = jax.grad(derivative)
@@ -3615,6 +3630,39 @@ def _deferred_probe(
     in the engine so a solver that needs each draw re-checked and one that does
     not can sit in the same model.
     """
+    if probe is _fail_if_budget_nonaffine_in_liquid:
+        bound["derivative_programs"] = MappingProxyType(
+            {
+                order: _make_liquid_probe_program(
+                    func=cast("Callable[..., object]", bound["coh_dag"]),
+                    liquid_name=cast("str", bound["liquid_name"]),
+                    order=order,
+                    scalar=True,
+                )
+                for order in ((1, 2) if bound["require_unit_slope"] else (2,))
+            }
+        )
+    elif probe is _fail_if_liquid_reading_next_state_varies_within_interval:
+        from _lcm.egm.continuation import ContinuationPlan  # noqa: PLC0415
+
+        plan = cast("ContinuationPlan", bound["continuation_plan"])
+        funcs = (
+            *(
+                plan.child_reads[target].next_state_func
+                for target in plan.stateful_targets
+            ),
+            plan.compute_regime_transition_probs,
+        )
+        liquid_name = cast("str", bound["liquid_name"])
+        bound["derivative_programs"] = MappingProxyType(
+            {
+                func: _make_liquid_probe_program(
+                    func=func, liquid_name=liquid_name, order=1, scalar=False
+                )
+                for func in funcs
+                if liquid_name in inspect.signature(func).parameters
+            }
+        )
     return _DeferredProbe(
         probe=probe,
         regime_name=regime_name,
@@ -3622,6 +3670,33 @@ def _deferred_probe(
         probe_schedule=probe_schedule,
         bound=MappingProxyType(bound),
     )
+
+
+def _make_liquid_probe_program(
+    *, func: Callable[..., object], liquid_name: str, order: int, scalar: bool
+) -> Callable[..., object]:
+    """Construct a derivative program closing over model structure only."""
+
+    # keyword-only-exempt: library-callback=jax.grad
+    def evaluate(value: FloatND, arguments: Mapping[str, object]) -> object:
+        result = func(**{**arguments, liquid_name: value})
+        return jnp.asarray(result).reshape(()) if scalar else result
+
+    derivative = evaluate
+    for _ in range(order):
+        derivative = jax.grad(derivative) if scalar else jax.jacfwd(derivative)
+    return jax.jit(jax.vmap(derivative, in_axes=(0, None)))
+
+
+def _evaluate_liquid_probe_program(
+    *, program: Callable[..., object], points: FloatND, arguments: Mapping[str, object]
+) -> Any:  # noqa: ANN401  # Scalar budget or pytree-valued continuation Jacobian.
+    """Evaluate current fills and release failed abstract specializations."""
+    try:
+        return program(points, arguments)
+    except Exception:
+        cast("Any", program).clear_cache()
+        raise
 
 
 @dataclass(eq=False, kw_only=True)
@@ -4119,6 +4194,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
     regime_name: str,
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
+    derivative_programs: Mapping[object, Callable[..., object]] | None = None,
 ) -> None:
     """Reject a carried-state law that varies smoothly in the liquid state.
 
@@ -4151,6 +4227,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
             regime_name=regime_name,
             probe_arguments=probe_arguments,
             probe_failure=probe_failure,
+            derivative_programs=derivative_programs,
         )
         if worst is not None and worst > tol:
             msg = (
@@ -4174,6 +4251,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
         regime_name=regime_name,
         probe_arguments=probe_arguments,
         probe_failure=probe_failure,
+        derivative_programs=derivative_programs,
     )
     if worst is not None and worst > tol:
         msg = (
@@ -4196,6 +4274,7 @@ def _max_abs_first_liquid_derivative(
     regime_name: str,
     probe_arguments: _ProbeArguments,
     probe_failure: Literal["reject", "assume_declared"],
+    derivative_programs: Mapping[object, Callable[..., object]] | None = None,
 ) -> float | None:
     """Largest absolute liquid derivative of `func` over the probe's fills.
 
@@ -4216,6 +4295,11 @@ def _max_abs_first_liquid_derivative(
                 arg_names=arg_names,
                 liquid_pos=arg_names.index(liquid_name),
                 probe_arguments=probe_arguments,
+                program=(
+                    derivative_programs[func]
+                    if derivative_programs is not None
+                    else None
+                ),
             )
         )
     except Exception as probe_error:
@@ -4253,6 +4337,7 @@ def _worst_liquid_jacobian(
     arg_names: tuple[str, ...],
     liquid_pos: int,
     probe_arguments: _ProbeArguments,
+    program: Callable[..., object] | None = None,
 ) -> float:
     """Largest absolute liquid-Jacobian entry over one fill rung's assignments."""
     worst = 0.0
@@ -4279,17 +4364,31 @@ def _worst_liquid_jacobian(
             ]
             # Every argument but the liquid one is constant for this rung,
             # so all probe points go through one compiled, vectorized call.
-            jac = jax.jit(
-                jax.vmap(
-                    jax.jacfwd(
-                        _bind_all_but_liquid(
-                            positional=positional,
-                            liquid_pos=liquid_pos,
-                            bound=args,
+            jac = (
+                _evaluate_liquid_probe_program(
+                    program=program,
+                    points=samples,
+                    arguments={
+                        name: arg
+                        for position, (name, arg) in enumerate(
+                            zip(arg_names, args, strict=True)
+                        )
+                        if position != liquid_pos
+                    },
+                )
+                if program is not None
+                else jax.jit(
+                    jax.vmap(
+                        jax.jacfwd(
+                            _bind_all_but_liquid(
+                                positional=positional,
+                                liquid_pos=liquid_pos,
+                                bound=args,
+                            )
                         )
                     )
-                )
-            )(samples)
+                )(samples)
+            )
             leaves = jax.tree_util.tree_leaves(jac)
             worst = max(
                 [
