@@ -680,6 +680,14 @@ class Model:
                 _simulation_programs(regimes=self._regimes),
             ),
         )
+        fail_if_axis_widths_name_undeclared_axes(
+            axis_widths=execution_config.axis_width_ceilings,
+            program_collections=(
+                _solve_programs(regimes=self._regimes),
+                _simulation_programs(regimes=self._regimes),
+            ),
+            label="axis_width_ceilings",
+        )
         fail_if_per_regime_widths_name_non_solve_axes(
             axis_widths_by_regime=self._execution.axis_widths_by_regime,
             solve_programs=_solve_programs(regimes=self._regimes),

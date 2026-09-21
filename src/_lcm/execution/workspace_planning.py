@@ -147,6 +147,7 @@ def workspace_width_candidates(
     axes: tuple[ReducedAxis | TiledOutputAxis, ...],
     fixed_widths: Mapping[str, int] = MappingProxyType({}),
     budget_bytes: int | None = None,
+    width_ceilings: Mapping[str, int] = MappingProxyType({}),
 ) -> tuple[Mapping[str, int], ...]:
     """Return the candidate sequence in planner rank order without compiling it.
 
@@ -159,14 +160,21 @@ def workspace_width_candidates(
     width policy it declares: it is the full extent, or a multiple of its
     `alignment` at or above its `minimum_width`.  Names no axis declares are ignored
     here; a name no program of the solve declares is refused before planning starts.
+
+    `width_ceilings` is an opt-in upper bound per axis name. It intersects the
+    legal candidates with `width <= ceiling`; it shortens no axis extent,
+    overrides no fixed width policy, and a ceiling below an axis's narrowest
+    legal width is refused.
     """
     declared_axes = _validate_axes(axes=axes)
     widths = _validate_fixed_widths(fixed_widths=fixed_widths)
+    ceilings = _validate_width_ceilings(width_ceilings=width_ceilings)
     budget = _validate_budget(budget_bytes=budget_bytes)
     return _workspace_width_candidates(
         axes=declared_axes,
         fixed_widths=widths,
         budget_bytes=budget,
+        width_ceilings=ceilings,
     )
 
 
@@ -174,6 +182,7 @@ def plan_workspace[Compiled](
     *,
     axes: tuple[ReducedAxis | TiledOutputAxis, ...],
     fixed_widths: Mapping[str, int] = MappingProxyType({}),
+    width_ceilings: Mapping[str, int] = MappingProxyType({}),
     compile_candidate: Callable[[Mapping[str, int]], Compiled],
     budget_bytes: int | None = None,
     memory_for: Callable[[Compiled], CompilerMemoryReservation] | None = None,
@@ -208,6 +217,7 @@ def plan_workspace[Compiled](
     """
     declared_axes = _validate_axes(axes=axes)
     widths_by_axis = _validate_fixed_widths(fixed_widths=fixed_widths)
+    ceilings = _validate_width_ceilings(width_ceilings=width_ceilings)
     budget = _validate_budget(budget_bytes=budget_bytes)
     resident = _validate_resident_bytes(resident_bytes=resident_bytes)
     if not callable(compile_candidate):
@@ -223,6 +233,7 @@ def plan_workspace[Compiled](
         axes=declared_axes,
         fixed_widths=widths_by_axis,
         budget_bytes=budget,
+        width_ceilings=ceilings,
     )
 
     if budget is None:
@@ -286,6 +297,7 @@ def plan_workspace_bounded[Compiled](
     *,
     axes: tuple[ReducedAxis | TiledOutputAxis, ...],
     fixed_widths: Mapping[str, int] = MappingProxyType({}),
+    width_ceilings: Mapping[str, int] = MappingProxyType({}),
     compile_candidate: Callable[[Mapping[str, int]], Compiled],
     budget_bytes: int | None = None,
     memory_for: Callable[[Compiled], CompilerMemoryReservation] | None = None,
@@ -360,6 +372,7 @@ def plan_workspace_bounded[Compiled](
         return plan_workspace(
             axes=axes,
             fixed_widths=fixed_widths,
+            width_ceilings=width_ceilings,
             compile_candidate=compile_candidate,
             budget_bytes=budget_bytes,
             memory_for=memory_for,
@@ -369,6 +382,7 @@ def plan_workspace_bounded[Compiled](
 
     declared_axes = _validate_axes(axes=axes)
     widths_by_axis = _validate_fixed_widths(fixed_widths=fixed_widths)
+    ceilings = _validate_width_ceilings(width_ceilings=width_ceilings)
     budget = _validate_budget(budget_bytes=budget_bytes)
     resident = _validate_resident_bytes(resident_bytes=resident_bytes)
     if not callable(compile_candidate):
@@ -381,7 +395,11 @@ def plan_workspace_bounded[Compiled](
         raise TypeError("The workspace profile lookup must be callable or None.")
 
     if budget is None:
-        widths = bootstrap_widths(axes=declared_axes, fixed_widths=widths_by_axis)
+        widths = bootstrap_widths(
+            axes=declared_axes,
+            fixed_widths=widths_by_axis,
+            width_ceilings=ceilings,
+        )
         return WorkspacePlan(
             widths=widths, peak_bytes=None, compiled=compile_candidate(widths)
         )
@@ -393,6 +411,7 @@ def plan_workspace_bounded[Compiled](
     search = _BoundedWidthSearch(
         axes=declared_axes,
         fixed_widths=widths_by_axis,
+        width_ceilings=ceilings,
         compile_candidate=compile_candidate,
         budget=budget,
         memory_for=memory_for,
@@ -483,6 +502,8 @@ class BoundedWidthSelector:
     """The core's declared axes, in declaration order."""
     fixed_widths: Mapping[str, int]
     """Widths the caller pinned; a pinned axis is never proposed at another width."""
+    width_ceilings: Mapping[str, int] = MappingProxyType({})
+    """Upper bound per axis name; no proposal exceeds the ceiling an axis carries."""
     policy: WidthSearchPolicy
     """Which search to run and the evaluation budget it runs under."""
     hint: Mapping[str, int] | None = None
@@ -493,6 +514,10 @@ class BoundedWidthSelector:
     def __post_init__(self) -> None:
         """Announce the policy and compute the seed the first proposal carries."""
         self._declared = {axis.name: axis for axis in self.axes}
+        self._width_ceiling_by_axis = {
+            axis.name: _ceiling_for(axis=axis, width_ceilings=self.width_ceilings)
+            for axis in self.axes
+        }
         self._decisions: list[WidthDecision] = []
         self._seen: set[tuple[tuple[str, int], ...]] = set()
         self._last_refused: dict[str, int] = {}
@@ -608,6 +633,25 @@ class BoundedWidthSelector:
             budget=budget, policy=self.policy, decisions=self._decisions
         )
 
+    def _admissible(self, *, axis: ReducedAxis | TiledOutputAxis, width: int) -> int:
+        """Return the width one axis admits, under its pin and its ceiling.
+
+        Args:
+            axis: The axis a width is being proposed for.
+            width: The proposal, before the axis's own policy narrows it.
+
+        Returns:
+            The pinned width of a pinned axis, else the proposal rounded onto
+            the widths the axis admits; neither exceeds a declared ceiling.
+
+        """
+        ceiling = self._width_ceiling_by_axis[axis.name]
+        if axis.name in self.fixed_widths:
+            return _fixed_width(
+                axis=axis, fixed_widths=self.fixed_widths, ceiling=ceiling
+            )
+        return _admissible_width(axis=axis, width=width, ceiling=ceiling)
+
     def _shrink_from(
         self, *, widths: MappingProxyType[str, int]
     ) -> MappingProxyType[str, int] | None:
@@ -643,13 +687,14 @@ class BoundedWidthSelector:
             return _width_mapping(
                 axes=self.axes,
                 values=tuple(
-                    _fixed_width(axis=axis, fixed_widths=self.fixed_widths)
-                    if axis.name in self.fixed_widths
-                    else axis.extent
-                    for axis in self.axes
+                    self._admissible(axis=axis, width=axis.extent) for axis in self.axes
                 ),
             )
-        return bootstrap_widths(axes=self.axes, fixed_widths=self.fixed_widths)
+        return bootstrap_widths(
+            axes=self.axes,
+            fixed_widths=self.fixed_widths,
+            width_ceilings=self.width_ceilings,
+        )
 
     def _hint_refusal(self, *, hint: Mapping[str, int]) -> str | None:
         """Name what makes a hint unusable, or `None` when every axis admits it."""
@@ -662,13 +707,13 @@ class BoundedWidthSelector:
         for axis in self.axes:
             width = hint[axis.name]
             if axis.name in self.fixed_widths:
-                fixed = _fixed_width(axis=axis, fixed_widths=self.fixed_widths)
+                fixed = self._admissible(axis=axis, width=axis.extent)
                 if width != fixed:
                     return (
                         f"axis {axis.name!r} is fixed at {fixed} and the hint asks "
                         f"for {width}."
                     )
-            elif _admissible_width(axis=axis, width=width) != width:
+            elif self._admissible(axis=axis, width=width) != width:
                 return (
                     f"axis {axis.name!r} admits no width {width} under alignment "
                     f"{axis.alignment}, floor {axis.minimum_width} and extent "
@@ -686,7 +731,7 @@ class BoundedWidthSelector:
         )
         for axis in movable:
             current = widths[axis.name]
-            narrower = _admissible_width(axis=axis, width=current // 2)
+            narrower = self._admissible(axis=axis, width=current // 2)
             if narrower < current:
                 return axis.name, _width_mapping(
                     axes=self.axes,
@@ -712,7 +757,7 @@ class BoundedWidthSelector:
             proposal = (
                 0
                 if ceiling <= floor
-                else _admissible_width(
+                else self._admissible(
                     axis=self._declared[name], width=(floor + ceiling) // 2
                 )
             )
@@ -741,6 +786,7 @@ class _BoundedWidthSearch[Compiled]:
 
     axes: tuple[ReducedAxis | TiledOutputAxis, ...]
     fixed_widths: Mapping[str, int]
+    width_ceilings: Mapping[str, int]
     compile_candidate: Callable[[Mapping[str, int]], Compiled]
     budget: int
     memory_for: Callable[[Compiled], CompilerMemoryReservation] | None
@@ -754,6 +800,7 @@ class _BoundedWidthSearch[Compiled]:
         selector = BoundedWidthSelector(
             axes=self.axes,
             fixed_widths=self.fixed_widths,
+            width_ceilings=self.width_ceilings,
             policy=self.policy,
             hint=hint,
         )
@@ -998,6 +1045,22 @@ def _validate_fixed_widths(*, fixed_widths: Mapping[str, int]) -> Mapping[str, i
     return MappingProxyType(widths)
 
 
+def _validate_width_ceilings(*, width_ceilings: Mapping[str, int]) -> Mapping[str, int]:
+    """Require exact positive ceilings keyed by non-empty axis names."""
+    ceilings = dict(width_ceilings)
+    for name, ceiling in ceilings.items():
+        if type(name) is not str or not name:
+            msg = "A workspace width ceiling must be keyed by a non-empty axis name."
+            raise TypeError(msg)
+        if type(ceiling) is not int:
+            msg = f"Width ceiling for workspace axis {name!r} must be an integer."
+            raise TypeError(msg)
+        if ceiling <= 0:
+            msg = f"Width ceiling for workspace axis {name!r} must be positive."
+            raise ValueError(msg)
+    return MappingProxyType(ceilings)
+
+
 def _validate_budget(*, budget_bytes: int | None) -> int | None:
     """Require a positive exact-integer byte budget when one is supplied."""
     if budget_bytes is None:
@@ -1060,6 +1123,7 @@ def bootstrap_widths(
     *,
     axes: tuple[ReducedAxis | TiledOutputAxis, ...],
     fixed_widths: Mapping[str, int] = MappingProxyType({}),
+    width_ceilings: Mapping[str, int] = MappingProxyType({}),
 ) -> MappingProxyType[str, int]:
     """Return the one width map an unbudgeted plan lowers, in declaration order.
 
@@ -1073,8 +1137,9 @@ def bootstrap_widths(
     widths: dict[str, int] = {}
     block = 1
     for axis in axes:
+        ceiling = _ceiling_for(axis=axis, width_ceilings=width_ceilings)
         if axis.name in fixed_widths:
-            width = _fixed_width(axis=axis, fixed_widths=fixed_widths)
+            width = _fixed_width(axis=axis, fixed_widths=fixed_widths, ceiling=ceiling)
         else:
             cap = (
                 _tiled_bootstrap_cap(block=block)
@@ -1082,7 +1147,9 @@ def bootstrap_widths(
                 else BOOTSTRAP_WIDTH_CAP
             )
             width = _admissible_width(
-                axis=axis, width=bootstrap_width(extent=axis.extent, cap=cap)
+                axis=axis,
+                width=bootstrap_width(extent=axis.extent, cap=cap),
+                ceiling=ceiling,
             )
         widths[axis.name] = width
         block *= width
@@ -1094,13 +1161,23 @@ def _workspace_width_candidates(
     axes: tuple[ReducedAxis | TiledOutputAxis, ...],
     fixed_widths: Mapping[str, int],
     budget_bytes: int | None,
+    width_ceilings: Mapping[str, int] = MappingProxyType({}),
 ) -> tuple[MappingProxyType[str, int], ...]:
     """Enumerate one bootstrap width map or the budgeted frontier, widest first."""
     if budget_bytes is None:
-        return (bootstrap_widths(axes=axes, fixed_widths=fixed_widths),)
+        return (
+            bootstrap_widths(
+                axes=axes,
+                fixed_widths=fixed_widths,
+                width_ceilings=width_ceilings,
+            ),
+        )
 
     frontiers = tuple(
-        _axis_frontier(axis=axis, fixed_widths=fixed_widths) for axis in axes
+        _axis_frontier(
+            axis=axis, fixed_widths=fixed_widths, width_ceilings=width_ceilings
+        )
+        for axis in axes
     )
     candidates = (
         _width_mapping(axes=axes, values=values)
@@ -1116,11 +1193,15 @@ def _candidate_rank(widths: Mapping[str, int]) -> tuple[int, tuple[int, ...]]:
 
 
 def _axis_frontier(
-    *, axis: ReducedAxis | TiledOutputAxis, fixed_widths: Mapping[str, int]
+    *,
+    axis: ReducedAxis | TiledOutputAxis,
+    fixed_widths: Mapping[str, int],
+    width_ceilings: Mapping[str, int],
 ) -> tuple[int, ...]:
     """Return one fixed width, or the admissible 1/powers-of-two/full ladder."""
+    ceiling = _ceiling_for(axis=axis, width_ceilings=width_ceilings)
     if axis.name in fixed_widths:
-        return (_fixed_width(axis=axis, fixed_widths=fixed_widths),)
+        return (_fixed_width(axis=axis, fixed_widths=fixed_widths, ceiling=ceiling),)
 
     widths = [1]
     power = 2
@@ -1128,18 +1209,65 @@ def _axis_frontier(
         widths.append(power)
         power *= 2
     widths.append(axis.extent)
-    admissible = {_admissible_width(axis=axis, width=width) for width in widths}
+    admissible = {
+        _admissible_width(axis=axis, width=width, ceiling=ceiling) for width in widths
+    }
     return tuple(sorted(admissible))
 
 
 def _fixed_width(
-    *, axis: ReducedAxis | TiledOutputAxis, fixed_widths: Mapping[str, int]
+    *,
+    axis: ReducedAxis | TiledOutputAxis,
+    fixed_widths: Mapping[str, int],
+    ceiling: int | None = None,
 ) -> int:
     """Return the fixed width of one axis under the width policy it declares."""
-    return _admissible_width(axis=axis, width=min(fixed_widths[axis.name], axis.extent))
+    return _admissible_width(
+        axis=axis,
+        width=min(fixed_widths[axis.name], axis.extent),
+        ceiling=ceiling,
+    )
 
 
-def _admissible_width(*, axis: ReducedAxis | TiledOutputAxis, width: int) -> int:
+def _ceiling_for(
+    *,
+    axis: ReducedAxis | TiledOutputAxis,
+    width_ceilings: Mapping[str, int],
+) -> int | None:
+    """Return the declared upper bound on one axis's width, or `None`.
+
+    Args:
+        axis: The axis whose candidate widths are being enumerated.
+        width_ceilings: The declared ceilings by axis name.
+
+    Returns:
+        The ceiling this axis is bound by, or `None` when none names it.
+
+    Raises:
+        ExecutionPlanningError: The ceiling lies below every legal width.
+
+    """
+    ceiling = width_ceilings.get(axis.name)
+    if ceiling is None:
+        return None
+    smallest = _smallest_admissible_width(axis=axis)
+    if ceiling < smallest:
+        msg = (
+            f"Workspace axis {axis.name!r} admits no width at or below the "
+            f"declared ceiling {ceiling}: its narrowest legal width is "
+            f"{smallest} under alignment {axis.alignment}, floor "
+            f"{axis.minimum_width} and extent {axis.extent}."
+        )
+        raise ExecutionPlanningError(msg)
+    return ceiling
+
+
+def _admissible_width(
+    *,
+    axis: ReducedAxis | TiledOutputAxis,
+    width: int,
+    ceiling: int | None = None,
+) -> int:
     """Return the width the axis admits nearest the proposal, preferring the shorter.
 
     An axis admits its full extent, whatever the alignment divides, plus every
@@ -1148,7 +1276,14 @@ def _admissible_width(*, axis: ReducedAxis | TiledOutputAxis, width: int) -> int
     below the alignment and so at zero — is lifted to the smallest width the set
     holds, which is the extent when no multiple of the alignment reaches the floor
     without passing the extent.
+
+    A `ceiling` lowers the proposal before it is rounded, so the result never
+    exceeds it.  The ceiling bounds the width only: the axis keeps its extent,
+    its alignment and its floor, and a ceiling under that floor is refused by
+    `_ceiling_for` before any proposal reaches here.
     """
+    if ceiling is not None:
+        width = min(width, ceiling)
     if width >= axis.extent:
         return axis.extent
     aligned = width - width % axis.alignment
