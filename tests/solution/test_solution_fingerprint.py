@@ -2052,6 +2052,19 @@ def test_numpy_public_numerical_functions_have_durable_identity(
     assert first == second
 
 
+@pytest.mark.parametrize("function", [np.load, np.loadtxt, np.save])
+def test_numpy_file_operations_have_no_durable_identity(function: Callable) -> None:
+    """File inputs must be captured before model construction."""
+    with pytest.raises(TypeError, match="durably fingerprint"):
+        fingerprints._semantic_fingerprint(_dependency_closure(function))
+
+
+def test_entire_jax_backend_is_not_a_general_terminal_value() -> None:
+    """A whole backend module requires a supported wrapper interpretation."""
+    with pytest.raises(TypeError, match="durably fingerprint"):
+        fingerprints._semantic_fingerprint(_dependency_closure(jnp))
+
+
 def test_generated_dag_can_flatten_nested_input_mappings() -> None:
     """DAG input flattening binds its mapping protocol dependency."""
 

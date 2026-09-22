@@ -48,6 +48,7 @@ from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution.external_fingerprint import (
+    external_backend_binding,
     external_enum_record,
     external_function_versions,
     external_parameter_record,
@@ -255,16 +256,18 @@ _JAX_PUBLIC_NUMERIC_TYPE_OBJECTS = tuple(
 )
 _NUMPY_UFUNCS = tuple(value for value in vars(np).values() if type(value) is np.ufunc)
 _NUMPY_ARRAY_FUNCTION_TYPE = type(np.sum)
+_SUPPORTED_NUMPY_FUNCTION_NAMES = frozenset({"sum", "asarray", "issubdtype"})
 _NUMPY_ARRAY_FUNCTIONS = tuple(
     (value, value.__wrapped__, value.__wrapped__.__code__)
-    for value in vars(np).values()
+    for name, value in vars(np).items()
+    if name in _SUPPORTED_NUMPY_FUNCTION_NAMES
     if type(value) is _NUMPY_ARRAY_FUNCTION_TYPE
     and isinstance(value.__wrapped__, types.FunctionType)
 )
 _NUMPY_PYTHON_FUNCTIONS = tuple(
     (value, value.__code__)
     for name, value in vars(np).items()
-    if not name.startswith("_") and isinstance(value, types.FunctionType)
+    if name in _SUPPORTED_NUMPY_FUNCTION_NAMES and isinstance(value, types.FunctionType)
 )
 _NUMPY_NO_VALUE = inspect.signature(np.sum).parameters["initial"].default
 
@@ -1027,7 +1030,12 @@ class _SemanticHasher:
                 self.frame(label="partial-start")
                 self.visit(value=value.func)
                 self.visit(value=value.args)
-                self.visit(value=value.keywords or {})
+                keywords = dict(value.keywords or {})
+                if (backend := external_backend_binding(value)) is not None:
+                    keywords.pop("xnp")
+                    self.frame(label="reviewed-partial-backend")
+                    self.visit(value=backend)
+                self.visit(value=keywords)
                 self._visit_named_state(state=value.__dict__)
                 self.frame(label="partial-end")
                 return
@@ -1523,6 +1531,7 @@ class _SemanticHasher:
     @staticmethod
     def _validate_partial_arguments(value: functools.partial[object]) -> None:
         """Fail closed when a partial binds an argument with unsealed semantics."""
+        backend = external_backend_binding(value)
         for index, argument in enumerate(value.args):
             if not _is_closed_terminal_reference(value=argument):
                 raise TypeError(
@@ -1530,6 +1539,8 @@ class _SemanticHasher:
                     f"{index}."
                 )
         for name, argument in (value.keywords or {}).items():
+            if name == "xnp" and backend is not None:
+                continue
             if not _is_closed_terminal_reference(value=argument):
                 raise TypeError(
                     "Cannot durably fingerprint partial bound keyword argument "
@@ -2261,11 +2272,18 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     active.add(identity)
     try:
         if isinstance(value, functools.partial):
-            return _is_closed_terminal_reference(
-                value=value.func, _active=active
-            ) and all(
-                _is_closed_terminal_reference(value=item, _active=active)
-                for item in (*value.args, *(value.keywords or {}).values())
+            backend = external_backend_binding(value)
+            return (
+                _is_closed_terminal_reference(value=value.func, _active=active)
+                and all(
+                    _is_closed_terminal_reference(value=item, _active=active)
+                    for item in value.args
+                )
+                and all(
+                    (name == "xnp" and backend is not None)
+                    or _is_closed_terminal_reference(value=item, _active=active)
+                    for name, item in (value.keywords or {}).items()
+                )
             )
         if _has_exact_type(value=value, candidates=(tuple, list, frozenset, set)):
             return all(

@@ -2,6 +2,7 @@
 
 import dataclasses
 import importlib
+import importlib.metadata
 import os
 import subprocess
 import sys
@@ -12,11 +13,13 @@ from types import FunctionType, ModuleType, SimpleNamespace
 from typing import Any
 
 import cloudpickle
+import dags.tree as dt
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.solution import external_fingerprint
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from lcm import (
     AgeGrid,
@@ -45,6 +48,90 @@ def test_generated_gettsim_graph_has_repeatable_semantic_identity() -> None:
         [10.0, 10.0],
     )
     assert _semantic_fingerprint(first) == _semantic_fingerprint(second)
+
+
+def test_real_kindergeld_policy_graph_has_numerical_and_durable_identity() -> None:
+    """The selected 2025 child-benefit policy yields 255 for an eligible child."""
+    inputs = {
+        "alter": jnp.array([10]),
+        "arbeitsstunden_w": jnp.array([0.0]),
+        "kindergeld__in_ausbildung": jnp.array([False]),
+        "kindergeld__p_id_empfänger": jnp.array([0]),
+        "p_id": jnp.array([0]),
+    }
+
+    def build() -> Callable:
+        return gettsim.main(
+            main_target=gettsim.MainTarget.tt_function,
+            policy_date_str="2025-01-01",
+            input_data=gettsim.InputData.tree(dt.unflatten_from_qnames(inputs)),
+            tt_targets=gettsim.TTTargets.qname(["kindergeld__betrag_m"]),
+            backend="jax",
+            include_fail_nodes=False,
+            include_warn_nodes=False,
+        )
+
+    first = build()
+    np.testing.assert_array_equal(first(inputs)["kindergeld__betrag_m"], [255])
+    assert _semantic_fingerprint(first) == _semantic_fingerprint(build())
+
+
+def test_real_pension_lookup_graph_has_numerical_and_durable_identity() -> None:
+    """The selected 2025 pension lookup yields the age-65 tax share."""
+    target = (
+        "einkommensteuer__einkünfte__sonstige__rente__"
+        "ertragsanteil_sonstige_private_vorsorge"
+    )
+    inputs = {
+        "einkommensteuer__einkünfte__sonstige__rente__"
+        "alter_beginn_leistungsbezug_sonstige_private_vorsorge": jnp.array([65])
+    }
+    build_data = {**inputs, "p_id": jnp.array([0])}
+
+    def build() -> Callable:
+        return gettsim.main(
+            main_target=gettsim.MainTarget.tt_function,
+            policy_date_str="2025-01-01",
+            input_data=gettsim.InputData.tree(dt.unflatten_from_qnames(build_data)),
+            tt_targets=gettsim.TTTargets.qname([target]),
+            backend="jax",
+            include_fail_nodes=False,
+            include_warn_nodes=False,
+        )
+
+    first = build()
+    np.testing.assert_allclose(first(inputs)[target], [0.18], rtol=1e-6)
+    assert _semantic_fingerprint(first) == _semantic_fingerprint(build())
+
+
+def test_real_wage_tax_polynomial_graph_has_numerical_and_durable_identity() -> None:
+    """The selected 2025 wage-tax tariff yields its expected annual value."""
+    target = "lohnsteuer__basistarif"
+    inputs = {
+        "alter": jnp.array([30]),
+        "einnahmen__bruttolohn_m": jnp.array([3000.0]),
+        "familie__p_id_elternteil_1": jnp.array([-1]),
+        "familie__p_id_elternteil_2": jnp.array([-1]),
+        "lohnsteuer__steuerklasse": jnp.array([1]),
+        "p_id": jnp.array([0]),
+        "sozialversicherung__pflege__beitrag__hat_kinder": jnp.array([False]),
+    }
+
+    def build() -> Callable:
+        return gettsim.main(
+            main_target=gettsim.MainTarget.tt_function,
+            policy_date_str="2025-01-01",
+            input_data=gettsim.InputData.tree(dt.unflatten_from_qnames(inputs)),
+            tt_targets=gettsim.TTTargets.qname([target]),
+            backend="jax",
+            include_fail_nodes=False,
+            include_warn_nodes=False,
+        )
+
+    first = build()
+    expected = 3618.4880603278016 if jax.config.x64_enabled else 3618.7637
+    np.testing.assert_allclose(first(inputs)[target], [expected], rtol=1e-6)
+    assert _semantic_fingerprint(first) == _semantic_fingerprint(build())
 
 
 def test_gettsim_lookup_parameters_bind_values_and_index_origins() -> None:
@@ -81,17 +168,16 @@ def test_gettsim_lookup_parameters_bind_values_and_index_origins() -> None:
     )
 
 
-def test_generated_callable_accepts_exact_jax_backend_parameter() -> None:
-    """A generated backend parameter has a versioned numerical identity."""
+def test_unreviewed_partial_rejects_backend_module() -> None:
+    """A bound backend module requires a supported generated wrapper."""
 
     def function(*, value: float, xnp: ModuleType) -> object:
         return xnp.sqrt(value)
 
     wrapped = partial(function, xnp=jnp)
     np.testing.assert_array_equal(wrapped(value=9.0), 3.0)
-    assert _semantic_fingerprint(wrapped) == _semantic_fingerprint(
-        partial(function, xnp=jnp)
-    )
+    with pytest.raises(TypeError, match="bound keyword argument 'xnp'"):
+        _semantic_fingerprint(wrapped)
 
 
 def test_policy_function_can_be_captured_directly() -> None:
@@ -151,6 +237,82 @@ def test_installed_policy_parameter_records_bind_nested_tables() -> None:
         function, params=policy.BasisformelParamValues(2.0, table, table, table)
     )
     assert _semantic_fingerprint(baseline) != _semantic_fingerprint(changed)
+
+
+def test_unsupported_ttsim_release_has_no_durable_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A carrier adapter requires an implementation version it understands."""
+    table = param_objects.ConsecutiveIntLookupTableParamValue(
+        xnp=jnp, values_to_look_up=jnp.array([1.0]), bases_to_subtract=jnp.array([0])
+    )
+    contract = external_fingerprint._capture_ttsim_contract()
+    assert contract is not None
+    monkeypatch.setattr(
+        external_fingerprint,
+        "_capture_ttsim_contract",
+        lambda: dataclasses.replace(contract, version="9.9"),
+    )
+    with pytest.raises(TypeError, match="Unsupported ttsim-backend version"):
+        _semantic_fingerprint(table)
+
+
+def test_editable_ttsim_installation_has_no_durable_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An editable backend requires an implementation receipt before durable use."""
+    table = param_objects.ConsecutiveIntLookupTableParamValue(
+        xnp=jnp, values_to_look_up=jnp.array([1.0]), bases_to_subtract=jnp.array([0])
+    )
+    original = importlib.metadata.distribution
+
+    def distribution(name: str) -> object:
+        installed = original(name)
+        if name != "ttsim-backend":
+            return installed
+        return SimpleNamespace(
+            version=installed.version,
+            locate_file=installed.locate_file,
+            read_text=lambda filename: (
+                '{"dir_info": {"editable": true}}'
+                if filename == "direct_url.json"
+                else installed.read_text(filename)
+            ),
+        )
+
+    monkeypatch.setattr(importlib.metadata, "distribution", distribution)
+    external_fingerprint._installed_package.cache_clear()
+    external_fingerprint._capture_ttsim_contract.cache_clear()
+    try:
+        with pytest.raises(TypeError, match="Editable ttsim-backend installation"):
+            _semantic_fingerprint(table)
+    finally:
+        external_fingerprint._installed_package.cache_clear()
+        external_fingerprint._capture_ttsim_contract.cache_clear()
+
+
+def test_unsupported_gettsim_release_has_no_durable_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A policy record requires an implementation version it understands."""
+    policy = importlib.import_module("gettsim.germany.wohngeld.wohngeld")
+    table = param_objects.ConsecutiveIntLookupTableParamValue(
+        xnp=jnp, values_to_look_up=jnp.array([1.0]), bases_to_subtract=jnp.array([0])
+    )
+    record = policy.BasisformelParamValues(1.0, table, table, table)
+    original = external_fingerprint._installed_package
+
+    def changed_version(
+        *, distribution_name: str, package: str
+    ) -> tuple[Path | None, str]:
+        root, version = original(distribution_name=distribution_name, package=package)
+        if distribution_name == "gettsim":
+            version = "9.9"
+        return root, version
+
+    monkeypatch.setattr(external_fingerprint, "_installed_package", changed_version)
+    with pytest.raises(TypeError, match="Unsupported gettsim version"):
+        _semantic_fingerprint(record)
 
 
 def test_rounding_wrapper_survives_serialization() -> None:
@@ -257,6 +419,44 @@ def test_library_name_claim_does_not_hide_user_function_state() -> None:
     function.__qualname__ = "flatten_to_qnames"
     with pytest.raises(TypeError, match="durably fingerprint"):
         _semantic_fingerprint(function)
+
+
+def test_unreviewed_installed_library_function_has_no_durable_identity() -> None:
+    """A genuine library function needs a reviewed operation contract."""
+    with pytest.raises(TypeError, match="Unreviewed external operation"):
+        _semantic_fingerprint(tt.policy_function)
+
+
+def test_adapter_does_not_discover_new_declaration_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The declaration contract contains only reviewed TTSIM classes."""
+    columns = importlib.import_module("ttsim.tt.column_objects_param_function")
+
+    @dataclasses.dataclass(frozen=True)
+    class SyntheticColumn(columns.ColumnObject):
+        pass
+
+    monkeypatch.setattr(columns, "SyntheticColumn", SyntheticColumn, raising=False)
+    external_fingerprint._capture_ttsim_contract.cache_clear()
+    try:
+        contract = external_fingerprint._capture_ttsim_contract()
+        assert contract is not None
+        assert SyntheticColumn not in contract.columns
+    finally:
+        external_fingerprint._capture_ttsim_contract.cache_clear()
+
+
+def test_optional_ttsim_adapter_loads_only_when_used() -> None:
+    """Importing the core fingerprint walker leaves optional TTSIM modules unloaded."""
+    script = (
+        "import sys; import _lcm.solution.fingerprint; "
+        "print('ttsim.tt.param_objects' in sys.modules)"
+    )
+    loaded = subprocess.check_output(  # noqa: S603, fixed interpreter and literal script
+        [sys.executable, "-c", script], text=True
+    ).strip()
+    assert loaded == "False"
 
 
 def test_generated_identity_agrees_between_fresh_processes() -> None:

@@ -321,6 +321,28 @@ decorated function object for the life of the process. Separately, an in-memory 
 keeps its model-instance token; that same-instance check is not applied to a restored
 archive. `metadata.source` records that distinction as `IN_MEMORY` or `PERSISTED`.
 
+### External callable graphs
+
+Durable identity supports ordinary Python policy functions and compositions without
+registering each economic function. The walker includes referenced code, captured
+values, declarations, and parameter data when their representations are supported. The
+supported GETTSIM integration is bounded to GETTSIM 1.2 and ttsim-backend 1.2.1. Its
+adapter recognizes the reviewed TTSIM declaration classes, lookup and polynomial
+carriers, foreign-key meanings, and rounding wrapper convention. Fixed graph operations
+have an explicit registry with tested implementation versions. A new opaque carrier,
+wrapper convention, library operation, or dependency version needs a reviewed adapter
+change before it can receive durable identity.
+
+The supported operation registry covers selected `dags` tree flattening, TTSIM grouping
+and person-ID aggregation, piecewise polynomial evaluation, and unit conversion. The
+NumPy contract covers selected numerical functions; file loading and saving inside a
+model callable are outside it. Load external data before constructing the model and
+capture the resulting supported numerical value. Keep captured code, data, and library
+implementations stable while using the model. A binding seal detects rebinding of
+recorded globals and closure cells. In-place mutation of their contents remains
+undetected. After changing a generated policy or its dependencies, rebuild the affected
+generated and JIT callables as well as the model.
+
 Each `(period, regime)` value has a lightweight `ValueArraySchema` recording its exact
 shape, dtype, and canonical named axes. Artifact descriptors play the corresponding
 descriptive role for retained payloads. Neither authenticates returned data. Simulation
