@@ -1,24 +1,33 @@
 """A host-scheduled NNBEGM outer mesh preserves planning of its inner programs.
 
-The fp32 conditional policy can vary with cell width at a certified candidate crossing.
-Reproducer and exact owner/readout evidence:
-https://github.com/OpenSourceEconomics/pylcm/issues/445.
+The inner cell width is an execution choice: the records a cell publishes, and
+so the conditional policy selected at an envelope crossing, are bit-identical
+across widths in the working format.
 """
 
 from dataclasses import replace
-from functools import cache
+from functools import cache, partial
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    core_program_graph,
+    materialize_core_program,
+)
+from _lcm.solution.negm import _with_outer_post_decision
 from lcm import ExecutionConfig, LinSpacedGrid
 from lcm.solver_api import SolutionResult
 from lcm.solvers import CELL_AXIS, OUTER_CANDIDATE_AXIS
-from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH
+from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.solution.test_nbegm_axes import _assert_arrays_agree, _assert_solutions_agree
 from tests.test_models import n_nbegm_toy
 
@@ -118,26 +127,60 @@ def test_nested_widths_preserve_values_nodes_and_masks(*, adaptive: bool) -> Non
             )
 
 
-@pytest.mark.parametrize(
-    "adaptive",
-    [
-        False,
-        pytest.param(
-            True,
-            marks=pytest.mark.xfail(
-                condition=not X64_ENABLED,
-                raises=AssertionError,
-                strict=True,
-                reason=(
-                    "inherited NB-EGM cell-width sensitivity at a certified "
-                    "candidate crossing; see "
-                    "https://github.com/OpenSourceEconomics/pylcm/issues/445"
-                ),
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("adaptive", [False, True])
 def test_nested_host_dispatch_preserves_inner_planning(*, adaptive: bool) -> None:
     """The full conditional policy has the same working-format parity obligation."""
     actual, expected = _solved_pair(adaptive=adaptive)
     _assert_solutions_agree(actual=actual, expected=expected)
+
+
+_CROSSING_NODE = 11.071428298950195
+
+
+def test_inner_core_records_are_cell_width_invariant_at_a_fixed_node() -> None:
+    """The adjuster's inner solve at one outer node is bit-identical across cell widths.
+
+    The value, marginal, and consumption rows a cell publishes are the same
+    float32 numbers whether the illiquid cells run as one fused vmap or as
+    single-cell `lax.map` steps, including at an envelope crossing where a
+    last-ULP change in a candidate value would switch the selected policy.
+    """
+    model = n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=_OUTER_MESH,
+        illiquid_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=3),
+        execution_config=ExecutionConfig(
+            axis_widths={CELL_AXIS: 1, OUTER_CANDIDATE_AXIS: 1}
+        ),
+    )
+    kernel, context = ride_along_kernel(
+        model=model, params={"discount_factor": 0.95}, period=0
+    )
+    node_context = CoreBuildContext(
+        state_action_space=context["state_action_space"],
+        next_regime_to_V_arr=context["next_regime_to_V_arr"],
+        next_regime_to_continuation=context["next_regime_to_continuation"],
+        flat_params=_with_outer_post_decision(
+            flat_params=context["flat_params"],
+            regime_name=kernel.regime_name,
+            outer_post_decision=kernel.outer_post_decision,
+            value=jnp.asarray(_CROSSING_NODE, dtype=canonical_float_dtype()),
+        ),
+        period=0,
+        ages=context["ages"],
+    )
+    materialized = materialize_core_program(
+        program=core_program_graph(kernel=kernel.adjuster_kernel)["replay"],
+        context=node_context,
+    )
+    outputs = {
+        width: jax.tree.leaves(
+            jax.jit(partial(materialized.function, __lcm_cell_width__=width))(
+                **materialized.arguments
+            )
+        )
+        for width in (3, 1)
+    }
+    for fused, tiled in zip(outputs[3], outputs[1], strict=True):
+        np.testing.assert_array_equal(np.asarray(fused), np.asarray(tiled))

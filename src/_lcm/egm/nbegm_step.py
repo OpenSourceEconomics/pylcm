@@ -712,6 +712,20 @@ def _invert_euler_at_node(
     )
 
 
+def _discounted_continuation(
+    *, discount_factor: ScalarFloat, cont_value: FloatND
+) -> FloatND:
+    """Round `discount_factor * cont_value` before it enters a candidate value.
+
+    The product is materialised behind an optimization barrier so the compiler
+    cannot contract it with the felicity add into a fused multiply-add. A
+    candidate value then carries the same two roundings whatever tile width the
+    execution plan runs the cell axis at, so a crossing between two candidates
+    is decided on width-invariant records.
+    """
+    return jax.lax.optimization_barrier(discount_factor * cont_value)
+
+
 def _as_pairs(entries: FloatND) -> Float1D:
     """Interleave every entry with itself and flatten: zero-width candidate pairs."""
     return jnp.stack([entries, entries], axis=-1).reshape(-1)
@@ -883,7 +897,9 @@ def nbegm_multi_interval_step_savings(
             inverse_eis=inverse_eis,
         )
     else:
-        value_endog = preferences.utility(consumption) + discount_factor * cont_value
+        value_endog = preferences.utility(consumption) + _discounted_continuation(
+            discount_factor=discount_factor, cont_value=cont_value
+        )
         marginal_endog = slope_endog * preferences.marginal_utility(consumption)
 
     # Where the continuation is flat (zero marginal value of liquid), the Euler
@@ -919,9 +935,10 @@ def nbegm_multi_interval_step_savings(
             inverse_eis=inverse_eis,
         )
     else:
-        node_value_safe = (
-            preferences.utility(node_consumption_safe)
-            + discount_factor * cont_value[:, None]
+        node_value_safe = preferences.utility(
+            node_consumption_safe
+        ) + _discounted_continuation(
+            discount_factor=discount_factor, cont_value=cont_value[:, None]
         )
         node_marginal_safe = preferences.marginal_utility(node_consumption_safe)
     node_value = jnp.where(node_feasible, node_value_safe, jnp.nan)
