@@ -135,6 +135,71 @@ def test_ceiling_leaves_every_published_collective_array_bitwise_unchanged(
     assert _bytes(bounded) == _bytes(unbounded)
 
 
+def _non_float_bytes_and_float_masks(result) -> dict[object, tuple]:
+    """Shape, dtype and finite mask of float arrays; raw bytes of every other array."""
+    out: dict[object, tuple] = {}
+    for key, array in _published_arrays(result).items():
+        if np.issubdtype(array.dtype, np.floating):
+            out[key] = (array.shape, array.dtype, np.isfinite(array).tobytes())
+        else:
+            out[key] = (array.shape, array.dtype, array.tobytes())
+    return out
+
+
+def _max_ulp_over_finite_floats(*, left, right) -> int:
+    """Largest ULP distance between two results' finite float entries."""
+    worst = 0
+    right_arrays = _published_arrays(right)
+    for key, a in _published_arrays(left).items():
+        if not np.issubdtype(a.dtype, np.floating):
+            continue
+        b = right_arrays[key]
+        mask = np.isfinite(a) & np.isfinite(b)
+        if mask.any():
+            worst = max(
+                worst,
+                int(
+                    np.max(
+                        np.testing.assert_array_max_ulp(
+                            a[mask], b[mask], maxulp=np.iinfo(np.int32).max
+                        )
+                    )
+                ),
+            )
+    return worst
+
+
+def test_budgeted_full_extent_arm_matches_the_ceiling_arm_outside_float_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both arms publish the same shapes, dtypes, finite masks and non-float arrays."""
+    unbounded, _ = _solve(monkeypatch=monkeypatch)
+    bounded, _ = _solve(
+        monkeypatch=monkeypatch, axis_width_ceilings={"cell": _CELL_CEILING}
+    )
+
+    assert _non_float_bytes_and_float_masks(
+        bounded
+    ) == _non_float_bytes_and_float_masks(unbounded)
+
+
+def test_budgeted_full_extent_arm_stays_within_fma_rounding_of_the_ceiling_arm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every finite published value differs from the ceiling arm by at most 2 ulp.
+
+    One fused versus unfused multiply-add moves a value by one ulp; the bound
+    leaves one more for that difference carried into the next period's
+    continuation value, and rejects anything larger.
+    """
+    unbounded, _ = _solve(monkeypatch=monkeypatch)
+    bounded, _ = _solve(
+        monkeypatch=monkeypatch, axis_width_ceilings={"cell": _CELL_CEILING}
+    )
+
+    assert _max_ulp_over_finite_floats(left=bounded, right=unbounded) <= 2
+
+
 @pytest.mark.xfail(
     strict=True,
     reason=(

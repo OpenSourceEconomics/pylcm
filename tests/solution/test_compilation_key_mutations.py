@@ -5,9 +5,10 @@ keys the solve publishes. A fact that changes the traced program — a shape, a
 dtype, an axis order, a device placement, a donation set, a static width, a
 function body, the x64 flag — must give the mutated solve a disjoint key set. A
 parameter value is a traced scalar argument, so it leaves every component of
-the key untouched except the model fingerprint, which digests the canonical
-solution parameters. The keys are built from durable data only: two processes
-publish the same keys, and no key keeps its model alive.
+the key untouched, the program fingerprint included; parameter values enter
+only the stored solution's model fingerprint. The keys are built from durable
+data only: two processes publish the same keys, and no key keeps its model
+alive.
 
 `tests/solution/test_compilation_identity.py` holds the unit-level cases for
 compiler options, donation, placement and solver group keys.
