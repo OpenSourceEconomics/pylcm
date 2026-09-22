@@ -1289,6 +1289,11 @@ def _snapshot_solution_for_save(  # noqa: C901
 
 def _require_save_compatibility(*, metadata: SolutionMetadata) -> None:
     """Reject incompatible versions before authority PyTree callbacks can run."""
+    if metadata.durable_identity is not True:
+        raise IncompatibleSolutionError(
+            "An ephemeral solution cannot be persisted; "
+            "use its local model to simulate."
+        )
     if (
         type(metadata.solver_api_version) is not int
         or metadata.solver_api_version != SOLVER_API_VERSION
