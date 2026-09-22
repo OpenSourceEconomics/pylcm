@@ -47,6 +47,104 @@ def test_map_over_leading_axis_selects_the_declared_execution_window(
     assert selected == [(expected, batch_size if expected == "lax" else None)]
 
 
+def _scan_body(row: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    """Row body with a scan inside, so the trace is not a single primitive."""
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def step(carry, value):
+        carry = carry * row["scale"] + value
+        return carry, carry
+
+    total, path = jax.lax.scan(step, jnp.float32(0.0), row["values"])
+    return {"total": total, "path": path, "index": row["index"] * 2}
+
+
+def _scan_tree(n_rows: int) -> dict[str, jax.Array]:
+    key = jax.random.key(n_rows)
+    return {
+        "values": jax.random.normal(key, (n_rows, 3), dtype=jnp.float32),
+        "scale": jnp.linspace(0.5, 1.5, n_rows, dtype=jnp.float32),
+        "index": jnp.arange(n_rows, dtype=jnp.int32),
+    }
+
+
+@pytest.mark.parametrize(("n_rows", "batch_size"), [(1016, 64), (1000, 64), (5, 4)])
+def test_map_over_leading_axis_matches_unpadded_lax_map_bitwise(
+    *, n_rows: int, batch_size: int
+) -> None:
+    """Every real row equals what ``jax.lax.map`` computes on the unpadded input."""
+    xs = _scan_tree(n_rows)
+    expected = jax.lax.map(_scan_body, xs, batch_size=batch_size)
+    result = map_over_leading_axis(func=_scan_body, xs=xs, batch_size=batch_size)
+    for name in expected:
+        assert jnp.array_equal(result[name], expected[name]).item(), name
+
+
+@pytest.mark.parametrize(
+    ("n_rows", "batch_size", "expected_traces"),
+    [(1016, 64, 1), (1000, 64, 2), (5, 4, 2)],
+)
+def test_map_over_leading_axis_traces_the_body_once_when_padding_is_cheap(
+    *, n_rows: int, batch_size: int, expected_traces: int
+) -> None:
+    """A remainder batch costs a second trace unless padding it away is cheap.
+
+    Padding to the next multiple of the batch size adds rows that are also
+    evaluated; the body is padded away only when they are at most a small share
+    of the axis, otherwise the remainder batch keeps its separate trace.
+    """
+    traces: list[int] = []
+
+    def counting_body(row: dict[str, jax.Array]) -> dict[str, jax.Array]:
+        traces.append(1)
+        return _scan_body(row)
+
+    jax.make_jaxpr(
+        lambda xs: map_over_leading_axis(
+            func=counting_body, xs=xs, batch_size=batch_size
+        )
+    )(_scan_tree(n_rows))
+    assert len(traces) == expected_traces
+
+
+@pytest.mark.parametrize(("n_rows", "batch_size"), [(0, 4), (4, 4), (4, 8), (4, 0)])
+def test_map_over_leading_axis_leaves_covered_or_empty_axes_alone(
+    *, n_rows: int, batch_size: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty axis or a window covering it takes the vectorized route unpadded."""
+    seen: list[tuple[int, ...]] = []
+    original_vmap = jax.vmap
+
+    def vmap_spy(func, *args, **kwargs):
+        def record(xs):
+            seen.append(tuple(leaf.shape for leaf in jax.tree.leaves(xs)))
+            return original_vmap(func, *args, **kwargs)(xs)
+
+        return record
+
+    monkeypatch.setattr(jax, "vmap", vmap_spy)
+    result = map_over_leading_axis(
+        func=lambda row: row + 1, xs=jnp.arange(n_rows), batch_size=batch_size
+    )
+    assert result.shape == (n_rows,)
+    assert seen == [((n_rows,),)]
+
+
+@pytest.mark.parametrize(("n_rows", "batch_size"), [(1016, 64), (999, 8)])
+def test_map_over_leading_axis_padded_rows_never_reach_the_outputs(
+    *, n_rows: int, batch_size: int
+) -> None:
+    """Every output leaf keeps exactly ``n_rows`` on its leading axis."""
+    result = map_over_leading_axis(
+        func=_scan_body, xs=_scan_tree(n_rows), batch_size=batch_size
+    )
+    assert {name: leaf.shape[0] for name, leaf in result.items()} == {
+        "total": n_rows,
+        "path": n_rows,
+        "index": n_rows,
+    }
+
+
 # keyword-only-exempt: library-callback=_lcm.utils.dispatchers.productmap
 def f(a, *, b, c):
     """Tests that dispatchers can handle standard arguments and keyword-only arguments.
