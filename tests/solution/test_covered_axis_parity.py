@@ -1,4 +1,4 @@
-"""Covering a planner axis changes its tile width and nothing the solve publishes.
+"""Covering a planner axis changes its tile width and, at most, the last ulp.
 
 Two tiny models expose a reduced axis whose extent (20) the power-of-two
 bootstrap width (16) does not divide:
@@ -13,6 +13,15 @@ under a budget with the bounded width search: the two arms that start from the
 seed. A budgeted exhaustive search already dispatches the full extent, so
 covering cannot change it there. Dispatched widths are read from the planner
 through `CensusRecorder`, and every published array is compared byte for byte.
+
+The NB-EGM toy at its builder's default sizes, three periods and a budgeted
+bounded search, is the counterexample to bitwise identity. The wider tile
+reorders rounding in the non-terminal periods: in float64, 31 and 9 of 120
+values move by at most 2 and 4 ulp; in float32, one value per period moves by
+one ulp. Shapes, dtypes and finite masks stay exact, and the tests hold every
+finite value to `_MAX_ULP` of the uncovered solve as a tripwire at that measured
+size.
+
 Each distinct solve runs once per worker and is shared across tests.
 """
 
@@ -32,6 +41,8 @@ from tests.test_models.deterministic import regression
 _EXTENT = 20
 _SEED = 16
 _BUDGET = 10**9
+_DEFAULT_SIZE_BUDGET = 40 * 1024**3
+_MAX_ULP = 4
 _NBEGM = "nbegm"
 _GRID_SEARCH = "grid_search"
 _AXIS = {_NBEGM: BRANCH_AXIS, _GRID_SEARCH: ACTION_PRODUCT_AXIS}
@@ -145,5 +156,96 @@ def test_covering_leaves_every_published_array_bitwise_unchanged(
     """Values and artifacts agree byte for byte with and without covering."""
     uncovered, _ = _solve(solver=solver, arm=arm, covered=False)
     covered, _ = _solve(solver=solver, arm=arm, covered=True)
+
+    assert _bytes(covered) == _bytes(uncovered)
+
+
+@functools.cache
+def _solve_default_size_toy(*, covered: bool) -> tuple[Any, Census]:
+    """Solve the NB-EGM toy at its default sizes under a budgeted bounded search."""
+    execution = ExecutionConfig(
+        device_memory_bytes=_DEFAULT_SIZE_BUDGET,
+        width_search=WidthSearchPolicy(kind=WidthSearch.BOUNDED),
+        covered_axes=(BRANCH_AXIS,) if covered else (),
+    )
+    recorder = CensusRecorder()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        recorder.install(monkeypatch=monkeypatch)
+        model = nbegm_multi_discrete_toy.build_model(
+            variant="nbegm",
+            n_actions=3,
+            envelope_arithmetic="ordinary",
+            execution_config=execution,
+        )
+        result = model.solve(
+            params=nbegm_multi_discrete_toy.build_params(n_actions=3),
+            log_level="off",
+        )
+    return result, recorder.census()
+
+
+def _masks_and_non_float_bytes(result) -> dict[object, tuple]:
+    """Shape, dtype and finite mask of float arrays; raw bytes of every other array."""
+    out: dict[object, tuple] = {}
+    for key, array in _published_arrays(result).items():
+        if np.issubdtype(array.dtype, np.floating):
+            out[key] = (array.shape, array.dtype, np.isfinite(array).tobytes())
+        else:
+            out[key] = (array.shape, array.dtype, array.tobytes())
+    return out
+
+
+def _max_ulp_over_finite_floats(*, left, right) -> int:
+    """Largest ULP distance between two results' finite float entries."""
+    worst = 0
+    right_arrays = _published_arrays(right)
+    for key, a in _published_arrays(left).items():
+        if not np.issubdtype(a.dtype, np.floating):
+            continue
+        b = right_arrays[key]
+        mask = np.isfinite(a) & np.isfinite(b)
+        if mask.any():
+            distances = np.testing.assert_array_max_ulp(
+                a[mask], b[mask], maxulp=np.iinfo(np.int32).max
+            )
+            worst = max(worst, int(np.max(distances)))
+    return worst
+
+
+def test_default_size_toy_covered_solve_dispatches_the_full_branch_extent() -> None:
+    """At default sizes the covered solve still dispatches `branch` at 20."""
+    _, census = _solve_default_size_toy(covered=True)
+
+    assert _dispatched_widths(census=census, axis=BRANCH_AXIS) == {_EXTENT}
+
+
+def test_default_size_toy_covering_keeps_shapes_dtypes_and_finite_masks() -> None:
+    """Covering leaves every shape, dtype, finite mask and non-float array exact."""
+    uncovered, _ = _solve_default_size_toy(covered=False)
+    covered, _ = _solve_default_size_toy(covered=True)
+
+    assert _masks_and_non_float_bytes(covered) == _masks_and_non_float_bytes(uncovered)
+
+
+def test_default_size_toy_covering_moves_no_value_beyond_the_ulp_bound() -> None:
+    """Every finite published value agrees with the uncovered solve to `_MAX_ULP`."""
+    uncovered, _ = _solve_default_size_toy(covered=False)
+    covered, _ = _solve_default_size_toy(covered=True)
+
+    assert _max_ulp_over_finite_floats(left=covered, right=uncovered) <= _MAX_ULP
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "At the toy's default sizes the wider covered tile reorders rounding in "
+        "the non-terminal periods, moving values by up to 4 ulp in float64 and "
+        "1 ulp in float32; which fused operation reorders is not isolated."
+    ),
+)
+def test_default_size_toy_covering_leaves_every_array_bitwise_unchanged() -> None:
+    """Covering at default sizes publishes the same bytes as not covering."""
+    uncovered, _ = _solve_default_size_toy(covered=False)
+    covered, _ = _solve_default_size_toy(covered=True)
 
     assert _bytes(covered) == _bytes(uncovered)
