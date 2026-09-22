@@ -717,11 +717,12 @@ def _discounted_continuation(
 ) -> FloatND:
     """Round `discount_factor * cont_value` before it enters a candidate value.
 
-    The product is materialised behind an optimization barrier so the compiler
-    cannot contract it with the felicity add into a fused multiply-add. A
-    candidate value then carries the same two roundings whatever tile width the
-    execution plan runs the cell axis at, so a crossing between two candidates
-    is decided on width-invariant records.
+    The barrier separates this product from the subsequent felicity add. For
+    identical working-format felicity, discount, and continuation operands,
+    these two additive candidate sites therefore use the same multiply-then-add
+    rounding rule across cell widths. This does not make upstream utility or
+    continuation evaluation width-invariant, and does not cover other NB-EGM
+    step variants or establish cross-backend bit identity.
     """
     return jax.lax.optimization_barrier(discount_factor * cont_value)
 

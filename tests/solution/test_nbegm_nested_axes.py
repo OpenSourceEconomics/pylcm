@@ -1,8 +1,8 @@
 """A host-scheduled NNBEGM outer mesh preserves planning of its inner programs.
 
-The inner cell width is an execution choice: the records a cell publishes, and
-so the conditional policy selected at an envelope crossing, are bit-identical
-across widths in the working format.
+The fixed-node regression checks published outputs for the additive toy at
+cell widths three and one. It does not expose every pre-envelope candidate
+record or establish width invariance for other step variants or backends.
 """
 
 from dataclasses import replace
@@ -141,7 +141,7 @@ def test_inner_core_records_are_cell_width_invariant_at_a_fixed_node() -> None:
     """The adjuster's inner solve at one outer node is bit-identical across cell widths.
 
     The value, marginal, and consumption rows a cell publishes are the same
-    float32 numbers whether the illiquid cells run as one fused vmap or as
+    working-format numbers whether the illiquid cells run as one fused vmap or as
     single-cell `lax.map` steps, including at an envelope crossing where a
     last-ULP change in a candidate value would switch the selected policy.
     """
