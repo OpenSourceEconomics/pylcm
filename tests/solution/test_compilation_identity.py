@@ -194,7 +194,7 @@ def test_candidate_frontier_describes_dynamic_arguments_once(
         regime = regimes[regime_name]
         expected[candidate] = _lowering_key(
             program_identity=_program_identity(
-                model_fingerprint=planning_kwargs["model_fingerprint"],
+                program_fingerprint=planning_kwargs["program_fingerprint"],
                 regime_name=regime_name,
                 core_name=core_name,
                 period_signature=regime.solution.period_signatures[period],
@@ -263,7 +263,7 @@ def test_lowering_key_carries_compiler_options() -> None:
 def test_program_identity_separates_distinct_solver_group_keys() -> None:
     """A solver grouping finer than the engine's splits the identity."""
     common = {
-        "model_fingerprint": "fingerprint",
+        "program_fingerprint": "fingerprint",
         "regime_name": "working_life",
         "core_name": "main",
         "period_signature": ("period-signature", 1),
@@ -274,7 +274,7 @@ def test_program_identity_separates_distinct_solver_group_keys() -> None:
     assert first != second
 
 
-def test_program_identity_separates_distinct_model_fingerprints() -> None:
+def test_program_identity_separates_distinct_program_fingerprints() -> None:
     """Two models never share a program identity, however alike their regimes."""
     common = {
         "regime_name": "working_life",
@@ -282,8 +282,8 @@ def test_program_identity_separates_distinct_model_fingerprints() -> None:
         "period_signature": ("period-signature", 1),
         "solver_group_key": None,
     }
-    first = _program_identity(**common, model_fingerprint="first")
-    second = _program_identity(**common, model_fingerprint="second")
+    first = _program_identity(**common, program_fingerprint="first")
+    second = _program_identity(**common, program_fingerprint="second")
 
     assert first != second
 

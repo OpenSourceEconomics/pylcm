@@ -43,9 +43,7 @@ from tests.test_models.deterministic.regression import (
 
 _N_PERIODS = 3
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-# Positions inside a lowering key: the model fingerprint sits inside the program
-# identity at the key's head; the donated-argument tuple is a top-level component.
-_FINGERPRINT_POSITION = 1
+# Position inside a lowering key of the donated-argument tuple.
 _DONATED_POSITION = 5
 type _Key = tuple[tuple[str, ...], *tuple[Hashable, ...]]
 type _Candidate = tuple[tuple[str, int, str], Hashable]
@@ -100,6 +98,27 @@ def _rewaged_model() -> Model:
     )
 
 
+def _fixed_discount_model(*, discount_factor: float) -> Model:
+    """The identity toy with its discount factor fixed at construction."""
+    return Model(
+        regimes={
+            "working_life": working_life.replace(
+                active=lambda age: age <= START_AGE + _N_PERIODS - 2,
+                states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
+                actions={
+                    "labor_supply": DiscreteGrid(category_class=LaborSupply),
+                    "consumption": LinSpacedGrid(start=1, stop=3, n_points=3),
+                },
+                solver=GridSearch(),
+            ),
+            "dead": dead,
+        },
+        ages=AgeGrid(start=START_AGE, stop=START_AGE + _N_PERIODS - 1, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params={"discount_factor": discount_factor},
+    )
+
+
 def _nbegm_model(*, donate_buffers: bool) -> Model:
     """The ride-along tax toy, whose NBEGM dispatch donates its marginal leaf."""
     return nbegm_ride_along_toy.build_model(
@@ -126,6 +145,9 @@ def _keys_of(
 
 
 _TOY_PARAMS = get_params(n_periods=_N_PERIODS)
+_TOY_PARAMS_WITHOUT_DISCOUNT = {
+    name: value for name, value in _TOY_PARAMS.items() if name != "discount_factor"
+}
 # (baseline, mutant, params, regime whose cores the mutated fact reaches)
 _IN_PROCESS_MUTATIONS = [
     pytest.param(
@@ -147,6 +169,13 @@ _IN_PROCESS_MUTATIONS = [
     ),
     pytest.param(
         _model, _rewaged_model, _TOY_PARAMS, "working_life", id="function_body"
+    ),
+    pytest.param(
+        lambda: _fixed_discount_model(discount_factor=0.95),
+        lambda: _fixed_discount_model(discount_factor=0.9),
+        _TOY_PARAMS_WITHOUT_DISCOUNT,
+        "working_life",
+        id="fixed_param",
     ),
 ]
 
@@ -199,14 +228,14 @@ def test_disabling_donation_relowers_every_donating_core(
     assert (len(donors) > 0, donors & keeping) == (True, set())
 
 
-def test_a_parameter_value_change_moves_only_the_model_fingerprint(
+def test_a_parameter_value_change_keeps_every_lowering_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Parameter values enter the key through the model fingerprint alone.
+    """Two parameter vectors of one model publish identical lowering keys.
 
-    Every parameter is a traced argument of the lowered program, so the
-    argument description, specialization, layout, donation, placement and
-    compiler components are identical across the two parameter vectors.
+    Every parameter is a traced argument of the lowered program, so nothing a
+    key names — program identity, argument description, specialization,
+    layout, donation, placement, compiler options — depends on its value.
     """
     captured = _capture_lowering_keys(monkeypatch=monkeypatch)
     _model().solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
@@ -216,16 +245,18 @@ def test_a_parameter_value_change_moves_only_the_model_fingerprint(
     )
     baseline, mutant = captured
 
-    assert {
-        candidate: _without_fingerprint(key=key) for candidate, key in baseline.items()
-    } == {candidate: _without_fingerprint(key=key) for candidate, key in mutant.items()}
+    assert baseline == mutant
 
 
-def test_a_parameter_value_change_separates_the_model_fingerprint(
+def test_a_parameter_value_change_keeps_every_lowered_program(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two parameter vectors digest to two model fingerprints."""
-    captured = _capture_lowering_keys(monkeypatch=monkeypatch)
+    """Every lowered program is byte-identical across two parameter vectors.
+
+    This is what licenses a parameter-free program identity: no parameter
+    value is baked into a lowered module as a constant.
+    """
+    captured = _capture_lowered_text(monkeypatch=monkeypatch)
     _model().solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
     _model().solve(
         params=get_params(n_periods=_N_PERIODS, discount_factor=0.9),
@@ -233,9 +264,39 @@ def test_a_parameter_value_change_separates_the_model_fingerprint(
     )
     baseline, mutant = captured
 
-    assert {_fingerprint(key=key) for key in baseline.values()}.isdisjoint(
-        {_fingerprint(key=key) for key in mutant.values()}
+    assert (len(baseline) > 0, baseline) == (True, mutant)
+
+
+def test_a_parameter_value_change_separates_the_model_fingerprint() -> None:
+    """Two parameter vectors digest to two solution-artifact fingerprints."""
+    baseline = _model().solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+    mutant = _model().solve(
+        params=get_params(n_periods=_N_PERIODS, discount_factor=0.9),
+        log_level="off",
     )
+
+    assert baseline.metadata.model_fingerprint != mutant.metadata.model_fingerprint
+
+
+def _capture_lowered_text(*, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
+    """Collect every solve's lowered modules, keyed by the engine's program label."""
+    captured: list[dict[str, str]] = []
+    original = backward_induction._assert_lowered_output_roles
+    original_planning = backward_induction._resolve_output_layouts_and_lowering_keys
+
+    def _new_solve(**kwargs: Any) -> tuple:
+        captured.append({})
+        return original_planning(**kwargs)
+
+    def _spy(**kwargs: Any) -> None:
+        captured[-1][kwargs["label"]] = kwargs["lowered"].as_text()
+        original(**kwargs)
+
+    monkeypatch.setattr(
+        backward_induction, "_resolve_output_layouts_and_lowering_keys", _new_solve
+    )
+    monkeypatch.setattr(backward_induction, "_assert_lowered_output_roles", _spy)
+    return captured
 
 
 def test_a_parameter_value_change_moves_the_solved_value() -> None:
@@ -252,22 +313,6 @@ def test_a_parameter_value_change_moves_the_solved_value() -> None:
         )
     )
     assert gap > 1e-3
-
-
-def _fingerprint(*, key: Hashable) -> str:
-    return cast("_Key", key)[0][_FINGERPRINT_POSITION]
-
-
-def _without_fingerprint(*, key: Hashable) -> Hashable:
-    identity, *rest = cast("_Key", key)
-    return (
-        tuple(
-            part
-            for position, part in enumerate(identity)
-            if position != _FINGERPRINT_POSITION
-        ),
-        *rest,
-    )
 
 
 def test_admission_is_checked_per_candidate_not_per_lowering_key(
@@ -359,13 +404,17 @@ print(json.dumps({repr(c): repr(k) for c, k in captured[0].items()}, sort_keys=T
 def _keys_in_fresh_process(
     *, env: Mapping[str, str] = {}, config: Mapping[str, object] = {}
 ) -> dict[str, str]:
-    """Solve the identity toy in a new interpreter and return its keys by `repr`."""
+    """Solve the identity toy in a new interpreter and return its keys by `repr`.
+
+    The baseline pins the x64 flag off, so a module imported earlier in this
+    interpreter that exports `JAX_ENABLE_X64` cannot reach the child.
+    """
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", _DUMP_KEYS, json.dumps(config)],
         capture_output=True,
         text=True,
         cwd=_REPO_ROOT,
-        env={**os.environ, "JAX_PLATFORMS": "cpu", **env},
+        env={**os.environ, "JAX_PLATFORMS": "cpu", "JAX_ENABLE_X64": "0", **env},
         check=False,
         timeout=600,
     )

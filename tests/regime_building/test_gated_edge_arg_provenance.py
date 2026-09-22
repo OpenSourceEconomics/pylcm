@@ -151,7 +151,7 @@ def _solve_fixture(*, regimes_dict, flat_params):
         regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
     )
     _bi_result = solve(
-        model_fingerprint="test_gated_edge_arg_provenance",
+        program_fingerprint="test_gated_edge_arg_provenance",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
@@ -1240,7 +1240,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
     _bi_result = solve(
-        model_fingerprint="test_gated_edge_arg_provenance",
+        program_fingerprint="test_gated_edge_arg_provenance",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,

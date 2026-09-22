@@ -106,6 +106,7 @@ from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.fingerprint import (
     SolutionParamProjection,
     fingerprint_model,
+    fingerprint_model_programs,
     fingerprint_model_structure,
     fingerprint_solution_support,
     project_solution_params,
@@ -858,6 +859,23 @@ class Model:
             process_grid_resolver=process_grid_resolver,
         )
 
+    def _program_fingerprint(
+        self,
+        *,
+        flat_params: FlatParams,
+        process_grid_resolver: ProcessGridResolver | None = None,
+    ) -> str:
+        """Digest the model facts every lowered solve program depends on."""
+        return fingerprint_model_programs(
+            ages=self.ages,
+            regimes=self._regimes,
+            user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            flat_params=flat_params,
+            structure=self._model_structure_fingerprint,
+            process_grid_resolver=process_grid_resolver,
+        )
+
     def get_params_template(self) -> UserFacingParamsTemplate:
         """Get a human-readable params template.
 
@@ -1025,7 +1043,9 @@ class Model:
             )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
-            model_fingerprint=model_fingerprint,
+            program_fingerprint=self._program_fingerprint(
+                flat_params=flat_params, process_grid_resolver=process_grid_resolver
+            ),
             params=params,
             log=log,
             log_path=log_path,
@@ -1063,7 +1083,7 @@ class Model:
         self,
         *,
         flat_params: FlatParams,
-        model_fingerprint: str,
+        program_fingerprint: str,
         params: UserParams,
         log: logging.Logger,
         log_path: str | Path | None,
@@ -1080,8 +1100,9 @@ class Model:
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
-        `model_fingerprint` is the durable identity of the model being solved,
-        and enters every executable's compilation key.
+        `program_fingerprint` is the identity of the model being solved without
+        its solve-time parameter values, and enters every executable's
+        compilation key.
 
         Returns the named backward-induction outputs: value-function arrays,
         each regime's published per-period simulation policy, and the
@@ -1109,7 +1130,7 @@ class Model:
                 flat_params=flat_params,
                 ages=self.ages,
                 regimes=self._regimes,
-                model_fingerprint=model_fingerprint,
+                program_fingerprint=program_fingerprint,
                 logger=log,
                 enable_jit=self.enable_jit,
                 execution=self._execution,

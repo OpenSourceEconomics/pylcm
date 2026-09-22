@@ -300,7 +300,7 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
         }
     )
     _bi_result = solve(
-        model_fingerprint="test_stochastic_marriage_offers_collective_solve",
+        program_fingerprint="test_stochastic_marriage_offers_collective_solve",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -516,7 +516,7 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
     )
     with pytest.raises(KeyError) as error:
         solve(
-            model_fingerprint="test_stochastic_marriage_offers_collective_solve",
+            program_fingerprint="test_stochastic_marriage_offers_collective_solve",
             flat_params=flat_params,
             ages=ages,
             regimes=processed,

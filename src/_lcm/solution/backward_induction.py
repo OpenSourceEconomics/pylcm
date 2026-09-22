@@ -219,7 +219,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     flat_params: FlatParams,
     ages: AgeGrid,
     regimes: MappingProxyType[RegimeName, Regime],
-    model_fingerprint: str,
+    program_fingerprint: str,
     logger: logging.Logger,
     enable_jit: bool,
     execution: ResolvedExecution | None = None,
@@ -240,9 +240,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         ages: Age grid for the model.
         regimes: The internal regimes, that contain all necessary functions
             to solve the model.
-        model_fingerprint: Durable fingerprint of the model being solved; enters
-            every executable's compilation key, so equivalent programs of
-            equivalent models share one executable and two models never do.
+        program_fingerprint: Digest of the model facts every lowered program
+            depends on — structure, fixed parameters, grid support, no
+            solve-time parameter values; enters every executable's compilation
+            key, so equivalent programs of equivalent models share one
+            executable and two models never do.
         logger: Logger that logs to stdout, and carries the runtime-validation
             policy. `log_level="debug"` stops backward induction at the first
             NaN period and raises; `"warning"` / `"progress"` let induction run
@@ -337,7 +339,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # Resolve every solve program, then compile unique lowerings when enabled.
     compiled_programs = _compile_all_functions(
         regimes=regimes,
-        model_fingerprint=model_fingerprint,
+        program_fingerprint=program_fingerprint,
         flat_params=flat_params,
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -3275,7 +3277,7 @@ def _retained_base_space_arrays(*, regime: Regime) -> object:
 def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
-    model_fingerprint: str,
+    program_fingerprint: str,
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
@@ -3307,8 +3309,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
 
     Args:
         regimes: The internal regimes containing the period adapters.
-        model_fingerprint: Durable fingerprint of the model being solved; opens
-            every program's identity, so two models never share an executable.
+        program_fingerprint: Digest of the model facts every lowered program
+            depends on; opens every program's identity, so two models never
+            share an executable.
         flat_params: Regime parameters for constructing lowering args.
         ages: Age grid for the model.
         next_regime_to_V_arr: Template with consistent keys and V array shapes
@@ -3373,7 +3376,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         ) = _resolve_output_layouts_and_lowering_keys(
             all_programs=all_programs,
             regimes=regimes,
-            model_fingerprint=model_fingerprint,
+            program_fingerprint=program_fingerprint,
             flat_params=flat_params,
             ages=ages,
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -3407,7 +3410,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             layouts=all_layouts,
             donations=fallback_donations,
             regimes=regimes,
-            model_fingerprint=model_fingerprint,
+            program_fingerprint=program_fingerprint,
             argument_keys=fallback_argument_keys,
         )
         frontier.bind_fallbacks(
@@ -4649,7 +4652,7 @@ class _LazyCandidateFrontier:
     ]
     input_liveness: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]
     regimes: MappingProxyType[RegimeName, Regime]
-    model_fingerprint: str
+    program_fingerprint: str
     n_periods: int
     enable_jit: bool
     donate_buffers: bool
@@ -4791,7 +4794,7 @@ class _LazyCandidateFrontier:
                 layouts=self.layouts,
                 donations=self.donations,
                 regimes=self.regimes,
-                model_fingerprint=self.model_fingerprint,
+                program_fingerprint=self.program_fingerprint,
                 argument_keys=self.argument_keys,
             )
         )
@@ -4808,7 +4811,7 @@ class _LazyCandidateFrontier:
                     layouts=self.layouts,
                     donations=self.fallback_donations,
                     regimes=self.regimes,
-                    model_fingerprint=self.model_fingerprint,
+                    program_fingerprint=self.program_fingerprint,
                     argument_keys=self.fallback_argument_keys,
                 )
             )
@@ -4820,7 +4823,7 @@ def _resolve_output_layouts_and_lowering_keys(
     *,
     all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
-    model_fingerprint: str,
+    program_fingerprint: str,
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
@@ -5029,7 +5032,7 @@ def _resolve_output_layouts_and_lowering_keys(
         layouts=layouts,
         donations=donations,
         regimes=regimes,
-        model_fingerprint=model_fingerprint,
+        program_fingerprint=program_fingerprint,
         argument_keys=argument_keys,
     )
     frontier = _LazyCandidateFrontier(
@@ -5047,7 +5050,7 @@ def _resolve_output_layouts_and_lowering_keys(
         readers_by_dispatch=readers_by_dispatch,
         input_liveness=input_liveness,
         regimes=regimes,
-        model_fingerprint=model_fingerprint,
+        program_fingerprint=program_fingerprint,
         n_periods=n_periods,
         enable_jit=enable_jit,
         donate_buffers=donate_buffers,
@@ -5071,7 +5074,7 @@ def _lowering_keys(
     layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
     donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
     regimes: MappingProxyType[RegimeName, Regime],
-    model_fingerprint: str,
+    program_fingerprint: str,
     argument_keys: dict[_CoreTriple, Hashable] | None = None,
 ) -> dict[_CoreCandidate, Hashable]:
     """Compute every candidate's lowering key, donation set included.
@@ -5099,7 +5102,7 @@ def _lowering_keys(
             )
         keys[candidate] = (
             _program_identity(
-                model_fingerprint=model_fingerprint,
+                program_fingerprint=program_fingerprint,
                 regime_name=regime_name,
                 core_name=core_key,
                 period_signature=regime.solution.period_signatures[period],
@@ -5538,7 +5541,7 @@ def _device_axis_description(*, sharding: jax.sharding.Sharding) -> str:
 
 def _program_identity(
     *,
-    model_fingerprint: str,
+    program_fingerprint: str,
     regime_name: RegimeName,
     core_name: str,
     period_signature: Hashable,
@@ -5548,7 +5551,8 @@ def _program_identity(
 
     Five components, each durable across model constructions:
 
-    - `model_fingerprint` — the model the program belongs to;
+    - `program_fingerprint` — the model the program belongs to, digested
+      without solve-time parameter values, since those are traced inputs;
     - `regime_name` and `core_name` — which named core of which regime it is;
     - `period_signature` — the engine's groupings of the period it serves
       (`SolutionPhase.period_signatures`);
@@ -5560,7 +5564,7 @@ def _program_identity(
     the other, so both belong here.
 
     Args:
-        model_fingerprint: Durable fingerprint of the model being solved.
+        program_fingerprint: Parameter-free digest of the model being solved.
         regime_name: Name of the regime whose core this is.
         core_name: The core's name within that regime's period graph.
         period_signature: The engine's signature for the core's period.
@@ -5572,7 +5576,7 @@ def _program_identity(
     """
     return (
         "program",
-        model_fingerprint,
+        program_fingerprint,
         regime_name,
         core_name,
         period_signature,
