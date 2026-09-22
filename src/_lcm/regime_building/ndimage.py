@@ -13,6 +13,13 @@
 # limitations under the License.
 #
 # Modifications made by Tim Mensinger, 2024
+"""Multilinear interpolation at arbitrary coordinates, adapted from JAX.
+
+`map_coordinates` reads an array at fractional coordinates by weighting its
+neighbouring cells; the continuation's value interpolator is its only caller.
+Coordinates are clamped to the array's extent rather than extrapolated.
+"""
+
 import functools
 import itertools
 import operator

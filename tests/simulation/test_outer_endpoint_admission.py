@@ -55,6 +55,15 @@ from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import BoolND, FloatND
 from tests.test_models import n_nbegm_toy as toy
 
+# The adaptive leg of this module peaks at 7.3 GB RSS in a fresh process, which
+# is more than a 16 GB runner can host next to three sibling xdist workers: on
+# the Windows general shard it was OOM-killed twice as a silent "node down".
+# `slow` moves the whole module onto the Linux-only slow non-solution lanes,
+# which run at two workers under `--dist loadfile`, so the module's cases stay
+# on one worker and at most one of them is resident at a time. Both precisions
+# still run it.
+pytestmark = pytest.mark.slow
+
 # The declared lower endpoint, approached from a positive realized stock.
 _LOWER_CASE = {
     "domain": (-1.0, 10.0),

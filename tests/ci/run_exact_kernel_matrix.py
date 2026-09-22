@@ -28,7 +28,7 @@ _SELECTION = "not slow or requires_exact_affine_kernel"
 # notice a surface that silently stopped being collected, and a floor with slack
 # tolerates exactly that. Adding or removing a test in the files above changes
 # this number, deliberately.
-_EXPECTED_COLLECTED = 46
+_EXPECTED_COLLECTED = 48
 # Every path here is anchored to the repository, never to the caller's working
 # directory: pytest runs with its own `cwd`, so a relative path would be read by
 # the parent and written by the child in two different places.

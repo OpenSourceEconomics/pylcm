@@ -17,7 +17,7 @@ import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
-from typing import cast
+from typing import ClassVar, cast
 
 import jax
 import jax.numpy as jnp
@@ -68,9 +68,15 @@ from _lcm.execution.core_program import (
     CoreArgumentBuilder,
     CoreBuildContext,
     CoreProgram,
+    ValueRead,
     core_program_graph,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from _lcm.solution.continuation_reads import (
+    continuation_leaf_reads,
+    published_continuation_templates,
+    rekeyed_value_reads,
+)
 from _lcm.solution.contract import (
     GENERATED_REPLAY_AUTHORITY,
     ConstraintRouteContext,
@@ -93,6 +99,7 @@ from _lcm.solution.nbegm import (
     proved_post_decision_of,
 )
 from _lcm.solution.negm import (
+    OUTER_CANDIDATE_AXIS,
     _fail_if_outer_grid_is_stochastic,
     _stack_carry_template,
     _with_no_adjustment_outer_function,
@@ -106,12 +113,14 @@ from _lcm.solution.periodization import (
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
+    EconFunction,
     EconFunctionArg,
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
     SimulationPolicy,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ModelInitializationError,
@@ -120,9 +129,11 @@ from lcm.exceptions import (
 )
 from lcm.solver_api import (
     EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
     ArtifactKey,
+    ContinuationCapabilities,
     KernelOutput,
 )
 from lcm.typing import (
@@ -160,6 +171,30 @@ class NNBEGM(TwoMarginSolver):
     to solve two coupled first-order conditions (that case belongs to
     the two-continuous-state solver published with its own paper).
     """
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration=(
+                "NestedConsumptionSavingsRegime with liquid and outer margins"
+            ),
+            problem_shape="NBEGM inner solve inside a finite or adaptive outer search",
+            prerequisites=(
+                "Inner NBEGM contract plus compatible outer search and branch "
+                "aggregation; no EV1 taste shocks"
+            ),
+            main_tradeoff=(
+                "Declared budget topology inside each outer candidate adds structural "
+                "and computational cost"
+            ),
+            reduced_axes=self.inner.capabilities.reduced_axes,
+            tiled_axes=self.inner.capabilities.tiled_axes,
+            host_axes=("outer_candidate",),
+            host_driven_programs=("adjuster:main", "adjuster:replay"),
+            supports_ev1_taste_shocks=False,
+            supports_nonlinear_certainty_equivalent=self.inner.capabilities.supports_nonlinear_certainty_equivalent,
+        )
 
     inner: NBEGM
     """Numerical configuration of the inner 1-D NB-EGM solve."""
@@ -232,6 +267,38 @@ class NNBEGM(TwoMarginSolver):
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """NNBEGM runs an inner NB-EGM solve that inverts the Euler equation."""
         return frozenset({EGM_CONTINUATION})
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """The EGM step reads the target's value and its marginal in resources."""
+        return ContinuationCapabilities(
+            value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
+
+    def declare_continuation_reads(
+        self, *, kernels: SolutionKernels, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Declare the carry leaves both nested roles read.
+
+        The keeper and the adjuster each receive the whole rolling continuation
+        mapping, so each names one read per published leaf of the targets its
+        period reaches. Both roles declaring is what leaves the nested dispatch
+        node without an undeclared reader, so the liveness ledger pins the
+        declared leaves rather than every reachable one. Each planned inner
+        read resolves into a transfer that replaces one leaf inside the target's
+        carry, including when an adaptive host loop schedules the outer nodes.
+        """
+        return replace(
+            kernels,
+            period_kernels=MappingProxyType(
+                {
+                    period: _with_declared_nested_reads(
+                        kernel=kernel, context=context, period=period
+                    )
+                    for period, kernel in kernels.period_kernels.items()
+                }
+            ),
+        )
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:
@@ -442,11 +509,12 @@ class NNBEGM(TwoMarginSolver):
 
         adjuster_by_period: dict[int, _RideAlongNBEGMPeriodKernel] = {}
         keeper_by_period: dict[int, _RideAlongNBEGMPeriodKernel] = {}
+        period_group_keys: dict[int, Hashable] = {}
         resolved_by_period: dict[int, SolverBuildContext] = {}
         outer_target_function_by_period: dict[int, Callable] = {}
         grouped_param_checks = []
         keeper_continuation_spec = None
-        for periods in grouped_periods.values():
+        for group_key, periods in grouped_periods.items():
             # The complete key above has already established that every period in
             # this group may share one concrete inner build. Resolve that pool once,
             # then narrow only the source regime's active-period tuple before handing
@@ -519,6 +587,14 @@ class NNBEGM(TwoMarginSolver):
                 keeper_by_period[period] = _ride_along_inner_kernel(
                     kernel=keeper_group.period_kernels[period], role="keeper"
                 )
+                # The outer key selected this build; the two inner builds may
+                # split it further, so both of their keys ride along.
+                period_group_keys[period] = (
+                    "nnbegm",
+                    group_key,
+                    adjuster_group.period_group_keys.get(period),
+                    keeper_group.period_group_keys.get(period),
+                )
                 outer_target_function_by_period[period] = outer_target_function
             grouped_param_checks.extend(adjuster_group.param_checks)
             grouped_param_checks.extend(keeper_group.param_checks)
@@ -539,7 +615,6 @@ class NNBEGM(TwoMarginSolver):
                     _FiniteNNBEGMPeriodKernel, outer_search=search
                 )
                 outer_grid_values = search.grid.to_jax()
-                outer_batch_size = search.batch_size
                 template = _stack_carry_template(
                     template=cast("EGMCarry", inner_template),
                     n_candidates=int(outer_grid_values.shape[0]) + 1,
@@ -549,7 +624,6 @@ class NNBEGM(TwoMarginSolver):
                     _AdaptiveNNBEGMPeriodKernel, outer_search=search
                 )
                 outer_grid_values = search.initial_grid.to_jax()
-                outer_batch_size = search.batch_size
                 # The continuous collapse republishes a policy-free carry. Its
                 # nested simulation payload reads the raw keeper/adjuster rows
                 # instead, so the standalone inner policy leaf must not leak into
@@ -588,24 +662,10 @@ class NNBEGM(TwoMarginSolver):
             if isinstance(context.grids[name], ContinuousGrid)
             and name != spec.continuous_state
         )
-        # A domain endpoint is a node value, so it is the solved period's own.
-        # With an age-specialized outer grid the representative age's endpoints
-        # are the wrong ones everywhere else: a stock only the later ages hold
-        # would be judged out of domain and dropped, and a stock past a
-        # narrower age's edge would be admitted with no value function to read
-        # it on.
+        # The representative age's outer nodes. Each period's own endpoints are
+        # read off that period's nodes wherever it declares them, so this is
+        # only the fallback for an age-invariant outer grid.
         representative_outer_values = context.grids[bound.outer_state].to_jax()
-
-        def _outer_state_domain_at(period: int) -> tuple[float, float]:
-            per_period = context.period_to_state_nodes
-            nodes = (
-                representative_outer_values
-                if per_period is None
-                else per_period.get(period, {}).get(
-                    bound.outer_state, representative_outer_values
-                )
-            )
-            return float(nodes[0]), float(nodes[-1])
 
         branch_aggregation_by_period = {
             period: _resolve_branch_fixed_cost(
@@ -622,10 +682,15 @@ class NNBEGM(TwoMarginSolver):
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_state_name=bound.outer_state,
-                    outer_state_domain=_outer_state_domain_at(period),
+                    outer_state_domain=_outer_state_domain_at(
+                        period=period,
+                        period_to_state_nodes=context.period_to_state_nodes,
+                        outer_state=bound.outer_state,
+                        representative_outer_values=representative_outer_values,
+                    ),
                     outer_post_decision=bound.outer_post_decision,
                     outer_target_function=outer_target_function_by_period[period],
-                    outer_batch_size=outer_batch_size,
+                    outer_dispatch_width=context.axis_widths.get(OUTER_CANDIDATE_AXIS),
                     outer_action=bound.outer_action,
                     inner_action=inner_action,
                     resources_target=spec.budget_target,
@@ -672,6 +737,7 @@ class NNBEGM(TwoMarginSolver):
         )
         return SolutionKernels(
             period_kernels=period_kernels,
+            period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=(
                 None
                 if keeper_egm_spec is None
@@ -884,9 +950,13 @@ class _NNBEGMPeriodKernel:
     outer_target_function: Callable
     """Resolved solve-phase DAG used to recover the outer action bank."""
 
-    outer_batch_size: int
-    """Outer-grid nodes solved per chunk before folding into the running
-    maximum; `0` solves every node at once."""
+    outer_dispatch_width: int | None
+    """Outer nodes dispatched per host loop step, or `None` for all pending.
+
+    The outer collapse runs as a host loop over separate dispatches of the
+    compiled adjuster, so the `outer_candidate` width reaches it as this field
+    rather than as a static keyword the planner binds into one program.
+    """
 
     outer_action: ActionName
     """The regime's outer continuous action (published for the nested
@@ -960,6 +1030,22 @@ class _NNBEGMPeriodKernel:
     """The fixed cost's scale function, arguments restricted to
     `period`/`age`/flat params (resolved per period at call time)."""
 
+    keeper_value_reads: tuple[ValueRead, ...] = ()
+    """Stored leaves every republished keeper program reads, or empty.
+
+    Filled once the model's continuation templates are known, so the reads name
+    leaves that exist. Each republished keeper program takes them under its own
+    graph key.
+    """
+
+    adjuster_value_reads: tuple[ValueRead, ...] = ()
+    """Stored leaves every republished adjuster program reads, or empty.
+
+    Filled once the model's continuation templates are known, so the reads name
+    leaves that exist. Each republished adjuster program takes them under its
+    own graph key.
+    """
+
     _core_programs: Mapping[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
@@ -976,6 +1062,12 @@ class _NNBEGMPeriodKernel:
         publishes the value and the carry alone; a replay-retaining solve
         dispatches the inner `replay` programs and assembles the nested policy
         from their banks.
+
+        Both roles retain the inner execution contract. The outer search owns
+        how many times it dispatches an adjuster; each compiled inner program
+        still owns its planner axes and value transfers.
+        Both searches declare the surrounding host loop's configurable name
+        separately from compiled axes.
         """
         programs: dict[str, CoreProgram] = {}
         for role, kernel, outer_node in (
@@ -998,9 +1090,34 @@ class _NNBEGMPeriodKernel:
                     retained_artifact_payload_types[SIMULATION_POLICY] = (
                         self._published_policy_type
                     )
-                programs[f"{role}:{name}"] = replace(
+                graph_key = f"{role}:{name}"
+                role_reads = (
+                    self.keeper_value_reads
+                    if role == "keeper"
+                    else self.adjuster_value_reads
+                )
+                requirements = (
+                    replace(
+                        program.requirements,
+                        value_reads=rekeyed_value_reads(
+                            reads=role_reads, core_key=graph_key
+                        ),
+                    )
+                    if role_reads
+                    else program.requirements
+                )
+                if role == "adjuster":
+                    requirements = replace(
+                        requirements,
+                        host_axis_names=(
+                            *requirements.host_axis_names,
+                            OUTER_CANDIDATE_AXIS,
+                        ),
+                    )
+                programs[graph_key] = replace(
                     program,
-                    name=f"{role}:{name}",
+                    name=graph_key,
+                    requirements=requirements,
                     replaces_program=(
                         None
                         if program.replaces_program is None
@@ -1053,11 +1170,12 @@ class _NNBEGMPeriodKernel:
         The retention shows in the compiled programs: the inner `replay`
         programs are present exactly when the solve retains replay artifacts,
         and only then does the outer search assemble a nested policy. The
-        finite search folds completed chunks immediately, so `outer_batch_size`
-        bounds retained candidate data while publishing the complete finite
-        candidate identities for exact replay. The adaptive search keeps its
-        exact-node bank because interpolation and policy publication consume
-        every refined node.
+        finite search folds completed chunks immediately. Without replay, it
+        releases their per-node value temporaries before the next chunk. Every
+        finite solve retains the full continuation-carry bank, and replay also
+        retains all node results, so the dispatch width does not bound those
+        banks. The adaptive search keeps its exact-node bank because interpolation
+        and policy publication consume every refined node.
         """
         keeper_result = self._solve_keeper(
             compiled_cores=compiled_cores,
@@ -1300,20 +1418,17 @@ class _NNBEGMPeriodKernel:
         params = dict(flat_params[self.regime_name])
         accepted = inspect.signature(self.outer_target_function).parameters
 
-        def bind(outer_action: FloatND) -> dict[str, EconFunctionArg]:
-            pool = {
-                **params,
-                **state_inputs,
-                **discrete_inputs,
-                self.inner_action: candidate_inner_action,
-                self.outer_action: outer_action,
-                "period": jnp.int32(period),
-                "age": ages.values[period],
-            }
-            return {name: value for name, value in pool.items() if name in accepted}
-
-        def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
-            return self.outer_target_function(**bind(outer_action))
+        bind = _OuterTargetArguments(
+            params=params,
+            state_inputs=state_inputs,
+            discrete_inputs=discrete_inputs,
+            inner_action=self.inner_action,
+            outer_action=self.outer_action,
+            candidate_inner_action=candidate_inner_action,
+            period=period,
+            age=ages.values[period],
+            accepted=frozenset(accepted),
+        )
 
         # The map evaluated at a zero outer action: the offset the certified
         # inverse subtracts. The certificate itself is resolved once per period
@@ -1350,17 +1465,16 @@ class _NNBEGMPeriodKernel:
                 "NNBEGM outer/discrete candidate target bank is misaligned."
             )
 
-        def forward(outer_action: FloatND) -> FloatND:
-            return jnp.broadcast_to(
-                jnp.asarray(evaluate(outer_action)[self.outer_post_decision]),
-                candidate_inner_action.shape,
-            )
-
         inversion = invert_declared_outer_target(
             inverse=inverse,
             target=candidate_targets,
             at_zero=at_zero,
-            forward=forward,
+            forward=_OuterPostDecisionForward(
+                outer_target_function=self.outer_target_function,
+                arguments=bind,
+                outer_post_decision=self.outer_post_decision,
+                shape=candidate_inner_action.shape,
+            ),
         )
         live = jnp.isfinite(candidate_inner_action)
         represented = live & inversion.admissible
@@ -1386,6 +1500,85 @@ class _NNBEGMPeriodKernel:
             period=period,
         )
         return jnp.where(represented, candidate_targets, jnp.nan)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OuterTargetArguments:
+    """Bind the outer target map's arguments at one candidate outer action.
+
+    Every value the binding reads is an explicit field, so the solved period's
+    candidate bank stays reachable only through this instance rather than
+    through a map defined per solve.
+    """
+
+    params: Mapping[str, EconFunctionArg]
+    """The regime's flat parameters at this period."""
+
+    state_inputs: Mapping[StateName, EconFunctionArg]
+    """The state grids, each broadcast onto its own axis of the candidate bank."""
+
+    discrete_inputs: Mapping[ActionName, EconFunctionArg]
+    """The candidate discrete-action codes, or empty for a continuous-only regime."""
+
+    inner_action: ActionName
+    """Name of the inner continuous action the candidate bank carries."""
+
+    outer_action: ActionName
+    """Name of the outer continuous action the binding varies."""
+
+    candidate_inner_action: FloatND
+    """The inner action of every candidate, at every state."""
+
+    period: int
+    """The period the candidates were solved in."""
+
+    age: EconFunctionArg
+    """The age of that period, in whatever dtype the model's age grid carries."""
+
+    accepted: frozenset[str]
+    """The argument names the outer target map declares."""
+
+    def __call__(self, outer_action: FloatND) -> dict[str, EconFunctionArg]:
+        """Return the arguments the outer target map takes at one outer action."""
+        pool = {
+            **self.params,
+            **self.state_inputs,
+            **self.discrete_inputs,
+            self.inner_action: self.candidate_inner_action,
+            self.outer_action: outer_action,
+            "period": jnp.int32(self.period),
+            "age": self.age,
+        }
+        return {name: value for name, value in pool.items() if name in self.accepted}
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OuterPostDecisionForward:
+    """Evaluate the declared outer post-decision at one candidate outer action.
+
+    This is the forward map the certified inversion re-evaluates at the action
+    it recovered, so the stock a candidate actually reaches is read off the same
+    declaration the solve used.
+    """
+
+    outer_target_function: Callable[..., Mapping[str, FloatND]]
+    """The regime's outer target map, returning its post-decision outputs."""
+
+    arguments: _OuterTargetArguments
+    """The binding that supplies every argument the map reads."""
+
+    outer_post_decision: FunctionName
+    """Name of the outer post-decision output the inversion compares against."""
+
+    shape: tuple[int, ...]
+    """Shape of the candidate bank the output is broadcast to."""
+
+    def __call__(self, outer_action: FloatND) -> FloatND:
+        """Return the post-decision stock the given outer action reaches."""
+        results = self.outer_target_function(**self.arguments(outer_action))
+        return jnp.broadcast_to(
+            jnp.asarray(results[self.outer_post_decision]), self.shape
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1422,8 +1615,9 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         adjuster_carries: list[EGMCarry] = []
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         nodes = list(self.outer_grid_values)
-        chunk_size = self.outer_batch_size or len(nodes)
-        for chunk_start in range(0, len(nodes), chunk_size):
+        for chunk_start, chunk_stop in _dispatch_bounds(
+            n_items=len(nodes), width=self.outer_dispatch_width
+        ):
             chunk_results = [
                 self.adjuster_kernel(
                     compiled_cores=adjuster_cores,
@@ -1440,15 +1634,17 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                     ages=ages,
                     logger=logger,
                 )
-                for node in nodes[chunk_start : chunk_start + chunk_size]
+                for node in nodes[chunk_start:chunk_stop]
             ]
             for adjuster_result in chunk_results:
                 V_arr = jnp.fmax(V_arr, adjuster_result.value)
                 adjuster_carries.append(
                     cast("EGMCarry", adjuster_result.continuations[EGM_CONTINUATION])
                 )
-                adjuster_results.append(adjuster_result)
+                if retain_replay:
+                    adjuster_results.append(adjuster_result)
             V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
+            del chunk_results, adjuster_result
 
         from _lcm.egm.outer_envelope import stack_candidate_carries  # noqa: PLC0415
 
@@ -1588,8 +1784,8 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         """Adaptively refine the shared outer mesh, then collapse continuously.
 
         The mesh driver's exact-solve callback runs the adjuster's inner
-        solve per requested node (chunked by the strategy's `batch_size`)
-        and caches every `OuterCandidateResult` by node value, so the final
+        solve per requested node, chunked by the outer dispatch width, and
+        caches every `OuterCandidateResult` by node value, so the final
         bank reuses the refinement solves instead of re-solving. The keeper
         stays a separate exact branch throughout; its `sim_policy` rides
         through unchanged until the continuous simulation reader lands.
@@ -1599,35 +1795,20 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         capability gates publication rather than the search.
         """
         config = self.outer_search
-        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         cache: dict[float, OuterCandidateResult] = {}
-
-        def solve_nodes(nodes_arr: Float1D) -> FloatND:
-            requested = [float(node) for node in np.asarray(nodes_arr)]
-            pending = [node for node in requested if node not in cache]
-            chunk_size = config.batch_size or max(len(pending), 1)
-            for chunk_start in range(0, len(pending), chunk_size):
-                chunk = pending[chunk_start : chunk_start + chunk_size]
-                chunk_results = [
-                    self._solve_adjuster_node(
-                        node=jnp.asarray(node),
-                        adjuster_cores=adjuster_cores,
-                        state_action_space=state_action_space,
-                        next_regime_to_V_arr=next_regime_to_V_arr,
-                        next_regime_to_continuation=next_regime_to_continuation,
-                        flat_params=flat_params,
-                        period=period,
-                        ages=ages,
-                        logger=logger,
-                    )
-                    for node in chunk
-                ]
-                jax.block_until_ready(
-                    [(result.V_arr, result.carry) for result in chunk_results]
-                )
-                cache.update(zip(chunk, chunk_results, strict=True))
-            return jnp.stack([cache[node].V_arr for node in requested])
-
+        solve_nodes = _AdaptiveNodeSolver(
+            kernel=self,
+            adjuster_cores=_subcores(compiled_cores=compiled_cores, role="adjuster"),
+            cache=cache,
+            dispatch_width=self.outer_dispatch_width,
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            logger=logger,
+        )
         mesh = refine_outer_mesh(
             initial_nodes=self.outer_grid_values,
             solve_at=solve_nodes,
@@ -1769,6 +1950,170 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             replay=replay,
             auxiliary=auxiliary,
         )
+
+
+def _dispatch_bounds(*, n_items: int, width: int | None) -> tuple[tuple[int, int], ...]:
+    """Return one `(start, stop)` pair per host-loop step of an outer dispatch.
+
+    The `outer_candidate` width is what cuts a host loop over outer nodes into
+    steps: `None`, or a width at or above the count, gives one step over every
+    item, and a smaller width gives consecutive steps of that many items with a
+    short last one when the width does not divide the count. No item is visited
+    twice and none is skipped, so the width reschedules the loop and nothing
+    else. An empty loop takes no step.
+    """
+    step = width or max(n_items, 1)
+    return tuple(
+        (start, min(start + step, n_items)) for start in range(0, n_items, step)
+    )
+
+
+def _with_declared_nested_reads(
+    *, kernel: PeriodKernel, context: SolverBuildContext, period: int
+) -> PeriodKernel:
+    """Return one nested period's kernel with both inner roles' reads declared.
+
+    Each role's argument builder hands its program the whole rolling
+    continuation mapping, so the leaves it reads are those the period's
+    reachable targets publish, one read per published leaf named from the
+    target's own template. Declaring both roles is what keeps the dispatch node
+    free of an undeclared reader, so its ledger pins the declared leaves rather
+    than every reachable one. A period reaching no target that publishes a
+    readable payload declares nothing for that role.
+    """
+    if not isinstance(kernel, _NNBEGMPeriodKernel):
+        return kernel
+    reachable = frozenset(
+        ()
+        if period == context.solution_reachability.n_periods - 1
+        else context.solution_reachability.targets(
+            period=period, source=context.regime_name
+        )
+    )
+    return replace(
+        kernel,
+        keeper_value_reads=_role_carry_reads(
+            inner=kernel.keeper_kernel,
+            context=context,
+            period=period,
+            regime_name=kernel.regime_name,
+            core_key="keeper",
+            reachable=reachable,
+        ),
+        adjuster_value_reads=_role_carry_reads(
+            inner=kernel.adjuster_kernel,
+            context=context,
+            period=period,
+            regime_name=kernel.regime_name,
+            core_key="adjuster",
+            reachable=reachable,
+        ),
+    )
+
+
+def _role_carry_reads(
+    *,
+    inner: _RideAlongNBEGMPeriodKernel,
+    context: SolverBuildContext,
+    period: int,
+    regime_name: RegimeName,
+    core_key: str,
+    reachable: frozenset[RegimeName],
+) -> tuple[ValueRead, ...]:
+    """Return one inner role's read per published leaf of its reachable targets."""
+    return tuple(
+        read
+        for target, template in published_continuation_templates(
+            continuation_specs=context.continuation_specs,
+            targets=inner.stateful_targets & reachable,
+        ).items()
+        for read in continuation_leaf_reads(
+            template=template,
+            artifact_key=EGM_CONTINUATION,
+            target=target,
+            source_regime=regime_name,
+            source_period=period,
+            core_key=core_key,
+        )
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _AdaptiveNodeSolver:
+    """The adaptive mesh driver's exact-solve callback for one period.
+
+    Solves every requested outer node through the adjuster kernel, chunked by
+    the outer dispatch width, and caches each `OuterCandidateResult` by node
+    value so a node the driver revisits is solved once. Every input the callback
+    reads is an explicit field, so the compiled adjuster cores stay reachable
+    only through this instance, which the period's solve drops on return.
+    """
+
+    kernel: _AdaptiveNNBEGMPeriodKernel
+    """The period kernel whose adjuster branch each node is solved through."""
+
+    adjuster_cores: Mapping[str, Callable]
+    """Immutable mapping of the adjuster's compiled core programs."""
+
+    cache: dict[float, OuterCandidateResult]
+    """Node value to its solved candidate; the driver's caller reads it back
+    to assemble the final bank."""
+
+    dispatch_width: int | None
+    """Mesh nodes dispatched per host loop step, or `None` for all pending."""
+
+    state_action_space: StateActionSpace
+    """The period's state-action space."""
+
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    """Immutable mapping of next-period regime name to its value array."""
+
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    """Immutable mapping of next-period regime name to its continuation payload."""
+
+    flat_params: FlatParams
+    """The solve's flat parameters."""
+
+    period: int
+    """The period being solved."""
+
+    ages: AgeGrid
+    """The model's lifecycle age grid."""
+
+    logger: logging.Logger
+    """Logger the adjuster kernel reports through."""
+
+    def __call__(self, nodes_arr: Float1D) -> FloatND:
+        """Return the candidate values on `nodes_arr`, stacked in request order.
+
+        `refine_outer_mesh` calls its `solve_at` with the requested nodes as the
+        sole positional argument.
+        """
+        requested = [float(node) for node in np.asarray(nodes_arr)]
+        pending = [node for node in requested if node not in self.cache]
+        for chunk_start, chunk_stop in _dispatch_bounds(
+            n_items=len(pending), width=self.dispatch_width
+        ):
+            chunk = pending[chunk_start:chunk_stop]
+            chunk_results = [
+                self.kernel._solve_adjuster_node(  # noqa: SLF001
+                    node=jnp.asarray(node),
+                    adjuster_cores=self.adjuster_cores,
+                    state_action_space=self.state_action_space,
+                    next_regime_to_V_arr=self.next_regime_to_V_arr,
+                    next_regime_to_continuation=self.next_regime_to_continuation,
+                    flat_params=self.flat_params,
+                    period=self.period,
+                    ages=self.ages,
+                    logger=self.logger,
+                )
+                for node in chunk
+            ]
+            jax.block_until_ready(
+                [(result.V_arr, result.carry) for result in chunk_results]
+            )
+            self.cache.update(zip(chunk, chunk_results, strict=True))
+        return jnp.stack([self.cache[node].V_arr for node in requested])
 
 
 def derive_nnbegm_replay_capability(
@@ -1940,6 +2285,44 @@ def _nnbegm_inner_action(
     return names[0]
 
 
+def _outer_state_domain_at(
+    *,
+    period: int,
+    period_to_state_nodes: (
+        MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None
+    ),
+    outer_state: StateName,
+    representative_outer_values: Float1D,
+) -> tuple[float, float]:
+    """Return the outer state's declared endpoints in one period.
+
+    A domain endpoint is a node value, so it is the solved period's own. With an
+    age-specialized outer grid the representative age's endpoints are the wrong
+    ones everywhere else: a stock only the later ages hold would be judged out of
+    domain and dropped, and a stock past a narrower age's edge would be admitted
+    with no value function to read it on.
+
+    Args:
+        period: The period whose endpoints are read.
+        period_to_state_nodes: Immutable mapping of period to that period's
+            age-specialized state nodes, or `None` for an age-invariant regime.
+        outer_state: Name of the outer state whose domain is read.
+        representative_outer_values: The representative age's outer nodes, used
+            wherever the period declares none of its own.
+
+    Returns:
+        Tuple of the outer state's lowest and highest node in that period.
+    """
+    nodes = (
+        representative_outer_values
+        if period_to_state_nodes is None
+        else period_to_state_nodes.get(period, {}).get(
+            outer_state, representative_outer_values
+        )
+    )
+    return float(nodes[0]), float(nodes[-1])
+
+
 def _nested_inverse_marginal(
     *,
     context: SolverBuildContext,
@@ -1976,23 +2359,78 @@ def _nested_inverse_marginal(
         inner_action,
     ):
         return None
-    marginal_utility = jax.grad(lambda c: utility(**{inner_action: c}))
+    marginal_utility = jax.grad(
+        _UtilityOfInnerAction(utility=utility, inner_action=inner_action)
+    )
     action_upper = jnp.asarray(savings_top * 1000.0 + 1000.0)
     action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+    return _NumericInverseMarginal(
+        at_node=_NumericInverseMarginalAtNode(
+            marginal_utility=marginal_utility,
+            action_lower=action_lower,
+            action_upper=action_upper,
+        )
+    )
 
-    def inverse_marginal(marginal_continuation: FloatND) -> FloatND:
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _UtilityOfInnerAction:
+    """The regime's utility as a function of the inner action alone.
+
+    The utility and the action's name are explicit fields, so the regime's
+    function pool stays reachable only through this instance rather than
+    through a map defined per model build.
+    """
+
+    __name__: ClassVar[str] = "utility_of_inner_action"
+    """Name reported for the differentiated map."""
+
+    utility: EconFunction
+    """The regime's utility, which reads the inner action and nothing else."""
+
+    inner_action: ActionName
+    """Name of the inner continuous action the utility is a function of."""
+
+    def __call__(self, action: FloatND) -> FloatND:
+        """Return utility at one inner-action level."""
+        return self.utility(**{self.inner_action: action})
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _NumericInverseMarginalAtNode:
+    """Invert the inner marginal utility at one marginal-continuation node."""
+
+    marginal_utility: Callable[[FloatND], FloatND]
+    """The action-derivative of the regime's utility."""
+
+    action_lower: FloatND
+    """Lower end of the bracket the root is searched in."""
+
+    action_upper: FloatND
+    """Upper end of the bracket the root is searched in."""
+
+    def __call__(self, marginal_continuation: FloatND) -> FloatND:
+        """Return the inner action whose marginal utility is the argument."""
+        return numeric_inverse_marginal_utility(
+            marginal_continuation=marginal_continuation,
+            marginal_utility=self.marginal_utility,
+            c_lower=self.action_lower,
+            c_upper=self.action_upper,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _NumericInverseMarginal:
+    """Invert the inner marginal utility over a whole array of nodes."""
+
+    at_node: _NumericInverseMarginalAtNode
+    """The per-node inversion, mapped over the flattened argument."""
+
+    def __call__(self, marginal_continuation: FloatND) -> FloatND:
+        """Return the inner actions the given marginal continuations imply."""
         flat = jnp.ravel(jnp.asarray(marginal_continuation))
-        roots = jax.vmap(
-            lambda m: numeric_inverse_marginal_utility(
-                marginal_continuation=m,
-                marginal_utility=marginal_utility,
-                c_lower=action_lower,
-                c_upper=action_upper,
-            )
-        )(flat)
+        roots = jax.vmap(self.at_node)(flat)
         return roots.reshape(jnp.shape(marginal_continuation))
-
-    return inverse_marginal
 
 
 def _resolve_branch_fixed_cost(
@@ -2229,7 +2667,7 @@ def _fail_if_inner_carry_rows_not_grid_aligned(*, inner: Solver) -> None:
 def _fail_if_nnbegm_carry_publishes_topology_rows(
     *, template: ContinuationPayload | None
 ) -> None:
-    if isinstance(template, EGMCarry) and template.breakpoints is not None:
+    if isinstance(template, EGMCarry) and ("breakpoints",) in template.leaves():
         msg = (
             "NNBEGM publishes a bridged (pointwise, finite-grid) outer "
             "envelope, which cannot represent the inner config's jump-topology "

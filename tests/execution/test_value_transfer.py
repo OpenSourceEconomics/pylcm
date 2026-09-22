@@ -1,7 +1,9 @@
 """Tests for planner-owned target-to-source value transfers."""
 
-from dataclasses import FrozenInstanceError
+from collections.abc import Mapping
+from dataclasses import FrozenInstanceError, dataclass
 from types import MappingProxyType
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -20,6 +22,7 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer_plan,
     resolve_value_transfer,
 )
+from lcm.solver_api import EGM_CONTINUATION
 
 
 def _mesh() -> jax.sharding.Mesh:
@@ -172,7 +175,7 @@ def test_addresses_are_immutable_and_same_artifact_can_feed_multiple_paths() -> 
     ],
 )
 def test_regime_value_address_fails_closed(*, kwargs, error, message) -> None:
-    values = {
+    values: dict[str, Any] = {
         "kind": ValueArtifactKind.REGIME_VALUE,
         "period": 3,
         "regime": "working",
@@ -210,7 +213,7 @@ def test_gated_continuation_requires_an_edge_target() -> None:
     ],
 )
 def test_consumer_address_fails_closed(*, replacement, error, message) -> None:
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "source_period": 2,
         "source_regime": "working",
         "core_key": "main",
@@ -258,7 +261,9 @@ def test_resolver_requires_concrete_shape_dtype_and_sharding() -> None:
 def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
     stored = _stored_value()
     different = jax.sharding.SingleDeviceSharding(jax.devices()[0])
-    with pytest.raises(ValueError, match="ALIGNED_LOCAL requires identical"):
+    with pytest.raises(
+        ValueError, match="is a copy_to_source_layout, not a aligned_local"
+    ):
         resolve_value_transfer(
             target=_target(),
             source=_source(),
@@ -266,7 +271,9 @@ def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
             stored_template=stored,
             source_sharding=different,
         )
-    with pytest.raises(ValueError, match="requires a distinct"):
+    with pytest.raises(
+        ValueError, match="is a aligned_local, not a copy_to_source_layout"
+    ):
         resolve_value_transfer(
             target=_target(),
             source=_source(),
@@ -442,6 +449,104 @@ def test_plan_rebuilds_nested_mappings_and_tuples_without_mutation() -> None:
     assert working[0] is stored
 
 
+@dataclass(frozen=True)
+class _CarryPayload:
+    """A published carry shaped like the EGM family's own frozen payload."""
+
+    values: object
+    """The row a reader's transfer replaces."""
+
+    breakpoints: object
+    """A sibling row the rebuild must leave alone."""
+
+    policy: object
+    """A second sibling row the rebuild must leave alone."""
+
+
+def _dataclass_plan_result(
+    *, path: tuple[str | int, ...], payload: _CarryPayload, stored: jax.Array
+) -> object:
+    """Apply one transfer whose consumer path descends into `payload`."""
+    transfer = resolve_value_transfer(
+        target=_target(),
+        source=_source(path=path),
+        kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
+        stored_template=stored,
+        source_sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+    )
+    arguments = MappingProxyType(
+        {
+            ValueInputChannel.NEXT_REGIME_VALUE.value: MappingProxyType(
+                {"working": payload}
+            )
+        }
+    )
+    result = cast(
+        "Mapping[str, Mapping[str, object]]",
+        apply_value_transfer_plan(arguments=arguments, plan=(transfer,)),
+    )
+    return result[ValueInputChannel.NEXT_REGIME_VALUE.value]["working"]
+
+
+def test_a_dataclass_branch_is_rebuilt_under_its_declaring_type() -> None:
+    """A consumer path through a frozen dataclass rebuilds it as that dataclass."""
+    stored = _stored_value()
+    payload = _CarryPayload(values=stored, breakpoints=object(), policy=object())
+
+    rebuilt = _dataclass_plan_result(
+        path=("working", "values"), payload=payload, stored=stored
+    )
+
+    assert type(rebuilt) is _CarryPayload
+
+
+def test_a_dataclass_rebuild_keeps_every_field_it_did_not_transfer() -> None:
+    """Only the addressed field moves; the siblings are the objects they were."""
+    stored = _stored_value()
+    payload = _CarryPayload(values=stored, breakpoints=object(), policy=object())
+
+    rebuilt = cast(
+        "_CarryPayload",
+        _dataclass_plan_result(
+            path=("working", "values"), payload=payload, stored=stored
+        ),
+    )
+
+    assert (rebuilt.breakpoints, rebuilt.policy) == (
+        payload.breakpoints,
+        payload.policy,
+    )
+
+
+def test_a_dataclass_rebuild_moves_the_addressed_field_to_the_source_layout() -> None:
+    """The transferred field lands in the consumer's layout, leaving the input alone."""
+    stored = _stored_value()
+    payload = _CarryPayload(values=stored, breakpoints=object(), policy=object())
+
+    rebuilt = cast(
+        "_CarryPayload",
+        _dataclass_plan_result(
+            path=("working", "values"), payload=payload, stored=stored
+        ),
+    )
+
+    assert (
+        cast("jax.Array", rebuilt.values).sharding,
+        payload.values is stored,
+    ) == (jax.sharding.SingleDeviceSharding(jax.devices()[0]), True)
+
+
+def test_plan_rejects_a_dataclass_path_segment_that_is_not_a_field() -> None:
+    """A path naming something the dataclass does not declare is refused."""
+    stored = _stored_value()
+    payload = _CarryPayload(values=stored, breakpoints=object(), policy=object())
+
+    with pytest.raises(KeyError, match="names no field of _CarryPayload"):
+        _dataclass_plan_result(
+            path=("working", "not_a_field"), payload=payload, stored=stored
+        )
+
+
 def test_plan_rejects_duplicate_consumer_paths() -> None:
     stored = _stored_value()
     transfer = _resolve_aligned(value=stored)
@@ -460,7 +565,7 @@ def test_plan_rejects_missing_channel_or_mapping_path() -> None:
     stored = _stored_value()
     transfer = _resolve_aligned(value=stored)
 
-    with pytest.raises(KeyError, match="input channel"):
+    with pytest.raises(KeyError, match="input argument"):
         apply_value_transfer_plan(arguments={}, plan=(transfer,))
     with pytest.raises(KeyError, match="mapping path"):
         apply_value_transfer_plan(
@@ -474,7 +579,7 @@ def test_plan_rejects_missing_channel_or_mapping_path() -> None:
 @pytest.mark.parametrize(
     ("path", "branch", "error", "message"),
     [
-        (("working", 0), [object()], TypeError, "unsupported container list"),
+        (("working", 0), [object()], TypeError, "would rebuild a list"),
         (("working", "leaf"), (object(),), TypeError, "requires an integer index"),
         (("working", 1), (object(),), IndexError, "out of range"),
     ],
@@ -500,3 +605,27 @@ def test_plan_rejects_unsupported_or_invalid_tree_traversal(
 
     with pytest.raises(error, match=message):
         apply_value_transfer_plan(arguments=arguments, plan=(transfer,))
+
+
+def test_a_continuation_leaf_read_is_dated_one_period_after_its_source() -> None:
+    """A parent reads its target's carry from the next period."""
+    with pytest.raises(ValueError, match="one after"):
+        ResolvedValueTransfer(
+            target=ValueArtifactAddress(
+                kind=ValueArtifactKind.CONTINUATION_LEAF,
+                period=3,
+                regime="retired",
+                artifact_key=EGM_CONTINUATION,
+                leaf_path=("value",),
+            ),
+            source=_source(
+                source_period=3,
+                channel=ValueInputChannel.CONTINUATION_LEAF,
+                path=("retired", "value"),
+            ),
+            kind=ValueTransferKind.ALIGNED_LOCAL,
+            stored_sharding=_named_sharding(),
+            source_sharding=_named_sharding(),
+            expected_shape=(4,),
+            expected_dtype=jnp.float32,
+        )

@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 
 from lcm import (
-    LinSpacedGrid,
+    ExecutionConfig,
     Model,
 )
 from lcm.consumption_savings_regime import (
@@ -226,21 +226,15 @@ def test_production_housing_model_solves_on_gpu():
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-@pytest.mark.parametrize("liquid_batch_size", [0, 4])
-def test_liquid_batch_size_threads_to_the_liquid_grid(liquid_batch_size: int):
-    """`build_model(liquid_batch_size=k)` sets the liquid grid's `batch_size`.
-
-    The liquid Euler grid carries the batch size that splays the per-asset-node
-    solve into chunks, bounding peak device memory at large `n_grid`. It is a
-    memory knob only — the GPU sweep confirms the solved value function is
-    unchanged across batch sizes.
-    """
+@pytest.mark.parametrize("cell_width", [1, 4])
+def test_cell_width_reaches_the_models_execution_plan(cell_width: int):
+    """Housing state-cell widths belong to the model's execution plan."""
     model = ds_app2_housing.build_model(
-        n_grid=5, n_periods=4, liquid_batch_size=liquid_batch_size
+        n_grid=5,
+        n_periods=4,
+        execution_config=ExecutionConfig(axis_widths={"cell": cell_width}),
     )
-    liquid_grid = model.user_regimes["working"].states["liquid"]
-    assert isinstance(liquid_grid, LinSpacedGrid)
-    assert liquid_grid.batch_size == liquid_batch_size
+    assert dict(model._execution.axis_widths) == {"cell": cell_width}
 
 
 def test_euler_coupled_housing_law_would_be_rejected():

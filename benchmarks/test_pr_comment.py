@@ -12,6 +12,46 @@ import pytest
 from benchmarks import pr_comment
 
 
+@pytest.mark.parametrize(
+    ("bench_name", "value", "expected"),
+    [
+        (
+            (
+                "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+                "track_peak_gpu_mem_automatic_solve_simulate"
+            ),
+            2_500_000_000.0,
+            "2.50 GB",
+        ),
+        (
+            (
+                "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+                "track_peak_gpu_mem_solve_save_all_persistable"
+            ),
+            32_000_000.0,
+            "32 MB",
+        ),
+        (
+            (
+                "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+                "track_peak_gpu_mem_load_supplied_solution_simulate"
+            ),
+            1_000_000_000.0,
+            "1.00 GB",
+        ),
+        ("bench_example.Example.peakmem_execution", 32_000_000.0, "32 MB"),
+        ("bench_example.Example.track_gpu_peak_mem", 2_500_000_000.0, "2.50 GB"),
+        ("bench_example.Example.track_compilation_time", 2.5, "2.50 s"),
+        ("bench_mahler_yum.MahlerYumBudgetedGpu.time_execution", 0.125, "125.0 ms"),
+    ],
+)
+def test_format_value_uses_memory_and_timing_units(
+    *, bench_name: str, value: float, expected: str
+) -> None:
+    """GPU memory phases display bytes in MB or GB; timing metrics keep time units."""
+    assert pr_comment._format_value(bench_name=bench_name, value=value) == expected
+
+
 def test_grouped_table_uses_canonical_family_and_numeric_parameter_order():
     """CPU/GPU statistics stay together and parameter values sort numerically."""
     rows = [
@@ -274,3 +314,268 @@ def test_comparison_matches_combined_aca_metrics_to_legacy_names(tmp_path: Path)
         "track_gpu_peak_mem",
     }
     assert {row.ratio for row in rows} == {0.5}
+
+
+def test_benchmark_report_labels_are_specific_to_verified_workloads(
+    tmp_path: Path,
+) -> None:
+    """Only verified automatic solve-and-simulate workloads get phase labels."""
+    rows = [
+        pr_comment._BenchmarkRow(
+            "AcaBaseline",
+            "track_compilation_time",
+            "",
+            "9.0 s",
+            "10.0 s",
+            1.11,
+        ),
+        pr_comment._BenchmarkRow(
+            "AcaBaseline",
+            "time_execution",
+            "",
+            "1.5 s",
+            "1.6 s",
+            1.07,
+        ),
+        pr_comment._BenchmarkRow(
+            "MahlerYumBudgetedGpu",
+            "track_compilation_time",
+            "",
+            "9.0 s",
+            "10.0 s",
+            1.11,
+        ),
+        pr_comment._BenchmarkRow(
+            "MahlerYumBudgetedGpu",
+            "time_execution",
+            "",
+            "1.5 s",
+            "1.6 s",
+            1.07,
+        ),
+        pr_comment._BenchmarkRow(
+            "CollectiveHouseholdConstruct",
+            "time_execution",
+            "",
+            "1.5 s",
+            "1.6 s",
+            1.07,
+        ),
+        pr_comment._BenchmarkRow(
+            "PrecautionarySavingsSimulate",
+            "time_execution",
+            "",
+            "10 ms",
+            "11 ms",
+            1.07,
+        ),
+        pr_comment._BenchmarkRow(
+            "CollectiveHouseholdSolve",
+            "track_compilation_time",
+            "",
+            "1.5 s",
+            "1.6 s",
+            1.07,
+        ),
+    ]
+
+    table = pr_comment._build_grouped_table(rows)
+
+    assert "| ACA (reduced) |" in table
+    assert "tiny continuous grids" not in table
+    assert table.count("cold solve + simulate (first run, includes compilation)") == 2
+    assert table.count("warm solve + simulate (reuses compiled code)") == 2
+    assert table.count("execution time") == 2
+    assert table.count("first call (including compilation)") == 1
+
+    result_file = tmp_path / "head.json"
+    result_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_aca_baseline.AcaBaseline.track_compilation_time": [
+                        [10.0],
+                        [],
+                    ],
+                    "bench_aca_baseline.AcaBaseline.time_execution": [[1.6], []],
+                    ("bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time"): [
+                        [10.0],
+                        [],
+                    ],
+                    "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution": [
+                        [1.6],
+                        [],
+                    ],
+                    (
+                        "bench_collective_household.CollectiveHouseholdConstruct."
+                        "time_execution"
+                    ): [[1.6], []],
+                    (
+                        "bench_precautionary_savings.PrecautionarySavingsSimulate."
+                        "time_execution"
+                    ): [[0.011], []],
+                    (
+                        "bench_collective_household.CollectiveHouseholdSolve."
+                        "track_compilation_time"
+                    ): [[1.6], []],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    raw_table = pr_comment._format_raw_results(
+        result_file=result_file, head_sha="77ebdd72"
+    )
+
+    assert (
+        raw_table.count("cold solve + simulate (first run, includes compilation)") == 2
+    )
+    assert raw_table.count("warm solve + simulate (reuses compiled code)") == 2
+    assert raw_table.count("execution time") == 2
+    assert raw_table.count("first call (including compilation)") == 1
+
+
+def test_mahler_policy_identities_do_not_compare_to_legacy_default(tmp_path: Path):
+    """Matching configured identities compare only within their own series."""
+    base_file = tmp_path / "base.json"
+    head_file = tmp_path / "head.json"
+    base_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_mahler_yum.MahlerYum.time_execution": [[10.0], []],
+                    "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution": [
+                        [20.0],
+                        [],
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    head_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution": [
+                        [25.0],
+                        [],
+                    ],
+                    (
+                        "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
+                        "track_peak_gpu_mem_automatic_solve_simulate"
+                    ): [
+                        [100.0],
+                        [],
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = pr_comment._build_comparison_rows(base_file=base_file, head_file=head_file)
+
+    timing = next(row for row in rows if row.class_name == "MahlerYumBudgetedGpu")
+    memory = next(
+        row for row in rows if row.class_name == "MahlerYumBudgetedGpuPeakMem"
+    )
+    assert timing.ratio == 1.25
+    assert memory.ratio is None
+    table = pr_comment._build_grouped_table(rows)
+    assert table.count("| Mahler-Yum |") == 1
+    assert "capacity-half" not in table
+
+
+def test_mahler_configured_identity_has_no_ratio_against_legacy_default(
+    tmp_path: Path,
+) -> None:
+    """The raw parser ignores ASV version when it joins comparison keys."""
+    base_file = tmp_path / "base.json"
+    head_file = tmp_path / "head.json"
+    base_file.write_text(
+        json.dumps(
+            {"results": {"bench_mahler_yum.MahlerYum.time_execution": [[10.0], []]}}
+        ),
+        encoding="utf-8",
+    )
+    head_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_mahler_yum.MahlerYumBudgetedGpu.time_execution": [
+                        [20.0],
+                        [],
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = pr_comment._build_comparison_rows(base_file=base_file, head_file=head_file)
+
+    assert len(rows) == 1
+    assert rows[0].class_name == "MahlerYumBudgetedGpu"
+    assert rows[0].ratio is None
+
+
+@pytest.mark.parametrize(
+    "prefix", ["", "bench_simulation_dispatch.SimulationDispatch."]
+)
+@pytest.mark.parametrize(
+    ("method", "value", "expected"),
+    [
+        ("track_host_ms_per_period_regime", 2.5, "2.50 ms"),
+        ("track_host_ms_per_period_regime", 0, "0.00 ms"),
+        ("track_second_call_compiles", 0, "0"),
+        ("track_second_call_compiles", 12, "12"),
+        ("track_compilation_time", 2.5, "2.50 s"),
+    ],
+)
+def test_simulation_dispatch_metric_units(
+    *, prefix: str, method: str, value: float, expected: str
+) -> None:
+    """Bare and fully qualified metric names retain their declared units."""
+    assert pr_comment._format_value(bench_name=prefix + method, value=value) == expected
+
+
+def test_simulation_dispatch_units_preserve_raw_values_and_ratios(
+    tmp_path: Path,
+) -> None:
+    """Display units change neither stored metrics nor zero-baseline policy."""
+    prefix = "bench_simulation_dispatch.SimulationDispatch."
+    methods = ("track_host_ms_per_period_regime", "track_second_call_compiles")
+    base_file, head_file = tmp_path / "base.json", tmp_path / "head.json"
+    for path, values in ((base_file, (5.0, 0)), (head_file, (2.5, 0))):
+        path.write_text(
+            json.dumps(
+                {
+                    "results": {
+                        prefix + method: [[value], []]
+                        for method, value in zip(methods, values, strict=True)
+                    }
+                }
+            )
+        )
+    before = head_file.read_bytes()
+    rows = pr_comment._build_comparison_rows(base_file=base_file, head_file=head_file)
+    by_method = {row.method_name: row for row in rows}
+    timing, count = (by_method[method] for method in methods)
+    assert (timing.before_value, timing.after_value, timing.ratio) == (
+        "5.00 ms",
+        "2.50 ms",
+        0.5,
+    )
+    assert (count.before_value, count.after_value, count.ratio) == ("", "0", None)
+    raw = pr_comment._parse_raw_values(head_file)
+    assert raw == {
+        ("SimulationDispatch", methods[0], ""): 2.5,
+        ("SimulationDispatch", methods[1], ""): 0,
+    }
+    table = pr_comment._format_raw_results(result_file=head_file, head_sha="head")
+    assert "| 2.50 ms |" in table
+    assert "| 0 |" in table
+    assert "2.50 s" not in table
+    assert "0.00 s" not in table
+    assert head_file.read_bytes() == before

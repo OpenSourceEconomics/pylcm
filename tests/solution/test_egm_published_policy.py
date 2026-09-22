@@ -79,6 +79,7 @@ def _kernel_published_policies(
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
     backward_induction.solve(
+        model_fingerprint="test_egm_published_policy",
         flat_params=model._process_params(params),
         ages=model.ages,
         regimes=model._regimes,
@@ -140,6 +141,7 @@ def test_retained_policies_are_host_resident():
     """
     model = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2)
     result = backward_induction.solve(
+        model_fingerprint="test_egm_published_policy",
         flat_params=model._process_params({"discount_factor": 0.95}),
         ages=model.ages,
         regimes=model._regimes,

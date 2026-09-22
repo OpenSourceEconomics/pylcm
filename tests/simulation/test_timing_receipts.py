@@ -1,0 +1,351 @@
+"""Timing receipts retain the observations needed to assess an acceptance failure."""
+
+import json
+import os
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from types import SimpleNamespace
+
+import jax.monitoring
+import pytest
+from _pytest.outcomes import Failed
+
+from benchmarks.asv._compile_counters import (
+    COMPILE_EVENT,
+    LOWERING_EVENT,
+    TRACE_EVENT,
+)
+from tests.ci.simulation_timings import TimingMeasurement
+from tests.simulation import test_compile_requests as timing_tests
+
+
+def test_timed_batch_retains_order_and_excludes_warmup_compilations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Receipts contain every timed sample and only the timed calls' compile events."""
+    calls: list[str] = []
+    clock = iter(
+        (0, 100, 100, 300, 300, 301, 301, 305, 305, 308, 308, 310, 310, 312, 312, 318)
+    )
+
+    def solve(**_kwargs: object) -> None:
+        pass
+
+    def simulate(*, log_level: str, **_kwargs: object) -> SimpleNamespace:
+        calls.append(log_level)
+        for event, repeats in (
+            (TRACE_EVENT, 1),
+            (LOWERING_EVENT, 2),
+            (COMPILE_EVENT, 3),
+        ):
+            for _ in range(repeats):
+                jax.monitoring.record_event_duration_secs(event, 0.001)
+        return SimpleNamespace(raw_results=None)
+
+    def witness() -> tuple[SimpleNamespace, dict, dict]:
+        return SimpleNamespace(solve=solve, simulate=simulate), {}, {}
+
+    monkeypatch.setattr(timing_tests, "WITNESSES", {"receipt": witness})
+    monkeypatch.setattr(
+        timing_tests, "time", SimpleNamespace(perf_counter=lambda: next(clock))
+    )
+
+    measurement = timing_tests._median_host_times(
+        witness="receipt", log_level="progress", repeats=3, stub_preflight=False
+    )
+
+    assert calls == ["off", "progress"] * 4
+    assert measurement.samples == (
+        ("off", 1.0),
+        ("progress", 4.0),
+        ("off", 3.0),
+        ("progress", 2.0),
+        ("off", 2.0),
+        ("progress", 6.0),
+    )
+    assert measurement.off_seconds == pytest.approx(2.0)
+    assert measurement.progress_seconds == pytest.approx(4.0)
+    assert (
+        measurement.trace_requests,
+        measurement.lowering_requests,
+        measurement.compile_requests,
+    ) == (6, 12, 18)
+
+
+def test_receipt_preserves_observations_and_worker_identity(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A worker publishes raw observations and medians in a portable JSON file."""
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw3")
+    measurement = TimingMeasurement(
+        samples=(("off", 1.0), ("progress", 3.0)),
+        trace_requests=2,
+        lowering_requests=3,
+        compile_requests=4,
+    )
+
+    receipt = measurement.write_receipt(
+        directory=tmp_path,
+        nodeid="tests/test_timing.py::test_wall_time[dissolution]",
+        witness="dissolution",
+        stub_preflight=True,
+    )
+
+    paths = tuple(tmp_path.rglob("*.json"))
+    assert len(paths) == 1
+    assert paths[0].read_text(encoding="utf-8").strip() == receipt
+    observed = json.loads(receipt)
+    assert observed["nodeid"] == "tests/test_timing.py::test_wall_time[dissolution]"
+    assert observed["witness"] == "dissolution"
+    assert observed["stub_preflight"] is True
+    assert observed["worker_id"] == "gw3"
+    assert observed["pid"] == os.getpid()
+    assert observed["precision"] == (64 if jax.config.jax_enable_x64 else 32)
+    assert observed["backend"] == jax.default_backend()
+    assert observed["samples"] == [["off", 1.0], ["progress", 3.0]]
+    assert observed["medians_seconds"] == {"off": 1.0, "progress": 3.0}
+    assert observed["progress_over_off"] == pytest.approx(3.0)
+    assert observed["compile_requests"] == {"trace": 2, "lowering": 3, "compile": 4}
+
+
+def test_xdist_workers_preserve_success_receipts_and_full_failure_details(
+    tmp_path: Path,
+) -> None:
+    """Two workers retain every receipt and carry complete failure JSON into xunit2."""
+    receipts = tmp_path / "receipts"
+    child = tmp_path / "test_worker_receipts.py"
+    child.write_text(
+        f"""
+from pathlib import Path
+
+import pytest
+
+from tests.ci.simulation_timings import TimingMeasurement
+
+
+@pytest.mark.parametrize("progress", [1.25, 2.0], ids=["passes", "fails"])
+def test_receipt(*, request: pytest.FixtureRequest, progress: float) -> None:
+    measurement = TimingMeasurement(
+        samples=(("off", 1.0), ("progress", progress)) * 3,
+        trace_requests=0, lowering_requests=0, compile_requests=0,
+    )
+    receipt = measurement.write_receipt(
+        directory=Path({str(receipts)!r}), nodeid=request.node.nodeid,
+        witness="dissolution", stub_preflight=False,
+    )
+    assert progress <= 1.5, "TIMING_RECEIPT=" + receipt
+""",
+        encoding="utf-8",
+    )
+    config = tmp_path / "pytest.ini"
+    config.write_text("[pytest]\njunit_family = xunit2\n", encoding="utf-8")
+    junit = tmp_path / "junit.xml"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        (str(Path(__file__).parents[2]), env.get("PYTHONPATH", ""))
+    )
+    env["JAX_PLATFORMS"] = "cpu"
+    env["JAX_ENABLE_X64"] = "1"
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(child),
+            "-v",
+            "-c",
+            str(config),
+            "--confcutdir",
+            str(tmp_path),
+            "-n",
+            "2",
+            "--dist",
+            "each",
+            f"--junitxml={junit}",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    (tmp_path / "worker-output.log").write_text(
+        result.stdout + result.stderr, encoding="utf-8"
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    cases = ET.parse(junit).findall(".//testcase")  # noqa: S314
+    failures = [failure for case in cases for failure in case.findall("failure")]
+    assert len(cases) == 4
+    assert len(failures) == 2
+    assert all(
+        case.find("error") is None and case.find("skipped") is None for case in cases
+    )
+    files = tuple(receipts.glob("*.json"))
+    assert len(files) == 4
+    raw = [path.read_text(encoding="utf-8").strip() for path in files]
+    records = [json.loads(value) for value in raw]
+    assert {record["worker_id"] for record in records} == {"gw0", "gw1"}
+    assert len({record["pid"] for record in records}) == 2
+    assert all(
+        record["precision"] == 64 and record["backend"] == "cpu" for record in records
+    )
+    for value, record in zip(raw, records, strict=True):
+        assert len(record["samples"]) == 6
+        assert record["compile_requests"] == {"trace": 0, "lowering": 0, "compile": 0}
+        if record["progress_over_off"] > 1.5:
+            assert any(
+                "TIMING_RECEIPT=" + value in (failure.text or "")
+                for failure in failures
+            )
+
+
+def _uniform(*, level: str, value: float, count: int) -> tuple[tuple[str, float], ...]:
+    """Return `count` samples of one log level, all at the same wall time."""
+    return tuple((level, value) for _ in range(count))
+
+
+def _spread(*, level: str, spread: float) -> tuple[tuple[str, float], ...]:
+    """Return three samples centred on one second, spanning `spread` of a second.
+
+    Over three points the inclusive interquartile range is half the full range,
+    so the batch's relative spread statistic comes out at half of `spread`.
+    """
+    return tuple((level, value) for value in (1.0 - spread / 2, 1.0, 1.0 + spread / 2))
+
+
+def _measurement(samples: tuple[tuple[str, float], ...]) -> TimingMeasurement:
+    """Wrap samples in a measurement that requested no compilation."""
+    return TimingMeasurement(
+        samples=samples,
+        trace_requests=0,
+        lowering_requests=0,
+        compile_requests=0,
+    )
+
+
+def test_relative_iqr_reports_each_leg_spread_against_its_own_median() -> None:
+    """The steadiness statistic is the inclusive interquartile range over the median."""
+    measurement = _measurement(
+        tuple(("off", value) for value in (1.0, 2.0, 3.0, 4.0, 5.0))
+        + _uniform(level="progress", value=2.0, count=5)
+    )
+
+    assert measurement.off_relative_iqr == pytest.approx(2.0 / 3.0)
+    assert measurement.progress_relative_iqr == pytest.approx(0.0)
+
+
+def test_steadiness_is_decided_on_the_validation_free_control_leg_alone() -> None:
+    """A dispersed `progress` leg is the signal under test, not a broken instrument."""
+    steady = _measurement(
+        _uniform(level="off", value=1.0, count=5)
+        + tuple(("progress", value) for value in (1.0, 2.0, 3.0, 4.0, 5.0))
+    )
+    unsteady = _measurement(
+        tuple(("off", value) for value in (1.0, 2.0, 3.0, 4.0, 5.0))
+        + _uniform(level="progress", value=1.0, count=5)
+    )
+
+    assert steady.host_is_steady
+    assert not unsteady.host_is_steady
+
+
+def test_the_receipt_carries_the_steadiness_statistics(tmp_path: Path) -> None:
+    """A reader of a receipt can tell a steady batch from a contaminated one."""
+    measurement = _measurement(
+        _uniform(level="off", value=1.0, count=5)
+        + _uniform(level="progress", value=2.0, count=5)
+    )
+
+    observed = json.loads(
+        measurement.write_receipt(
+            directory=tmp_path,
+            nodeid="tests/test_timing.py::test_wall_time[dissolution]",
+            witness="dissolution",
+            stub_preflight=False,
+        )
+    )
+
+    assert observed["relative_iqr"] == {"off": 0.0, "progress": 0.0}
+    assert observed["host_is_steady"] is True
+
+
+def test_a_steady_batch_is_kept_and_no_further_batch_is_taken(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry loop stops at the first batch the control leg says is usable."""
+    spreads = (0.0, *(1.0,) * (timing_tests.HOST_TIME_ATTEMPTS - 1))
+    taken, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+
+    assert taken == 1
+    assert chosen.measurement.host_is_steady
+    assert chosen.attempted_relative_iqrs == (0.0,)
+
+
+def test_the_steadiest_attempt_is_reported_when_no_attempt_is_steady(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every attempt is spent and the least contaminated batch is the one reported."""
+    spreads = (0.4, *(1.0,) * (timing_tests.HOST_TIME_ATTEMPTS - 1))
+    taken, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+
+    assert taken == timing_tests.HOST_TIME_ATTEMPTS
+    assert chosen.measurement.off_relative_iqr == pytest.approx(0.2)
+    assert not chosen.measurement.host_is_steady
+    assert len(chosen.attempted_relative_iqrs) == timing_tests.HOST_TIME_ATTEMPTS
+    assert chosen.attempted_relative_iqrs[0] == pytest.approx(0.2)
+
+
+def test_an_exhausted_retry_fails_the_row_and_reports_every_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No attempt found a steady host, so the row is unmeasured, not skipped.
+
+    A skip would be published as a marked declined row and the aggregate gate
+    refuses those, so the row says it outright: the obligation was not
+    discharged, and the control-leg spread of every attempt is in the message
+    so a reader can tell a stalled runner from a real instrument problem.
+    """
+    spreads = (0.4,) * timing_tests.HOST_TIME_ATTEMPTS
+    _, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+
+    with pytest.raises(Failed) as excinfo:
+        timing_tests._require_a_steady_host(batch=chosen, receipt="RECEIPT")
+
+    message = str(excinfo.value)
+    assert timing_tests.UNSTABLE_HOST_MARKER in message
+    assert f"in {timing_tests.HOST_TIME_ATTEMPTS} attempts" in message
+    assert "[" + ", ".join(["0.200"] * timing_tests.HOST_TIME_ATTEMPTS) + "]" in message
+    assert "RECEIPT" in message
+
+
+def test_a_steady_batch_passes_the_precondition_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The precondition itself is unchanged: a readable batch is simply read."""
+    spreads = (0.0, *(1.0,) * (timing_tests.HOST_TIME_ATTEMPTS - 1))
+    _, chosen = _run_retry_loop(monkeypatch=monkeypatch, spreads=spreads)
+
+    timing_tests._require_a_steady_host(batch=chosen, receipt="RECEIPT")
+
+
+def _run_retry_loop(
+    *, monkeypatch: pytest.MonkeyPatch, spreads: tuple[float, ...]
+) -> tuple[int, timing_tests.SteadyBatch]:
+    """Return how many batches the retry loop took and the batch it settled on."""
+    remaining = list(spreads)
+
+    def batch(**_kwargs: object) -> TimingMeasurement:
+        """Stand in for one timed batch with a prescribed control-leg spread."""
+        return _measurement(
+            _spread(level="off", spread=remaining.pop(0))
+            + _uniform(level="progress", value=1.0, count=3)
+        )
+
+    monkeypatch.setattr(timing_tests, "_median_host_times", batch)
+    chosen = timing_tests._steady_median_host_times(
+        witness="receipt", log_level="progress", repeats=3, stub_preflight=False
+    )
+    return len(spreads) - len(remaining), chosen

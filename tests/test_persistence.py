@@ -51,7 +51,7 @@ def _retired_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
-def _build_tiny_model(*, enable_jit: bool, n_subjects: int):
+def _build_tiny_model(*, enable_jit: bool):
     def utility(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
         return jnp.log(consumption + wealth)
 
@@ -83,7 +83,6 @@ def _build_tiny_model(*, enable_jit: bool, n_subjects: int):
         ages=ages,
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
-        n_subjects=n_subjects,
     )
     params = {"discount_factor": 0.95}
     return model, params
@@ -99,7 +98,7 @@ def _initial_conditions():
 
 @pytest.fixture
 def model_and_params():
-    return _build_tiny_model(enable_jit=False, n_subjects=2)
+    return _build_tiny_model(enable_jit=False)
 
 
 @pytest.fixture
@@ -254,15 +253,9 @@ def test_simulate_with_solve_debug_persists_snapshot(*, tmp_path, model_and_para
     assert snapshot.result is not None
 
 
-def test_simulate_debug_persists_snapshot_with_aot_compiled_regimes(tmp_path):
-    """Debug snapshot saves successfully when `n_subjects` triggers AOT compile.
-
-    AOT compilation produces `jax.stages.Compiled` callables on each
-    `Regime.simulation`; their backing `LoadedExecutable`
-    cannot be pickled. The snapshot path must strip those before pickling
-    `result.pkl`.
-    """
-    model, params = _build_tiny_model(enable_jit=True, n_subjects=2)
+def test_simulate_debug_persists_snapshot_with_compiled_runtime(tmp_path):
+    """Debug snapshots serialize canonical regimes after compiled runtime dispatch."""
+    model, params = _build_tiny_model(enable_jit=True)
     model.simulate(
         params=params,
         initial_conditions=_initial_conditions(),

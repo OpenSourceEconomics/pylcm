@@ -1,3 +1,10 @@
+"""The IID processes a regime can declare as a state.
+
+`UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess` and
+`NormalMixtureIIDProcess` each discretize a distribution whose draw does not
+depend on the current node.
+"""
+
 from abc import abstractmethod
 from dataclasses import dataclass, fields
 from types import MappingProxyType

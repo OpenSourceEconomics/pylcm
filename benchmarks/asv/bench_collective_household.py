@@ -21,9 +21,21 @@ companions, on the same workloads.
 """
 
 import gc
+import statistics
 import time
 
 from . import _gpu_mem
+
+# Warm samples CollectiveHouseholdConstruct's and CollectiveHouseholdSolve's
+# setup_cache collect per commit, shared by track_execution_time and
+# track_peak_cpu_mem: build once, one cold call, then this many timed warm
+# calls -- not one independent build+warm cycle per metric (mirrors
+# bench_mahler_yum.py's MahlerYumBudgetedGpu). The parameterized
+# CollectiveHouseholdSimulate and ReferenceChainSolve below still use the
+# ASV-native time_execution/peakmem_execution pair: sharing their setup
+# across params would need the subprocess CLI in `_gpu_mem` to accept
+# parameters, which is out of scope here.
+_WARM_SAMPLES = 3
 
 _N_PERIODS = 6
 
@@ -40,14 +52,13 @@ _GPU_N_SUBJECTS = 100_000
 _GPU_DEPTH = 8
 
 
-def _make_model(*, n_subjects=None):
+def _make_model():
     from lcm_examples import collective_household
 
     model = collective_household.get_model(
         n_periods=_N_PERIODS,
         wealth_n_points=_WEALTH_N_POINTS,
         consumption_n_points=_CONSUMPTION_N_POINTS,
-        n_subjects=n_subjects,
     )
     return model, collective_household.get_params()
 
@@ -68,62 +79,113 @@ def _clear_gpu_memory():
 
 
 class CollectiveHouseholdConstruct:
-    """What `Model(...)` costs before anything is traced."""
+    """What `Model(...)` costs before anything is traced.
 
-    version = "1"
+    `time_execution`/`peakmem_execution` were previously separate ASV-native
+    benchmarks, each independently paying for a construction call.
+    `setup_cache` now collects one cold call and `_WARM_SAMPLES` warm calls
+    in one isolated subprocess; the cheap `track_*` methods below read the
+    shared result.
+    """
+
+    # Version bumped: setup_cache-based combined producer replaces the
+    # separate ASV-native time_execution/peakmem_execution benchmarks.
+    version = "2"
     timeout = 600
 
-    def setup(self):
-        # Warm the imports so the measured call is construction, not the first
-        # import of jax and pylcm.
+    def setup_for_gpu_measurement(self):
+        # Warm the imports so the measured call is construction, not the
+        # first import of jax and pylcm.
+        pass
+
+    def execute_for_measurement(self):
         _make_model()
 
-    def time_execution(self):
-        _make_model()
+    def setup_cache(self) -> dict[str, float | list[float]]:
+        return _gpu_mem.measure_combined_with_warm_samples(
+            bench_module="benchmarks.asv.bench_collective_household",
+            bench_class="CollectiveHouseholdConstruct",
+            warm_samples=_WARM_SAMPLES,
+        )
 
-    def peakmem_execution(self):
-        _make_model()
+    def setup(self, cache: dict[str, float | list[float]]) -> None:
+        self._measurements = cache
 
-    def teardown(self):
-        _clear_gpu_memory()
+    def track_execution_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return statistics.median(measurements["warm_samples"])
+
+    track_execution_time.unit = "seconds"
+
+    def track_peak_cpu_mem(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["peak_cpu_mem"]
+
+    track_peak_cpu_mem.unit = "bytes"
 
 
 class CollectiveHouseholdSolve:
-    """Backward induction over six periods of the marriage market."""
+    """Backward induction over six periods of the marriage market.
 
-    version = "1"
+    `time_execution`/`peakmem_execution` were previously separate ASV-native
+    benchmarks; each independently calls `setup()`, so measuring both paid
+    for two independent build+solve cycles for the same underlying
+    operation. `setup_cache` now collects one cold call and `_WARM_SAMPLES`
+    warm calls in one isolated subprocess; the cheap `track_*` methods below
+    read the shared result.
+    """
+
+    # Version bumped: setup_cache-based combined producer replaces the
+    # separate ASV-native time_execution/peakmem_execution benchmarks.
+    version = "2"
     timeout = 900
 
     def _build(self):
         self.model, self.model_params = _make_model()
 
-    def setup(self):
-        self._build()
-        start = time.perf_counter()
-        self.model.solve(params=self.model_params, log_level="off")
-        self._compile_time = time.perf_counter() - start
-
     def setup_for_gpu_measurement(self):
         self._build()
 
-    def time_execution(self):
+    def execute_for_measurement(self):
         self.model.solve(params=self.model_params, log_level="off")
 
-    def peakmem_execution(self):
-        self.model.solve(params=self.model_params, log_level="off")
+    def setup_cache(self) -> dict[str, float | list[float]]:
+        return _gpu_mem.measure_combined_with_warm_samples(
+            bench_module="benchmarks.asv.bench_collective_household",
+            bench_class="CollectiveHouseholdSolve",
+            warm_samples=_WARM_SAMPLES,
+        )
 
-    def teardown(self):
-        _clear_gpu_memory()
+    def setup(self, cache: dict[str, float | list[float]]) -> None:
+        self._measurements = cache
 
-    def track_compilation_time(self):
-        return self._compile_time
+    def track_execution_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return statistics.median(measurements["warm_samples"])
+
+    track_execution_time.unit = "seconds"
+
+    def track_peak_cpu_mem(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["peak_cpu_mem"]
+
+    track_peak_cpu_mem.unit = "bytes"
+
+    def track_compilation_time(
+        self, cache: dict[str, float | list[float]] | None = None
+    ) -> float:
+        measurements = self._measurements if cache is None else cache
+        return measurements["compilation_time"]
 
     track_compilation_time.unit = "seconds"
-
-
-class CollectiveHouseholdSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.asv.bench_collective_household"
-    bench_class = "CollectiveHouseholdSolve"
 
 
 class CollectiveHouseholdSimulate:
@@ -137,7 +199,11 @@ class CollectiveHouseholdSimulate:
 
     version = "1"
     timeout = 900
-    params = [1_000, 10_000, 100_000]
+    # 10,000 (the intermediate point) added little coverage over the two
+    # endpoints in the PR#440 benchmark review's measured run (warm
+    # simulation ~337/355/354 ms at 1,000/10,000/100,000) and cost 3m24s;
+    # dropped rather than kept as a third routine point.
+    params = [1_000, 100_000]
     param_names = ["n_subjects"]
 
     def _build(self, n_subjects):
@@ -207,7 +273,13 @@ class ReferenceChainSolve:
 
     version = "1"
     timeout = 900
-    params = [1, 2, 4, 8]
+    # Depths 2 and 4 (the intermediate points) had warm-solve ratios of
+    # 1.20/1.21 against the depth-1 baseline in the PR#440 benchmark
+    # review's measured run -- almost indistinguishable from depth-8's
+    # 1.21 -- and cost 2m29s; dropped rather than kept as routine points.
+    # Depth 1 (short chain) and depth 8 (genuinely transitive long chain)
+    # remain.
+    params = [1, 8]
     param_names = ["depth"]
 
     def _build(self, depth):
@@ -235,11 +307,6 @@ class ReferenceChainSolve:
         return self._compile_time
 
     track_compilation_time.unit = "seconds"
-
-
-class ReferenceChainSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.asv.bench_collective_household"
-    bench_class = "ReferenceChainSolve"
 
 
 def _make_reference_chain(*, depth):

@@ -271,35 +271,10 @@ class _CoverageStatus:
     covered: ScalarInt
 
 
-@pytest.mark.parametrize(
-    "grid",
-    [
-        LinSpacedGrid(start=0.0, stop=20.0, n_points=4, batch_size=1),
-        DiscreteGrid(category_class=_CoverageStatus, distributed=True),
-    ],
-)
-def test_carried_state_grid_with_solve_only_knobs_is_rejected(grid: Any) -> None:
-    """A carried state's grid is simulate metadata; `batch_size`/`distributed`
-    apply only to solve grid axes and must not be set on it."""
-    with pytest.raises(RegimeInitializationError, match="carried"):
-        _build_regime(
-            states={
-                "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
-                "pension_wealth": Phased(solve=_impute_pension_wealth, simulate=grid),
-            },
-            state_transitions={
-                "wealth": _next_wealth,
-                "pension_wealth": _evolve_pension_wealth,
-            },
-        )
-
-
 def test_process_grid_inside_phased_is_rejected() -> None:
     """Stochastic-process grids have intrinsic transitions and cannot be
     phase-variant."""
-    process = NormalIIDProcess(
-        n_points=5, batch_size=0, distributed=False, gauss_hermite=True
-    )
+    process = NormalIIDProcess(n_points=5, gauss_hermite=True)
     with pytest.raises(RegimeInitializationError, match="process"):
         _build_regime(
             states={

@@ -6,6 +6,7 @@ imported before `lcm` (as the benchmark suite does via `lcm_examples`),
 that boot must not cycle back into a half-initialized `_lcm.typing`.
 """
 
+import os
 import subprocess
 import sys
 
@@ -78,3 +79,32 @@ def test_consumption_savings_declarations_share_their_own_module():
 def test_joint_transition_is_exported_from_lcm() -> None:
     """`JointTransition` is available from the package's public namespace."""
     assert lcm.JointTransition.__name__ == "JointTransition"
+
+
+def test_model_import_keeps_runtime_type_checking_decoratable() -> None:
+    """NumPy host-array hints must resolve before JAX callables are decorated."""
+    # Execute only the fixed import probe in the already active Pixi environment.
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "pixi",
+            "run",
+            "--frozen",
+            "--no-install",
+            "--manifest-path",
+            os.environ["PIXI_PROJECT_MANIFEST"],
+            "--environment",
+            os.environ["PIXI_ENVIRONMENT_NAME"],
+            "python",
+            "-c",
+            (
+                "import warnings; "
+                "from beartype.roar import BeartypeClawDecorWarning; "
+                "warnings.simplefilter('error', BeartypeClawDecorWarning); "
+                "import lcm.model"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

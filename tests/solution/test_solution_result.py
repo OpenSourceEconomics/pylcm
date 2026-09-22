@@ -10,6 +10,7 @@ from types import MappingProxyType, ModuleType
 from typing import cast
 
 import cloudpickle
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -27,8 +28,9 @@ from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     FlatParams,
 )
-from lcm import LinSpacedGrid, Model
+from lcm import ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import (
+    ExecutionPlanningError,
     IncompatibleSolutionError,
     InvalidSimulationInputError,
     SolutionIntegrityError,
@@ -321,7 +323,7 @@ def test_model_solve_omits_policy_without_replay_route() -> None:
     )
     assert result.omissions[policy_ref] is OmissionReason.NOT_APPLICABLE
     assert result.omissions[continuation_ref] is OmissionReason.NOT_REQUESTED
-    assert result.metadata.solver_api_version == 1
+    assert result.metadata.solver_api_version == solver_api_module.SOLVER_API_VERSION
     assert not result.diagnostics
 
 
@@ -715,6 +717,49 @@ def test_obsolete_solve_and_simulate_interfaces_are_absent() -> None:
     assert "period_to_regime_to_V_arr" not in simulate_parameters
     assert "policies" not in simulate_parameters
     assert "period_to_regime_to_dissolution_flags" not in simulate_parameters
+
+
+def _refuse_unadmitted_compiled_dispatch(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError("A one-byte budget reached compiled core dispatch")
+
+
+def test_unmeetable_execution_budget_fails_closed_before_solving(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Known resident inputs already exceed one byte, before any core executes."""
+    model, params, _initial_conditions = _small_grid_search_inputs(
+        execution_config=ExecutionConfig(device_memory_bytes=1)
+    )
+
+    monkeypatch.setattr(
+        jax.stages.Compiled, "__call__", _refuse_unadmitted_compiled_dispatch
+    )
+    with pytest.raises(
+        ExecutionPlanningError, match=r"keeps \d+ bytes resident.*1-byte budget"
+    ):
+        model.solve(params=params, log_level="off")
+
+
+def test_a_budgeted_model_replays_a_supplied_solution() -> None:
+    """A workspace budget is the model's, so a supplied solution still simulates."""
+    model, params, initial_conditions = _small_grid_search_inputs(
+        execution_config=ExecutionConfig(device_memory_bytes=2**32)
+    )
+    solution = model.solve(params=params, log_level="off")
+
+    replayed = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        solution=solution,
+        log_level="off",
+    )
+    automatic = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        log_level="off",
+    )
+
+    assert_frame_equal(replayed.to_dataframe(), automatic.to_dataframe())
 
 
 def test_solution_result_has_no_mapping_compatibility_bridge() -> None:
@@ -1425,11 +1470,15 @@ def test_dissolution_flag_is_refused_from_the_wrong_artifact_channel(
         )
 
 
-def _small_grid_search_inputs() -> tuple[Model, UserParams, UserInitialConditions]:
+def _small_grid_search_inputs(
+    *,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> tuple[Model, UserParams, UserInitialConditions]:
     model = get_model(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
+        execution_config=execution_config,
     )
     params = get_params(n_periods=2)
     initial_conditions = {

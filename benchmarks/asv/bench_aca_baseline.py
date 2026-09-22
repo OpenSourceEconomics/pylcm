@@ -25,14 +25,21 @@ shipped in aca-model — no aca-data pipeline run required.
 
 ASV wiring notes:
 
-- Each class's `setup_cache` launches one isolated subprocess through
-  `_gpu_mem.measure_combined`. That process builds once, runs one cold
-  simulation while recording compilation time and CPU/GPU peak memory,
-  then immediately times one warm simulation. Four cheap `track_*`
-  methods read the shared result. This avoids recompiling the model once
-  per metric while retaining four independent ASV series.
-- `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives
-  the debug configuration a separate combined subprocess.
+- `AcaBaseline` and `AcaBaselineDebugLog` keep the combined cold/warm timing and
+  CPU-memory measurement (`_gpu_mem.measure_combined`): one isolated subprocess
+  builds once, runs one cold simulate (compilation time + CPU peak) and one warm
+  simulate, and three cheap `track_*` methods read the shared result.
+- `AcaBaselineGpuPeakMem` and `AcaBaselineDebugLogGpuPeakMem` are separate ASV
+  classes wired to `_gpu_mem.GpuPeakMemProfile`. They run the exact three-phase
+  GPU-memory profile (automatic solve+simulate, ALL_PERSISTABLE solve+save,
+  load+supplied-solution simulate) sequentially in three fresh isolated
+  processes, in a producer independent of the timing subprocess: selecting only
+  timing no longer pays for the memory profile, and selecting only the memory
+  profile no longer pays for the timing subprocess. No reported phase peak is
+  summed or subtracted.
+- `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives the
+  debug configuration a separate combined subprocess; `AcaBaselineDebugLogGpuPeakMem`
+  likewise gets its own three-phase profile.
 - XLA autotuning is disabled and preallocation is off in the measurement
   subprocess, preserving the previous GPU-memory benchmark semantics.
 """
@@ -46,11 +53,12 @@ import time
 from . import _gpu_mem
 
 _N_SUBJECTS = 1000
+_SIMULATION_SEED = 0
 
 _LOG_DIR_PREFIX = "aca-bench-debug-log-"
 
-# Longer than the combined subprocess timeout, so the sweep below can never
-# remove a directory belonging to a live run.
+# Longer than any individual measurement subprocess timeout, so the sweep below
+# can never remove a directory belonging to a live run.
 _STALE_LOG_DIR_AGE_SECONDS = 24 * 3600
 
 
@@ -103,7 +111,6 @@ def _build() -> tuple[object, object, object]:
     from lcm import DiscreteGrid
 
     model = create_benchmark_model(
-        n_subjects=_N_SUBJECTS,
         pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
     )
     edge_periods = model.reachability.solution.periods_for_edge(
@@ -126,10 +133,9 @@ def _build() -> tuple[object, object, object]:
 class AcaBaseline:
     """aca-baseline simulate with runtime validation and logging off."""
 
-    # Stable version stamp so asv keeps continuity across benchmark-body
-    # refactors that don't change what's measured.
-    version = "1"
-    timeout = 3600
+    # Benchmark semantics version for deterministic forward simulation.
+    version = "2"
+    timeout = 14400
     # Simulate logging configuration; `AcaBaselineDebugLog` overrides both.
     log_level = "off"
     log_path: str | None = None
@@ -152,9 +158,47 @@ class AcaBaseline:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            seed=_SIMULATION_SEED,
             log_level=self.log_level,
             log_path=self.log_path,
         )
+
+    def execute_gpu_memory_phase(
+        self,
+        *,
+        phase: str,
+        archive_path: pathlib.Path,
+    ) -> None:
+        """Run one exact solution-lifecycle phase in its dedicated child process."""
+        if phase == _gpu_mem.AUTOMATIC_SOLVE_SIMULATE:
+            self.execute_for_measurement()
+            return
+        if phase == _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE:
+            from lcm.solver_api import ResultRetention
+
+            solution = self.model.solve(
+                params=self.model_params,
+                log_level=self.log_level,
+                retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+                log_path=self.log_path,
+            )
+            solution.save(path=archive_path)
+            return
+        if phase == _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE:
+            from lcm.persistence import load_solution
+
+            solution = load_solution(path=archive_path)
+            self.model.simulate(
+                params=self.model_params,
+                initial_conditions=self.initial_conditions,
+                seed=_SIMULATION_SEED,
+                solution=solution,
+                log_level=self.log_level,
+                log_path=self.log_path,
+            )
+            return
+        msg = f"Unknown GPU memory profile phase: {phase!r}."
+        raise ValueError(msg)
 
     def track_execution_time(self, cache: dict[str, float] | None = None) -> float:
         return self._measurements["execution_time"]
@@ -166,15 +210,19 @@ class AcaBaseline:
 
     track_peak_cpu_mem.unit = "bytes"
 
-    def track_peak_gpu_mem(self, cache: dict[str, float] | None = None) -> float:
-        return self._measurements["peak_gpu_mem"]
-
-    track_peak_gpu_mem.unit = "bytes"
-
     def track_compilation_time(self, cache: dict[str, float] | None = None) -> float:
         return self._measurements["compilation_time"]
 
     track_compilation_time.unit = "seconds"
+
+
+class AcaBaselineGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
+    """Three-phase solve/persistence/simulate GPU-memory profile for `AcaBaseline`."""
+
+    version = "2"
+    timeout = 14400
+    bench_module = "benchmarks.asv.bench_aca_baseline"
+    bench_class = "AcaBaseline"
 
 
 class AcaBaselineDebugLog(AcaBaseline):
@@ -200,3 +248,12 @@ class AcaBaselineDebugLog(AcaBaseline):
         # cleanup rides on `atexit` inside `_make_log_dir` instead.
         self.log_path = _make_log_dir()
         super().setup_for_gpu_measurement()
+
+
+class AcaBaselineDebugLogGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
+    """Three-phase GPU-memory profile for `AcaBaselineDebugLog`."""
+
+    version = "2"
+    timeout = 14400
+    bench_module = "benchmarks.asv.bench_aca_baseline"
+    bench_class = "AcaBaselineDebugLog"

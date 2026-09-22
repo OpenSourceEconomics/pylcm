@@ -27,6 +27,7 @@ from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -105,7 +106,7 @@ def resolve_solver(
 
     - `"brute"` — `GridSearch`, the dense-grid oracle.
     - `"nbegm"` — numerical `NBEGM` configuration over `savings_grid`,
-      forwarding extra numerical constructor arguments (block sizes, envelope
+      forwarding extra numerical constructor arguments (envelope
       settings, and so on). DAG role names belong to the regime's
       `LiquidMargin` and are not accepted here.
 
@@ -146,6 +147,7 @@ def make_alive_dead_model(
     alive_functions: Mapping[str, Callable[..., object]],
     liquid_law: Callable[..., object],
     alive_solver: OneMarginSolver | GridSearch,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     constraints: Mapping[str, Callable[..., object]],
     extra_actions: Mapping[str, Grid] | None = None,
     extra_states: Mapping[str, Grid] | None = None,
@@ -279,4 +281,5 @@ def make_alive_dead_model(
         regime_id_class=RegimeId,
         states=dict(model_states) if model_states else {},
         fixed_params=dict(fixed_params) if fixed_params else {},
+        execution_config=execution_config,
     )

@@ -17,38 +17,85 @@ on:
       - '**.md'
       - '**.ipynb'
 jobs:
+  # General (`notslow`) work, duration-weighted into three shards per fp64 OS.
+  # The split is deterministic: `tests/ci/shard_test_files.py` sorts the
+  # manifest's general universe by decreasing observed per-LEG weight and fills
+  # the lightest bin, and `tests/conftest.py` applies the result at collection
+  # time from `PYLCM_CI_GENERAL_*`. Passing the split through the environment
+  # rather than as several hundred paths keeps the Windows command line bounded
+  # and leaves `ignore_implicit_eight_device_collection` -- whose exclusion is
+  # keyed on a file NOT being named -- working unchanged.
   tests:
-    name: Run tests for ${{ matrix.os }} on ${{ matrix.python-version }}
+    name: >-
+      Run general tests for ${{ matrix.os }} on ${{ matrix.python-version }}
+      (shard ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ${{ matrix.os }}
     permissions:
-      # `contents` for the checkout, `actions` to delete this ref's superseded
-      # JAX caches in the prune step below.
       actions: write
       contents: read
     strategy:
       fail-fast: false
+      # Shard counts differ per leg because the legs cost different amounts and
+      # carry different setup. Measured on run 35078533997: 141 worker-minutes
+      # of payload on fp64 Linux, 117 on macOS, 232 on Windows, against roughly
+      # 2, 3 and 8 minutes of per-job checkout and pixi install respectively.
+      # At four workers that is 11.7, 14.6 and 14.5 payload minutes per job.
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-        python-version:
-          - '3.14'
-        # Neither the macOS nor the Windows runner can host four parallel JAX AOT
-        # compiles of the DC-EGM solve/oracle battery: macOS swap-thrashes for
-        # hours, Windows grows past the 16 GB runner and is killed mid-suite.
-        # Drop the `slow` set on both. What it covers is numerics, which are
-        # platform-independent and stay covered on Linux and the two GPU jobs;
-        # what these runners are here for is the platform surface — imports,
-        # paths, dtypes, the pandas/arrow round trip — all of which is in the
-        # remaining set.
         include:
+          - os: ubuntu-latest
+            python-version: '3.14'
+            leg: fp64-linux
+            shard: 1
+            shards: 3
+          - os: ubuntu-latest
+            python-version: '3.14'
+            leg: fp64-linux
+            shard: 2
+            shards: 3
+          - os: ubuntu-latest
+            python-version: '3.14'
+            leg: fp64-linux
+            shard: 3
+            shards: 3
           - os: macos-latest
-            pytest_extra: -m "not slow and not manual"
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 1
+            shards: 2
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 2
+            shards: 2
           - os: windows-latest
-            pytest_extra: -m "not slow and not manual"
+            python-version: '3.14'
+            leg: fp64-windows
+            shard: 1
+            shards: 4
+          - os: windows-latest
+            python-version: '3.14'
+            leg: fp64-windows
+            shard: 2
+            shards: 4
+          - os: windows-latest
+            python-version: '3.14'
+            leg: fp64-windows
+            shard: 3
+            shards: 4
+          - os: windows-latest
+            python-version: '3.14'
+            leg: fp64-windows
+            shard: 4
+            shards: 4
+    env:
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+      PYLCM_CI_GENERAL_LEG: ${{ matrix.leg }}
+      PYLCM_CI_GENERAL_SHARDS: ${{ matrix.shards }}
+      PYLCM_CI_GENERAL_SHARD: ${{ matrix.shard }}
+      PYLCM_SHARD: ${{ matrix.shard }}
+      PYLCM_CACHE_KEY: jax-gen-${{ matrix.os }}-s${{ matrix.shard }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Activate the MSVC developer environment
         # Must precede `setup-pixi`. Installing the project editable runs the
         # hatch build hook, which compiles the kernel and fails when no C++
@@ -56,10 +103,10 @@ jobs:
         # the activation after the install leaves `cl.exe` absent for the one
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@v1.13.0
       - uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.78.0
+          pixi-version: v0.80.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -69,15 +116,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p reports
+          pylcm_native_report="reports/native.json"
           set +e
           pixi run -e tests-cpu python -m tests.ci.probe_native \
-            --report=reports/native-${{ runner.os }}-fp64.json
+            --report="$pylcm_native_report"
           status=$?
           set -e
           if test "$status" -eq 2; then
             pixi reinstall -e tests-cpu --locked pylcm
             pixi run -e tests-cpu python -m tests.ci.probe_native \
-              --report=reports/native-${{ runner.os }}-fp64.json
+              --report="$pylcm_native_report"
           elif test "$status" -ne 0; then
             exit "$status"
           fi
@@ -85,34 +133,1906 @@ jobs:
         # `setup-pixi` caches the environment but not JAX's persistent
         # compilation cache, so every job recompiles every program from cold.
         # Safe because JAX keys an entry on the computation, the backend and its
-        # own version, so a stale or torn entry misses rather than misleads —
-        # `pixi.lock` in the key only saves the pointless misses after a JAX
-        # upgrade. `github.sha` makes each run write a fresh entry while
-        # `restore-keys` starts it from the nearest earlier one, so the cache
-        # follows the branch instead of freezing at its first write.
-        #
-        # CPU only. The GPU jobs run on organization runners whose home
-        # directory may already persist between runs, which would make this an
-        # expensive no-op, and a shared cache directory is what a multi-worker
-        # GPU run races on. Measure there before adding it.
-        uses: actions/cache@v6
+        # own version, so a stale or torn entry misses rather than misleads.
+        # `github.sha` makes each run write a fresh entry while `restore-keys`
+        # starts it from the nearest earlier one, so the cache follows the
+        # branch instead of freezing at its first write. Each lane keys its own
+        # namespace (`PYLCM_CACHE_KEY`) so lanes never fight over one entry.
+        uses: actions/cache@v6.1.0
         with:
+          key: ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-${{github.sha}}
           path: ~/.cache/jax
-          key: >-
-            jax-${{ runner.os }}-${{ matrix.python-version }}-${{
-            hashFiles('pixi.lock') }}-${{ github.sha }}
           restore-keys: |
-            jax-${{ runner.os }}-${{ matrix.python-version }}-${{
-              hashFiles('pixi.lock') }}-
-            jax-${{ runner.os }}-${{ matrix.python-version }}-
+            ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
+            ${{env.PYLCM_CACHE_KEY}}-
+      - name: Run one general shard
+        shell: bash {0}
+        # The `slow` set is dropped on macOS and Windows: neither runner can
+        # host four parallel JAX AOT compiles of the DC-EGM solve/oracle battery
+        # (macOS swap-thrashes for hours, Windows grows past the 16 GB runner).
+        # What it covers is numerics, which stay covered on Linux and the two
+        # GPU jobs; what these runners are here for is the platform surface.
+        # The three timing witnesses are deselected here and run serially in
+        # `tests-timing`, uncontended by xdist.
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          coverage_args=()
+          if test "$RUNNER_OS" = "Linux"; then
+            coverage_args=(--cov=./ \
+              --cov-report="xml:reports/coverage-general-$PYLCM_SHARD.xml")
+          fi
+          pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
+            --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
+            --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
+            --deselect=tests/simulation/initial_conditions/test_admission_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp64-$RUNNER_OS-general-$PYLCM_SHARD.xml\
+            -n 4 ${coverage_args[@]+"${coverage_args[@]}"}
+      - name: Upload JUnit reports and receipts
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: junit-cpu-fp64-${{ runner.os }}-general-${{ matrix.shard }}
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-general-${{ matrix.shard }}
+          path: reports/coverage-general-${{ matrix.shard }}.xml
+          if-no-files-found: error
+      - name: Prune superseded JAX caches for this lane
+        # `github.sha` in the key means every run writes a fresh entry instead
+        # of replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Keep this ref's newest entry
+        # and drop the rest. Never fail the build over cache housekeeping: a
+        # pull request from a fork gets a read-only token and cannot delete.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{github.token}}
+        run: |
+          gh cache list --ref "$GITHUB_REF" --key "$PYLCM_CACHE_KEY-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
+  # fp32 is otherwise only exercised on `gpu32`, behind the contended GPU
+  # runners. A dtype regression is not GPU-specific, so catch it here first.
+  # Two duration-weighted shards: the fp32 general payload is less than half the
+  # fp64 one. Three shards: the leg measured 190 worker-minutes on run
+  # 35078533997, which two four-worker jobs cannot carry inside the guardrail.
+  tests-fp32:
+    name: Run general fp32 tests on ubuntu-latest (shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 1
+          - 2
+          - 3
+    env:
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+      PYLCM_CI_GENERAL_LEG: fp32-linux
+      PYLCM_CI_GENERAL_SHARDS: '3'
+      PYLCM_CI_GENERAL_SHARD: ${{ matrix.shard }}
+      PYLCM_SHARD: ${{ matrix.shard }}
+      PYLCM_CACHE_KEY: jax-gen32-s${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Cache JAX compiled programs
+        # `setup-pixi` caches the environment but not JAX's persistent
+        # compilation cache, so every job recompiles every program from cold.
+        # Safe because JAX keys an entry on the computation, the backend and its
+        # own version, so a stale or torn entry misses rather than misleads.
+        # `github.sha` makes each run write a fresh entry while `restore-keys`
+        # starts it from the nearest earlier one, so the cache follows the
+        # branch instead of freezing at its first write. Each lane keys its own
+        # namespace (`PYLCM_CACHE_KEY`) so lanes never fight over one entry.
+        uses: actions/cache@v6.1.0
+        with:
+          key: ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-${{github.sha}}
+          path: ~/.cache/jax
+          restore-keys: |
+            ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
+            ${{env.PYLCM_CACHE_KEY}}-
+      - name: Run one general shard
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          pixi run -e tests-cpu pytest tests --precision=32 \
+            --deselect=tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
+            --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
+            --deselect=tests/simulation/initial_conditions/test_admission_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
+            -m "not slow and not manual" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp32-Linux-general-$PYLCM_SHARD.xml\
+            -n 4
+      - name: Upload JUnit reports and receipts
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: junit-cpu-fp32-general-${{ matrix.shard }}
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+          if-no-files-found: warn
+      - name: Prune superseded JAX caches for this lane
+        # `github.sha` in the key means every run writes a fresh entry instead
+        # of replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Keep this ref's newest entry
+        # and drop the rest. Never fail the build over cache housekeeping: a
+        # pull request from a fork gets a read-only token and cannot delete.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{github.token}}
+        run: |
+          gh cache list --ref "$GITHUB_REF" --key "$PYLCM_CACHE_KEY-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
+  # The two exhaustive source-certificate campaigns verify Python AST, string,
+  # path and hash properties of the certified corridor. Nothing in them executes
+  # JAX or depends on the working precision, so their full mutation population
+  # runs ONCE here, on Linux/Python 3.14, instead of four times across the
+  # numerical matrix. Source bytes and the Python version are this lane's
+  # authority, not the runner's OS. The platform-sensitive part -- line-ending
+  # canonical hashing, nested-checkout path lookup, a clean acceptance and one
+  # independently resealed rejection -- stays on every general lane as
+  # `tests/test_source_certificate_portability.py`, so Windows and macOS lose no
+  # signal. This lane is mandatory on every PR push and gates `cpu`.
+  #
+  # `--dist load` rather than `loadfile`: these are source-only cases with no
+  # device or cache coupling, and the program module alone is a 27-minute atom
+  # under `loadfile`, over the 24-minute payload guardrail. Per-test
+  # distribution costs one module-scoped clean verification per worker (two),
+  # not per test.
+  tests-source-contract:
+    name: Run the source-only certificate campaign (Linux, 3.14)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    env:
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Run the source-only certificate campaign
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          pixi run -e tests-cpu pytest \
+            tests/test_simulation_candidate_program_certificate.py \
+            tests/test_uniform_process_grid_certificate.py \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=1800 --timeout-method=thread -v --max-worker-restart=3 \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp64-source-contract.xml \
+            --cov=./ --cov-report="xml:reports/coverage-source-contract.xml" \
+            -n 2 --dist load \
+          && check_population reports/junit-cpu-fp64-source-contract.xml
+      - name: Upload JUnit reports and receipts
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: junit-cpu-fp64-source-contract
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        # Not sent to Codecov here. The `coverage` job below is the single
+        # deliberate combine stage: it checks the complete set of contributing
+        # lanes against the manifest before any upload, so an incomplete run
+        # cannot publish a partial coverage picture that looks like a drop.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-source-contract
+          path: reports/coverage-source-contract.xml
+          if-no-files-found: error
+  # Slow non-solution tests, Linux only at both precisions (macOS and Windows
+  # drop the `slow` set, see the `tests` job). Unchained from the general lanes
+  # so a general shard's failure no longer hides this phase's result.
+  tests-rest-slow:
+    name: Run slow non-solution tests (Linux, fp${{ matrix.precision }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        precision:
+          - 64
+          - 32
+    env:
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+      PYLCM_CI_PRECISION: ${{ matrix.precision }}
+      PYLCM_CACHE_KEY: jax-rest-fp${{ matrix.precision }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Cache JAX compiled programs
+        # `setup-pixi` caches the environment but not JAX's persistent
+        # compilation cache, so every job recompiles every program from cold.
+        # Safe because JAX keys an entry on the computation, the backend and its
+        # own version, so a stale or torn entry misses rather than misleads.
+        # `github.sha` makes each run write a fresh entry while `restore-keys`
+        # starts it from the nearest earlier one, so the cache follows the
+        # branch instead of freezing at its first write. Each lane keys its own
+        # namespace (`PYLCM_CACHE_KEY`) so lanes never fight over one entry.
+        uses: actions/cache@v6.1.0
+        with:
+          key: ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-${{github.sha}}
+          path: ~/.cache/jax
+          restore-keys: |
+            ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
+            ${{env.PYLCM_CACHE_KEY}}-
+      - name: Run the non-solution slow tests
+        shell: bash {0}
+        # `--dist loadfile` is repeated here rather than left to the project's
+        # addopts because this lane now depends on it for memory, not only for
+        # compile reuse: `tests/simulation/test_outer_endpoint_admission.py`
+        # peaks at 7.3 GB RSS in its adaptive case, and loadfile is what keeps
+        # the whole module on one of the two workers, so only one such case is
+        # ever resident and roughly 8 GB of the 16 GB runner stays free for the
+        # other worker. That module was OOM-killed twice as a silent xdist
+        # "node down" on the Windows general shard at four workers, which is why
+        # it is marked `slow` and lands here.
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-report="xml:reports/coverage-rest-slow.xml")
+          fi
+          pixi run -e tests-cpu pytest tests --ignore=tests/solution \
+            --precision="$PYLCM_CI_PRECISION" -m "slow and not manual" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp$PYLCM_CI_PRECISION-rest-slow.xml \
+            --dist loadfile -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
+      - name: Upload JUnit reports and receipts
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: junit-cpu-fp${{ matrix.precision }}-rest-slow
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        if: always() && matrix.precision == 64
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-rest-slow
+          path: reports/coverage-rest-slow.xml
+          if-no-files-found: error
+      - name: Prune superseded JAX caches for this lane
+        # `github.sha` in the key means every run writes a fresh entry instead
+        # of replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Keep this ref's newest entry
+        # and drop the rest. Never fail the build over cache housekeeping: a
+        # pull request from a fork gets a read-only token and cannot delete.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{github.token}}
+        run: |
+          gh cache list --ref "$GITHUB_REF" --key "$PYLCM_CACHE_KEY-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
+  # The certified-envelope cases alone require the disabled XLA backend
+  # optimizer; applying that flag to the rest would invalidate batch-width
+  # invariance checks. Its own job keeps that process boundary explicit.
+  tests-certified:
+    name: Run the certified opt-level-zero battery (Linux, fp64)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    env:
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+      PYLCM_CACHE_KEY: jax-certified
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Cache JAX compiled programs
+        # `setup-pixi` caches the environment but not JAX's persistent
+        # compilation cache, so every job recompiles every program from cold.
+        # Safe because JAX keys an entry on the computation, the backend and its
+        # own version, so a stale or torn entry misses rather than misleads.
+        # `github.sha` makes each run write a fresh entry while `restore-keys`
+        # starts it from the nearest earlier one, so the cache follows the
+        # branch instead of freezing at its first write. Each lane keys its own
+        # namespace (`PYLCM_CACHE_KEY`) so lanes never fight over one entry.
+        uses: actions/cache@v6.1.0
+        with:
+          key: ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-${{github.sha}}
+          path: ~/.cache/jax
+          restore-keys: |
+            ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
+            ${{env.PYLCM_CACHE_KEY}}-
+      - name: Run the certified opt-level-zero battery
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          XLA_FLAGS=--xla_backend_optimization_level=0 \
+            pixi run -e tests-cpu pytest \
+            tests/solution/test_nbegm_multi_discrete_agreement.py \
+            -m "slow and not manual" -k certified \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=2400 --timeout-method=thread -v \
+            --durations=25 --junitxml=reports/junit-cpu-fp64-certified.xml \
+            --cov=./ --cov-report="xml:reports/coverage-certified.xml" -n 0 \
+          && check_population reports/junit-cpu-fp64-certified.xml
+      - name: Upload JUnit reports and receipts
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: junit-cpu-fp64-certified
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        # Not sent to Codecov here. The `coverage` job below is the single
+        # deliberate combine stage: it checks the complete set of contributing
+        # lanes against the manifest before any upload, so an incomplete run
+        # cannot publish a partial coverage picture that looks like a drop.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-certified
+          path: reports/coverage-certified.xml
+          if-no-files-found: error
+      - name: Prune superseded JAX caches for this lane
+        # `github.sha` in the key means every run writes a fresh entry instead
+        # of replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Keep this ref's newest entry
+        # and drop the rest. Never fail the build over cache housekeeping: a
+        # pull request from a fork gets a read-only token and cannot delete.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{github.token}}
+        run: |
+          gh cache list --ref "$GITHUB_REF" --key "$PYLCM_CACHE_KEY-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
+  # The three timing witnesses run serially, in their own process, uncontended
+  # by xdist and by any other payload on the runner -- a bar measured next to
+  # four parallel workers is a bar measured against noise. Their own job is what
+  # makes "uncontended" true now that the general lanes are sharded.
+  tests-timing:
+    name: Run the serial timing witnesses (${{ matrix.os }}, fp${{ matrix.precision }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS is deliberately absent. The hosted macOS runners never satisfy
+        # the steadiness precondition of the measurement (the control leg's
+        # relative IQR sat between 0.17 and 0.54 over eight fresh batches
+        # against a 0.15 ceiling on 2026-09-16), and since a declined row is a
+        # failure rather than a skip, the lane could only ever be red. Each of
+        # the six timing obligations is measured on Linux fp64, Linux fp32 and
+        # Windows fp64 instead; that is a maintainer scope decision, not a
+        # loosened bar.
+        include:
+          - os: ubuntu-latest
+            precision: 64
+          - os: windows-latest
+            precision: 64
+          - os: ubuntu-latest
+            precision: 32
+    env:
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+      PYLCM_CI_PRECISION: ${{ matrix.precision }}
+      PYLCM_CACHE_KEY: jax-tm-${{ matrix.os }}-fp${{ matrix.precision }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Activate the MSVC developer environment
+        # Must precede `setup-pixi`. Installing the project editable runs the
+        # hatch build hook, which compiles the kernel and fails when no C++
+        # compiler is on PATH -- on every platform, not only this one. Putting
+        # the activation after the install leaves `cl.exe` absent for the one
+        # step that needs it, so the environment never finishes building.
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Cache JAX compiled programs
+        # `setup-pixi` caches the environment but not JAX's persistent
+        # compilation cache, so every job recompiles every program from cold.
+        # Safe because JAX keys an entry on the computation, the backend and its
+        # own version, so a stale or torn entry misses rather than misleads.
+        # `github.sha` makes each run write a fresh entry while `restore-keys`
+        # starts it from the nearest earlier one, so the cache follows the
+        # branch instead of freezing at its first write. Each lane keys its own
+        # namespace (`PYLCM_CACHE_KEY`) so lanes never fight over one entry.
+        uses: actions/cache@v6.1.0
+        with:
+          key: ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-${{github.sha}}
+          path: ~/.cache/jax
+          restore-keys: |
+            ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
+            ${{env.PYLCM_CACHE_KEY}}-
+      - name: Run the serial timing witnesses
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          coverage_args=()
+          if test "$RUNNER_OS" = "Linux" && test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-report="xml:reports/coverage-timing.xml")
+          fi
+          pylcm_junit_report="reports/junit-cpu-fp$PYLCM_CI_PRECISION-$RUNNER_OS-timing.xml"
+          pixi run -e tests-cpu pytest \
+            tests/simulation/test_compile_requests.py::test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off\
+            tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
+            tests/simulation/initial_conditions/test_admission_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
+            --precision="$PYLCM_CI_PRECISION" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --junitxml="$pylcm_junit_report" ${coverage_args[@]+"${coverage_args[@]}"}
+          pixi run -e tests-cpu python -m tests.ci.check_simulation_timing_report \
+            "$pylcm_junit_report"
+      - name: Upload JUnit reports and receipts
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: junit-cpu-fp${{ matrix.precision }}-${{ runner.os }}-timing
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+            reports/simulation-timings/*.json
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        if: always() && runner.os == 'Linux' && matrix.precision == 64
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-timing
+          path: reports/coverage-timing.xml
+          if-no-files-found: error
+      - name: Prune superseded JAX caches for this lane
+        # `github.sha` in the key means every run writes a fresh entry instead
+        # of replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Keep this ref's newest entry
+        # and drop the rest. Never fail the build over cache housekeeping: a
+        # pull request from a fork gets a read-only token and cannot delete.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{github.token}}
+        run: |
+          gh cache list --ref "$GITHUB_REF" --key "$PYLCM_CACHE_KEY-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
+  # Each of these files pins a four-CPU-device topology at import, a pin that
+  # only takes effect in a process where no JAX backend has been touched yet.
+  # `--ci-policy`/`--full-suite` query the default backend while resolving the
+  # hardware profile during `pytest_configure`, BEFORE the module import that
+  # applies the pin -- so these invocations omit both flags and keep only
+  # `--policy-child --hardware-profile=cpu`, which stay inert without a policy
+  # to drive. None of these files declares a `requires`/`coverage`/`isolation`/
+  # `ci` marker, so no policy-gated test is skipped by omitting them.
+  tests-topology-four-device:
+    name: Run the four-CPU-device witnesses (Linux, fp${{ matrix.precision }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        precision:
+          - 64
+          - 32
+    env:
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+      PYLCM_CI_PRECISION: ${{ matrix.precision }}
+      PYLCM_CACHE_KEY: jax-four-device-fp${{ matrix.precision }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Cache JAX compiled programs
+        # `setup-pixi` caches the environment but not JAX's persistent
+        # compilation cache, so every job recompiles every program from cold.
+        # Safe because JAX keys an entry on the computation, the backend and its
+        # own version, so a stale or torn entry misses rather than misleads.
+        # `github.sha` makes each run write a fresh entry while `restore-keys`
+        # starts it from the nearest earlier one, so the cache follows the
+        # branch instead of freezing at its first write. Each lane keys its own
+        # namespace (`PYLCM_CACHE_KEY`) so lanes never fight over one entry.
+        uses: actions/cache@v6.1.0
+        with:
+          key: ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-${{github.sha}}
+          path: ~/.cache/jax
+          restore-keys: |
+            ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
+            ${{env.PYLCM_CACHE_KEY}}-
+      - name: Run tests/test_distributed.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-test-distributed.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/execution/test_transfer_catalogue.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-test-transfer-catalogue.xml
+          pixi run -e tests-cpu pytest \
+            tests/execution/test_transfer_catalogue.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_placement.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-test-distributed-placement.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_placement.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_lifetime.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-test-distributed-lifetime.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_lifetime.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_template_placement.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-test-distributed-template-placement.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_template_placement.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_simulation_values.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-simulation-values.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_simulation_values.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_simulation_value_reads.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-simulation-value-reads.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_simulation_value_reads.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_solve_readiness.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-solve-readiness.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_solve_readiness.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_eager_weak_inputs.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-eager-weak-inputs.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_eager_weak_inputs.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_constant_simulation.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-constant-simulation.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_constant_simulation.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/simulation/test_operand_placement.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-simulation-operands.xml
+          pixi run -e tests-cpu pytest \
+            tests/simulation/test_operand_placement.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/simulation/test_host_operations.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-host-operations.xml
+          pixi run -e tests-cpu pytest \
+            tests/simulation/test_host_operations.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_taste_stream.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-taste-stream.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_taste_stream.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Run tests/test_distributed_entry_allocations.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-entry-allocations.xml
+          pixi run -e tests-cpu pytest \
+            tests/test_distributed_entry_allocations.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit"
+      - name: Write this lane family's coverage XML
+        if: always() && matrix.precision == 64
+        shell: bash
+        run: |
+          set -euo pipefail
+          pixi run -e tests-cpu coverage xml \
+            -o reports/coverage-topology-four-device.xml
+      - name: Upload JUnit reports and receipts
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: junit-cpu-fp${{ matrix.precision }}-topology-four-device
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        if: always() && matrix.precision == 64
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-topology-four-device
+          path: reports/coverage-topology-four-device.xml
+          if-no-files-found: error
+      - name: Prune superseded JAX caches for this lane
+        # `github.sha` in the key means every run writes a fresh entry instead
+        # of replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Keep this ref's newest entry
+        # and drop the rest. Never fail the build over cache housekeeping: a
+        # pull request from a fork gets a read-only token and cannot delete.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{github.token}}
+        run: |
+          gh cache list --ref "$GITHUB_REF" --key "$PYLCM_CACHE_KEY-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
+  # These modules receive eight devices from the process ENVIRONMENT and never
+  # mutate import-time topology, so all three topology controls must be set
+  # before pytest starts -- ahead of policy and backend initialization. They can
+  # therefore activate the full policy. Their guards refuse even partial native
+  # skips: an all-skipped or any-skipped report fails the step.
+  tests-topology-eight-device:
+    name: Run the eight-CPU-device witnesses (Linux, fp${{ matrix.precision }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        precision:
+          - 64
+          - 32
+    env:
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+      PYLCM_CI_PRECISION: ${{ matrix.precision }}
+      PYLCM_CACHE_KEY: jax-eight-device-fp${{ matrix.precision }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Cache JAX compiled programs
+        # `setup-pixi` caches the environment but not JAX's persistent
+        # compilation cache, so every job recompiles every program from cold.
+        # Safe because JAX keys an entry on the computation, the backend and its
+        # own version, so a stale or torn entry misses rather than misleads.
+        # `github.sha` makes each run write a fresh entry while `restore-keys`
+        # starts it from the nearest earlier one, so the cache follows the
+        # branch instead of freezing at its first write. Each lane keys its own
+        # namespace (`PYLCM_CACHE_KEY`) so lanes never fight over one entry.
+        uses: actions/cache@v6.1.0
+        with:
+          key: ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-${{github.sha}}
+          path: ~/.cache/jax
+          restore-keys: |
+            ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
+            ${{env.PYLCM_CACHE_KEY}}-
+      - name: Run tests/test_distributed_simulation_eight_devices.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-simulation-eight-devices.xml
+          JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/test_distributed_simulation_eight_devices.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit" no-skips
+      - name: Run tests/simulation/test_independent_outer_cohorts.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-independent-outer-cohorts.xml
+          JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_independent_outer_cohorts.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit" no-skips
+      - name: Run tests/test_continuous_assets_sharding.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-continuous-assets-sharding.xml
+          JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/test_continuous_assets_sharding.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit" no-skips
+      - name: Run tests/test_continuous_transfer_admission.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-continuous-transfer-admission.xml
+          JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/test_continuous_transfer_admission.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit" no-skips
+      - name: Run tests/test_continuous_assets_aca_numerics.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-continuous-assets-aca-numerics.xml
+          JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/test_continuous_assets_aca_numerics.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit" no-skips
+      - name: Run tests/simulation/test_subject_parallel.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-subject-parallel.xml
+          JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_subject_parallel.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit" no-skips
+      - name: Run tests/simulation/test_subject_parallel_runtime.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-subject-parallel-runtime.xml
+          JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_subject_parallel_runtime.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit" no-skips
+      - name: Run tests/simulation/test_subject_parallel_model.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-subject-parallel-model.xml
+          JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/simulation/test_subject_parallel_model.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit" no-skips
+      - name: Write this lane family's coverage XML
+        if: always() && matrix.precision == 64
+        shell: bash
+        run: |
+          set -euo pipefail
+          pixi run -e tests-cpu coverage xml \
+            -o reports/coverage-topology-eight-device.xml
+      - name: Upload JUnit reports and receipts
+        # `always()` so a failing run still publishes its report: the XML is how
+        # a run's counts are read back, and a run that failed is exactly when
+        # that matters.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: junit-cpu-fp${{ matrix.precision }}-topology-eight-device
+          path: |
+            reports/junit-*.xml
+            reports/ci-receipts/*.json
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        if: always() && matrix.precision == 64
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-topology-eight-device
+          path: reports/coverage-topology-eight-device.xml
+          if-no-files-found: error
+      - name: Prune superseded JAX caches for this lane
+        # `github.sha` in the key means every run writes a fresh entry instead
+        # of replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Keep this ref's newest entry
+        # and drop the rest. Never fail the build over cache housekeeping: a
+        # pull request from a fork gets a read-only token and cannot delete.
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{github.token}}
+        run: |
+          gh cache list --ref "$GITHUB_REF" --key "$PYLCM_CACHE_KEY-" \
+            --sort created_at --order desc --limit 100 --json id \
+            --jq '.[1:][].id' | while read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              gh cache delete "$cache_id" || true
+            done
+  # The exact-kernel capability matrix is a per-platform build property, not a
+  # per-shard one: it ran once per OS before the general lanes were sharded and
+  # still runs once per OS now, rather than three times.
+  tests-exact-kernel:
+    name: Run the exact-kernel capability matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Activate the MSVC developer environment
+        # Must precede `setup-pixi`. Installing the project editable runs the
+        # hatch build hook, which compiles the kernel and fails when no C++
+        # compiler is on PATH -- on every platform, not only this one. Putting
+        # the activation after the install leaves `cl.exe` absent for the one
+        # step that needs it, so the environment never finishes building.
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
       - name: Run the fp64 exact-kernel capability matrix
-        if: runner.os == 'Linux' && matrix.python-version == '3.14'
+        if: runner.os == 'Linux'
         shell: bash {0}
         run: >-
           pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
           --precision=64 --output-dir=reports
       - name: Run the Windows exact-kernel capability matrix
-        if: runner.os == 'Windows' && matrix.python-version == '3.14'
+        if: runner.os == 'Windows'
         # Both precisions run even when the first fails, because each arm's
         # report is evidence about a different build; the step then fails if
         # either did. A bare `bash {0}` template has neither `-e` nor a status
@@ -126,236 +2046,42 @@ jobs:
           pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py \
             --precision=64 --output-dir=reports || rc=1
           exit "$rc"
-      - name: Run pytest
-        shell: bash {0}
-        run: >-
-          mkdir -p reports &&
-          pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
-          --policy-child --ci-policy=full --hardware-profile=cpu
-          --junitxml=reports/junit-cpu-${{ runner.os }}.xml
-        if: runner.os != 'Linux' || matrix.python-version != '3.14'
-      - name: Run pytest and collect coverage
-        shell: bash {0}
-        # The long `tests/solution -m slow` battery runs in the sharded matrix
-        # below. This base leg keeps the fast suite, slow non-solution tests, and
-        # the two certified-envelope cases. Certified runs in its own process
-        # because it alone requires the disabled XLA backend optimizer; applying
-        # that flag to the rest would invalidate batch-width invariance checks.
-        # Coverage from this base leg and the fp64 shards is merged by Codecov.
-        run: |
-          mkdir -p reports
-          pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
-            --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
-            --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
-            --cov=./ --cov-report= -n 4 \
-          && XLA_FLAGS=--xla_backend_optimization_level=0 \
-            pixi run -e tests-cpu pytest \
-            tests/solution/test_nbegm_multi_discrete_agreement.py \
-            -m "slow and not manual" -k certified \
-            --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=2400 --timeout-method=thread \
-            --durations=25 --junitxml=reports/junit-cpu-fp64-certified.xml \
-            --cov=./ --cov-append --cov-report= -n 0 \
-          && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
-            -m "slow and not manual" \
-            --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
-            --durations=25 --junitxml=reports/junit-cpu-fp64-rest-slow.xml \
-            --cov=./ --cov-append --cov-report=xml -n 2
-        if: runner.os == 'Linux' && matrix.python-version == '3.14'
-      - name: Upload JUnit reports
-        # `always()` so a failing run still publishes its report: the XML is how
-        # a run's counts are read back, and a run that failed is exactly when
-        # that matters.
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: junit-cpu-fp64-${{ runner.os }}-${{ matrix.python-version }}
-          path: reports/junit-cpu-*.xml
-          if-no-files-found: warn
-      - name: Upload exact-kernel capability diagnostics
-        # Kept out of the JUnit artifact above on purpose. The matrix's `broken`
-        # arm is required to produce a failing testcase -- that failure is the
-        # positive control proving the detector fires -- so pooling its report
-        # with the suite's would put a failure and three extra arms per
-        # precision into the counts a healthy run reports.
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: exact-kernel-matrix-fp64-${{ runner.os }}-${{ matrix.python-version }}
-          path: |
-            reports/junit-exact-kernel-matrix-*.xml
-            reports/exact-kernel-skips-*.json
-            reports/exact-kernel-matrix-*.log
-          if-no-files-found: warn
-      - name: Upload coverage report
-        if: runner.os == 'Linux' && matrix.python-version == '3.14'
-        uses: codecov/codecov-action@v7.0.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage.xml
-          flags: cpu-python
-          disable_search: true
-          fail_ci_if_error: true
-      - name: Prune superseded JAX caches for this ref
-        # `github.sha` in the key means every run writes a fresh entry instead of
-        # replacing one, so an active branch accumulates them until the
-        # repository passes GitHub's 10 GB ceiling. Eviction is then
-        # least-recently-used, and the first casualty is the entry on the default
-        # branch — the only one a *new* branch may restore from, since a run
-        # reads its own ref and the default branch and nothing else. Every new
-        # branch would then start cold and pay the full compile.
-        #
-        # Keep this ref's newest entry and drop the rest. Pruning here rather
-        # than after the write leaves two per (os, ref) once the post-step saves
-        # the new one, so a run cancelled before it saves still leaves the branch
-        # a warm start. Never fail the build over cache housekeeping: a pull
-        # request from a fork gets a read-only token and cannot delete.
-        if: always()
-        continue-on-error: true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh cache list --ref "$GITHUB_REF" \
-            --key "jax-${{ runner.os }}-${{ matrix.python-version }}-" \
-            --sort created_at --order desc --limit 100 --json id \
-            --jq '.[1:][].id' | while read -r cache_id; do
-              [ -n "$cache_id" ] || continue
-              gh cache delete "$cache_id" || true
-            done
-  # fp32 is otherwise only exercised on `gpu32`, behind the contended GPU
-  # runners. A dtype regression is not GPU-specific, so catch it here first,
-  # on cheap and uncontended CPU capacity. Linux-only and its own job (not a
-  # matrix leg) because the platform surface (imports, paths, the
-  # pandas/arrow round trip) is already covered by `tests`, and adding fp32
-  # x {macos, windows} would double CI time for a dimension that's about
-  # dtype, not platform.
-  tests-fp32:
-    name: Run tests for ubuntu-latest on 3.14 (fp32)
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - name: Activate the MSVC developer environment
-        # Must precede `setup-pixi`. Installing the project editable runs the
-        # hatch build hook, which compiles the kernel and fails when no C++
-        # compiler is on PATH -- on every platform, not only this one. Putting
-        # the activation after the install leaves `cl.exe` absent for the one
-        # step that needs it, so the environment never finishes building.
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-      - uses: prefix-dev/setup-pixi@v0.10.2
-        with:
-          pixi-version: v0.78.0
-          cache: true
-          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-          environments: tests-cpu
-          activate-environment: true
-          frozen: true
-      - name: Probe or reinstall the installed native payload
-        shell: bash
-        run: |
-          mkdir -p reports
-          set +e
-          pixi run -e tests-cpu python -m tests.ci.probe_native \
-            --report=reports/native-Linux-fp32.json
-          status=$?
-          set -e
-          if test "$status" -eq 2; then
-            pixi reinstall -e tests-cpu --locked pylcm
-            pixi run -e tests-cpu python -m tests.ci.probe_native \
-              --report=reports/native-Linux-fp32.json
-          elif test "$status" -ne 0; then
-            exit "$status"
-          fi
-      - name: Cache JAX compiled programs
-        # Same rationale as the `tests` job's cache step above, keyed apart
-        # (`jax-fp32-...`) so this leg never shares -- or fights over -- the
-        # fp64 leg's cache entries.
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/jax
-          key: >-
-            jax-fp32-${{ runner.os }}-3.14-${{
-            hashFiles('pixi.lock') }}-${{ github.sha }}
-          restore-keys: |
-            jax-fp32-${{ runner.os }}-3.14-${{
-              hashFiles('pixi.lock') }}-
-            jax-fp32-${{ runner.os }}-3.14-
       - name: Run the fp32 exact-kernel capability matrix
+        if: runner.os == 'Linux'
         shell: bash {0}
         run: >-
           pixi run -e tests-cpu python tests/ci/run_exact_kernel_matrix.py
           --precision=32 --output-dir=reports
-      - name: Run pytest at fp32
-        shell: bash {0}
-        # The long slow solution battery runs in the shared precision/shard
-        # matrix below. This leg retains the fast and slow non-solution tests.
-        env:
-          XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
-        run: |
-          mkdir -p reports
-          pixi run -e tests-cpu pytest tests --precision=32 \
-            -m "not slow and not manual" \
-            --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
-            --durations=25 --junitxml=reports/junit-cpu-fp32-notslow.xml \
-            -n 4 \
-          && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
-            --precision=32 -m "slow and not manual" \
-            --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
-            --durations=25 --junitxml=reports/junit-cpu-fp32-rest-slow.xml -n 2
-      - name: Upload JUnit reports
-        # `always()` so a failing run still publishes its report: the XML is how
-        # a run's counts are read back, and a run that failed is exactly when
-        # that matters.
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: junit-cpu-fp32
-          path: reports/junit-cpu-*.xml
-          if-no-files-found: warn
       - name: Upload exact-kernel capability diagnostics
-        # Separate from the JUnit artifact for the same reason as the fp64 leg:
-        # the `broken` arm's required failure must not land in the counts a
-        # healthy run reports.
+        # Kept out of the JUnit artifacts on purpose. The matrix's `broken` arm
+        # is required to produce a failing testcase -- that failure is the
+        # positive control proving the detector fires -- so pooling its report
+        # with the suite's would put a failure and extra arms per precision into
+        # the counts a healthy run reports.
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
-          name: exact-kernel-matrix-fp32
+          name: exact-kernel-matrix-${{ runner.os }}
           path: |
             reports/junit-exact-kernel-matrix-*.xml
             reports/exact-kernel-skips-*.json
             reports/exact-kernel-matrix-*.log
           if-no-files-found: warn
-      - name: Prune superseded JAX caches for this ref
-        if: always()
-        continue-on-error: true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh cache list --ref "$GITHUB_REF" \
-            --key "jax-fp32-${{ runner.os }}-3.14-" \
-            --sort created_at --order desc --limit 100 --json id \
-            --jq '.[1:][].id' | while read -r cache_id; do
-              [ -n "$cache_id" ] || continue
-              gh cache delete "$cache_id" || true
-            done
-  # The slow solution phase dominates both CPU precisions. Stable hashing assigns
-  # whole files to three jobs, preserving module-local compile reuse while new or
-  # renamed files enter exactly one shard without maintaining a timing manifest.
-  # Each job keeps two xdist workers: increasing that inside a 16 GB runner has
-  # exhausted memory, whereas separate runners provide real parallel capacity.
+  # The slow solution phase dominates both CPU precisions. Whole files are
+  # assigned by decreasing observed per-precision weight into the lightest bin
+  # (`shard_test_files.py --weights-leg`), preserving module-local compile reuse
+  # while balancing real cost rather than a hash. Both precisions take seven
+  # shards. Run 35078533997 measured 288.5 worker-minutes at fp64 and 285.4 at
+  # fp32, so a two-worker job carries 20.6 and 20.4 payload minutes at seven
+  # shards; fewer shards break the 24-minute payload guardrail and more buy
+  # nothing, because the heaviest indivisible file already costs 21.1 minutes at
+  # fp64 and 22.1 at fp32 and `--dist loadfile` cannot split it. Each job keeps
+  # two xdist workers: increasing that inside a 16 GB runner has exhausted
+  # memory, whereas separate runners provide real capacity.
   tests-slow-solution:
     name: >-
       Run slow solution tests on ubuntu-latest at fp${{ matrix.precision }}
-      (shard ${{ matrix.shard }}/3)
+      (shard ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -364,22 +2090,61 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        precision:
-          - 64
-          - 32
-        shard:
-          - 1
-          - 2
-          - 3
+        include:
+          - precision: 64
+            shard: 1
+            shards: 7
+          - precision: 64
+            shard: 2
+            shards: 7
+          - precision: 64
+            shard: 3
+            shards: 7
+          - precision: 64
+            shard: 4
+            shards: 7
+          - precision: 64
+            shard: 5
+            shards: 7
+          - precision: 64
+            shard: 6
+            shards: 7
+          - precision: 64
+            shard: 7
+            shards: 7
+          - precision: 32
+            shard: 1
+            shards: 7
+          - precision: 32
+            shard: 2
+            shards: 7
+          - precision: 32
+            shard: 3
+            shards: 7
+          - precision: 32
+            shard: 4
+            shards: 7
+          - precision: 32
+            shard: 5
+            shards: 7
+          - precision: 32
+            shard: 6
+            shards: 7
+          - precision: 32
+            shard: 7
+            shards: 7
     env:
       XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
       PYLCM_CI_PRECISION: ${{ matrix.precision }}
       PYLCM_CI_SHARD: ${{ matrix.shard }}
+      PYLCM_CI_SHARDS: ${{ matrix.shards }}
+      PYLCM_CI_RECEIPT: reports/ci-receipts
+      PYLCM_CACHE_KEY: jax-sol-fp${{ matrix.precision }}-s${{ matrix.shard }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.78.0
+          pixi-version: v0.80.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -389,7 +2154,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p reports
-          pylcm_native_report="reports/native-$PYLCM_CI_PRECISION-$PYLCM_CI_SHARD.json"
+          pylcm_native_report="reports/native.json"
           set +e
           pixi run -e tests-cpu python -m tests.ci.probe_native \
             --report="$pylcm_native_report"
@@ -402,33 +2167,38 @@ jobs:
           elif test "$status" -ne 0; then
             exit "$status"
           fi
-      - name: Cache this shard's JAX compiled programs
-        uses: actions/cache@v6
+      - name: Cache JAX compiled programs
+        # `setup-pixi` caches the environment but not JAX's persistent
+        # compilation cache, so every job recompiles every program from cold.
+        # Safe because JAX keys an entry on the computation, the backend and its
+        # own version, so a stale or torn entry misses rather than misleads.
+        # `github.sha` makes each run write a fresh entry while `restore-keys`
+        # starts it from the nearest earlier one, so the cache follows the
+        # branch instead of freezing at its first write. Each lane keys its own
+        # namespace (`PYLCM_CACHE_KEY`) so lanes never fight over one entry.
+        uses: actions/cache@v6.1.0
         with:
+          key: ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-${{github.sha}}
           path: ~/.cache/jax
-          key: >-
-            jax-solution-fp${{ matrix.precision }}-shard${{ matrix.shard }}-${{
-            hashFiles('pixi.lock') }}-${{ github.sha }}
           restore-keys: |
-            jax-solution-fp${{ matrix.precision }}-shard${{ matrix.shard }}-${{
-              hashFiles('pixi.lock') }}-
-            jax-solution-fp${{ matrix.precision }}-shard${{ matrix.shard }}-
+            ${{env.PYLCM_CACHE_KEY}}-${{hashFiles('pixi.lock')}}-
+            ${{env.PYLCM_CACHE_KEY}}-
       - name: Run one slow solution shard
         shell: bash {0}
         run: |
           set -euo pipefail
           mkdir -p reports
           pixi run -e tests-cpu python -m tests.ci.shard_test_files \
-            tests/solution --shards 3 --shard "$PYLCM_CI_SHARD" \
+            tests/solution --shards "$PYLCM_CI_SHARDS" --shard "$PYLCM_CI_SHARD" \
+            --weights-leg "fp$PYLCM_CI_PRECISION-solution" \
             > reports/solution-shard-files.txt
           mapfile -t files < reports/solution-shard-files.txt
           test "${#files[@]}" -gt 0
           coverage_args=()
           if test "$PYLCM_CI_PRECISION" = "64"; then
-            pylcm_coverage_report="reports/coverage-64-$PYLCM_CI_SHARD.xml"
             coverage_args=(
               --cov=./
-              --cov-report="xml:$pylcm_coverage_report"
+              --cov-report="xml:reports/coverage-solution-$PYLCM_CI_SHARD.xml"
             )
           fi
           pylcm_junit_report="reports/junit-$PYLCM_CI_PRECISION-$PYLCM_CI_SHARD.xml"
@@ -438,58 +2208,136 @@ jobs:
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 \
             --junitxml="$pylcm_junit_report" \
-            -n 2 "${coverage_args[@]}"
+            -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
       - name: Upload JUnit report and shard manifest
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: >-
             junit-cpu-fp${{ matrix.precision }}-solution-${{ matrix.shard }}
           path: |
             reports/junit-*.xml
             reports/solution-shard-files.txt
+            reports/ci-receipts/*.json
           if-no-files-found: warn
-      - name: Upload coverage report
-        if: matrix.precision == 64
-        uses: codecov/codecov-action@v7.0.0
+      - name: Upload this lane's coverage data
+        if: always() && matrix.precision == 64
+        uses: actions/upload-artifact@v7.0.1
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          flags: cpu-python
-          files: >-
-            reports/coverage-64-${{ matrix.shard }}.xml
-          disable_search: true
-          fail_ci_if_error: true
-      - name: Prune superseded JAX caches for this shard
+          name: coverage-solution-${{ matrix.shard }}
+          path: reports/coverage-solution-${{ matrix.shard }}.xml
+          if-no-files-found: error
+      - name: Prune superseded JAX caches for this lane
+        # `github.sha` in the key means every run writes a fresh entry instead
+        # of replacing one, so an active branch accumulates them until the
+        # repository passes GitHub's 10 GB ceiling. Keep this ref's newest entry
+        # and drop the rest. Never fail the build over cache housekeeping: a
+        # pull request from a fork gets a read-only token and cannot delete.
         if: always()
         continue-on-error: true
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{github.token}}
         run: |
-          gh cache list --ref "$GITHUB_REF" \
-            --key "jax-solution-fp${{ matrix.precision }}-shard${{ matrix.shard }}-" \
+          gh cache list --ref "$GITHUB_REF" --key "$PYLCM_CACHE_KEY-" \
             --sort created_at --order desc --limit 100 --json id \
             --jq '.[1:][].id' | while read -r cache_id; do
               [ -n "$cache_id" ] || continue
               gh cache delete "$cache_id" || true
             done
-  # One context for the whole matrix, so branch protection names `cpu` rather than
-  # every (os, python-version) leg — adding a platform would otherwise silently drop
-  # out of the required set until someone remembered to add it there too.
+  # The single deliberate combine stage. Every fp64 Linux lane uploads its own
+  # complete coverage XML as an artifact and NONE of them talks to Codecov; this
+  # job downloads them all, checks the set against the manifest's recorded
+  # contributor list, and only then uploads. That replaces the old
+  # "last invocation of the chain writes the XML" contract, which cannot survive
+  # the split into independent jobs: `--cov-append` does not share data across
+  # machines, and a partial upload would read as a coverage drop rather than as
+  # a missing lane.
+  coverage:
+    name: Combine and publish coverage
+    needs:
+      - tests
+      - tests-source-contract
+      - tests-rest-slow
+      - tests-certified
+      - tests-timing
+      - tests-topology-four-device
+      - tests-topology-eight-device
+      - tests-slow-solution
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Download every lane's coverage data
+        uses: actions/download-artifact@v7.0.0
+        with:
+          pattern: coverage-*
+          path: coverage-data
+      - name: Check the complete contributor manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          pixi run -e tests-cpu python -m tests.ci.check_coverage_manifest \
+            coverage-data
+      - name: Upload the combined coverage to Codecov
+        uses: codecov/codecov-action@v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: cpu-python
+          directory: coverage-data
+          disable_search: false
+          fail_ci_if_error: true
+  # One context for the whole matrix, so branch protection names `cpu` rather
+  # than every lane -- adding a platform or a shard would otherwise silently
+  # drop out of the required set until someone remembered to add it there too.
+  # Fail-closed: every lane must have succeeded, and a skipped or cancelled lane
+  # is not a success.
   cpu:
     name: cpu
     needs:
       - tests
       - tests-fp32
+      - tests-source-contract
+      - tests-rest-slow
+      - tests-certified
+      - tests-timing
+      - tests-topology-four-device
+      - tests-topology-eight-device
+      - tests-exact-kernel
       - tests-slow-solution
+      - coverage
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Fail unless every leg succeeded
+      - name: Fail unless every lane succeeded
         run: |-
-          echo "tests: ${{ needs.tests.result }}"
-          echo "tests-fp32: ${{ needs.tests-fp32.result }}"
-          echo "tests-slow-solution: ${{ needs.tests-slow-solution.result }}"
-          test "${{ needs.tests.result }}" = "success"
-          test "${{ needs.tests-fp32.result }}" = "success"
-          test "${{ needs.tests-slow-solution.result }}" = "success"
+          echo "tests: ${{needs.tests.result}}"
+          echo "fp32: ${{needs.tests-fp32.result}}"
+          echo "source-contract: ${{needs.tests-source-contract.result}}"
+          echo "rest-slow: ${{needs.tests-rest-slow.result}}"
+          echo "certified: ${{needs.tests-certified.result}}"
+          echo "timing: ${{needs.tests-timing.result}}"
+          echo "topology-four-device: ${{needs.tests-topology-four-device.result}}"
+          echo "topology-eight-device: ${{needs.tests-topology-eight-device.result}}"
+          echo "exact-kernel: ${{needs.tests-exact-kernel.result}}"
+          echo "slow-solution: ${{needs.tests-slow-solution.result}}"
+          echo "coverage: ${{needs.coverage.result}}"
+          test "${{needs.tests.result}}" = "success"
+          test "${{needs.tests-fp32.result}}" = "success"
+          test "${{needs.tests-source-contract.result}}" = "success"
+          test "${{needs.tests-rest-slow.result}}" = "success"
+          test "${{needs.tests-certified.result}}" = "success"
+          test "${{needs.tests-timing.result}}" = "success"
+          test "${{needs.tests-topology-four-device.result}}" = "success"
+          test "${{needs.tests-topology-eight-device.result}}" = "success"
+          test "${{needs.tests-exact-kernel.result}}" = "success"
+          test "${{needs.tests-slow-solution.result}}" = "success"
+          test "${{needs.coverage.result}}" = "success"

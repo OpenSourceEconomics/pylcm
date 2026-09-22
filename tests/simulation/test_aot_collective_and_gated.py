@@ -1,30 +1,26 @@
-"""Ahead-of-time compiled simulation of collective and gated-edge models.
+"""Runtime-compiled simulation of collective and gated-edge models.
 
-`Model(n_subjects=N)` compiles every simulate function for batch shape `N`
-before the first forward pass and swaps the compiled programs in whenever the
-simulated population is exactly `N`. A compiled program is fixed to the
-argument shapes it was lowered against, so the templates it is lowered with
-have to be the arrays simulate actually dispatches:
-
-- a collective regime's value function carries a trailing stakeholder axis, so
-  every continuation template built for a collective target carries it too;
-- a regime declaring `gated_edges` chooses its action against the gated
-  continuation `Wbar`, which is one stakeholder's leg of the target's value
-  and therefore carries no stakeholder axis at all;
-- routing that regime's rows re-evaluates the gate at the realized candidate
-  target state, and that evaluator is compiled ahead of time too, so the
-  first routed period dispatches a program rather than tracing one.
+Simulation prepares programs from the population and live argument shapes on each
+call. Collective continuation values retain their trailing stakeholder axis;
+gated continuation values select one stakeholder's leg, and routing re-evaluates
+the gate at the realized candidate target state. Repeated calls reuse the
+compiled decisions and population gate evaluators for those shapes.
 
 Both models below are small enough that every simulated value is an exact
 arithmetic expression, stated in the factory's docstring.
 """
 
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from _lcm.simulation.gated_routing import population_call
+from _lcm.simulation import gated_routing
+from _lcm.simulation.runtime import CompiledSimulationProgram
+from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -58,13 +54,16 @@ CONSENT_V_SINGLE_PERIOD_0 = (3.85, 8.65)
 CONSENT_PERIOD_1_REGIMES = ("married_terminal", "single_terminal")
 
 
-def test_collective_model_simulates_under_the_aot_program():
-    """A collective model simulated at its declared `n_subjects` keeps its values.
+def test_collective_model_simulates_under_the_runtime_program(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A collective runtime program keeps both stakeholders' values.
 
     Each subject's period-0 row carries both stakeholders' values at the
     household argmax, and they are the same numbers the model solves to.
     """
-    model, params = make_two_stakeholder_model(n_subjects=_N_SUBJECTS)
+    compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
+    model, params = make_two_stakeholder_model()
     initial_conditions = make_couple_initial_conditions(n_subjects=_N_SUBJECTS)
 
     result = model.simulate(
@@ -72,7 +71,7 @@ def test_collective_model_simulates_under_the_aot_program():
         initial_conditions=initial_conditions,
         log_level="debug",
     )
-    _fail_if_aot_programs_missing(model=model, n_subjects=_N_SUBJECTS)
+    assert compiled, "Simulation must dispatch an actual compiled program."
 
     simulated = result.to_dataframe()
     period_0 = simulated.loc[simulated["period"] == 0, ["value_f", "value_m"]]
@@ -83,8 +82,10 @@ def test_collective_model_simulates_under_the_aot_program():
     )
 
 
-def test_gated_edge_model_simulates_under_the_aot_program():
-    """A gated-edge model simulated at its declared `n_subjects` keeps its values.
+def test_gated_edge_model_simulates_under_the_runtime_program(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A gated-edge runtime program keeps its values and consent routes.
 
     The source regime's own action is chosen against the consent-gated
     continuation, so its period-0 value is the flow payoff plus the discounted
@@ -92,7 +93,8 @@ def test_gated_edge_model_simulates_under_the_aot_program():
     fallback where it does not — and each subject then routes to the regime
     its own gate selects.
     """
-    model = _make_consent_model(n_subjects=_N_SUBJECTS)
+    compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
+    model = _make_consent_model()
     params = {"discount_factor": _DISCOUNT_FACTOR}
     initial_conditions = {
         "education": jnp.array([Education.low, Education.high], dtype=jnp.int32),
@@ -105,7 +107,7 @@ def test_gated_edge_model_simulates_under_the_aot_program():
         initial_conditions=initial_conditions,
         log_level="debug",
     )
-    _fail_if_aot_programs_missing(model=model, n_subjects=_N_SUBJECTS)
+    assert compiled, "Simulation must dispatch an actual compiled program."
 
     simulated = result.to_dataframe()
     aaae(
@@ -117,76 +119,77 @@ def test_gated_edge_model_simulates_under_the_aot_program():
     assert tuple(routed) == CONSENT_PERIOD_1_REGIMES
 
 
-def test_gate_evaluators_are_compiled_before_the_first_simulated_period():
-    """A gated model's gate evaluators are AOT programs, not traced on first use.
+def test_gate_evaluators_reuse_compilation_for_a_repeated_population(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second forward call reuses the gate programs the first one built."""
+    model = _make_consent_model()
+    params = {"discount_factor": _DISCOUNT_FACTOR}
+    initial_conditions = {
+        "education": jnp.array([Education.low, Education.high], dtype=jnp.int32),
+        "age": jnp.zeros(_N_SUBJECTS),
+        "regime_id": jnp.full(_N_SUBJECTS, ConsentRegimeId.single, dtype=jnp.int32),
+    }
+    solution = model.solve(params=params, log_level="debug")
+    calls: list[Callable] = []
+    original = gated_routing.population_call
 
-    The router re-evaluates the gate at the realized candidate target state
-    once per edge per period, and that evaluation is a compiled program of its
-    own. Leaving it out of ahead-of-time compilation would move a trace and a
-    compile into the first routed period — the one place a fixed batch size is
-    meant to have paid for already.
-    """
-    model = _make_consent_model(n_subjects=_N_SUBJECTS)
+    def observe(
+        *, func: Callable, axis_size: int, subject_width: int | None = None
+    ) -> Callable:
+        call = original(func=func, axis_size=axis_size, subject_width=subject_width)
+        calls.append(call)
+        return call
 
+    monkeypatch.setattr(gated_routing, "population_call", observe)
     model.simulate(
-        params={"discount_factor": _DISCOUNT_FACTOR},
-        initial_conditions={
-            "education": jnp.array([Education.low, Education.high], dtype=jnp.int32),
-            "age": jnp.zeros(_N_SUBJECTS),
-            "regime_id": jnp.full(_N_SUBJECTS, ConsentRegimeId.single, dtype=jnp.int32),
-        },
+        params=params,
+        initial_conditions=initial_conditions,
+        solution=solution,
         log_level="debug",
     )
-
-    assert _uncompiled_gate_evaluators(model=model, n_subjects=_N_SUBJECTS) == []
-
-
-def _fail_if_aot_programs_missing(*, model: Model, n_subjects: int) -> None:
-    """Raise unless every dispatched decision function is an AOT program.
-
-    Both tests are claims about the compiled programs, so a model that quietly
-    fell back to the interpreted path would make them assert nothing.
-    """
-    cached = model._simulate_compile_cache.get(n_subjects)
-    if cached is None:
-        msg = (
-            f"no simulate program was compiled for {n_subjects} subjects; "
-            f"compiled batch shapes: {sorted(model._simulate_compile_cache)}"
+    assert calls, "The positive control must exercise the gate evaluators."
+    calls.clear()
+    with count_compile_requests() as counts:
+        result = model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=solution,
+            log_level="debug",
         )
-        raise AssertionError(msg)
-    interpreted = [
-        f"{regime_name}/argmax_and_max_Q_over_a[{period}]"
-        for regime_name, regime in cached.items()
-        for period in regime.active_periods
-        if not isinstance(
-            regime.simulation.argmax_and_max_Q_over_a[period], jax.stages.Compiled
-        )
-    ]
-    if interpreted:
-        msg = f"these decision functions were not AOT-compiled: {interpreted}"
-        raise AssertionError(msg)
+        for periods in result.raw_results.values():
+            for period in periods.values():
+                jax.block_until_ready(period.V_arr)
+    assert not calls, "The repeated population rebuilt a gate evaluator."
+    assert (
+        counts.trace_requests,
+        counts.lowering_requests,
+        counts.compile_requests,
+    ) == (
+        0,
+        0,
+        0,
+    )
+    simulated = result.to_dataframe()
+    assert tuple(simulated.loc[simulated["period"] == 1, "regime_name"]) == (
+        CONSENT_PERIOD_1_REGIMES
+    )
 
 
-def _uncompiled_gate_evaluators(*, model: Model, n_subjects: int) -> list[str]:
-    """Return a label per gate evaluator that is not an AOT program."""
-    cached = model._simulate_compile_cache[n_subjects]
-    return [
-        f"{regime_name} -> {target_name} (fold period {fold_period})"
-        for regime_name, regime in cached.items()
-        for target_name, edge in regime.gated_edges.items()
-        for fold_period in (
-            period + 1
-            for period in regime.active_periods
-            if period + 1 < model.n_periods
-        )
-        if not isinstance(
-            population_call(
-                func=edge.simulate_gate_evaluator_at(period=fold_period),
-                axis_size=n_subjects,
-            ),
-            jax.stages.Compiled,
-        )
-    ]
+def _capture_compiled_dispatches(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> list[jax.stages.Compiled]:
+    """Observe actual runtime dispatch, refusing a silent eager fallback."""
+    observed: list[jax.stages.Compiled] = []
+    original = CompiledSimulationProgram.__call__
+
+    def observe(self: CompiledSimulationProgram, **arguments: object) -> object:
+        assert isinstance(self.executable, jax.stages.Compiled)
+        observed.append(self.executable)
+        return original(self, **arguments)
+
+    monkeypatch.setattr(CompiledSimulationProgram, "__call__", observe)
+    return observed
 
 
 @categorical(ordered=True)
@@ -214,7 +217,7 @@ class ConsentRegimeId:
     married_terminal: ScalarInt  # code 2
 
 
-def _make_consent_model(*, n_subjects: int | None) -> Model:
+def _make_consent_model() -> Model:
     """Build a singleton source consenting into a collective target.
 
     `single` is active at age 0 and transitions with probability one into the
@@ -232,10 +235,6 @@ def _make_consent_model(*, n_subjects: int | None) -> Model:
       fails at high, so $\\bar{W}^f = (3, 7)$.
     - `single` at period 0, work again optimal: $V = (1 + 0.95 \\cdot 3,
       2 + 0.95 \\cdot 7) = (3.85, 8.65)$.
-
-    Args:
-        n_subjects: Simulate batch size to compile ahead of time, or `None` to
-            compile at runtime.
 
     Returns:
         The model.
@@ -294,7 +293,6 @@ def _make_consent_model(*, n_subjects: int | None) -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
-        n_subjects=n_subjects,
     )
 
 

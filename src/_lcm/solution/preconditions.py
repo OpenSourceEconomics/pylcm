@@ -24,6 +24,7 @@ from typing import cast
 import jax.numpy as jnp
 
 from _lcm.engine import Regime
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY, ParetoWeights
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName
 from lcm.ages import AgeGrid
@@ -75,6 +76,7 @@ def check_pareto_weights(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Check every collective regime's Pareto weights against its parameters.
 
@@ -111,6 +113,7 @@ def check_pareto_weights(
             regime=regime,
             regime_params=regime_params,
             ages=ages,
+            process_grid_resolver=process_grid_resolver,
         )
 
 
@@ -120,6 +123,7 @@ def _check_one_regimes_weights(
     regime: Regime,
     regime_params: FlatRegimeParams,
     ages: AgeGrid,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Evaluate one regime's declared weights over its grid and judge them.
 
@@ -128,7 +132,9 @@ def _check_one_regimes_weights(
 
     """
     weights = cast("ParetoWeights", regime.solution.pareto_weights)
-    states = regime.solution.state_action_space(regime_params=regime_params).states
+    states = regime.solution.state_action_space(
+        regime_params=regime_params, process_grid_resolver=process_grid_resolver
+    ).states
     read_states = [name for name in weights.arg_names if name in states]
     mesh = (
         dict(

@@ -2,14 +2,16 @@
 
 When a carry target's next-state law reads the current liquid state, the
 continuation core evaluates the continuation DAG once per declared liquid
-interval. `NBEGM.interval_batch_size` controls how those evaluations run —
-all intervals in one vectorized pass (`0`), or in sequential chunks of the
-given size — and the merged value function must not depend on the choice.
+interval. `ExecutionConfig.axis_widths[INTERVAL_AXIS]` controls the width of
+the streamed interval blocks. The merged value function must agree between
+single-interval blocks and a block spanning this model's two intervals.
 """
 
 import numpy as np
 import pytest
 
+from lcm import ExecutionConfig
+from lcm.solvers import INTERVAL_AXIS
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_next_asset_cliff_toy as toy
 
@@ -22,10 +24,10 @@ _PARTITION_ULP = 64
 _ALIVE = "alive"
 
 
-def _solve_v(interval_batch_size: int) -> dict[int, np.ndarray]:
+def _solve_v(interval_width: int) -> dict[int, np.ndarray]:
     model = toy.build_model(
         variant="nbegm",
-        interval_batch_size=interval_batch_size,
+        execution_config=ExecutionConfig(axis_widths={INTERVAL_AXIS: interval_width}),
     )
     solution = model.solve(params=toy.build_params(), log_level="debug").values
     return {
@@ -35,13 +37,13 @@ def _solve_v(interval_batch_size: int) -> dict[int, np.ndarray]:
     }
 
 
-@pytest.mark.parametrize("interval_batch_size", [1, 2])
-def test_interval_batch_size_leaves_the_value_function_unchanged(
-    interval_batch_size: int,
+@pytest.mark.parametrize("interval_width", [1, 2])
+def test_interval_width_leaves_the_value_function_unchanged(
+    interval_width: int,
 ) -> None:
     """`V` names the same values whether intervals solve vectorized or in chunks."""
-    vectorized = _solve_v(0)
-    chunked = _solve_v(interval_batch_size)
+    vectorized = _solve_v(2)
+    chunked = _solve_v(interval_width)
     assert vectorized.keys() == chunked.keys()
     for period in vectorized:
         # Every entry of `V` is a flow utility plus a discounted continuation of

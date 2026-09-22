@@ -161,14 +161,14 @@ def test_solve_fixed_params_aot_parity():
 
 def test_aot_dedup_with_fixed_params(caplog: pytest.LogCaptureFixture) -> None:
     """AOT compilation deduplicates partial objects wrapping the same JIT function."""
-    # Without fixed_params, count the unique functions as baseline.
+    # Without fixed_params, count the unique lowerings as baseline.
     model_baseline = _make_model()
     with caplog.at_level(logging.INFO):
         model_baseline.solve(
             params={"discount_factor": 0.95, "interest_rate": 0.05},
             log_level="progress",
         )
-    baseline_lines = [r for r in caplog.records if "unique functions" in r.message]
+    baseline_lines = [r for r in caplog.records if "unique lowerings" in r.message]
     assert len(baseline_lines) == 1
 
     caplog.clear()
@@ -177,7 +177,7 @@ def test_aot_dedup_with_fixed_params(caplog: pytest.LogCaptureFixture) -> None:
     model_fixed = _make_model(extra_fixed_params={"interest_rate": 0.05})
     with caplog.at_level(logging.INFO):
         model_fixed.solve(params={"discount_factor": 0.95}, log_level="progress")
-    fixed_lines = [r for r in caplog.records if "unique functions" in r.message]
+    fixed_lines = [r for r in caplog.records if "unique lowerings" in r.message]
     assert len(fixed_lines) == 1
     assert baseline_lines[0].message == fixed_lines[0].message
 

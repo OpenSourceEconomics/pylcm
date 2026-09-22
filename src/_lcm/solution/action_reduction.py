@@ -7,7 +7,7 @@ action order.  It deliberately knows nothing about grid construction, block widt
 device placement.
 """
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import jax.numpy as jnp
 
@@ -80,6 +80,11 @@ class HardMaxReduction:
     def semantic_key(self) -> tuple[str, int]:
         """Stable identity of the exact singleton hard-max contract."""
         return ("hard-max", 1)
+
+    @property
+    def exactness(self) -> Literal["exact"]:
+        """Return `"exact"`: the max with lowest-id tie-break is order independent."""
+        return "exact"
 
     def initialize(self, *, value_template: FloatND) -> HardMaxAccumulator:
         """Create an empty accumulator with ``value_template``'s shape and dtype."""

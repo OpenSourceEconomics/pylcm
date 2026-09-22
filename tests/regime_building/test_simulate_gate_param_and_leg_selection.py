@@ -231,6 +231,7 @@ def _solve_f2_fixture():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_simulate_gate_param_and_leg_selection",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
@@ -548,6 +549,7 @@ def _solve_f3_fixture():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_simulate_gate_param_and_leg_selection",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,

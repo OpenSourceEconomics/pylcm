@@ -1,0 +1,47 @@
+{
+  "status": "authorized_b1_only_pending_installation_and_submission",
+  "base": "620813df93b6a50db4383ffc43690dc70e4ae8c3",
+  "head": "72c333c82fab1cd1aa7322039b0301b4040cb589",
+  "reviewed_head": "aaefa6ff86441906f50acbbf001dae64439ad2ba",
+  "source_files": {
+    "620813df93b6a50db4383ffc43690dc70e4ae8c3": {
+      "tests/test_distributed_placement.py": "a3e5abd36e3f8977c878d97c5239c59adcc7e76588bbd46da509813a77fcc430",
+      "tests/conftest.py": "bc4cbc684dc76254f0ae750a397874a7b021bf92613eb3ae4002c305702a5023",
+      "pyproject.toml": "c317f40adeac9bfb1a0932f3c3583f0755b81a8c3ed415dd91fa841609c46899",
+      "pixi.lock": "91a003559f0c012afe6041769b9c8b3d8940ae7e86ccb341611307e6516b5732",
+      "hatch_build.py": "10641a05a9c147280f57dfe703d49391a6ad0ae80312f7f46cae3580006e6327"
+    },
+    "72c333c82fab1cd1aa7322039b0301b4040cb589": {
+      "tests/test_distributed_placement.py": "a3e5abd36e3f8977c878d97c5239c59adcc7e76588bbd46da509813a77fcc430",
+      "tests/conftest.py": "6283f1bd5163b17775dd46b9a9bb1f2c085b80bde0c9cbecb491fccc56138e9c",
+      "pyproject.toml": "c317f40adeac9bfb1a0932f3c3583f0755b81a8c3ed415dd91fa841609c46899",
+      "pixi.lock": "91a003559f0c012afe6041769b9c8b3d8940ae7e86ccb341611307e6516b5732",
+      "hatch_build.py": "10641a05a9c147280f57dfe703d49391a6ad0ae80312f7f46cae3580006e6327"
+    }
+  },
+  "fixture_functions_unchanged": true,
+  "value_comparator_unchanged": true,
+  "runtime_environment": {
+    "pixi_environment": "tests-cuda13",
+    "normal_install_required": true,
+    "native_base_hashes": "not_installed_or_observed; mandatory before release",
+    "native_head_example_receipt": "existing scaling-install-login.json; cannot transplant native payload from a different checkout",
+    "nvccflags": "-arch=sm_86",
+    "gpu": "4 actual A40 on one node",
+    "same_lock_required": true
+  },
+  "git_src_trees": {
+    "base": "3e1ceab17b94cf6ee307550688297d6f5e8c393b",
+    "head": "e0c3164a3d1a7353aac5743c4687be37e7c5e62f"
+  },
+  "tooling_deployment": "Tracked tools; require exact committed/pushed/pulled tooling SHA from release environment; independent source checkouts; no ACA controller",
+  "installed_protocol": {
+    "version": "3.2.28",
+    "shared_core": "354ea0f050e3",
+    "consistent": true,
+    "original_bundle_version": "3.2.26",
+    "frozen_profile_policy_digest": "9949d584371c98f758dbc1f4200f6265e07186e5c2f552b8ff08f270cb71b4c4"
+  },
+  "source_fixture_extracted_from": "tests/test_distributed_placement.py",
+  "source_fixture_file_sha256": "a3e5abd36e3f8977c878d97c5239c59adcc7e76588bbd46da509813a77fcc430"
+}

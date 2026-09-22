@@ -1,6 +1,6 @@
 """Exact blockwise collective choice under one global household identity."""
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import jax.numpy as jnp
 
@@ -46,6 +46,11 @@ class CollectiveHardMaxReduction:
     def semantic_key(self) -> tuple[str, int]:
         """Stable identity of the collective hard-max contract."""
         return ("collective-hard-max", 1)
+
+    @property
+    def exactness(self) -> Literal["exact"]:
+        """Return `"exact"`: the max with lowest-id tie-break is order independent."""
+        return "exact"
 
     def initialize(
         self, *, stakeholder_template: FloatND

@@ -7,6 +7,10 @@ title: Continuous integration
 PyLCM assigns tests by what they require and what coverage they provide. File location
 is not a proxy for hardware or cost, and a GPU job does not replay every CPU test.
 
+The workload manifest, the shard split, the timing-witness lane, the files that CI pins
+by path, and the candidate certificate are described in
+[Certification and preflight](certification.md).
+
 The ordinary pull-request policy is:
 
 ```console
@@ -35,40 +39,52 @@ pixi run test -- --ci-policy=nightly tests/test_models/test_ds_app2_housing_buil
 
 ## Declaring a test contract
 
-Five independent markers describe a test:
+Four independent markers describe a test, and the policy reads exactly the arguments
+listed here:
 
-- `requires(...)` states hard capabilities such as a GPU, native kernel, platform, or
-  minimum device memory.
-- `coverage(...)` assigns routine backend and precision coverage. An unmarked test is
-  owned by CPU at its representative precision; GPU CI selects explicit GPU obligations
-  only.
-- `resources(...)` records measured wall time, host/device memory, CPU demand, and
-  compile intensity.
-- `isolation(...)` declares fresh-process, exclusive-device, cache, or environment
-  boundaries.
-- `ci(...)` assigns the bounded tier: `pr`, `relevant`, `extended`, or `nightly`.
+- `requires(device, min_devices)` states hard capabilities. `device` is `any`, `cpu` or
+  `gpu`; `min_devices` above one selects the multi-GPU profile.
+- `coverage(backends, precisions)` assigns routine backend and precision coverage. An
+  unmarked test is owned by CPU at its representative precision; GPU CI selects explicit
+  GPU obligations only.
+- `isolation(process)` declares a fresh-process boundary. The launcher schedules such
+  tests in their own pytest child.
+- `ci(tier)` assigns the bounded tier: `pr`, `relevant`, `extended`, or `nightly`.
 
-For example, a production-scale GPU witness that is excluded from ordinary pull requests
-but remains available under nightly and full policies is:
+For example, a GPU witness that is excluded from ordinary pull requests but remains
+available under nightly and full policies is:
 
 ```python
-@pytest.mark.requires(device="gpu", native=("exact_affine",))
+@pytest.mark.requires(device="gpu")
 @pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="both")
-@pytest.mark.resources(wall="production", gpu_mem_gb=16, compile="heavy")
-@pytest.mark.isolation(process="fresh", gpu="exclusive", cache="isolated")
+@pytest.mark.isolation(process="fresh")
 @pytest.mark.ci(tier="nightly")
 def test_production_case(): ...
 ```
 
-Marker arguments are validated during collection. The selection report records every
-collected node as selected, policy-deselected, matrix-deselected, isolation-deselected,
-or capability-skipped.
+Marker arguments are validated during collection, and an argument outside the list above
+is a collection error rather than a silently ignored hint. The selection report records
+every collected node as selected, policy-deselected, matrix-deselected,
+isolation-deselected, or capability-skipped.
+
+`pyproject.toml` also registers a
+`resources(wall, wall_seconds, host_mem_gb, gpu_mem_gb, cpu_cores, compile)` marker. It
+documents a measured resource contract for a human reader; the execution policy does not
+read it, and it selects nothing.
 
 ## Python line coverage
 
-Codecov combines four reports from the fp64 Linux CPU jobs: the base suite and the three
-slow-solution shards. Statuses and the pull-request comment wait for the complete set,
-and every upload carries the `cpu-python` flag. Reports are not carried across commits.
+Every lane that runs under coverage uploads its own `coverage-*` artifact. A single
+`coverage` job downloads all of them, checks them against the `coverage_contributors`
+list in `tests/ci/ci-workloads.json` with `tests/ci/check_coverage_manifest.py`, and
+uploads one combined report under the `cpu-python` flag. Reports are not carried across
+commits.
+
+Completeness is enforced by that checker, not by Codecov: the combine step refuses to
+proceed unless every recorded lane delivered a non-empty report, and refuses an
+unrecorded extra artifact too. Codecov itself publishes on the single upload
+(`after_n_builds: 1`), so a missing lane would otherwise read as a coverage drop in the
+code under test rather than as a lane that never ran.
 
 This percentage measures Python lines exercised on CPU. The fp32 and GPU jobs do not
 repeat coverage instrumentation; they test dtype and hardware behavior directly, while

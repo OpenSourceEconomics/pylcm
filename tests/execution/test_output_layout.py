@@ -45,6 +45,19 @@ def _mesh() -> jax.sharding.Mesh:
     return jax.sharding.Mesh(np.asarray(jax.devices()), ("kind",))
 
 
+def _wrong_output_sharding() -> jax.NamedSharding:
+    """Corrupt naming on one device, physical replication on several devices."""
+    # Replication and a size-one partition are physically identical. A single
+    # device therefore exercises the deliberately strict named-axis contract;
+    # actual partition-vs-replication is pinned by the isolated topology tests.
+    mesh = (
+        jax.sharding.Mesh(np.asarray(jax.devices()), ("wrong",))
+        if len(jax.devices()) == 1
+        else _mesh()
+    )
+    return jax.NamedSharding(mesh, jax.P())
+
+
 def _template(*, collective: bool = False):
     shape = (len(jax.devices()), 3, 2) if collective else (len(jax.devices()), 3)
     spec = jax.P("kind", None, None) if collective else jax.P("kind", None)
@@ -203,38 +216,47 @@ def test_compilation_key_tracks_layout_tree_and_shardings():
     assert first.compilation_key == same.compilation_key
     assert first.compilation_key != different.compilation_key
 
-    def func(x):
-        return x
+    identity = ("program", "fingerprint", "regime", "main", ("signature",), None)
+    other_identity = ("program", "fingerprint", "regime", "carry", ("signature",), None)
 
-    def other_func(x):
-        return x
-
-    assert _lowering_key(func=func, layout_key=first.compilation_key) == _lowering_key(
-        func=func, layout_key=same.compilation_key
+    assert _lowering_key(
+        program_identity=identity, layout_key=first.compilation_key
+    ) == _lowering_key(program_identity=identity, layout_key=same.compilation_key)
+    assert _lowering_key(
+        program_identity=identity, layout_key=first.compilation_key
+    ) != _lowering_key(program_identity=identity, layout_key=different.compilation_key)
+    assert _lowering_key(
+        program_identity=identity, layout_key=first.compilation_key
+    ) != _lowering_key(
+        program_identity=other_identity, layout_key=first.compilation_key
     )
-    assert _lowering_key(func=func, layout_key=first.compilation_key) != _lowering_key(
-        func=func, layout_key=different.compilation_key
-    )
-    assert _lowering_key(func=func, layout_key=first.compilation_key) != _lowering_key(
-        func=other_func, layout_key=first.compilation_key
-    )
 
 
-def test_lowering_key_tracks_positional_partial_bindings() -> None:
+def test_lowering_key_reads_the_program_identity_not_the_bound_callable() -> None:
+    """The key follows the program identity, not the object the program is carried on.
+
+    A compilation key says what a program computes. Which Python object carries
+    it — a partial over one policy object or over another — is not part of that
+    claim, so equal identities give one key and distinct identities give two.
+    """
+
     def core(_static_policy: object, /) -> object:
         return _static_policy
 
-    policy = object()
-    first = functools.partial(core, policy)
-    equivalent = functools.partial(core, policy)
-    different = functools.partial(core, object())
+    identity = ("program", "fingerprint", "regime", "main", ("signature",), None)
+    other_identity = ("program", "fingerprint", "regime", "main", ("other",), None)
+    first = functools.partial(core, object())
+    second = functools.partial(core, object())
+    # The two partials bind different objects, so a callable-keyed identity
+    # would separate them; the program identity is what decides here.
+    assert first() is not second()
 
-    first_key = _lowering_key(func=first, layout_key=("layout",))
-    equivalent_key = _lowering_key(func=equivalent, layout_key=("layout",))
-    different_key = _lowering_key(func=different, layout_key=("layout",))
-
-    assert first_key == equivalent_key
-    assert first_key != different_key
+    assert _lowering_key(
+        program_identity=identity, layout_key=("layout",)
+    ) == _lowering_key(program_identity=identity, layout_key=("layout",))
+    assert _lowering_key(
+        program_identity=identity, layout_key=("layout",)
+    ) != _lowering_key(program_identity=other_identity, layout_key=("layout",))
 
 
 def test_role_tree_output_mismatch_fails_during_lowering():
@@ -266,7 +288,7 @@ def test_assert_output_layout_rejects_post_run_repair_need():
     assert_output_layout(output=expected, layout=resolved)
     replicated = jax.device_put(
         jnp.zeros(expected.shape),
-        jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
+        _wrong_output_sharding(),
     )
     with pytest.raises(AssertionError, match="output sharding"):
         assert_output_layout(output=replicated, layout=resolved)
@@ -362,7 +384,7 @@ def test_published_value_placement_is_asserted_not_repaired():
     template = _template()
     replicated = jax.device_put(
         jnp.zeros(template.shape),
-        jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
+        _wrong_output_sharding(),
     )
     layout = resolve_output_layout(
         core_key="main",
@@ -370,7 +392,12 @@ def test_published_value_placement_is_asserted_not_repaired():
         state_order=("kind", "wealth"),
         output_roles=VALUE,
     )
-    core = PlannedCore(compiled=lambda **_kwargs: replicated, layout=layout)
+    core = PlannedCore(
+        compiled=lambda **_kwargs: replicated,
+        layout=layout,
+        tile_widths={},
+        name="main",
+    )
 
     with pytest.raises(AssertionError, match="sharding"):
         _publish_kernel_value(value=replicated, compiled_cores={"main": core})
@@ -568,7 +595,7 @@ def test_assert_value_leaf_layout_checks_only_the_value_leaf():
     assert_value_leaf_layout(value=template, layout=resolved)
     replicated = jax.device_put(
         jnp.zeros(template.shape),
-        jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
+        _wrong_output_sharding(),
     )
     with pytest.raises(AssertionError, match="output sharding"):
         assert_value_leaf_layout(value=replicated, layout=resolved)

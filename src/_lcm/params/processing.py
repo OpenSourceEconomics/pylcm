@@ -33,7 +33,7 @@ import pandas as pd
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
-from _lcm.dtypes import safe_to_float_dtype, safe_to_int_dtype
+from _lcm.dtypes import CanonicalArrayWriter, safe_to_float_dtype, safe_to_int_dtype
 from _lcm.engine import Regime
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
@@ -222,7 +222,10 @@ def materialize_granular_transition_params(
     return cast("FlatParams", MappingProxyType(result))
 
 
-def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
+# keyword-only-exempt: primary-argument=flat_params
+def cast_params_to_canonical_dtypes(
+    flat_params: FlatParams, *, array_writer: CanonicalArrayWriter | None = None
+) -> FlatParams:
     """Cast every numeric leaf of `flat_params` to its canonical pylcm dtype.
 
     Runs as a separate pass so the orchestrator can interpose
@@ -232,6 +235,8 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
     Args:
         flat_params: Output of `broadcast_to_template`, optionally
             after `convert_series_in_params`.
+        array_writer: Optional owner admitting each validated canonical leaf before
+            its device upload; traversal and top-level identity memo stay unchanged.
 
     Returns:
         New immutable mapping with every leaf cast to its canonical dtype.
@@ -253,6 +258,7 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
                             value=value,
                             name=f"{regime}{QNAME_DELIMITER}{param_qname}",
                             memo=memo,
+                            array_writer=array_writer,
                         )
                         for param_qname, value in leaves.items()
                     }
@@ -263,15 +269,28 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
     )
 
 
-def _cast_shared(*, value: Any, name: str, memo: dict[int, Any]) -> Any:  # noqa: ANN401
+def _cast_shared(
+    *,
+    value: Any,  # noqa: ANN401
+    name: str,
+    memo: dict[int, Any],
+    array_writer: CanonicalArrayWriter | None,
+) -> Any:  # noqa: ANN401
     """Cast `value` once per distinct input object, memoized by identity in `memo`."""
     key = id(value)
     if key not in memo:
-        memo[key] = _cast_leaves_to_canonical_dtype(value=value, name=name)
+        memo[key] = _cast_leaves_to_canonical_dtype(
+            value=value, name=name, array_writer=array_writer
+        )
     return memo[key]
 
 
-def _cast_leaves_to_canonical_dtype(*, value: Any, name: str) -> Any:  # noqa: ANN401, C901, PLR0911
+def _cast_leaves_to_canonical_dtype(  # noqa: C901, PLR0911
+    *,
+    value: Any,  # noqa: ANN401
+    name: str,
+    array_writer: CanonicalArrayWriter | None,
+) -> Any:  # noqa: ANN401
     """Cast a single params leaf to its canonical pylcm dtype.
 
     Strict whitelist — every code path either casts or raises.
@@ -304,14 +323,18 @@ def _cast_leaves_to_canonical_dtype(*, value: Any, name: str) -> Any:  # noqa: A
     if isinstance(value, UserMappingLeaf):
         return MappingLeaf(
             {
-                k: _cast_leaves_to_canonical_dtype(value=v, name=f"{name}.{k}")
+                k: _cast_leaves_to_canonical_dtype(
+                    value=v, name=f"{name}.{k}", array_writer=array_writer
+                )
                 for k, v in value.data.items()
             }
         )
     if isinstance(value, UserSequenceLeaf):
         return SequenceLeaf(
             [
-                _cast_leaves_to_canonical_dtype(value=v, name=f"{name}[{i}]")
+                _cast_leaves_to_canonical_dtype(
+                    value=v, name=f"{name}[{i}]", array_writer=array_writer
+                )
                 for i, v in enumerate(value.data)
             ]
         )
@@ -324,19 +347,27 @@ def _cast_leaves_to_canonical_dtype(*, value: Any, name: str) -> Any:  # noqa: A
         raise InvalidParamsError(msg)
     # `bool` before `int` — `True` is a Python `int` subclass.
     if isinstance(value, bool):
+        if array_writer is not None:
+            return array_writer(
+                value=np.asarray(value), dtype=np.dtype(np.bool_), name=name
+            )
         return jnp.bool_(value)
     if isinstance(value, int):
-        return safe_to_int_dtype(value=value, name=name)
+        return safe_to_int_dtype(value=value, name=name, array_writer=array_writer)
     if isinstance(value, float):
-        return safe_to_float_dtype(value=value, name=name)
+        return safe_to_float_dtype(value=value, name=name, array_writer=array_writer)
     if isinstance(value, (Array, np.ndarray)):
         kind = value.dtype.kind
         if kind == "b":
+            if array_writer is not None:
+                return array_writer(value=value, dtype=np.dtype(np.bool_), name=name)
             return jnp.asarray(value, dtype=jnp.bool_)
         if kind in ("i", "u"):
-            return safe_to_int_dtype(value=value, name=name)
+            return safe_to_int_dtype(value=value, name=name, array_writer=array_writer)
         if kind == "f":
-            return safe_to_float_dtype(value=value, name=name)
+            return safe_to_float_dtype(
+                value=value, name=name, array_writer=array_writer
+            )
         msg = (
             f"{name!r}: array dtype {value.dtype} not supported "
             f"(expected bool / int / float)."

@@ -16,13 +16,16 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
+    IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    Phased,
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import FloatND, ScalarInt
@@ -289,21 +292,81 @@ def test_broadcast_state_read_only_through_age_specialized_function_survives() -
     assert "bonus_base" not in model.pruned_variables["work"]
 
 
-def test_sharded_state_pruned_anywhere_raises() -> None:
-    """A model-level `distributed=True` state must survive pruning in every
-    non-terminal regime."""
-    with pytest.raises(ModelInitializationError, match=r"skill.*pruned|pruned.*skill"):
+def test_sharded_state_may_be_pruned_from_a_regime_that_does_not_read_it() -> None:
+    """Sharding follows pruning: only the regimes carrying the state get its axis."""
+    model = _build_model(
+        states={"skill": DiscreteGrid(category_class=_Skill)},
+        state_transitions={"skill": fixed_transition("skill")},
+        regimes={
+            "work": _work_regime(),
+            "retired": _retired_regime(),  # does not read skill
+            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+        },
+        execution_config=ExecutionConfig(sharded_states=("skill",)),
+    )
+
+    assert "skill" in model.pruned_variables["retired"]
+
+
+def test_sharded_state_must_be_declared_at_model_level() -> None:
+    """Execution configuration cannot create a device axis on a regime-only state."""
+    with pytest.raises(ExecutionPlanningError, match="must name model-level states"):
+        _build_model(execution_config=ExecutionConfig(sharded_states=("wealth",)))
+
+
+@pytest.mark.parametrize(
+    "grid",
+    [
+        LinSpacedGrid(start=0.0, stop=1.0, n_points=3),
+        IrregSpacedGrid(n_points=3),
+        Phased(
+            solve=lambda: jnp.int32(0), simulate=DiscreteGrid(category_class=_Skill)
+        ),
+    ],
+    ids=["concrete-continuous", "runtime-continuous", "carried-discrete"],
+)
+def test_unsupported_sharded_state_combinations_are_refused(*, grid) -> None:
+    """Unsupported and runtime grids are refused with the offending state name."""
+    with pytest.raises(
+        ExecutionPlanningError,
+        match=(
+            r"sharded_states \['skill'\].*sole sharded state, retained in every regime"
+        ),
+    ):
         _build_model(
-            states={
-                "skill": DiscreteGrid(category_class=_Skill, distributed=True),
-            },
+            states={"skill": grid},
             state_transitions={"skill": fixed_transition("skill")},
             regimes={
                 "work": _work_regime(),
-                "retired": _retired_regime(),  # does not read skill
-                "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+                "retired": _retired_regime(functions={"utility": _utility_with_skill}),
+                "dead": UserRegime(
+                    transition=None,
+                    states={"skill": None},
+                    functions={"utility": lambda: 0.0},
+                ),
             },
+            execution_config=ExecutionConfig(sharded_states=("skill",)),
         )
+
+
+def test_sharding_preserves_the_outcome_grid_object() -> None:
+    """Execution placement travels beside the grid without replacing its definition."""
+    grid = DiscreteGrid(category_class=_Skill)
+    model = _build_model(
+        states={"skill": grid},
+        state_transitions={"skill": fixed_transition("skill")},
+        regimes={
+            "work": _work_regime(),
+            "retired": _retired_regime(functions={"utility": _utility_with_skill}),
+            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+        },
+        execution_config=ExecutionConfig(sharded_states=("skill",)),
+    )
+    assert all(
+        regime.solution.grids["skill"] is grid
+        for regime in model._regimes.values()
+        if "skill" in regime.solution.grids
+    )
 
 
 def test_model_broadcast_solves_and_simulates() -> None:

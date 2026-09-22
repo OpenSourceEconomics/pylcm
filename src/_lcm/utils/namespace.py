@@ -1,3 +1,10 @@
+"""Flatten and unflatten the qualified names a params pytree is keyed by.
+
+`flatten_regime_namespace` joins a nested regime namespace into single
+qualified keys and `unflatten_regime_namespace` inverts it, so one flat mapping
+can address every regime's parameters.
+"""
+
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any

@@ -5,16 +5,19 @@ income process `income` whose node enters next period's liquid wealth additively
 income node is not on the consumption--saving Euler axis (it rides along), but unlike a
 deterministic co-state its child node is *distributed*: the continuation must weight the
 per-node child reads by the process's intrinsic transition probabilities. That weighted
-node expectation is the quantity `NBEGM.stochastic_node_batch_size` splays into blocks,
+node expectation is the quantity the `stochastic_node` planner axis folds in blocks,
 so this toy is the minimal lock that the splay path integrates the same value either
 way.
 The brute variant (`GridSearch`) productmaps over `(liquid, income, consumption)` and
 averages the action-aggregated next-period V over the income nodes — the dense oracle.
 """
 
+from dataclasses import replace
+
 import jax.numpy as jnp
 
 import lcm
+from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.grids.base import Grid
 from lcm import DiscreteGrid, LinSpacedGrid, Model, NormalIIDProcess, categorical
 from lcm.typing import (
@@ -117,7 +120,8 @@ def build_model(
     *,
     variant: str = "brute",
     tax_kind: str = "kink",
-    stochastic_node_batch_size: int = 0,
+    envelope_arithmetic: ComparisonArithmetic = "certified",
+    execution_config: lcm.ExecutionConfig = lcm.ExecutionConfig(),  # noqa: B008
     n_periods: int = 4,
     n_liquid: int = 120,
     n_consumption: int = 150,
@@ -137,8 +141,7 @@ def build_model(
             tax, whose declared jump makes the one-sided carry publish
             breakpoints on the child's own liquid axis (the income node never
             moves them).
-        stochastic_node_batch_size: Block size for splaying the continuation's
-            income-node expectation (NBEGM only); `0` reads the whole mesh in one pass.
+        execution_config: Planner widths and placement for this model.
         n_periods: Number of lifecycle periods (the last is terminal).
         n_liquid: Liquid-state grid size.
         n_consumption: Consumption-action grid size (brute only).
@@ -162,7 +165,7 @@ def build_model(
     alive_solver = resolve_solver(
         variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
-        stochastic_node_batch_size=stochastic_node_batch_size,
+        envelope_arithmetic=envelope_arithmetic,
     )
     alive_functions = {**alive_functions, "savings": savings}
     liquid_law = next_liquid_from_savings
@@ -174,9 +177,7 @@ def build_model(
     if with_kind:
         extra_state_transitions = {"kind": {"alive": lcm.fixed_transition("kind")}}
         if distributed_kind:
-            model_states = {
-                "kind": DiscreteGrid(category_class=ConsumerKind, distributed=True)
-            }
+            model_states = {"kind": DiscreteGrid(category_class=ConsumerKind)}
         else:
             extra_states = {
                 **extra_states,
@@ -184,6 +185,16 @@ def build_model(
             }
 
     return make_alive_dead_model(
+        execution_config=(
+            replace(
+                execution_config,
+                sharded_states=tuple(
+                    dict.fromkeys((*execution_config.sharded_states, "kind"))
+                ),
+            )
+            if distributed_kind
+            else execution_config
+        ),
         n_periods=n_periods,
         n_liquid=n_liquid,
         liquid_max=liquid_max,

@@ -16,7 +16,7 @@ pulls in no numerical engine modules.
 import functools
 import logging
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import cast
@@ -43,10 +43,19 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     ProgramScope,
+    ReducedAxis,
+    TiledOutputAxis,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.execution.reductions import WEIGHTED_EXPECTATION_REDUCTION
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.solution.continuation_reads import (
+    continuation_leaf_reads,
+    published_continuation_templates,
+    rekeyed_value_reads,
+    with_continuation_leaf_reads,
+)
 from _lcm.solution.continuation_target import union_fixed_params, union_free_params
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -65,15 +74,19 @@ from _lcm.typing import (
     FlatParams,
     RegimeName,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExactAffineKernelUnavailableError,
+    ModelInitializationError,
     RegimeInitializationError,
 )
 from lcm.solver_api import (
     EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
     SIMULATION_POLICY,
     ArtifactKey,
+    ContinuationCapabilities,
     KernelOutput,
 )
 from lcm.typing import (
@@ -116,12 +129,8 @@ class ExactEnvelope:
     max_runs: int = 24
     """Maximum resource-increasing runs folded into one node cell."""
 
-    cell_batch_size: int | None = None
-    """Number of independent node cells resolved in parallel; `None` is serial."""
-
     def __post_init__(self) -> None:
         _fail_if_envelope_max_runs_too_few(self.max_runs)
-        _fail_if_envelope_cell_batch_size_non_positive(self.cell_batch_size)
 
 
 @beartype(conf=REGIME_CONF)
@@ -135,13 +144,9 @@ class FUESEnvelope:
     n_points_to_scan: int | None = None
     """Forward-scan width; `None` performs the exhaustive scan."""
 
-    scan_unroll: int = 1
-    """Loop-unroll factor for the sequential candidate scan."""
-
     def __post_init__(self) -> None:
         _fail_if_fues_jump_thresh_non_positive(self.jump_thresh)
         _fail_if_fues_n_points_to_scan_too_few(self.n_points_to_scan)
-        _fail_if_fues_scan_unroll_too_few(self.scan_unroll)
 
 
 @beartype(conf=REGIME_CONF)
@@ -238,6 +243,29 @@ class DCEGM(OneMarginSolver):
     """
 
     @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration="ConsumptionSavingsRegime with one LiquidMargin",
+            problem_shape="One liquid Euler margin and optional discrete choice",
+            prerequisites=(
+                "Valid resources and post-decision roles; lower bound; supported "
+                "passive states and continuation layout; EV1 taste shocks"
+            ),
+            main_tradeoff=(
+                "Constrained candidates and upper envelope; simulation may "
+                "re-optimize on the action grid"
+            ),
+            reduced_axes=("stochastic_node",),
+            tiled_axes=("cell", "savings_point", "euler_point")
+            + (("envelope_cell",) if isinstance(self.envelope, ExactEnvelope) else ()),
+            host_axes=(),
+            host_driven_programs=(),
+            supports_ev1_taste_shocks=True,
+            supports_nonlinear_certainty_equivalent=False,
+        )
+
+    @property
     def publishes_simulation_policy(self) -> bool:
         """The kernel can publish an off-grid EGM policy on every active period.
 
@@ -302,24 +330,10 @@ class DCEGM(OneMarginSolver):
     supplied finite candidate set, not for the unsampled continuous branch.
     """
 
-    stochastic_node_batch_size: int = 0
-    """Block size for splaying the child stochastic-node expectation.
-
-    The continuation expectation runs over the product of the child regime's
-    stochastic process nodes — a single mesh, not a per-grid axis, so it gets
-    its own solve-level knob rather than a per-grid `batch_size`. A positive
-    value below the mesh length processes that expectation in `lax.map` blocks
-    instead of one fused vmap, shedding the dominant `egm_step` working buffer
-    (which carries this node axis); `0` keeps the fused vmap. Like the savings
-    grid's `batch_size`, this is a memory knob only — the solved value function
-    is identical to the unsplayed solve.
-    """
-
     def __post_init__(self) -> None:
         _fail_if_savings_grid_is_stochastic(self.savings_grid)
         _fail_if_refined_grid_factor_too_small(self.refined_grid_factor)
         _fail_if_n_constrained_points_too_few(self.n_constrained_points)
-        _fail_if_stochastic_node_batch_size_negative(self.stochastic_node_batch_size)
 
     def _with_liquid_margin(self, margin: _BoundLiquidMargin) -> _BoundDCEGM:
         """Bind regime-owned DAG names without exposing them on public `DCEGM`."""
@@ -339,6 +353,13 @@ class DCEGM(OneMarginSolver):
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """DC-EGM inverts the Euler equation against its targets' marginals."""
         return frozenset({EGM_CONTINUATION})
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """The EGM step reads the target's value and its marginal in resources."""
+        return ContinuationCapabilities(
+            value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
 
     def validate_model(self, *, context: SolverModelContext) -> None:
         """Validate the user-level DC-EGM contract for this regime."""
@@ -360,6 +381,13 @@ class DCEGM(OneMarginSolver):
         it meaningful to ask whether this installation can execute its selected
         backend.
         """
+        if context.sharded_state_names:
+            raise ModelInitializationError(
+                f"DCEGM regime {context.regime_name!r} cannot shard discrete "
+                f"state axes {sorted(context.sharded_state_names)!r}: its child "
+                "carry indexing requires whole discrete axes. Remove these "
+                "states from ExecutionConfig.sharded_states."
+            )
         if isinstance(self.envelope, ExactEnvelope):
             _fail_if_exact_affine_kernel_unavailable(
                 regime_name=context.regime_name,
@@ -423,6 +451,12 @@ class DCEGM(OneMarginSolver):
             ),
         )
 
+    def declare_continuation_reads(
+        self, *, kernels: SolutionKernels, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Declare every published row of every carry target each period reads."""
+        return declare_dcegm_carry_reads(kernels=kernels, context=context)
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one DC-EGM period adapter per period and the carry template.
 
@@ -470,40 +504,59 @@ class DCEGM(OneMarginSolver):
         # retention authority needs it.
         programs_by_core: dict[int, MappingProxyType[str, CoreProgram]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
+        period_group_keys: dict[int, Hashable] = {}
         for period, core in steps.items():
             if id(core) not in programs_by_core:
                 values_core = functools.partial(_dcegm_values_core, core=core)
                 replay_core = core
                 if context.enable_jit:
-                    values_core = jax.jit(values_core)
-                    replay_core = jax.jit(replay_core)
+                    # The plan's width is a compile-time choice, so the solver's
+                    # own compilation must hold it static too; the engine's outer
+                    # jit then hands this one a concrete width.
+                    values_core = jax.jit(values_core, static_argnames=_WIDTH_KEYWORDS)
+                    replay_core = jax.jit(replay_core, static_argnames=_WIDTH_KEYWORDS)
+                requirements = CoreExecutionRequirements(
+                    reduced_axes=_stochastic_node_axis(
+                        node_axes=build.stochastic_node_axes_by_period[period],
+                        state_action_space=context.state_action_space,
+                    ),
+                    tiled_axes=_tiled_axes(build=build),
+                )
                 programs_by_core[id(core)] = MappingProxyType(
                     {
                         "main": CoreProgram(
                             name="main",
                             function=values_core,
                             argument_builder=argument_builder,
-                            requirements=CoreExecutionRequirements(),
+                            requirements=requirements,
                             output_roles=_dcegm_output_roles(
                                 build=build, publish_replay=False
                             ),
-                            disposition=CoreExecutionDisposition.DENSE,
-                            disposition_reason=_DCEGM_DENSE_REASON,
+                            disposition=CoreExecutionDisposition.PLANNED,
                             donation_candidates=(),
                             scope=ProgramScope.VALUES_ONLY,
+                            compiler_options=(
+                                (("scan_unroll", 1),)
+                                if isinstance(self.envelope, FUESEnvelope)
+                                else ()
+                            ),
                         ),
                         "replay": CoreProgram(
                             name="replay",
                             function=replay_core,
                             argument_builder=argument_builder,
-                            requirements=CoreExecutionRequirements(),
+                            requirements=requirements,
                             output_roles=_dcegm_output_roles(
                                 build=build, publish_replay=True
                             ),
-                            disposition=CoreExecutionDisposition.DENSE,
-                            disposition_reason=_DCEGM_DENSE_REASON,
+                            disposition=CoreExecutionDisposition.PLANNED,
                             donation_candidates=(),
                             scope=ProgramScope.REPLAY,
+                            compiler_options=(
+                                (("scan_unroll", 1),)
+                                if isinstance(self.envelope, FUESEnvelope)
+                                else ()
+                            ),
                             retained_artifact_keys=(SIMULATION_POLICY,),
                             retained_artifact_payload_types={
                                 SIMULATION_POLICY: EGMSimPolicy
@@ -512,6 +565,7 @@ class DCEGM(OneMarginSolver):
                         ),
                     }
                 )
+            period_group_keys[period] = build.step_group_keys[period]
             period_kernels[period] = _DCEGMPeriodKernel(
                 _core_programs=programs_by_core[id(core)],
                 regime_name=context.regime_name,
@@ -520,8 +574,9 @@ class DCEGM(OneMarginSolver):
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
+            period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=EGMContinuationSpec(
-                template=build.carry_template,
+                template=context.place_on_regime_devices(template=build.carry_template),
                 layout=self.egm_continuation_layout,
             ),
         )
@@ -544,9 +599,121 @@ class _BoundDCEGM(DCEGM):
     """Name of the function giving the savings the exogenous grid spans."""
 
 
-# Why the DC-EGM program executes dense: the kernel owns its stochastic-node
-# and refined-grid batching, and no product axis of it is planner-streamable.
-_DCEGM_DENSE_REASON = "deliberately_dense:dcegm_solver_owned_node_and_grid_batching"
+# Planner name of the child stochastic-node mesh the DC-EGM continuation folds.
+STOCHASTIC_NODE_AXIS = "stochastic_node"
+
+# Planner name of the exact envelope's resource-node cells.
+ENVELOPE_CELL_AXIS = "envelope_cell"
+
+# Planner name of the output state cells the per-combo solve is tiled over.
+CELL_AXIS = "cell"
+
+# Planner name of the exogenous savings nodes the continuation is tiled over.
+SAVINGS_POINT_AXIS = "savings_point"
+
+# Planner name of the exogenous Euler nodes the asset-row solve is tiled over.
+EULER_POINT_AXIS = "euler_point"
+
+_STOCHASTIC_NODE_WIDTH_KEYWORD = "_lcm_stochastic_node_width"
+
+_TILED_AXIS_WIDTH_KEYWORDS = MappingProxyType(
+    {
+        CELL_AXIS: "_lcm_cell_width",
+        SAVINGS_POINT_AXIS: "_lcm_savings_point_width",
+        EULER_POINT_AXIS: "_lcm_euler_point_width",
+        ENVELOPE_CELL_AXIS: "_lcm_envelope_cell_width",
+    }
+)
+
+
+def _tiled_axes(*, build: EGMStepBuild) -> tuple[TiledOutputAxis, ...]:
+    """Declare the loops the DC-EGM kernel runs in planner-sized tiles.
+
+    Each is a loop whose per-tile results are concatenated rather than folded,
+    so the axis is a tiled output axis and every width names the same result:
+
+    - `cell` over the regime's output state cells (its discrete and passive
+      states); discrete actions stay outside it, because the action
+      aggregation needs every action's value at once;
+    - `savings_point` over the exogenous savings nodes of the continuation;
+    - `euler_point` over the exogenous Euler nodes, which only the asset-row
+      kernel loops over;
+    - `envelope_cell` over adjacent candidate abscissae, which only the exact
+      envelope visits with a tiled cell scan.
+
+    A loop of one cell has nothing to tile and carries no declaration, so a
+    regime whose kernel does not run it — the single-post-state kernel's node
+    loop, a single-cell state product — declares no axis for it and
+    `ExecutionConfig(axis_widths=...)` refuses that name.
+    """
+    extents = {
+        CELL_AXIS: build.cell_extent,
+        SAVINGS_POINT_AXIS: build.savings_point_extent,
+        EULER_POINT_AXIS: build.euler_point_extent,
+        ENVELOPE_CELL_AXIS: build.envelope_cell_extent,
+    }
+    state_names = {
+        CELL_AXIS: build.row_discrete_state_names + build.row_passive_state_names,
+        SAVINGS_POINT_AXIS: (),
+        EULER_POINT_AXIS: (),
+        ENVELOPE_CELL_AXIS: (),
+    }
+    return tuple(
+        TiledOutputAxis(
+            name=name,
+            state_names=state_names[name],
+            extent=extents[name],
+            width_keyword=keyword,
+        )
+        for name, keyword in _TILED_AXIS_WIDTH_KEYWORDS.items()
+        if extents[name] > 1
+    )
+
+
+# Every planner width the DC-EGM core takes, in one tuple: the width is a
+# compile-time choice, so the solver's own jit has to hold all of them static.
+_WIDTH_KEYWORDS = (
+    _STOCHASTIC_NODE_WIDTH_KEYWORD,
+    *_TILED_AXIS_WIDTH_KEYWORDS.values(),
+)
+
+
+def _stochastic_node_axis(
+    *,
+    node_axes: tuple[tuple[StateName, int], ...],
+    state_action_space: StateActionSpace,
+) -> tuple[ReducedAxis, ...]:
+    """Declare the child stochastic-node mesh the continuation folds, where it is one.
+
+    An axis's coordinates are grids the program receives, so the mesh is
+    declarable exactly when the regime carries every child stochastic state on
+    a grid of the child's own node count. Three meshes carry no such
+    declaration and fold in one block instead:
+
+    - a regime whose reachable targets carry no stochastic state at all;
+    - a one-node mesh, which has nothing to partition;
+    - a cross-grid mesh, whose child integrates a state on a shorter grid than
+      the parent's own — the node axis then belongs to the child and no grid
+      the program receives has its length.
+    """
+    grids = state_action_space.states
+    declarable = all(
+        name in grids and int(jnp.asarray(grids[name]).shape[0]) == count
+        for name, count in node_axes
+    )
+    extent = math.prod(count for _, count in node_axes)
+    if not node_axes or not declarable or extent <= 1:
+        return ()
+    return (
+        ReducedAxis(
+            name=STOCHASTIC_NODE_AXIS,
+            coordinate_names=tuple(name for name, _ in node_axes),
+            coordinate_extents=tuple(count for _, count in node_axes),
+            canonical_order="c",
+            reduction=WEIGHTED_EXPECTATION_REDUCTION,
+            width_keyword=_STOCHASTIC_NODE_WIDTH_KEYWORD,
+        ),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -555,6 +722,14 @@ class EGMStepBuild:
 
     steps: MappingProxyType[int, EGMStepFunction]
     """Per-period step function; periods sharing a configuration share one."""
+
+    step_group_keys: MappingProxyType[int, Hashable]
+    """Per-period key of the configuration group whose step the period got.
+
+    Built from continuation targets and declared signatures alone, so two
+    builds of one model assign a period the same key. Two periods share a step
+    exactly when they share this key.
+    """
 
     carry_template: EGMCarry
     """The regime's all-finite carry template (discrete states, then passive
@@ -566,11 +741,28 @@ class EGMStepBuild:
     row_discrete_state_names: tuple[StateName, ...]
     """Discrete states leading every carry and policy row, in row order."""
 
+    stochastic_node_axes_by_period: MappingProxyType[
+        int, tuple[tuple[StateName, int], ...]
+    ]
+    """Each period core's actual child stochastic mesh, as state names and counts."""
+
     row_passive_state_names: tuple[StateName, ...]
     """Passive continuous states following the discrete states on every row."""
 
     row_discrete_action_names: tuple[ActionName, ...]
     """Discrete actions following the passive states on every row."""
+
+    cell_extent: int
+    """Number of output state cells: the discrete-by-passive state product."""
+
+    savings_point_extent: int
+    """Number of nodes on the solver's exogenous savings grid."""
+
+    euler_point_extent: int
+    """Number of asset-row nodes, or `0` where the kernel runs no node loop."""
+
+    envelope_cell_extent: int
+    """Number of exact-envelope node cells, or `0` for another backend."""
 
 
 def _dcegm_output_roles(
@@ -615,6 +807,80 @@ def _dcegm_values_core(
     """Run DC-EGM without retaining its optional simulation-policy output."""
     value, carry, _policy = core(**kwargs)
     return value, carry
+
+
+def declare_dcegm_carry_reads(
+    *, kernels: SolutionKernels, context: SolverBuildContext
+) -> SolutionKernels:
+    """Attach each DC-EGM period's declared carry reads to its shared programs.
+
+    Periods sharing one numerical core share the programs built around it; the
+    reads are a fact about the period, so each period gets its own program
+    mapping around the same core.
+    """
+    return replace(
+        kernels,
+        period_kernels=MappingProxyType(
+            {
+                period: dcegm_kernel_with_declared_reads(
+                    kernel=kernel, context=context, period=period
+                )
+                for period, kernel in kernels.period_kernels.items()
+            }
+        ),
+    )
+
+
+def dcegm_kernel_with_declared_reads(
+    *, kernel: PeriodKernel, context: SolverBuildContext, period: int
+) -> PeriodKernel:
+    """Return one DC-EGM period's adapter with its reachable targets' rows declared.
+
+    The builder hands the step the whole rolling payload, keyed by every carry
+    target the core indexes across all periods for pytree stability. Of those,
+    only the targets this period actually reaches publish a continuation at
+    `period + 1` — a target inactive there still occupies a carry key, but the
+    rolling mapping holds the build template for it, not a produced artifact.
+    Reads are declared for the reachable subset, one per published leaf, each
+    under its own leaf path inside the rolling mapping. The replay variant
+    runs the same reads under its own core name. Shared with the composite
+    solvers that embed this adapter.
+    """
+    if not isinstance(kernel, _DCEGMPeriodKernel):
+        return kernel
+    reachable_targets = (
+        ()
+        if period == context.solution_reachability.n_periods - 1
+        else context.solution_reachability.targets(
+            period=period,
+            source=context.regime_name,
+        )
+    )
+    reads = tuple(
+        read
+        for target, template in published_continuation_templates(
+            continuation_specs=context.continuation_specs,
+            targets=kernel.stateful_targets & frozenset(reachable_targets),
+        ).items()
+        for read in continuation_leaf_reads(
+            template=template,
+            artifact_key=EGM_CONTINUATION,
+            target=target,
+            source_regime=kernel.regime_name,
+            source_period=period,
+            core_key="main",
+        )
+    )
+    return replace(
+        kernel,
+        _core_programs=with_continuation_leaf_reads(
+            programs=kernel.core_programs(),
+            reads_by_core_key={
+                "main": reads,
+                "replay": rekeyed_value_reads(reads=reads, core_key="replay"),
+            },
+        ),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -676,9 +942,10 @@ class _DCEGMPeriodKernel:
     `main` inverts the Euler equation on the savings grid and publishes the
     value function plus the continuation a parent interpolates. `replay` is the
     output-specialized variant that also publishes the off-grid simulation
-    policy. Both are deliberately dense because the kernel owns its
-    stochastic-node and refined-grid batching. Calling the kernel builds the
-    selected program's arguments through its declared builder.
+    policy. Both declare the child stochastic-node mesh as a reduced axis, so
+    the execution plan owns the width their continuation expectation folds at.
+    Calling the kernel builds the selected program's arguments through its
+    declared builder.
     """
 
     _core_programs: Mapping[str, CoreProgram]
@@ -881,16 +1148,6 @@ def _fail_if_fues_n_points_to_scan_too_few(fues_n_points_to_scan: int | None) ->
         raise RegimeInitializationError(msg)
 
 
-def _fail_if_fues_scan_unroll_too_few(fues_scan_unroll: int) -> None:
-    if fues_scan_unroll < 1:
-        msg = (
-            f"FUESEnvelope.scan_unroll must be at least 1, got "
-            f"{fues_scan_unroll}. It is the `lax.scan` unroll factor for the "
-            "FUES candidate scan; 1 means no unrolling."
-        )
-        raise RegimeInitializationError(msg)
-
-
 def _fail_if_envelope_max_runs_too_few(envelope_max_runs: int) -> None:
     if envelope_max_runs < _MIN_ENVELOPE_MAX_RUNS:
         msg = (
@@ -898,32 +1155,6 @@ def _fail_if_envelope_max_runs_too_few(envelope_max_runs: int) -> None:
             f"got {envelope_max_runs}. It is the fold capacity of the exact "
             "upper envelope; a non-concave candidate chain folds into at "
             "least two resource-increasing runs."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_envelope_cell_batch_size_non_positive(
-    envelope_cell_batch_size: int | None,
-) -> None:
-    if envelope_cell_batch_size is not None and envelope_cell_batch_size < 1:
-        msg = (
-            f"ExactEnvelope.cell_batch_size must be at least 1, got "
-            f"{envelope_cell_batch_size}. It is how many node cells the exact "
-            "upper envelope resolves in parallel; use None to resolve them one "
-            "at a time."
-        )
-        raise RegimeInitializationError(msg)
-
-
-def _fail_if_stochastic_node_batch_size_negative(
-    stochastic_node_batch_size: int,
-) -> None:
-    if stochastic_node_batch_size < 0:
-        msg = (
-            f"DCEGM.stochastic_node_batch_size must be non-negative, got "
-            f"{stochastic_node_batch_size}. It is the block size for splaying the "
-            "child stochastic-node expectation into `lax.map` blocks; 0 keeps the "
-            "fused vmap."
         )
         raise RegimeInitializationError(msg)
 

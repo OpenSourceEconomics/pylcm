@@ -18,16 +18,18 @@ absorb.
 """
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from lcm import Model
 from lcm_examples.mahler_yum_2024 import (
-    MAHLER_YUM_MODEL,
     RETIREMENT_REGIME,
     START_PARAMS,
     WORKING_REGIME,
@@ -40,6 +42,7 @@ from lcm_examples.mahler_yum_2024 import (
     working_to_retirement_probability,
     working_to_working_probability,
 )
+from tests.ci.mahler_execution import create_mahler_gpu_model
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 # The full Mahler & Yum solve takes about 25 minutes on a 24 GB M4 Pro. Keep the
@@ -225,13 +228,24 @@ def test_create_inputs_starts_subjects_in_working_regime():
     np.testing.assert_array_equal(initial_conditions["age"], np.full(4, 25))
 
 
+@pytest.fixture(scope="module")
+def mahler_gpu_model(*, request: pytest.FixtureRequest) -> Model:
+    """Build the heavy workload with a capacity receipt beside its policy report."""
+    selection_report = request.config.getoption("--selection-report")
+    directory = Path(selection_report).parent if selection_report else Path("reports")
+    suffix = Path(selection_report).stem if selection_report else "manual"
+    return create_mahler_gpu_model(
+        report_path=directory / f"mahler-execution-{suffix}.json"
+    )
+
+
 @_gpu_x64
-def test_model_solves_and_simulates():
+def test_model_solves_and_simulates(*, mahler_gpu_model: Model) -> None:
     """Smoke test: model runs end-to-end with small n."""
     model_params, ic_df = create_inputs(
         seed=0, n_simulation_subjects=4, params=START_PARAMS
     )
-    result = MAHLER_YUM_MODEL.simulate(
+    result = mahler_gpu_model.simulate(
         params=model_params,
         initial_conditions=ic_df,
         seed=12345,
@@ -245,12 +259,12 @@ def test_model_solves_and_simulates():
 
 
 @pytest.fixture(scope="module")
-def simulation_result():
+def simulation_result(*, mahler_gpu_model: Model) -> pd.DataFrame:
     """Full simulation with START_PARAMS (seed=32, n=10000)."""
     model_params, initial_conditions = create_inputs(
         seed=32, n_simulation_subjects=10000, params=START_PARAMS
     )
-    result = MAHLER_YUM_MODEL.simulate(
+    result = mahler_gpu_model.simulate(
         params=model_params,
         initial_conditions=initial_conditions,
         seed=42,

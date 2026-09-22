@@ -56,6 +56,7 @@ from lcm.processes import RouwenhorstAR1Process
 from lcm.transition import MarkovTransition
 from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserFunction
 from tests.conftest import build_prepared_structure
+from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
 @categorical(ordered=True)
@@ -152,6 +153,7 @@ def _solve(regimes: dict[str, Regime]) -> MappingProxyType:
         enable_jit=False,
     )
     _bi_result = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
@@ -468,6 +470,7 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
         "next_wage_shock" not in processed["period0"].solution.transitions["terminal"]
     )
     solution = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
@@ -507,6 +510,7 @@ def _solve_jit(*, regimes: dict[str, Regime], enable_jit: bool) -> MappingProxyT
         enable_jit=enable_jit,
     )
     _bi_result = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
@@ -741,6 +745,7 @@ def test_a_folded_target_reached_only_by_the_regime_transition_is_enumerable():
 
     assert processed["period0"].solution.transitions["terminal"] == {}
     solution = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
@@ -801,6 +806,7 @@ def test_a_coarse_transition_into_a_folded_target_needs_no_per_target_cells():
     processed = _process(regimes={"period0": period0, "terminal": terminal})
 
     solution = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
@@ -876,6 +882,7 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
         enable_jit=False,
     )
     _bi_result = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
@@ -899,6 +906,7 @@ def test_a_coarse_candidate_folding_a_source_carried_process_solves():
     processed = _process(regimes=_make_target_local_fold_regimes(shared=True))
 
     solution = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=_FLAT_PARAMS,
         ages=_AGES,
         regimes=processed,
@@ -976,6 +984,7 @@ def test_coarse_self_transition_retains_the_self_continuation():
         "the coarse self-transition must retain 'stay' as its own continuation target"
     )
     _bi_result = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=params,
         ages=ages3,
         regimes=processed,
@@ -1020,6 +1029,7 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
 
     assert "next_wage_shock" not in processed["stay"].solution.transitions["stay"]
     solution = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=_discounted_params("stay", "done"),
         ages=ages3,
         regimes=processed,
@@ -1072,6 +1082,7 @@ def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
 
     assert "next_wage_shock" not in processed["src"].solution.transitions["alt"]
     solution = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=_discounted_params("src", "stay", "alt"),
         ages=ages3,
         regimes=processed,
@@ -1241,6 +1252,7 @@ def _solve_route(*, regimes: dict[str, Regime], discount: float) -> MappingProxy
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=flat_params,
         ages=_AGES,
         regimes=processed,
@@ -1417,6 +1429,7 @@ def _simulate_route(
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_fold_iid_shocks",
         flat_params=flat_params,
         ages=_AGES,
         regimes=processed,
@@ -1436,7 +1449,7 @@ def _simulate_route(
     result = simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
-        regimes=processed,
+        regimes=bind_eager_simulation(regimes=processed),
         regime_names_to_ids=regime_names_to_ids,
         logger=get_logger(log_level="off"),
         period_to_regime_to_V_arr=solution,

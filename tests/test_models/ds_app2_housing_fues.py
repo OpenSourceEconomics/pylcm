@@ -62,6 +62,7 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -209,7 +210,7 @@ def build_model(  # noqa: C901
     housing_max: float = 20.0,
     n_periods: int | None = None,
     envelope: Literal["fues", "mss", "ltm", "rfc"] = "fues",
-    liquid_batch_size: int = 0,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the DS App.2 housing EGM-FUES discrete-housing model.
 
@@ -231,13 +232,8 @@ def build_model(  # noqa: C901
         n_periods: Optional shortened horizon for construction tests; `None` uses
             the full lifecycle to `TERMINAL_AGE`.
         envelope: DC-EGM upper-envelope backend; the Table 3 method is FUES.
-        liquid_batch_size: Optional chunking of the liquid Euler-state grid. A
-            positive value splays the per-asset-node solve into
-            `ceil(n_grid / liquid_batch_size)` sequential chunks, bounding the
-            peak device memory of the discrete-housing argmax (whose tensor
-            carries the liquid axis) without changing the solved value function.
-            `0` (the default) solves every liquid node in one kernel. The
-            `"brute"` variant ignores it (grid search has no Euler asset row).
+        execution_config: Planner widths and device placement. Both variants
+            expose the `cell` axis for state-cell work.
 
     Returns:
         The three-regime (working, retired, dead) discrete-housing model.
@@ -282,9 +278,7 @@ def build_model(  # noqa: C901
     )
 
     housing_class = _make_housing_levels(n_housing=n_housing)
-    liquid_grid = LinSpacedGrid(
-        start=0.0, stop=liquid_max, n_points=n_grid, batch_size=liquid_batch_size
-    )
+    liquid_grid = LinSpacedGrid(start=0.0, stop=liquid_max, n_points=n_grid)
     consumption_grid = LinSpacedGrid(
         start=0.05, stop=liquid_max, n_points=n_consumption
     )
@@ -438,6 +432,7 @@ def build_model(  # noqa: C901
             regimes={"working": working, "retired": retired, "dead": dead},
             ages=ages,
             regime_id_class=HousingFuesRegimeId,
+            execution_config=execution_config,
         )
 
     inner_solver = DCEGM(
@@ -502,6 +497,7 @@ def build_model(  # noqa: C901
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=HousingFuesRegimeId,
+        execution_config=execution_config,
     )
 
 

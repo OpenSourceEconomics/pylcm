@@ -10,6 +10,7 @@ from _lcm.grids import UniformContinuousGrid
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -99,6 +100,7 @@ def get_model(
     | IrregSpacedGrid
     | PiecewiseLinSpacedGrid
     | PiecewiseLogSpacedGrid = DEFAULT_CONSUMPTION_GRID,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     final_age_alive = START_AGE + n_periods - 2
     return Model(
@@ -115,6 +117,7 @@ def get_model(
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        execution_config=execution_config,
     )
 
 

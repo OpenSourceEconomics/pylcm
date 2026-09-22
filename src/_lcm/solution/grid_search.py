@@ -43,8 +43,9 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
-    StreamableProductAxis,
-    TargetValueAccess,
+    ReducedAxis,
+    TiledOutputAxis,
+    ValueRead,
 )
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
@@ -67,12 +68,14 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     simulation_route,
 )
+from _lcm.solution.dcegm import CELL_AXIS
 from _lcm.typing import (
     FlatParams,
     MaxQOverAFunction,
     RegimeName,
     StateName,
 )
+from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
 from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
@@ -80,8 +83,11 @@ from lcm.typing import (
     FloatND,
 )
 
-_ACTION_AXIS_NAME = "action"
+# Planner name of the flattened Cartesian action axis grid search reduces.
+ACTION_PRODUCT_AXIS = "action_product"
+
 _ACTION_WIDTH_KEYWORD = "_lcm_action_block_width"
+_CELL_WIDTH_KEYWORD = "_lcm_cell_width"
 _CORE_RUNTIME_ARG_NAMES = frozenset(
     {
         "next_regime_to_V_arr",
@@ -118,6 +124,16 @@ class _ActionStreamingDisposition(StrEnum):
 
 def _select_action_width_keyword(*, context: SolverBuildContext) -> str:
     """Choose a deterministic planner keyword outside the model namespace."""
+    return _select_width_keyword(context=context, prefix=_ACTION_WIDTH_KEYWORD)
+
+
+def _select_cell_width_keyword(*, context: SolverBuildContext) -> str:
+    """Choose the state-cell width keyword outside every model input namespace."""
+    return _select_width_keyword(context=context, prefix=_CELL_WIDTH_KEYWORD)
+
+
+def _select_width_keyword(*, context: SolverBuildContext, prefix: str) -> str:
+    """Select an unoccupied deterministic suffix for a planner-owned width."""
     occupied = set(_CORE_RUNTIME_ARG_NAMES)
     occupied.update(context.flat_param_names)
     occupied.update(context.state_action_space.action_names)
@@ -127,11 +143,11 @@ def _select_action_width_keyword(*, context: SolverBuildContext) -> str:
     if context.pareto_weights is not None:
         occupied.update(context.pareto_weights.param_names)
 
-    candidate = _ACTION_WIDTH_KEYWORD
+    candidate = prefix
     suffix = 0
     while candidate in occupied:
         suffix += 1
-        candidate = f"{_ACTION_WIDTH_KEYWORD}_{suffix}"
+        candidate = f"{prefix}_{suffix}"
     return candidate
 
 
@@ -139,6 +155,28 @@ def _select_action_width_keyword(*, context: SolverBuildContext) -> str:
 @dataclass(frozen=True, kw_only=True)
 class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe this configured solver without building numerical kernels."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime or a specialized regime",
+            problem_shape="General discrete-continuous action product",
+            prerequisites=(
+                "Ordinary callable constraints; EV1 taste shocks; transition-local "
+                "joint lotteries"
+            ),
+            main_tradeoff=(
+                "Broad representation; eligible singleton hard-max routes stream "
+                "actions, while EV1 and collective reductions use dense actions"
+            ),
+            reduced_axes=("action_product",),
+            tiled_axes=("cell",),
+            host_axes=(),
+            host_driven_programs=(),
+            supports_ev1_taste_shocks=True,
+            supports_nonlinear_certainty_equivalent=True,
+        )
 
     @property
     def supports_transition_local_lotteries(self) -> bool:
@@ -231,18 +269,37 @@ class GridSearch(Solver):
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
+        untiled_state_names = tuple(
+            name
+            for name in context.state_action_space.state_names
+            if name in context.sharded_state_names
+            and name not in context.co_map_state_names
+        )
+        inner_state_names = tuple(
+            name
+            for name in context.state_action_space.state_names
+            if name not in context.co_map_state_names
+            and name not in untiled_state_names
+        )
+        cell_extent = math.prod(
+            context.state_action_space.states[name].shape[0]
+            for name in inner_state_names
+        )
+        cell_width_keyword = (
+            _select_cell_width_keyword(context=context) if cell_extent > 1 else None
+        )
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
             if q_id not in program_functions:
                 common_kwargs = {
                     "Q_and_F": Q_and_F,
-                    "batch_sizes": {
-                        name: grid.batch_size
-                        for name, grid in context.grids.items()
-                        if name in context.state_action_space.state_names
-                    },
+                    "batch_sizes": dict.fromkeys(
+                        context.state_action_space.state_names, 0
+                    ),
                     "action_names": action_names,
                     "state_names": context.state_action_space.state_names,
+                    "cell_width_keyword": cell_width_keyword,
+                    "untiled_state_names": untiled_state_names,
                     "n_discrete_action_axes": len(
                         context.state_action_space.discrete_actions
                     ),
@@ -282,10 +339,10 @@ class GridSearch(Solver):
                 edge_target_regimes=context.edge_target_regimes,
             )
             requirements = CoreExecutionRequirements(
-                streamable_axes=(
+                reduced_axes=(
                     (
-                        StreamableProductAxis(
-                            name=_ACTION_AXIS_NAME,
+                        ReducedAxis(
+                            name=ACTION_PRODUCT_AXIS,
                             coordinate_names=action_names,
                             coordinate_extents=action_extents,
                             canonical_order="c",
@@ -296,7 +353,19 @@ class GridSearch(Solver):
                     if stream_actions
                     else ()
                 ),
-                target_value_accesses=_target_value_accesses(
+                tiled_axes=(
+                    (
+                        TiledOutputAxis(
+                            name=CELL_AXIS,
+                            state_names=inner_state_names,
+                            extent=cell_extent,
+                            width_keyword=cell_width_keyword,
+                        ),
+                    )
+                    if cell_width_keyword is not None
+                    else ()
+                ),
+                value_reads=_value_reads(
                     regime_name=context.regime_name,
                     period=period,
                     target_regimes=target_regimes,
@@ -317,10 +386,12 @@ class GridSearch(Solver):
                 ),
                 disposition=(
                     CoreExecutionDisposition.PLANNED
-                    if stream_actions
+                    if requirements.axes
                     else CoreExecutionDisposition.DENSE
                 ),
-                disposition_reason=(None if stream_actions else action_streaming.value),
+                disposition_reason=(
+                    None if requirements.axes else action_streaming.value
+                ),
                 donation_candidates=(),
             )
             result[period] = _GridSearchPeriodKernel(
@@ -384,7 +455,7 @@ def _edge_reference_regimes_for_targets(
     return tuple(dict.fromkeys(references))
 
 
-def _target_value_accesses(
+def _value_reads(
     *,
     regime_name: RegimeName,
     period: int,
@@ -392,9 +463,9 @@ def _target_value_accesses(
     same_period_ref_regimes: tuple[RegimeName, ...],
     edge_reference_regimes: tuple[RegimeName, ...],
     edge_target_regimes: tuple[RegimeName, ...],
-) -> tuple[TargetValueAccess, ...]:
+) -> tuple[ValueRead, ...]:
     """Declare every stored value leaf read by one GridSearch program."""
-    accesses: list[TargetValueAccess] = []
+    reads: list[ValueRead] = []
     for target_regime in target_regimes:
         target = (
             ValueArtifactAddress(
@@ -410,8 +481,8 @@ def _target_value_accesses(
                 regime=target_regime,
             )
         )
-        accesses.append(
-            _target_value_access(
+        reads.append(
+            _value_read(
                 regime_name=regime_name,
                 period=period,
                 target=target,
@@ -419,8 +490,8 @@ def _target_value_accesses(
                 path=(target_regime,),
             )
         )
-    accesses.extend(
-        _target_value_access(
+    reads.extend(
+        _value_read(
             regime_name=regime_name,
             period=period,
             target=ValueArtifactAddress(
@@ -433,8 +504,8 @@ def _target_value_accesses(
         )
         for reference_regime in same_period_ref_regimes
     )
-    accesses.extend(
-        _target_value_access(
+    reads.extend(
+        _value_read(
             regime_name=regime_name,
             period=period,
             target=ValueArtifactAddress(
@@ -447,19 +518,19 @@ def _target_value_accesses(
         )
         for reference_regime in edge_reference_regimes
     )
-    return tuple(accesses)
+    return tuple(reads)
 
 
-def _target_value_access(
+def _value_read(
     *,
     regime_name: RegimeName,
     period: int,
     target: ValueArtifactAddress,
     channel: ValueInputChannel,
     path: tuple[str | int, ...],
-) -> TargetValueAccess:
+) -> ValueRead:
     """Pair one logical target artifact with its exact program-argument leaf."""
-    return TargetValueAccess(
+    return ValueRead(
         target=target,
         source=ValueConsumerAddress(
             source_period=period,
