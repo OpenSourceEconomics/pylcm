@@ -10,7 +10,7 @@ import dataclasses
 import logging
 import math
 import operator
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
 
@@ -44,6 +44,9 @@ class ResolvedExecution:
 
     axis_width_ceilings: MappingProxyType[str, int] = MappingProxyType({})
     """Widest block the planner may compile each named axis at; empty means none."""
+
+    covered_axes: frozenset[str] = frozenset()
+    """Axis names whose conservative seed covers the whole extent."""
 
     device_memory_bytes: int | None
     """Effective per-device workspace budget every phase admits against, or `None`.
@@ -258,6 +261,7 @@ def resolve_execution_config(
         axis_widths=model_wide_widths,
         axis_widths_by_regime=widths_by_regime,
         axis_width_ceilings=MappingProxyType(dict(config.axis_width_ceilings)),
+        covered_axes=frozenset(config.covered_axes),
         device_memory_bytes=_effective_device_memory_bytes(
             requested_bytes=config.device_memory_bytes,
             headroom_fraction=config.device_memory_headroom_fraction,
@@ -376,7 +380,7 @@ def fail_if_per_regime_widths_name_non_solve_axes(
 
 def fail_if_axis_widths_name_undeclared_axes(
     *,
-    axis_widths: Mapping[str, AxisWidth],
+    axis_widths: Collection[str],
     program_collections: tuple[Iterable[CoreProgram], ...],
     label: str = "axis_widths",
 ) -> None:
@@ -389,7 +393,7 @@ def fail_if_axis_widths_name_undeclared_axes(
     already merged.
 
     Args:
-        axis_widths: The widths the user declared, by axis name.
+        axis_widths: The axis names the user declared, as width keys or a tuple.
         program_collections: One collection of core programs per phase whose
             axes the widths may name.
         label: The `ExecutionConfig` field the declaration came from, named in

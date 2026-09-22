@@ -11,7 +11,7 @@ import itertools
 import logging
 import math
 import operator
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, SupportsIndex, cast
@@ -148,6 +148,7 @@ def workspace_width_candidates(
     fixed_widths: Mapping[str, int] = MappingProxyType({}),
     budget_bytes: int | None = None,
     width_ceilings: Mapping[str, int] = MappingProxyType({}),
+    covered_axes: Collection[str] = (),
 ) -> tuple[Mapping[str, int], ...]:
     """Return the candidate sequence in planner rank order without compiling it.
 
@@ -165,6 +166,9 @@ def workspace_width_candidates(
     legal candidates with `width <= ceiling`; it shortens no axis extent,
     overrides no fixed width policy, and a ceiling below an axis's narrowest
     legal width is refused.
+
+    `covered_axes` names the axes whose bootstrap width is their whole extent
+    where `bootstrap_widths` covers them; a budgeted frontier already holds it.
     """
     declared_axes = _validate_axes(axes=axes)
     widths = _validate_fixed_widths(fixed_widths=fixed_widths)
@@ -175,6 +179,7 @@ def workspace_width_candidates(
         fixed_widths=widths,
         budget_bytes=budget,
         width_ceilings=ceilings,
+        covered_axes=covered_axes,
     )
 
 
@@ -188,6 +193,7 @@ def plan_workspace[Compiled](
     memory_for: Callable[[Compiled], CompilerMemoryReservation] | None = None,
     resident_bytes: int = 0,
     resident_bytes_for: Callable[[Compiled], int] | None = None,
+    covered_axes: Collection[str] = (),
 ) -> WorkspacePlan[Compiled]:
     """Compile the width frontier widest-first and return the first candidate that fits.
 
@@ -234,6 +240,7 @@ def plan_workspace[Compiled](
         fixed_widths=widths_by_axis,
         budget_bytes=budget,
         width_ceilings=ceilings,
+        covered_axes=covered_axes,
     )
 
     if budget is None:
@@ -306,6 +313,7 @@ def plan_workspace_bounded[Compiled](
     policy: WidthSearchPolicy = _EXHAUSTIVE_POLICY,
     hint: Mapping[str, int] | None = None,
     cached_analysis_for: Callable[[Mapping[str, int]], object | None] | None = None,
+    covered_axes: Collection[str] = (),
 ) -> WorkspacePlan[Compiled]:
     """Search a bounded number of widths for one the budget admits.
 
@@ -358,6 +366,8 @@ def plan_workspace_bounded[Compiled](
             for a width mapping, or `None`. A report that refuses the width
             spends an evaluation and no compilation; one that admits it is
             followed by the compilation that owns the returned executable.
+        covered_axes: Axes whose conservative seed is their whole extent where
+            `bootstrap_widths` covers them.
 
     Returns:
         The widest admitted candidate the search reached, with its already
@@ -378,6 +388,7 @@ def plan_workspace_bounded[Compiled](
             memory_for=memory_for,
             resident_bytes=resident_bytes,
             resident_bytes_for=resident_bytes_for,
+            covered_axes=covered_axes,
         )
 
     declared_axes = _validate_axes(axes=axes)
@@ -399,6 +410,7 @@ def plan_workspace_bounded[Compiled](
             axes=declared_axes,
             fixed_widths=widths_by_axis,
             width_ceilings=ceilings,
+            covered_axes=covered_axes,
         )
         return WorkspacePlan(
             widths=widths, peak_bytes=None, compiled=compile_candidate(widths)
@@ -419,6 +431,7 @@ def plan_workspace_bounded[Compiled](
         resident_bytes_for=resident_bytes_for,
         policy=policy,
         cached_analysis_for=cached_analysis_for,
+        covered_axes=covered_axes,
     )
     return search.run(hint=hint)
 
@@ -510,6 +523,8 @@ class BoundedWidthSelector:
     """A mapping to evaluate first; a declaration that refuses it logs and skips it."""
     label: str = ""
     """What the diagnostics call this core."""
+    covered_axes: Collection[str] = ()
+    """Axes whose conservative seed is their whole extent where it is covered."""
 
     def __post_init__(self) -> None:
         """Announce the policy and compute the seed the first proposal carries."""
@@ -694,6 +709,7 @@ class BoundedWidthSelector:
             axes=self.axes,
             fixed_widths=self.fixed_widths,
             width_ceilings=self.width_ceilings,
+            covered_axes=self.covered_axes,
         )
 
     def _hint_refusal(self, *, hint: Mapping[str, int]) -> str | None:
@@ -724,14 +740,24 @@ class BoundedWidthSelector:
     def _shrink(
         self, *, widths: Mapping[str, int]
     ) -> tuple[str, MappingProxyType[str, int]] | None:
-        """Halve the widest-extent unfixed axis that is not already at its floor."""
+        """Halve the widest-extent unfixed axis that is not already at its floor.
+
+        A covered axis refused at its whole extent steps to the power-of-two
+        width `bootstrap_width` gives it before halving.
+        """
         movable = sorted(
             (axis for axis in self.axes if axis.name not in self.fixed_widths),
             key=lambda axis: -axis.extent,
         )
         for axis in movable:
             current = widths[axis.name]
-            narrower = self._admissible(axis=axis, width=current // 2)
+            proposal = (
+                bootstrap_width(extent=axis.extent)
+                if current == axis.extent
+                and _covers(axis=axis, covered_axes=self.covered_axes)
+                else current // 2
+            )
+            narrower = self._admissible(axis=axis, width=proposal)
             if narrower < current:
                 return axis.name, _width_mapping(
                     axes=self.axes,
@@ -794,6 +820,7 @@ class _BoundedWidthSearch[Compiled]:
     resident_bytes_for: Callable[[Compiled], int] | None
     policy: WidthSearchPolicy
     cached_analysis_for: Callable[[Mapping[str, int]], object | None] | None
+    covered_axes: Collection[str]
 
     def run(self, *, hint: Mapping[str, int] | None) -> WorkspacePlan[Compiled]:
         """Walk the policy and return its widest admitted candidate."""
@@ -803,6 +830,7 @@ class _BoundedWidthSearch[Compiled]:
             width_ceilings=self.width_ceilings,
             policy=self.policy,
             hint=hint,
+            covered_axes=self.covered_axes,
         )
         compiled_by_widths: dict[tuple[tuple[str, int], ...], Compiled] = {}
         while (widths := selector.propose()) is not None:
@@ -1104,6 +1132,22 @@ def bootstrap_width(*, extent: int, cap: int = BOOTSTRAP_WIDTH_CAP) -> int:
     return 1 << (upper_bound.bit_length() - 1)
 
 
+def _covers(
+    *, axis: ReducedAxis | TiledOutputAxis, covered_axes: Collection[str]
+) -> bool:
+    """Report whether a named axis is seeded at its whole extent.
+
+    It is when the extent is within `BOOTSTRAP_WIDTH_CAP` and the power-of-two
+    `bootstrap_width` leaves a remainder of it, which a map at that width would
+    trace as a second program.
+    """
+    return (
+        axis.name in covered_axes
+        and axis.extent <= BOOTSTRAP_WIDTH_CAP
+        and axis.extent % bootstrap_width(extent=axis.extent) != 0
+    )
+
+
 def _tiled_bootstrap_cap(*, block: int) -> int:
     """Return the cap a tiled output axis bootstraps under, given the live block.
 
@@ -1124,6 +1168,7 @@ def bootstrap_widths(
     axes: tuple[ReducedAxis | TiledOutputAxis, ...],
     fixed_widths: Mapping[str, int] = MappingProxyType({}),
     width_ceilings: Mapping[str, int] = MappingProxyType({}),
+    covered_axes: Collection[str] = (),
 ) -> MappingProxyType[str, int]:
     """Return the one width map an unbudgeted plan lowers, in declaration order.
 
@@ -1133,6 +1178,10 @@ def bootstrap_widths(
     the map stays near `BOOTSTRAP_BLOCK_CAP` and the live block stays bounded by a
     fixed number of cells whatever the model.  Every width is the one the axis
     admits nearest the proposal, so alignment and `minimum_width` still hold.
+
+    An unfixed axis `covered_axes` names takes its whole extent instead where
+    `_covers` holds, so the map over it traces no remainder program; a ceiling
+    below the extent still bounds it.
     """
     widths: dict[str, int] = {}
     block = 1
@@ -1148,7 +1197,11 @@ def bootstrap_widths(
             )
             width = _admissible_width(
                 axis=axis,
-                width=bootstrap_width(extent=axis.extent, cap=cap),
+                width=(
+                    axis.extent
+                    if _covers(axis=axis, covered_axes=covered_axes)
+                    else bootstrap_width(extent=axis.extent, cap=cap)
+                ),
                 ceiling=ceiling,
             )
         widths[axis.name] = width
@@ -1162,6 +1215,7 @@ def _workspace_width_candidates(
     fixed_widths: Mapping[str, int],
     budget_bytes: int | None,
     width_ceilings: Mapping[str, int] = MappingProxyType({}),
+    covered_axes: Collection[str] = (),
 ) -> tuple[MappingProxyType[str, int], ...]:
     """Enumerate one bootstrap width map or the budgeted frontier, widest first."""
     if budget_bytes is None:
@@ -1170,6 +1224,7 @@ def _workspace_width_candidates(
                 axes=axes,
                 fixed_widths=fixed_widths,
                 width_ceilings=width_ceilings,
+                covered_axes=covered_axes,
             ),
         )
 

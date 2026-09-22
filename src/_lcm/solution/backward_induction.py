@@ -3843,6 +3843,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                         axes=representative.requirements.axes,
                         fixed_widths=execution.widths_for(regime_name=triple[0]),
                         width_ceilings=execution.axis_width_ceilings,
+                        covered_axes=execution.covered_axes,
                         compile_candidate=_CompiledCandidateLookup(
                             compiled_by_width=compiled_by_width
                         ),
@@ -4000,6 +4001,7 @@ def _bounded_candidate_source(
             axes=representative.requirements.axes,
             fixed_widths=execution.widths_for(regime_name=triple[0]),
             width_ceilings=execution.axis_width_ceilings,
+            covered_axes=execution.covered_axes,
             policy=policy,
             hint=policy.hints.get(triple[0]),
             label=_describe_candidate(candidate=(triple, ())),
@@ -4950,6 +4952,7 @@ def _resolve_output_layouts_and_lowering_keys(
             axes=materialized.requirements.axes,
             fixed_widths=execution_widths.widths_for(regime_name=regime_name),
             width_ceilings=execution_widths.axis_width_ceilings,
+            covered_axes=execution_widths.covered_axes,
             budget_bytes=budget_bytes,
         )
         state_order = tuple(

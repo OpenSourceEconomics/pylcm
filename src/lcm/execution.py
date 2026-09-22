@@ -233,6 +233,18 @@ class ExecutionConfig:
     planned, naming the axis and the value.
     """
 
+    covered_axes: tuple[str, ...] = ()
+    """Planner axis names whose conservative seed covers the whole extent.
+
+    Without a budget, and as the conservative seed of a bounded search, an axis
+    is lowered at the largest power of two below its extent. For an axis named
+    here whose extent is at most the bootstrap cap and not a multiple of that
+    power of two, the seed is the full extent instead, so the map over the axis
+    needs no remainder program. A fixed width or a ceiling below the extent
+    still binds. A bounded search refused at the covered width proposes the
+    power-of-two width next. An empty tuple covers nothing.
+    """
+
     devices: tuple[int, ...] | None = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
@@ -282,6 +294,7 @@ class ExecutionConfig:
                 axis_width_ceilings=self.axis_width_ceilings
             ),
         )
+        _fail_if_covered_axes_invalid(covered_axes=self.covered_axes)
         sharded = tuple(self.sharded_states)
         _fail_if_sharded_states_invalid(sharded_states=sharded)
         object.__setattr__(self, "sharded_states", sharded)
@@ -379,6 +392,16 @@ def _normalized_axis_width_ceilings(
         _fail_if_width_invalid(label=f"axis_width_ceilings[{name!r}]", width=ceiling)
         validated[name] = ceiling
     return MappingProxyType(validated)
+
+
+def _fail_if_covered_axes_invalid(*, covered_axes: tuple[str, ...]) -> None:
+    """Require distinct non-empty axis names."""
+    if not all(covered_axes):
+        msg = "ExecutionConfig.covered_axes entries must be non-empty axis names."
+        raise ValueError(msg)
+    if len(set(covered_axes)) != len(covered_axes):
+        msg = f"ExecutionConfig.covered_axes names an axis twice: {covered_axes!r}."
+        raise ValueError(msg)
 
 
 def _validated_per_regime_widths(
