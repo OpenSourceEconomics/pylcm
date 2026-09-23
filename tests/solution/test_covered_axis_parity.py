@@ -15,12 +15,10 @@ covering cannot change it there. Dispatched widths are read from the planner
 through `CensusRecorder`, and every published array is compared byte for byte.
 
 The NB-EGM toy at its builder's default sizes, three periods and a budgeted
-bounded search, is the counterexample to bitwise identity. The wider tile
-reorders rounding in the non-terminal periods: in float64, 31 and 9 of 120
-values move by at most 2 and 4 ulp; in float32, one value per period moves by
-one ulp. Shapes, dtypes and finite masks stay exact, and the tests hold every
-finite value to `_MAX_ULP` of the uncovered solve as a tripwire at that measured
-size.
+bounded search, publishes the same bytes covered and uncovered on the CPU
+backend. A wider tile can reorder rounding in fused reductions on other
+backends, so every finite value is also held to `_MAX_ULP` of the uncovered
+solve; shapes, dtypes and finite masks must stay exact.
 
 Each distinct solve runs once per worker and is shared across tests.
 """
@@ -235,14 +233,6 @@ def test_default_size_toy_covering_moves_no_value_beyond_the_ulp_bound() -> None
     assert _max_ulp_over_finite_floats(left=covered, right=uncovered) <= _MAX_ULP
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "At the toy's default sizes the wider covered tile reorders rounding in "
-        "the non-terminal periods, moving values by up to 4 ulp in float64 and "
-        "1 ulp in float32; which fused operation reorders is not isolated."
-    ),
-)
 def test_default_size_toy_covering_leaves_every_array_bitwise_unchanged() -> None:
     """Covering at default sizes publishes the same bytes as not covering."""
     uncovered, _ = _solve_default_size_toy(covered=False)
