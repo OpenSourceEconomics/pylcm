@@ -30,6 +30,7 @@ from typing import cast
 
 import jax
 from jax._src import config as jax_config
+from jax._src import core as jax_core
 
 from _lcm.engine import (
     Regime,
@@ -5626,8 +5627,27 @@ def _trace_settings_key() -> Hashable:
       traces at all;
     - `jax_default_matmul_precision`, the contraction precision;
     - the ambient mesh set by `jax.set_mesh`.
+
+    The context holds JAX's interned axis environment as an object whose repr
+    is its address, so it is spelled by its contents: a key then reads the same
+    in every process that traces under the same context.
     """
-    return ("trace_context", jax_config.trace_context())
+    return (
+        "trace_context",
+        tuple(_spelled_trace_value(value) for value in jax_config.trace_context()),
+    )
+
+
+def _spelled_trace_value(value: object) -> object:
+    """Replace an axis environment by the axis names and sizes it binds."""
+    if not isinstance(value, jax_core.AxisEnv):
+        return value
+    return (
+        "axis_env",
+        tuple(sorted(value.axis_sizes.items(), key=repr)),
+        tuple(sorted(value.spmd_axis_names, key=repr)),
+        tuple(sorted(value.explicit_mesh_axis_names, key=repr)),
+    )
 
 
 def _abstract_arguments_key(
