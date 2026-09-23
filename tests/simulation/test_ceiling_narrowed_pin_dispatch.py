@@ -28,7 +28,9 @@ from tests.simulation.test_unbudgeted_subject_width import (
     _materialized,
 )
 
-_CASES = tuple(cases())
+# A single-subject population carries no subject planner axis, so extent 1 is
+# outside the dispatch domain.
+_CASES = tuple(case for case in cases() if case[0].extent > 1)
 
 
 def _kw(case: tuple[Axis, int, int]) -> dict[str, Any]:
