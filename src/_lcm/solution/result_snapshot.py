@@ -766,6 +766,8 @@ def _validate_solution_metadata_fields(
         _require_exact_str(getattr(metadata, field_name), label=field_name)
     if type(metadata.source) is not SolutionSource:
         raise TypeError("Solution metadata source must be exact SolutionSource.")
+    if type(metadata.durable_identity) is not bool:
+        raise TypeError("Solution metadata durable_identity must be an exact bool.")
     _require_positive_exact_int(
         metadata.solver_api_version,
         label="solution solver_api_version",

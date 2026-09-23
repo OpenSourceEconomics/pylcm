@@ -294,10 +294,10 @@ class ValueArraySchema:
 class SolutionMetadata:
     """In-memory identity and retention facts for one solve.
 
-    ``model_fingerprint`` is the durable semantic identity used for restored
-    results. ``model_instance_id`` remains a separate same-instance guard for
-    in-memory results. ``params_fingerprint`` binds the result to the canonical
-    solve parameters used by that solve.
+    ``model_fingerprint`` binds either the durable semantics or an ephemeral
+    model instance. ``model_instance_id`` guards in-memory consumption;
+    ephemeral results always require the producing instance. ``params_fingerprint``
+    binds the result to the canonical solve parameters used by that solve.
     """
 
     retention: ResultRetention
@@ -315,7 +315,9 @@ class SolutionMetadata:
     value_schemas: Mapping[tuple[int, RegimeName], ValueArraySchema]
     """Schema of every stored value array, keyed by period and regime."""
     model_fingerprint: str = "0" * _SHA256_HEX_LENGTH
-    """Durable digest of the model's semantics, binding restored results."""
+    """Model identity digest; durable results may use it after restoration."""
+    durable_identity: bool = True
+    """Whether this result has a persistable semantic model identity."""
     solver_identities: Mapping[RegimeName, SolverIdentity] = field(default_factory=dict)
     """Package-owned identity of each regime's solver."""
     replay_routes: Mapping[RegimeName, ReplayRouteIdentity | None] = field(
@@ -335,7 +337,7 @@ class SolutionMetadata:
     solution_schema_version: int = SOLUTION_SCHEMA_VERSION
     """Version of the result container's schema."""
 
-    def __post_init__(self) -> None:  # noqa: C901
+    def __post_init__(self) -> None:  # noqa: C901, PLR0912
         if self.n_periods < 1:
             raise ValueError("SolutionMetadata.n_periods must be positive.")
         if type(self.pylcm_version) is not str or not self.pylcm_version:
@@ -352,6 +354,8 @@ class SolutionMetadata:
             )
         if not self.model_instance_id:
             raise ValueError("SolutionMetadata.model_instance_id must not be empty.")
+        if type(self.durable_identity) is not bool:
+            raise ValueError("SolutionMetadata.durable_identity must be an exact bool.")
         if len(self.params_fingerprint) != _SHA256_HEX_LENGTH or any(
             character not in "0123456789abcdef" for character in self.params_fingerprint
         ):
@@ -480,6 +484,7 @@ _ARTIFACT_CONTRACT_DATACLASS_FIELDS: tuple[
             "params_fingerprint",
             "value_schemas",
             "model_fingerprint",
+            "durable_identity",
             "solver_identities",
             "replay_routes",
             "artifact_descriptors",

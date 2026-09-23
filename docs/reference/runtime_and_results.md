@@ -321,6 +321,27 @@ decorated function object for the life of the process. Separately, an in-memory 
 keeps its model-instance token; that same-instance check is not applied to a restored
 archive. `metadata.source` records that distinction as `IN_MEMORY` or `PERSISTED`.
 
+### Ephemeral model identity
+
+`Model(..., durable_identity=False)` lets an expert-owned model use a callable graph
+whose semantics the durable fingerprint walker cannot represent. The default is
+`durable_identity=True`. An ephemeral model skips the model callable walk and binding
+seal at construction. It can solve and simulate in its originating process with the same
+model instance. `SolutionMetadata.durable_identity` marks each result explicitly.
+
+An ephemeral solution retains parameter, solver, replay-route, schema, and artifact
+checks. Its identity is tied to the producing model instance and runtime. A different
+model, a restored model, or a different process cannot replay the result. Both
+`SolutionResult.save()` and `save_solution()` reject it. `SimulationResult.save()` also
+rejects an ephemeral simulation; `SimulationResult.to_dataframe()` remains available for
+scientific exports.
+
+In this mode, users are responsible for keeping code, dependencies, and captured data
+consistent while the model runs. Rebinding or mutating a value captured by a Python
+callable may change its behavior. JAX may also keep an earlier captured value in an
+already compiled function. Rebuild generated and JIT callables, then build a new model
+and solve again after changing such state.
+
 Each `(period, regime)` value has a lightweight `ValueArraySchema` recording its exact
 shape, dtype, and canonical named axes. Artifact descriptors play the corresponding
 descriptive role for retained payloads. Neither authenticates returned data. Simulation
