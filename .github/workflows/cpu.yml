@@ -30,6 +30,7 @@ jobs:
       Run general tests for ${{ matrix.os }} on ${{ matrix.python-version }}
       (shard ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read
@@ -167,7 +168,7 @@ jobs:
             --deselect=tests/simulation/test_compile_requests.py::test_simulate_host_time_at_progress_is_within_the_bar_of_off\
             --deselect=tests/simulation/initial_conditions/test_admission_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
             --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=0 \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp64-$RUNNER_OS-general-$PYLCM_SHARD.xml\
             -n 4 ${coverage_args[@]+"${coverage_args[@]}"}
@@ -216,6 +217,7 @@ jobs:
   tests-fp32:
     name: Run general fp32 tests on ubuntu-latest (shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read
@@ -287,7 +289,7 @@ jobs:
             --deselect=tests/simulation/initial_conditions/test_admission_preflight_contract.py::test_unstubbed_warm_full_call_progress_meets_existing_time_bar\
             -m "not slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=0 \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp32-Linux-general-$PYLCM_SHARD.xml\
             -n 4
@@ -340,6 +342,7 @@ jobs:
   tests-source-contract:
     name: Run the source-only certificate campaign (Linux, 3.14)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read
@@ -398,7 +401,7 @@ jobs:
             tests/test_simulation_candidate_program_certificate.py \
             tests/test_uniform_process_grid_certificate.py \
             --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=1800 --timeout-method=thread -v --max-worker-restart=3 \
+            --timeout=1800 --timeout-method=thread -v --max-worker-restart=0 \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp64-source-contract.xml \
             --cov=./ --cov-report="xml:reports/coverage-source-contract.xml" \
@@ -433,6 +436,7 @@ jobs:
   tests-rest-slow:
     name: Run slow non-solution tests (Linux, fp${{ matrix.precision }})
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read
@@ -510,7 +514,7 @@ jobs:
           pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             --precision="$PYLCM_CI_PRECISION" -m "slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=0 \
             --durations=25 \
             --junitxml=reports/junit-cpu-fp$PYLCM_CI_PRECISION-rest-slow.xml \
             --dist loadfile -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
@@ -557,6 +561,7 @@ jobs:
   tests-certified:
     name: Run the certified opt-level-zero battery (Linux, fp64)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read
@@ -685,6 +690,7 @@ jobs:
   tests-timing:
     name: Run the serial timing witnesses (${{ matrix.os }}, fp${{ matrix.precision }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read
@@ -830,6 +836,7 @@ jobs:
   tests-topology-four-device:
     name: Run the four-CPU-device witnesses (Linux, fp${{ matrix.precision }})
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read
@@ -1525,6 +1532,7 @@ jobs:
   tests-topology-eight-device:
     name: Run the eight-CPU-device witnesses (Linux, fp${{ matrix.precision }})
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read
@@ -1982,6 +1990,7 @@ jobs:
   tests-exact-kernel:
     name: Run the exact-kernel capability matrix (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
@@ -2205,7 +2214,7 @@ jobs:
           pixi run -e tests-cpu pytest "${files[@]}" \
             --precision="$PYLCM_CI_PRECISION" -m slow \
             --policy-child --ci-policy=full --hardware-profile=cpu \
-            --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
+            --timeout=600 --timeout-method=thread -v --max-worker-restart=0 \
             --durations=25 \
             --junitxml="$pylcm_junit_report" \
             -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
@@ -2265,6 +2274,7 @@ jobs:
       - tests-topology-eight-device
       - tests-slow-solution
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -2316,6 +2326,7 @@ jobs:
       - coverage
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Fail unless every lane succeeded
         run: |-
