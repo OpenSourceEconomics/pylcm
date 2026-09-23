@@ -516,13 +516,51 @@ def fingerprint_model(
     Hardware placement, compiler, sharding, tiling controls, prose descriptions,
     and ``Phased.simulate`` truth are intentionally excluded.
 
-    The record is split at the boundary no parameter vector crosses. Everything
-    a model fixes at build — topology, names, identities, declared callable
-    semantics — enters through `structure`, whose digest
-    `fingerprint_model_structure` produces; only concrete grid support and the
-    canonical solution parameters are read from `flat_params` here. A caller
-    holding a model across many parameter vectors passes the structure digest it
-    already computed, and pays the callable walk once rather than per solve.
+    The record is `fingerprint_model_programs` — everything the lowered
+    programs depend on — plus the canonical solution parameters, which are
+    traced inputs of those programs and so belong only to a stored solution.
+    A caller holding a model across many parameter vectors passes the
+    structure digest it already computed, and pays the callable walk once
+    rather than per solve.
+    """
+    record = (
+        ("pylcm-model-fingerprint", 7),
+        fingerprint_model_programs(
+            ages=ages,
+            regimes=regimes,
+            user_regimes=user_regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            flat_params=flat_params,
+            structure=structure,
+            process_grid_resolver=process_grid_resolver,
+        ),
+        project_solution_params(
+            flat_params=flat_params, regimes=regimes, projection=projection
+        ),
+    )
+    return _semantic_fingerprint(record)
+
+
+def fingerprint_model_programs(
+    *,
+    ages: AgeGrid,
+    regimes: Mapping[RegimeName, Regime],
+    user_regimes: _FingerprintUserRegimes,
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_params: FlatParams,
+    structure: str | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> str:
+    """Hash the model facts every lowered solve program depends on.
+
+    The record is the structure digest `fingerprint_model_structure` produces
+    — topology, names, identities, declared callable semantics — plus the
+    concrete grid support read from `flat_params`. Fixed parameters enter
+    through the structure digest, since they can shape grids, topology and
+    static choices. Solve-time parameter values are traced inputs of every
+    program and are excluded: two parameter vectors of one model lower to
+    byte-identical programs, so they share this digest and the executables
+    keyed on it.
     """
     structure_digest = structure
     if structure_digest is None:
@@ -533,7 +571,7 @@ def fingerprint_model(
             regime_names_to_ids=regime_names_to_ids,
         )
     record = (
-        ("pylcm-model-fingerprint", 6),
+        ("pylcm-model-programs", 1),
         structure_digest,
         {
             name: _grid_support(
@@ -543,9 +581,6 @@ def fingerprint_model(
             )
             for name, regime in regimes.items()
         },
-        project_solution_params(
-            flat_params=flat_params, regimes=regimes, projection=projection
-        ),
     )
     return _semantic_fingerprint(record)
 
@@ -2645,6 +2680,7 @@ def _semantic_sort_key(value: object) -> tuple[str, str]:
 __all__ = [
     "SealedBinding",
     "fingerprint_model",
+    "fingerprint_model_programs",
     "fingerprint_model_structure",
     "fingerprint_solution_support",
     "project_solution_params",

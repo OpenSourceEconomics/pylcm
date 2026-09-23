@@ -218,6 +218,21 @@ class ExecutionConfig:
     an axis only its programs declare takes the bare-integer form.
     """
 
+    axis_width_ceilings: Mapping[str, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Planner axis name to the widest block it may be compiled at; empty means none.
+
+    A ceiling is an upper bound, not an override: the planner keeps every legal
+    candidate at or below it and drops the wider ones. It leaves the axis extent,
+    the output shape, the alignment and the floor of the axis untouched, and it
+    binds only the axes it names. An axis whose `axis_widths` entry already fixes
+    it is narrowed to the ceiling as well.
+
+    A ceiling below an axis's narrowest legal width is refused when the axis is
+    planned, naming the axis and the value.
+    """
+
     devices: tuple[int, ...] | None = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
@@ -260,6 +275,13 @@ class ExecutionConfig:
             )
         widths = _normalized_axis_widths(axis_widths=self.axis_widths)
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))
+        object.__setattr__(
+            self,
+            "axis_width_ceilings",
+            _normalized_axis_width_ceilings(
+                axis_width_ceilings=self.axis_width_ceilings
+            ),
+        )
         sharded = tuple(self.sharded_states)
         _fail_if_sharded_states_invalid(sharded_states=sharded)
         object.__setattr__(self, "sharded_states", sharded)
@@ -328,6 +350,35 @@ def _normalized_axis_widths(
             _fail_if_width_invalid(label=f"axis_widths[{name!r}]", width=width)
             normalized[name] = width
     return normalized
+
+
+def _normalized_axis_width_ceilings(
+    *, axis_width_ceilings: Mapping[str, int]
+) -> MappingProxyType[str, int]:
+    """Validate the one declaration form a ceiling takes and freeze it.
+
+    Args:
+        axis_width_ceilings: The ceilings the caller declared, by axis name.
+
+    Returns:
+        The same declaration in a read-only mapping.
+
+    Raises:
+        TypeError: An axis name is not a non-empty string, or a ceiling is not
+            an exact integer — a per-regime mapping among them.
+        ValueError: A ceiling is not positive.
+
+    """
+    validated: dict[str, int] = {}
+    for name, ceiling in axis_width_ceilings.items():
+        if type(name) is not str or not name:
+            msg = (
+                "ExecutionConfig.axis_width_ceilings keys must be non-empty axis names."
+            )
+            raise TypeError(msg)
+        _fail_if_width_invalid(label=f"axis_width_ceilings[{name!r}]", width=ceiling)
+        validated[name] = ceiling
+    return MappingProxyType(validated)
 
 
 def _validated_per_regime_widths(

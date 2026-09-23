@@ -147,7 +147,7 @@ def test_nonterminal_collective_regime_solves_with_continuation():
     )
 
     _bi_result = solve(
-        model_fingerprint="test_nonterminal_collective_solve",
+        program_fingerprint="test_nonterminal_collective_solve",
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType(
@@ -291,7 +291,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     )
 
     _bi_result = solve(
-        model_fingerprint="test_nonterminal_collective_solve",
+        program_fingerprint="test_nonterminal_collective_solve",
         flat_params=MappingProxyType(
             {
                 "couple": MappingProxyType(

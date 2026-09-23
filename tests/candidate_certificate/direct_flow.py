@@ -337,7 +337,7 @@ _SOURCE_SEALS = {
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
-    SUPPORT_FINGERPRINT_SOURCE: "5ac9769fcb9545e7a83c813b9c12162eaa4ac26d0409b7a0a1a2040254a2e897",
+    SUPPORT_FINGERPRINT_SOURCE: "c5a1b0018765547f1ebdffb89d07a8073f0e598d93da3791a364f492b97bb06b",
     UNIFORM_PROCESS_GRID_SOURCE: "275462d64f6899e8f5a3cb624b5eeefd4c2f7bbe607f035be2c9e4ea2b739262",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "37627a347ff56b72d3a1487b428481b9952959cfd753e4b412776296a7516d6f",
@@ -348,7 +348,7 @@ _SOURCE_SEALS = {
     RUNTIME_SHARDING_SOURCE: "0e7f276d6abad69469ba42707a4dcfc78e9eefd3fb78ed9aad7942559553df9a",
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "070d4936497a9a15089cdc34d188d56873dee724c2275a5fc3424478ce5a3d11",
     COMBINED_ASSEMBLY_SOURCE: "eae7d7e3bdaf96d75671331b3cf5a49ba178316cc1848511615ec9a2f90c6fdb",
-    COMBINED_CHUNK_ADMISSION_SOURCE: "12848bf848c6b6d5640b993ed111a2f7a934c7b0d0365234f975556ba41d8803",
+    COMBINED_CHUNK_ADMISSION_SOURCE: "eb4cfbd97c11c0990ec5b96cf8b20d26387d6563243668fe2a5acf20c136187c",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "ebb5e00669a33d9486c3e3f7a6d5752937bf2751ec95ac360903274b6d81304d",
     COMBINED_CHUNK_OPERATIONS_SOURCE: "82057a91e6cf149f750f90b71c9258cf33b310e0675044bf219d466e836614d1",
     COMBINED_CHUNK_PLANNING_SOURCE: "7b8ff3abda0b6f57bc6bf3901287bb8cbc6fe6ba741cdbec902d45fb4fabb047",
@@ -390,10 +390,10 @@ _SOURCE_SEALS = {
     SCHEDULER_SOURCE: "0d6c5bb74f8229fca43231142c4d53cbe3753949fc4e05e4c216f5cc683620ea",
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
-    WORKSPACE_PLANNING_SOURCE: "6ad39cc598ffb6a1f61409b99800831aebd3d86812decf5b6d1f34fa8b10754e",
+    WORKSPACE_PLANNING_SOURCE: "0d7054688b1946a06d0f0dabb2377c767f5d2a254b5b77b6411bd58dbc4abcef",
     SIMULATION_PROGRAMS_SOURCE: "66fb5cd52ab3cf2e55d7b9baceba318c702ac646a98d367d557d0254eb98e489",
     SIMULATION_PROGRAM_TYPES_SOURCE: "222cb4d5053a26f333b0c2f97393badc50182b0ae8d90f2fccc6b8faa4eb6169",
-    SIMULATION_RUNTIME_SOURCE: "fa8427cf1c10f0564b3f77f239853bc64b9f81d8baa203b6f3c209eec509a038",
+    SIMULATION_RUNTIME_SOURCE: "64c333b0b75c1abae92f65abb2f12afcda3415579bb2da2617214cab86b61516",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
@@ -408,7 +408,7 @@ _SOURCE_SEALS = {
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
-    DISPATCHERS_SOURCE: "e70cdc8d4161b50a1ab5ad5fef33aeecde287c6467b8e848c48a2db9884e29d9",
+    DISPATCHERS_SOURCE: "c2fb9380250e48c44de560456f0a343ca5623a928b1800cb28f47ca8f2833d8b",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "cc6fb60ba679598349fb49d1ea4a14068889d81f57c9293728b88dd9c7173b50",
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
@@ -419,9 +419,9 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "1d3383ea8d035eaf7ee0eb1e17f39417d401973ecdf9804a42005d5443d6b2ac",
     SIMULATION_TRANSITIONS_SOURCE: "76ba02db6b40070033d1c6b3fd5769a675ff8c1d27e2bb8b179246c06be8066e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "662d7a79d2ed0a6cc8c28ef0c8a847f7647b439983201e3899f75379bab55fd8",
+    MODEL_SOURCE: "dfd3b6e117b0278158a9649a5c6010ec43da5a2414a49841632d1d58813aad69",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "20b3818cc5c8f3b12a7c906af32cffbd7de235d8c3815c99b934415856b89a26",
+    BACKWARD_INDUCTION_SOURCE: "702b0f4fbc8d3f36509d88f523924aacd727917c03c65d54e6a7302eef2bdb67",
     PERIOD_REPLAY_SOURCE: "ae1879ebc56c90ce5a14dcdfe70f0520b61df96c786932fac7f4a9dfc22ee1be",
     INITIAL_CONDITIONS_SOURCE: "567cf1ecaf670aca5c8484aba0b936c478fcf16fbdf5fdd2f0d021efb5e53118",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
@@ -3120,7 +3120,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_RUNTIME_SOURCE: (
-            "49bef93ca14a3371de78170635b29b84883e5f876e686212d607ee23bbc35d3e",
+            "4cfa4719633cb362990e8d78e2ce60eadca3c33c245b51d9e99eaa2ce68a8fdb",
             {
                 "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
                 "SimulationRuntime.dispatch": "8ba6cd9386f3210c6478c5f31684f9f0dd9acff0533e272dbc34bbbb4cf89463",
@@ -3130,7 +3130,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
                 "_prepared_route_key": "c24e6727be651d6e766953a595de9094ad87bbd0c51223e98f23bfd99a855369",
                 "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
                 "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
-                "SimulationRuntime._prepare_materialized": "2fedd149d390a67bc1dacd7606c148e808d49df548143fedec9b221f57d9240f",
+                "SimulationRuntime._prepare_materialized": "3bb08504989dddee6748dec912a78f12b013ccc232a74070e05dabbb80727c95",
                 "execute_simulation_program": "da913ce854658373c080a13dc50150f6b71ee2aedb929bb6499b3cab8cc2fa2b",
                 "_SimulationCandidateCompiler.__call__": "003bac5cdf6c9211bde9f92dfe5562875b5882b68c9c438c58d26609a84e036a",
                 "_with_subject_extent": "c48502d31e8f9fb29221122b0de6d10f38f3d6f740854a82512c2b964079e463",
@@ -3199,18 +3199,18 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "0274a9df4449666dd2311fe457a95f89ec247301eb1a5e5632d77cfe449d48bc",
+            "f3fb47bda97177da2dcd43d093085b087782971dc3952d007ff635294809ebc2",
             {
                 "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-                "Model.__init__": "9c434ef8c9b7a9a7af6356c4a251dab58cd9d393c5eaa54b04831ab9fe5a76c9",
+                "Model.__init__": "4eff36f6fb64c632c0ee60aae41c33e4365c83d42cc1bf3a3fcdb65f2cab5fe5",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "5f6ac94db67c7d4086b4da44e6dca0a3620983584c4b3bdbc44bd9a5f587211e",
                 # Fixed caller owners flow through both private automatic-solve
                 # boundaries without becoming numerical operands or cache keys.
-                "Model._solve_from_flat_params": "6ecb7e14a48b6cd979ec5d598fc4b2a14355a9356efbea4dc701e2f0ae786942",
-                "Model._solve_compiled": "469cf767b899d94fc0df22c9615a508209536de87dc539a24e6e292ba1d2b94d",
+                "Model._solve_from_flat_params": "e65295f1917d77d8b65661d4dd7bb43a5303cba7de45bcf498f2792ea8750d2c",
+                "Model._solve_compiled": "b26ffb42c20436d0e879510401ad2f8b82c99a953fb27c7284f54977d12b37ed",
                 "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
                 "Model._process_params": "b08215b65b9edca9a1ef20fb5a64d1f8a42aba81c99d8d62dd32e62ce17cf6e9",
@@ -3619,12 +3619,12 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     WORKSPACE_PLANNING_SOURCE: (
-        "86b7dd1bcc6d16aa13f706e09b7040f06d449fe008c1e1796c36f8d059639574",
+        "494d364195da93fa7e69e25dbcf3ae24a5a120b69bc7926c48e1697b0ae78917",
         {
             "_MemoryAnalyzable.memory_analysis": "28c38165b967325e04356285a49a7f1abab248c1d61cf92c8dffa33408d9637f",
             "WorkspacePlan.__post_init__": "d5aac605f11a499bf65418187c83f288a9e6302e341aac6334a697ebf514982e",
-            "workspace_width_candidates": "22699fdc99a437deb660d94cb7849edd184c9a14c5eb05d0b4580afe21cabc5d",
-            "plan_workspace": "f0698760b386b8b9d64632529e6b38d6bd098252bef630e8c6955b93c640d2b0",
+            "workspace_width_candidates": "b21f284e2d00c069ab9267f4935807ae4a23b5f728ef90c638a563a3a7d0519d",
+            "plan_workspace": "32d17750b6f375a05f96ca91011b7a1b7c3ebd34df8f6b9a5425aafa7ef92971",
             "plan_axis_free_workspace": "b5cca5b8ba998f4e4db88e282856e4a360f8f1728e830c24ea3791d8da49d39c",
             "_resident_exhausts_budget_message": "c4d70c808081a036a2b167eada3441348817e49ea0561a1100305d6a44a015a1",
             "_no_candidate_fits_message": "ee996eb12950a8af3c1b54b384e567077d8c33e1906ce85fcbabc1391dba0d25",
@@ -3636,12 +3636,12 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "_validate_resident_bytes": "ece252f4071f0b708b42074e53d06b225400297efd225702b1ca9ae20f135c5c",
             "bootstrap_width": "7b74ba3484d72f9525e5e3fb978ad813ca6b684e34e5078a6424342e5977983f",
             "_tiled_bootstrap_cap": "d7e16de916ee80f4fb298ec36e65111eca2e971060759897e5e7d401a5cd3907",
-            "bootstrap_widths": "3dfc25c31f159a5f1438664437715263779431e72305a9d555a9903983f370b4",
-            "_workspace_width_candidates": "d3f37ceb7f786c8785c6635fe4942a63302138b8db5a78e1d93612600f7c0375",
+            "bootstrap_widths": "039ec0419e2d2febdabe8d63da4d79251847653ef0d39418e234c97d89afb8d4",
+            "_workspace_width_candidates": "56762c38e1eb1f7bc76e1dab1c4d0f158c44a702d87edea7657f961888e7f6fc",
             "_candidate_rank": "fb310dfffa04b1180e391907a03e7137950ecb0ff60919efe3e2db626e540e9d",
-            "_axis_frontier": "447643e0ee4cb661542a62a6716054ef6014bbeead631ad6029bef0382fabf44",
-            "_fixed_width": "f0ffcd129a81e4afbbb2da78955e10c670a273d6d00f25a7b78767597cec4694",
-            "_admissible_width": "700c5a09ca990b703df2c4fba65642482c9ca0c27dad02f7c3b6b15016679ee6",
+            "_axis_frontier": "e3ad824a54ee89b75a2ccbc2d013cd6055c2a0e33c9ae89f37e3b1e959fe6104",
+            "_fixed_width": "ca34e5f5a2c461f15be91a1c7f41ee91de833b37b174ebd3bbdff3b21d4ec8cd",
+            "_admissible_width": "e38d2036f99bc8edc1633bd783a6f8a7226fd11634826f853976d9af21f5623c",
             "_smallest_admissible_width": "6f80c9145d0d2b9d2d674b0a3ba8fbcde84f3cacad677d099317f4c077117193",
             "_width_mapping": "237667842db07b3505f6c2d66395e802071b8bee98047aa4794956f793826c27",
             "_memory_for_candidate": "95e7e8b701c9098afb3320d6024503baf0d74b30a9ff6acea9a8459274677734",
@@ -3794,16 +3794,16 @@ def _simulation_adapter_errors(*, tree: ast.Module, source: str) -> list[str]:
 # and dispatch bindings; numerical ranking bodies retain their existing contract.
 _FINITE_BUDGET_CONTRACTS = {
     "src/_lcm/simulation/chunk_admission.py": (
-        "d893ab9906061c926cb7e5046d2d22d1576fc9abe71fdbf57bdb118a6e1a91cb",
+        "d068c63f88dc37389b25c887a9b78c8904532792f1b5df1f498894e6ffc13167",
         {
             "_ChunkProfiler.profile_widths": "2d649ae2ece17d0e44c9f92d08e865c9f54e2d040f60545e8da8894024a50b6e",
             "_simulation_chunk_profile_key": "18e3cde4b65997347ed5622e2a43dc6c66d75d1ce7b28481cbbe8d7286b1c505",
             "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
-            "_independent_anchor_widths": "52ef0117a0d5dcebb683261d3da3514cb2d4204d3450c1c21b4d3e790b64eb49",
-            "_plan_independent_chunks": "7632e9d43a6b7570fe5fae9fa506dfdeb4b8d580eb4ac59e6297d91134ecbd72",
+            "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
+            "_plan_independent_chunks": "6a3498d6672a85b1950ecfe85321c91e9124456a51d08428f69feaaf10a80164",
             "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
             "prepare_simulation_chunks": "57184ba8caf462c6baa178dd9fd63bade471ead73bee0bf868cd33f5b7f8307c",
-            "_ChunkProfiler.__call__": "fd4b7f29a3ce6f8b1acbc3b067e8e7d6cde1b6ec277b567203c790a83697873b",
+            "_ChunkProfiler.__call__": "dfdaeb448cdff047ed8bad87b46cbce7649782bd9ae525af5b240a0d836aa2f1",
             "_common_axes": "277ef7d313404ccdd8610cf7f5a4896b38710693206a213f6728e4377cf637ef",
         },
     ),
@@ -3851,12 +3851,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "0274a9df4449666dd2311fe457a95f89ec247301eb1a5e5632d77cfe449d48bc",
+        "f3fb47bda97177da2dcd43d093085b087782971dc3952d007ff635294809ebc2",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "9c434ef8c9b7a9a7af6356c4a251dab58cd9d393c5eaa54b04831ab9fe5a76c9",
+            "Model.__init__": "4eff36f6fb64c632c0ee60aae41c33e4365c83d42cc1bf3a3fcdb65f2cab5fe5",
             "Model.simulate": "5f6ac94db67c7d4086b4da44e6dca0a3620983584c4b3bdbc44bd9a5f587211e",
         },
     ),
@@ -3888,11 +3888,11 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "6ea6de0fb952e52888681893092b940b14523f5a58a65308a1da9223ee8e3801",
+        "1b2af7b4343a009401f5245b8a970aeb0e37b81dcd54cfc9b1ff46c2ca279f9c",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_compile_all_functions": "2e4a73fe8fb47d65bb7f653bc02769a9b9a2d37871c3d30fbe195c2538afbfd8",
+            "_compile_all_functions": "0a98be95fb072d1f71aa5c7aa08095d8272b82152cc10dae4ae522d56deaadbb",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -3972,11 +3972,11 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "6ea6de0fb952e52888681893092b940b14523f5a58a65308a1da9223ee8e3801",
+        "1b2af7b4343a009401f5245b8a970aeb0e37b81dcd54cfc9b1ff46c2ca279f9c",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "a30e3a7876a07bb50c5d7a39538839d2a9a98fa30e13e64e221b224ca61ec092",
+            "solve": "8d042976e7dd0921a1ee6be10a78e8ba057c17d24aed910d67e5f7a620c68d1b",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
             "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
             "_retire_donated_inputs": "d5c3862195f2733fa97a5489d8db20d7c55e53431f0b2313b1b4f9a49b34e20c",
@@ -4037,17 +4037,17 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_ADMISSION_SOURCE: (
-        "d893ab9906061c926cb7e5046d2d22d1576fc9abe71fdbf57bdb118a6e1a91cb",
+        "d068c63f88dc37389b25c887a9b78c8904532792f1b5df1f498894e6ffc13167",
         {
             "_ChunkProfiler.profile_widths": "2d649ae2ece17d0e44c9f92d08e865c9f54e2d040f60545e8da8894024a50b6e",
             "_simulation_chunk_profile_key": "18e3cde4b65997347ed5622e2a43dc6c66d75d1ce7b28481cbbe8d7286b1c505",
             "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
-            "_independent_anchor_widths": "52ef0117a0d5dcebb683261d3da3514cb2d4204d3450c1c21b4d3e790b64eb49",
-            "_plan_independent_chunks": "7632e9d43a6b7570fe5fae9fa506dfdeb4b8d580eb4ac59e6297d91134ecbd72",
+            "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
+            "_plan_independent_chunks": "6a3498d6672a85b1950ecfe85321c91e9124456a51d08428f69feaaf10a80164",
             "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
             "PreparedSimulationChunks.require_chunk": "6669149a4b503b89411b3485e9cbc811a37820620eb83fb8f133ee129682a4a3",
             "prepare_simulation_chunks": "57184ba8caf462c6baa178dd9fd63bade471ead73bee0bf868cd33f5b7f8307c",
-            "_ChunkProfiler.__call__": "fd4b7f29a3ce6f8b1acbc3b067e8e7d6cde1b6ec277b567203c790a83697873b",
+            "_ChunkProfiler.__call__": "dfdaeb448cdff047ed8bad87b46cbce7649782bd9ae525af5b240a0d836aa2f1",
             "_common_axes": "277ef7d313404ccdd8610cf7f5a4896b38710693206a213f6728e4377cf637ef",
         },
     ),
@@ -4221,12 +4221,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "0274a9df4449666dd2311fe457a95f89ec247301eb1a5e5632d77cfe449d48bc",
+        "f3fb47bda97177da2dcd43d093085b087782971dc3952d007ff635294809ebc2",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "9c434ef8c9b7a9a7af6356c4a251dab58cd9d393c5eaa54b04831ab9fe5a76c9",
+            "Model.__init__": "4eff36f6fb64c632c0ee60aae41c33e4365c83d42cc1bf3a3fcdb65f2cab5fe5",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "ada74ce5f724d2944b187c777fb43717cd574db5f64e992cad2a6c669b9d08fa",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4241,7 +4241,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "6ea6de0fb952e52888681893092b940b14523f5a58a65308a1da9223ee8e3801",
+        "1b2af7b4343a009401f5245b8a970aeb0e37b81dcd54cfc9b1ff46c2ca279f9c",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4318,11 +4318,11 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/runtime.py": (
-        "49bef93ca14a3371de78170635b29b84883e5f876e686212d607ee23bbc35d3e",
+        "4cfa4719633cb362990e8d78e2ce60eadca3c33c245b51d9e99eaa2ce68a8fdb",
         {
             "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
             "SimulationRuntime.prepare_abstract": "842dba8c1e48637eba99548bebb2858a25116785451901451be656ad3ab55a76",
-            "_dispatch_widths": "b69e48a579baa53d8f031edfd871cd8781920419c1a173125d4ed2772836a67c",
+            "_dispatch_widths": "d68b9429ae1eed54ed99a49ce6793880f52bb5c09fa6248e1ffdf85f81806406",
             "_unbudgeted_subject_width": "2abdeb21c827cce18a98efda59515ac14649d7f20b797fa433b0765368c5457d",
             "_subject_slice_bytes": "8f5c1eabf55dec703079531a5d44138ceeeac5f66dd21384f873598096bfb5b3",
             "_require_abstract_arguments": "c99bca4f2c8dad3b1454441b13b5e25f81ca67fc44b98acddc00d325458bb073",
@@ -4443,9 +4443,9 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "2e4a73fe8fb47d65bb7f653bc02769a9b9a2d37871c3d30fbe195c2538afbfd8",
+            "_compile_all_functions": "0a98be95fb072d1f71aa5c7aa08095d8272b82152cc10dae4ae522d56deaadbb",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
-            "_resolve_output_layouts_and_lowering_keys": "52337a240e326511fd44a9a94ba234126f301a39032a94d836aa77aaa1e9e15c",
+            "_resolve_output_layouts_and_lowering_keys": "d68b63bf7d2ca9ab027f34a5ce306c631094e7903bf5224aef1975ccdfdc1c13",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "55e6e53f9d98a5e16b8b0548de876ed9e73a208d92156cacb837f594784d17fd",
@@ -4474,7 +4474,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "6ea6de0fb952e52888681893092b940b14523f5a58a65308a1da9223ee8e3801"
+        != "1b2af7b4343a009401f5245b8a970aeb0e37b81dcd54cfc9b1ff46c2ca279f9c"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6278,13 +6278,13 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/simulation/chunk_admission.py": (
-        "d893ab9906061c926cb7e5046d2d22d1576fc9abe71fdbf57bdb118a6e1a91cb",
+        "d068c63f88dc37389b25c887a9b78c8904532792f1b5df1f498894e6ffc13167",
         {
             "_ChunkProfiler.profile_widths": "2d649ae2ece17d0e44c9f92d08e865c9f54e2d040f60545e8da8894024a50b6e",
             "_simulation_chunk_profile_key": "18e3cde4b65997347ed5622e2a43dc6c66d75d1ce7b28481cbbe8d7286b1c505",
             "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
-            "_independent_anchor_widths": "52ef0117a0d5dcebb683261d3da3514cb2d4204d3450c1c21b4d3e790b64eb49",
-            "_plan_independent_chunks": "7632e9d43a6b7570fe5fae9fa506dfdeb4b8d580eb4ac59e6297d91134ecbd72",
+            "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
+            "_plan_independent_chunks": "6a3498d6672a85b1950ecfe85321c91e9124456a51d08428f69feaaf10a80164",
             "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
             "prepare_simulation_chunks": "57184ba8caf462c6baa178dd9fd63bade471ead73bee0bf868cd33f5b7f8307c",
         },
@@ -6330,16 +6330,16 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "6ea6de0fb952e52888681893092b940b14523f5a58a65308a1da9223ee8e3801",
+        "1b2af7b4343a009401f5245b8a970aeb0e37b81dcd54cfc9b1ff46c2ca279f9c",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "a30e3a7876a07bb50c5d7a39538839d2a9a98fa30e13e64e221b224ca61ec092",
+            "solve": "8d042976e7dd0921a1ee6be10a78e8ba057c17d24aed910d67e5f7a620c68d1b",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
             "_iter_edge_topologies": "de3078515a59f624e07889c6f3e05c8ac948472416c81a993c8d02f29905789b",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "2e4a73fe8fb47d65bb7f653bc02769a9b9a2d37871c3d30fbe195c2538afbfd8",
-            "_resolve_output_layouts_and_lowering_keys": "52337a240e326511fd44a9a94ba234126f301a39032a94d836aa77aaa1e9e15c",
+            "_compile_all_functions": "0a98be95fb072d1f71aa5c7aa08095d8272b82152cc10dae4ae522d56deaadbb",
+            "_resolve_output_layouts_and_lowering_keys": "d68b63bf7d2ca9ab027f34a5ce306c631094e7903bf5224aef1975ccdfdc1c13",
         },
     ),
     "src/_lcm/solution/diagnostics.py": (
@@ -6352,10 +6352,10 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/fingerprint.py": (
-        "336fd7460865f8375b854a3a1f21a5ba3354a6b3809439f99d41d44d70af3e07",
+        "7cbe2e990cdfe57ef6f61bd56d408a64c6d7fc4fe7f4dc5da9615c50d562a55e",
         {
             "fingerprint_solution_support": "7ccac4755a555ca12f935e9d9f039f0ab4aa5ba4b1c198d3873fac016294ddd7",
-            "fingerprint_model": "f42134108b28f94b0857f477d7bd56122cb9bbba52aa29c307fce53e2496757e",
+            "fingerprint_model": "4ef219fa9a2379a7586f35808b39b5acb30936d49f1bb18a81161ad3ddc33c83",
             "_grid_support": "f19da7f398d1100feb6ff9aed31bdd3f148224b0845de4c111bb58d3d31e32d7",
         },
     ),
@@ -6413,17 +6413,17 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "0274a9df4449666dd2311fe457a95f89ec247301eb1a5e5632d77cfe449d48bc",
+        "f3fb47bda97177da2dcd43d093085b087782971dc3952d007ff635294809ebc2",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "9c434ef8c9b7a9a7af6356c4a251dab58cd9d393c5eaa54b04831ab9fe5a76c9",
+            "Model.__init__": "4eff36f6fb64c632c0ee60aae41c33e4365c83d42cc1bf3a3fcdb65f2cab5fe5",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "ff9e176801623ee2a12a19ddcc9332ac767c8fd6faee662d6008c448a441d475",
             "Model.solve": "b7447007287a2846e9f8ae2f42f307d6308b98d81b2d38bf7312053aeac4e9bc",
-            "Model._solve_from_flat_params": "6ecb7e14a48b6cd979ec5d598fc4b2a14355a9356efbea4dc701e2f0ae786942",
-            "Model._solve_compiled": "469cf767b899d94fc0df22c9615a508209536de87dc539a24e6e292ba1d2b94d",
+            "Model._solve_from_flat_params": "e65295f1917d77d8b65661d4dd7bb43a5303cba7de45bcf498f2792ea8750d2c",
+            "Model._solve_compiled": "b26ffb42c20436d0e879510401ad2f8b82c99a953fb27c7284f54977d12b37ed",
             "Model._resolve_solution_result": "089380ec11cde45fff87c839c2c66d8bba14ffe29637a155411d01a791d4025b",
             "Model._consume_owned_solution": "19c0e7b062f651ee6f7ca4cf11239021eba42d711ac73f603d2b9ea7aac31c3f",
             "Model._consume_foreign_solution": "ada74ce5f724d2944b187c777fb43717cd574db5f64e992cad2a6c669b9d08fa",
@@ -6486,7 +6486,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
 
 _GROUPED_MAPPER_CONTRACTS = {
     "src/_lcm/utils/dispatchers.py": (
-        "e07b714ea45ff89b63fc4eb979fbb78b6847383694a19796af7e4e08091ab547",
+        "7ec4aa018117d967cc973d7ae5df013b5af13997faf51177c9af1a70f3fbbcc3",
         {
             "tiled_productmap": "5c90e484842166ba0eeee513fb39051c154d2f4c835f2b49bf53fa1bc6845222",
             "_TiledProductMap.__call__": "b398eff34df6867799a9dd877766bd16a6e784263e8de139ba6c136e20bb75de",
@@ -6497,7 +6497,7 @@ _GROUPED_MAPPER_CONTRACTS = {
             "_MapWholeCoordinate.__call__": "1f0d033c579a54294d8c3397abf8b3ae2e5be27c7921f6a444e453960252d506",
             "_EvaluateTiledCell.__call__": "6836bd1b2ab970e74485a818ace01e603a3e25d9b49337e0a11e39efe88e770a",
             "_restore_product_axes": "aefd91d6e6d5c1d49f1451435c80b04c616fc010784907adcf8e377508f087c2",
-            "map_over_leading_axis": "2e4707b27863a6d373660a18404ad5373d00cf89037276dc17e44095ab5fa9d2",
+            "map_over_leading_axis": "b1d033acd692898271f38d8f2954c27d00b1b1b2198ea2dca48248466387c098",
             "_RestoreProductAxisOrder.__call__": "63d433afc99fab8238b273b0075f926b672c20943aea9d2b6170dfc1a6ee5df0",
             "_transpose_product_axes": "54961f0159833bf5de6053053200dda0e3745caae17447c2aafd2e6f4faadae3",
         },

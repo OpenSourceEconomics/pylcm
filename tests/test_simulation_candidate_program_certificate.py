@@ -737,11 +737,7 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "chunk_dispatch:explicit_width_conflict_ignored": (
         "src/_lcm/simulation/runtime.py",
-        (
-            "axis.name in configured\n"
-            "            and min(configured[axis.name], axis.extent) !="
-            " selected"
-        ),
+        "axis.name in configured and effective_pins[axis.name] != selected",
         "False",
     ),
     "chunk_dispatch:unit_width_handoff_omitted": (

@@ -47,6 +47,7 @@ def _selector(
             execution=SimpleNamespace(
                 device_memory_bytes=100,
                 axis_widths=pins,
+                axis_width_ceilings=MappingProxyType({}),
                 device_memory_cap_note=lambda: "",
             )
         ),
@@ -254,7 +255,9 @@ def test_singleton_anchor_retains_subject_pin_without_manufacturing_axis() -> No
     assert admission._independent_outer_candidates(
         population=3, alignment=1, subject_width=1
     ) == (1, 2, 3)
-    choices = admission._independent_anchor_widths(axes=(), configured={"subject": 1})
+    choices = admission._independent_anchor_widths(
+        axes=(), configured={"subject": 1}, ceilings={}
+    )
     assert choices == ({"subject": 1},)
 
 
@@ -325,6 +328,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
             execution=SimpleNamespace(
                 device_memory_bytes=totals[64],
                 axis_widths={"subject": 64},
+                axis_width_ceilings=MappingProxyType({}),
                 device_memory_cap_note=lambda: "",
             )
         ),

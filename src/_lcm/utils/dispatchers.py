@@ -41,6 +41,16 @@ FunctionWithArrayReturn = TypeVar(
 )
 
 
+# Largest share of extra rows worth adding so the batch size divides the axis.
+# `jax.lax.map` traces its body a second time for a remainder batch, and when such
+# maps nest the extra traces multiply, so a remainder is expensive at lowering time.
+# Repeating the last row up to the next multiple of the batch size removes the
+# remainder at the cost of evaluating the added rows, which is cheap only while
+# they are a small share of the axis. Above this share the remainder batch keeps
+# its own trace.
+_MAX_PADDING_SHARE = 0.01
+
+
 def map_over_leading_axis[InputTree, OutputTree](
     *,
     func: Callable[[InputTree], OutputTree],
@@ -63,9 +73,17 @@ def map_over_leading_axis[InputTree, OutputTree](
     if batch_size < 0:
         raise ValueError(f"batch_size must be non-negative, got {batch_size}")
     positional_func = allow_args(func)
-    if 0 < batch_size < n_rows:
+    if not 0 < batch_size < n_rows:
+        return jax.vmap(positional_func)(xs)
+    n_padding = -n_rows % batch_size
+    if n_padding == 0 or n_padding / n_rows > _MAX_PADDING_SHARE:
         return jax.lax.map(positional_func, xs, batch_size=batch_size)
-    return jax.vmap(positional_func)(xs)
+    padded = jax.tree.map(
+        lambda leaf: jnp.concatenate([leaf, jnp.repeat(leaf[-1:], n_padding, axis=0)]),
+        xs,
+    )
+    mapped = jax.lax.map(positional_func, padded, batch_size=batch_size)
+    return jax.tree.map(lambda leaf: leaf[:n_rows], mapped)
 
 
 def simulation_spacemap(

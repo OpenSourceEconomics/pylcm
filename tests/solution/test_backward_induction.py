@@ -179,7 +179,7 @@ def test_memory_budget_requires_jit_before_backward_induction() -> None:
     """A device-memory budget needs compiler reports, which eager execution lacks."""
     with pytest.raises(ExecutionPlanningError, match="requires JIT compilation"):
         solve(
-            model_fingerprint="test_backward_induction",
+            program_fingerprint="test_backward_induction",
             flat_params=MappingProxyType({}),
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regimes=MappingProxyType({}),
@@ -308,7 +308,7 @@ def test_backward_induction():
     )
 
     solution = solve(
-        model_fingerprint="test_backward_induction",
+        program_fingerprint="test_backward_induction",
         flat_params=MappingProxyType({"default": flat_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
@@ -374,7 +374,7 @@ def test_backward_induction_single_period_Qc_arr():
     )
 
     got = solve(
-        model_fingerprint="test_backward_induction",
+        program_fingerprint="test_backward_induction",
         flat_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),

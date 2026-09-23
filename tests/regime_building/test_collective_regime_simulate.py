@@ -207,7 +207,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
         }
     )
     _bi_result = solve(
-        model_fingerprint="test_collective_regime_simulate",
+        program_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -279,7 +279,7 @@ def test_couple_simulate_with_runtime_validation_enabled():
         }
     )
     _bi_result = solve(
-        model_fingerprint="test_collective_regime_simulate",
+        program_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -436,7 +436,7 @@ def _solve_consent():
         }
     )
     _bi_result = solve(
-        model_fingerprint="test_collective_regime_simulate",
+        program_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -709,7 +709,7 @@ def _solve_dissolution():
         }
     )
     _bi_result = solve(
-        model_fingerprint="test_collective_regime_simulate",
+        program_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -1027,7 +1027,7 @@ def _solve_consent_discrete_axis():
         }
     )
     _bi_result = solve(
-        model_fingerprint="test_collective_regime_simulate",
+        program_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -1449,7 +1449,7 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
         }
     )
     _bi_result = solve(
-        model_fingerprint="test_collective_regime_simulate",
+        program_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -1617,7 +1617,7 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
     # `_roll_gated_edges` guard predates this fix); this is the control that
     # isolates the bug to the SIMULATE path below.
     _bi_result = solve(
-        model_fingerprint="test_collective_regime_simulate",
+        program_fingerprint="test_collective_regime_simulate",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
