@@ -479,7 +479,11 @@ class Model:
     """Program executors shared by calls with the same outer subject shape."""
 
     _simulate_entry_operations: ProfiledSimulationOperations
-    """Pure entry executable profiles; no call owners or admission decisions."""
+    """Entry and validation executable profiles; no call owners or admissions.
+
+    Holds this model's user-law validation executables, so they are reused across
+    its simulate calls and freed with it.
+    """
 
     _simulate_compile_lock: threading.Lock
     """Serialize creation of runtime executors for each subject shape."""
@@ -2544,6 +2548,7 @@ class Model:
                 else None
             ),
             process_grid_resolver=process_grid_resolver,
+            producers=self._simulate_entry_operations,
         )
         padded_n_subjects = len(next(iter(initial_conditions.values())))
         if solution is None:

@@ -5595,7 +5595,12 @@ def _lowering_key(
     placement_key: Hashable | None = None,
     compiler_options: tuple[tuple[str, int], ...] = (),
 ) -> Hashable:
-    """Identify a program's tree, specialization, layout, donations and devices."""
+    """Identify a program's tree, specialization, layout, donations and devices.
+
+    The trace settings that change what a traced program computes are part of the
+    identity, so a program traced under different settings is a different
+    executable.
+    """
     return (
         program_identity,
         (None if arguments is None else _abstract_arguments_key(arguments=arguments)),
@@ -5605,6 +5610,22 @@ def _lowering_key(
         donated_arguments,
         placement_key,
         compiler_options,
+        _trace_settings_key(),
+    )
+
+
+def _trace_settings_key() -> Hashable:
+    """Return the current trace settings that change a traced program.
+
+    - `jax_enable_x64` selects the default integer and float widths.
+    - `jax_default_matmul_precision` selects the contraction precision.
+    """
+    return (
+        ("jax_enable_x64", bool(jax.config.jax_enable_x64)),
+        (
+            "jax_default_matmul_precision",
+            jax.config.jax_default_matmul_precision,
+        ),
     )
 
 

@@ -28,7 +28,6 @@ from _lcm.dtypes import (
 )
 from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_ids
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.execution.workspace_planning import plan_workspace
 from _lcm.grids import DiscreteGrid
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
@@ -124,6 +123,7 @@ def validate_simulation_inputs(
     execution: ResolvedExecution | None = None,
     retained_footprint: DeviceBufferFootprint | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    producers: ProfiledSimulationOperations | None = None,
 ) -> None:
     """Validate a complete call with two host summaries and ordered diagnostics.
 
@@ -131,12 +131,16 @@ def validate_simulation_inputs(
     any constraint is composed. The second reads reduced feasibility and
     transition flags. Invalid data or user-law errors select the original
     serial diagnostic path; admission and backend resource failures propagate.
+    A budgeted call keeps its user-law executables in `producers`, which a Model
+    passes so they are reused across its calls and freed with it; without one,
+    they live for this call only.
     """
     if not validation_enabled(logger):
         return
     memory = _preflight_memory(
         execution=execution,
         retained_footprint=retained_footprint,
+        producers=producers,
         initial_conditions=initial_conditions,
         flat_params=flat_params,
         regimes=regimes,
@@ -226,6 +230,7 @@ def _preflight_memory(
     *,
     execution: ResolvedExecution | None,
     retained_footprint: DeviceBufferFootprint | None,
+    producers: ProfiledSimulationOperations | None = None,
     initial_conditions: InitialConditions,
     flat_params: FlatParams,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -254,6 +259,7 @@ def _preflight_memory(
         devices=devices,
         subject_devices=devices[:1],
         operations=_PREFLIGHT_OPERATIONS,
+        producers=ProfiledSimulationOperations() if producers is None else producers,
         inputs=union_buffer_footprints(
             footprints=(
                 retained_footprint,
@@ -1586,11 +1592,13 @@ def _run_profiled_feasibility(
     function: Callable[..., BoolND | bool],
     arguments: Mapping[str, object],
 ) -> BoolND:
-    """Admit one call-owned user DAG with explicit dynamic input owners.
+    """Admit one user DAG with explicit dynamic input owners.
 
-    User functions can carry model-specific closures, so their executables stay
-    local to this call. All runtime parameters, action arrays and subject arrays
-    are dynamic operands. Pure metadata operations use the shared profile owner.
+    The executable is determined by the DAG (its code and captured values), the
+    trace settings and the abstract operands; every value that differs between
+    calls is an operand. So `memory.producers` reuses it across calls exactly,
+    closures included. All runtime parameters, action arrays and subject arrays
+    are dynamic operands. Admission runs on every call.
     """
     placed = place_simulation_arguments(
         arguments=arguments,
@@ -1608,7 +1616,7 @@ def _run_profiled_feasibility(
     external = resident_bytes_by_device(
         live=live, arguments=argument_buffers, devices=memory.subject_devices
     )
-    compiler = _FeasibilityCompiler(
+    executable = memory.producers.admit_producer(
         function=function,
         arguments=jax.tree.map(
             lambda value: jax.ShapeDtypeStruct(
@@ -1619,35 +1627,15 @@ def _run_profiled_feasibility(
             ),
             dict(placed),
         ),
-    )
-    plan = plan_workspace(
-        axes=(),
-        compile_candidate=compiler,
+        devices=memory.subject_devices,
+        output_sharding=None,
         budget_bytes=memory.budget_bytes,
         resident_bytes=max(external.values()),
     )
-    result = plan.compiled(**placed)
+    result = executable(**placed)
     jax.block_until_ready(result)
     memory.hold(tree=result)
     return result
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class _FeasibilityCompiler:
-    """Own a user DAG and abstract operands only for its current admission."""
-
-    function: Callable[..., BoolND | bool]
-    """Current numerical DAG; concrete call parameters remain explicit operands."""
-    arguments: Mapping[str, object]
-    """Placed shape descriptors, preserving dtype, weak type and device layout."""
-
-    def __call__(self, widths: Mapping[str, int]) -> jax.stages.Compiled:
-        """Lower the full feasibility producer without allocating its output."""
-        if widths:
-            raise ExecutionPlanningError("Feasibility declares no workspace axes.")
-        return (
-            jax.jit(self.function, keep_unused=True).lower(**self.arguments).compile()
-        )
 
 
 def _age_specialized_feasibility_message(
@@ -1858,9 +1846,17 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     if age_specialized_message is not None:
         raise UnsupportedOperationError(age_specialized_message)
 
-    feasibility_func = _get_feasibility(
-        functions=regime.simulation.functions,
-        constraints=regime.simulation.constraints,
+    feasibility_func = (
+        _get_feasibility(
+            functions=regime.simulation.functions,
+            constraints=regime.simulation.constraints,
+        )
+        if memory is None
+        else memory.producers.built(
+            builder=_get_feasibility,
+            functions=regime.simulation.functions,
+            constraints=regime.simulation.constraints,
+        )
     )
     accepted = get_union_of_args([feasibility_func])
 
