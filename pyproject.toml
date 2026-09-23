@@ -164,6 +164,9 @@ quantecon = "*"
 build-docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
 explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
 view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
+[tool.pixi.feature.gettsim.pypi-dependencies]
+gettsim = "==1.2"
+ttsim-backend = "==1.2.1"
 [tool.pixi.feature.tests-pro-py313]
 # Replicates the external reviewer's air-gapped container so a bundle can be
 # tested against the interpreter and libraries that will actually run it, rather
@@ -226,6 +229,7 @@ cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
 docs = { features = [ "docs" ], solve-group = "default" }
 tests-pro-py313 = { features = [ "tests-pro-py313" ], no-default-feature = true }
 tests-cpu = { features = [ "tests" ], solve-group = "default" }
+tests-gettsim = { features = [ "tests", "gettsim" ], solve-group = "default" }
 tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }

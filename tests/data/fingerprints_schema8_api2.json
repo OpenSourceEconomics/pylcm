@@ -1,0 +1,20 @@
+{
+  "32": {
+    "dissolution": "1524379119ec3b6c8eb1405204ff7ee7fdd044536bea71bce7385ce940250f91",
+    "ds_app2_housing": "a06f05282423b445667f03735b97b63a37f78a92fc68b9e77cf0440b0dad8c24",
+    "multi_regime_normal": "c045b1d2a90a1678bfc1faafc19063bdb2c24c7a8df4406db2e9c048ac45561d",
+    "n_nbegm_toy": "ed7b602bb035ea3a09ac4be8c1065f47a85fbb1edd1110b2608de5460c21f4eb",
+    "nbegm_ride_along_toy": "974210940e22d3eec7441875a0b248352c3effd9e64c1926e98dec875c97ce9d",
+    "nbegm_stochastic_node_toy": "65859e728b0210da1e300e7a9e6e0fdfb6b6d783e35a7acc76b74b9500d2e065",
+    "negm_kinked_toy": "b80975cc05dc0b543409c88fa00efb1bbde6f19bfcdc34b5ce9b504a4d072ac7"
+  },
+  "64": {
+    "dissolution": "41f607e3a4fd81216e851b566fdfff8951bc5ad025b89dbc75dc51cf7eaa664f",
+    "ds_app2_housing": "00ec8695abf4f418f820b25f04295e6bbeba3953717374654f5aadb1fc2817c8",
+    "multi_regime_normal": "7dd41a1a6cdbbe63a69a0e9b6c28195786f60ad9583dbead5104f6c3e825e73d",
+    "n_nbegm_toy": "8f01537790711009210b5d851a4433085ee5ed765b00b96613316cf27f3a819e",
+    "nbegm_ride_along_toy": "09f1e9985fbab2c725c4214c557651d9b24660943bc99096c33d2a001e423cdb",
+    "nbegm_stochastic_node_toy": "405078ed6a7fe49e2dcd3962553d899eb3fdfe01966126f1f70800304a4127ff",
+    "negm_kinked_toy": "86760b8732529053949c8ae6600ea248a208023725a245782152d520bd2bd1ac"
+  }
+}

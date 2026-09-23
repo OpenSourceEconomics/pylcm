@@ -1,14 +1,14 @@
-"""Durable model fingerprints of every in-tree model are pinned to a checked-in table.
+"""Durable model fingerprints of selected in-tree models have checked-in pins.
 
 The digest covers the arrays a model fixes at build, and their dtype follows the
 working float format, so the table records one row per format and each test reads
 the row of the format the session runs under. What it never covers is execution
 policy: two models differing only in ExecutionConfig widths are the same model.
 
-The immutable table records Solver API 2 identities. A test-only projection of
-SolverIdentity.solver_api_version isolates the deliberate API 3 compatibility
-break; every other semantic field must still reproduce the historical digest.
-Production fingerprints continue to bind the current API version.
+The table records structure schema 8 with Solver API 2 identities. A test-only
+projection of SolverIdentity.solver_api_version isolates the API 3 compatibility
+break; every other semantic field must reproduce the pinned digest. Production
+fingerprints bind the current API version.
 """
 
 import dataclasses
@@ -31,7 +31,7 @@ from tests.test_models import (
 )
 from tests.test_models.processes import get_multi_regime_model
 
-_FIXTURE = Path(__file__).parents[1] / "data" / "fingerprints_slice4_base.json"
+_FIXTURE = Path(__file__).parents[1] / "data" / "fingerprints_schema8_api2.json"
 
 _MODELS = {
     "multi_regime_normal": lambda: get_multi_regime_model(
@@ -82,7 +82,7 @@ def test_fingerprint_is_invariant_to_a_solvers_execution_policy(key: str) -> Non
 def test_model_declaration_matches_api2_pin_after_version_projection(
     *, key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only the explicit solver API identity differs from the immutable model pins."""
+    """The projected solver API identity reproduces the schema 8 model pins."""
     original = _SemanticHasher._visit_dataclass
     projected = []
     model = _MODELS[key]()
@@ -92,8 +92,8 @@ def test_model_declaration_matches_api2_pin_after_version_projection(
         if type(value) is SolverIdentity:
             assert value.solver_api_version == 3
             projected.append(value)
-            # This intentionally incompatible identity exists only inside the
-            # historical hash oracle; no solver or archive consumes it.
+            # This incompatible identity exists only inside the pin oracle;
+            # no solver or archive consumes it.
             historical = object.__new__(SolverIdentity)
             for declaration in dataclasses.fields(value):
                 object.__setattr__(
@@ -107,14 +107,14 @@ def test_model_declaration_matches_api2_pin_after_version_projection(
         original(self, value)
 
     monkeypatch.setattr(_SemanticHasher, "_visit_dataclass", visit_at_api2)
-    historical = fingerprint_model_structure(
+    projected_fingerprint = fingerprint_model_structure(
         ages=model.ages,
         regimes=model._regimes,
         user_regimes=model.user_regimes,
         regime_names_to_ids=model.regime_names_to_ids,
     )
     assert projected, "The version projection must actually observe solver identities."
-    assert historical == _pinned()[key]
+    assert projected_fingerprint == _pinned()[key]
 
 
 @pytest.mark.parametrize("key", sorted(_MODELS))

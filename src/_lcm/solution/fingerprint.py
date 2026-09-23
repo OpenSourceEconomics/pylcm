@@ -3,6 +3,7 @@
 import annotationlib
 import builtins
 import dataclasses
+import datetime
 import dis
 import functools
 import hashlib
@@ -46,6 +47,15 @@ from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.solution.external_fingerprint import (
+    external_backend_binding,
+    external_enum_record,
+    external_function_versions,
+    external_parameter_record,
+    external_policy_record_version,
+    external_wrapper_metadata,
+    is_external_declaration,
+)
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
 from lcm.case_piece import (
@@ -245,11 +255,25 @@ _JAX_PUBLIC_NUMERIC_TYPE_OBJECTS = tuple(
     value for value in _JAX_PUBLIC_NUMERIC_VALUES if isinstance(value, type)
 )
 _NUMPY_UFUNCS = tuple(value for value in vars(np).values() if type(value) is np.ufunc)
-_NUMPY_SCALAR_TYPES = tuple(
-    value
-    for value in vars(np).values()
-    if isinstance(value, type) and issubclass(value, np.generic)
+_NUMPY_ARRAY_FUNCTION_TYPE = type(np.sum)
+_SUPPORTED_NUMPY_FUNCTION_NAMES = frozenset({"sum", "asarray", "issubdtype"})
+_NUMPY_ARRAY_FUNCTIONS = tuple(
+    (value, value.__wrapped__, value.__wrapped__.__code__)
+    for name, value in vars(np).items()
+    if name in _SUPPORTED_NUMPY_FUNCTION_NAMES
+    if type(value) is _NUMPY_ARRAY_FUNCTION_TYPE
+    and isinstance(value.__wrapped__, types.FunctionType)
 )
+_NUMPY_PYTHON_FUNCTIONS = tuple(
+    (value, value.__code__)
+    for name, value in vars(np).items()
+    if name in _SUPPORTED_NUMPY_FUNCTION_NAMES and isinstance(value, types.FunctionType)
+)
+_NUMPY_NO_VALUE = inspect.signature(np.sum).parameters["initial"].default
+
+# The dtype registry contains concrete constructors. Abstract scalar families
+# retain their versioned type identity without a lossy dtype conversion.
+_NUMPY_SCALAR_TYPES = tuple(dict.fromkeys(np.sctypeDict.values()))
 _NUMPY_PUBLIC_TYPE_OBJECTS = tuple(
     value
     for name, value in vars(np).items()
@@ -615,7 +639,7 @@ def fingerprint_model_structure(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-structure", 7),
+        ("pylcm-model-structure", 8),
         tuple(ages.exact_values),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
@@ -749,6 +773,7 @@ class _SemanticHasher:
     def __init__(self, *, binding_recorder: BindingRecorder | None = None) -> None:
         self._digest = hashlib.sha256()
         self._active: dict[int, int] = {}
+        self._active_annotations: set[int] = set()
         self._active_bound_methods: dict[tuple[int, int], int] = {}
         self._binding_recorder = binding_recorder
 
@@ -783,6 +808,10 @@ class _SemanticHasher:
             self._digest.update(part)
 
     def visit(self, *, value: object, _ignore_beartype_guards: bool = False) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915
+        if value is _NUMPY_NO_VALUE:
+            self.frame(label="numpy-no-value")
+            self.visit(value=_native_numeric_versions())
+            return
         if value is Ellipsis:
             self.frame(label="ellipsis")
             return
@@ -823,6 +852,15 @@ class _SemanticHasher:
                 label="Fraction",
                 payload=f"{value.numerator}/{value.denominator}".encode(),
             )
+            return
+        if type(value) is datetime.date:
+            self.frame(label="date", payload=value.isoformat().encode())
+            return
+        if (record := external_parameter_record(value)) is not None:
+            self.visit(value=record)
+            return
+        if (record := external_enum_record(value)) is not None:
+            self.visit(value=record)
             return
         if isinstance(value, Enum):
             if not _has_exact_type(
@@ -878,6 +916,8 @@ class _SemanticHasher:
                 raise TypeError(msg)
             self.frame(label="inspect-signature-python-seal")
             self.visit(value=_PYTHON_IMPLEMENTATION_SEAL)
+            return
+        if self._visit_external_function(value):
             return
         if self._visit_native_numeric_callable(value):
             return
@@ -990,7 +1030,12 @@ class _SemanticHasher:
                 self.frame(label="partial-start")
                 self.visit(value=value.func)
                 self.visit(value=value.args)
-                self.visit(value=value.keywords or {})
+                keywords = dict(value.keywords or {})
+                if (backend := external_backend_binding(value)) is not None:
+                    keywords.pop("xnp")
+                    self.frame(label="reviewed-partial-backend")
+                    self.visit(value=backend)
+                self.visit(value=keywords)
                 self._visit_named_state(state=value.__dict__)
                 self.frame(label="partial-end")
                 return
@@ -1087,6 +1132,19 @@ class _SemanticHasher:
                 self.visit(value=getattr(value, declaration.name))
         self.frame(label="type-end")
 
+    def _visit_external_function(self, value: object) -> bool:
+        """Hash an authenticated fixed library implementation."""
+        if (versions := external_function_versions(value)) is not None:
+            function = cast("types.FunctionType", value)
+            self._validate_function_defaults(function)
+            self.frame(label="external-library-function-start")
+            self.visit(value=versions)
+            self.visit(value=_PYTHON_IMPLEMENTATION_SEAL)
+            self._visit_native_python_function_seal(function)
+            self.frame(label="external-library-function-end")
+            return True
+        return False
+
     def _visit_native_numeric_callable(self, value: object) -> bool:
         """Hash supported native numerical callables without opaque object trust."""
         kind = _native_numeric_callable_kind(value)
@@ -1097,9 +1155,11 @@ class _SemanticHasher:
         self.visit(value=_native_numeric_versions())
         if kind == "jax-custom-jvp":
             self._visit_custom_jvp(value)
-        elif kind == "jax-function":
+        elif kind == "numpy-array-function":
+            self._visit_native_python_function_seal(cast("Any", value).__wrapped__)
+        elif kind in {"jax-function", "numpy-function"}:
             function = cast("types.FunctionType", value)
-            self.frame(label="canonical-jax-function")
+            self.frame(label=f"canonical-{kind}")
             self._visit_native_python_function_seal(function)
         elif kind == "jax-pjit":
             state = vars(value)
@@ -1268,6 +1328,9 @@ class _SemanticHasher:
                 self._visit_annotation(argument)
             self.frame(label="annotation-arguments-end")
             return
+        if type(annotation) is dict:
+            self._visit_annotation_mapping(cast("dict[object, object]", annotation))
+            return
         if isinstance(annotation, type):
             self.frame(
                 label="annotation-type",
@@ -1312,6 +1375,23 @@ class _SemanticHasher:
             f"{type(annotation).__module__}.{type(annotation).__qualname__}."
         )
         raise TypeError(msg)
+
+    def _visit_annotation_mapping(self, mapping: dict[object, object]) -> None:
+        """Hash a finite output schema in deterministic field order."""
+        identity = id(mapping)
+        if identity in self._active_annotations:
+            raise TypeError("Cannot durably fingerprint a cyclic annotation mapping.")
+        self._active_annotations.add(identity)
+        try:
+            self.frame(
+                label="annotation-mapping-start", payload=str(len(mapping)).encode()
+            )
+            for key in sorted(mapping, key=_semantic_sort_key):
+                self._visit_annotation(key)
+                self._visit_annotation(mapping[key])
+            self.frame(label="annotation-mapping-end")
+        finally:
+            self._active_annotations.remove(identity)
 
     def _visit_function_annotations(self, annotations: Mapping[str, object]) -> None:
         """Hash a function's raw annotation mapping via metadata-only traversal."""
@@ -1417,6 +1497,7 @@ class _SemanticHasher:
             "__signature__",
             "__type_params__",
         }
+        redundant_metadata |= external_wrapper_metadata(function)
         function_state = {
             name: member
             for name, member in function.__dict__.items()
@@ -1450,6 +1531,7 @@ class _SemanticHasher:
     @staticmethod
     def _validate_partial_arguments(value: functools.partial[object]) -> None:
         """Fail closed when a partial binds an argument with unsealed semantics."""
+        backend = external_backend_binding(value)
         for index, argument in enumerate(value.args):
             if not _is_closed_terminal_reference(value=argument):
                 raise TypeError(
@@ -1457,6 +1539,8 @@ class _SemanticHasher:
                     f"{index}."
                 )
         for name, argument in (value.keywords or {}).items():
+            if name == "xnp" and backend is not None:
+                continue
             if not _is_closed_terminal_reference(value=argument):
                 raise TypeError(
                     "Cannot durably fingerprint partial bound keyword argument "
@@ -1647,13 +1731,20 @@ class _SemanticHasher:
         self.frame(label="module-reference-end")
 
     def _visit_dataclass(self, value: object) -> None:
+        external_declaration = is_external_declaration(value)
+        if (version := external_policy_record_version(value)) is not None:
+            self.frame(label="gettsim-policy-version", payload=version.encode())
         self.frame(
             label="dataclass-start",
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
         for declaration in dataclasses.fields(cast("Any", value)):
             self.frame(label="field", payload=declaration.name.encode())
-            self.visit(value=getattr(value, declaration.name))
+            field_value = getattr(value, declaration.name)
+            if external_declaration:
+                self._visit_terminal_reference(field_value)
+            else:
+                self.visit(value=field_value)
         # Exact pylcm declarations have their implementation sealed by the
         # separately checked pylcm version; their fully traversed fields carry
         # instance semantics. Extension dataclasses still bind their own call code.
@@ -2072,6 +2163,8 @@ def _native_numeric_versions() -> tuple[tuple[str, str], ...]:
 
 def _native_numeric_callable_kind(value: object) -> str | None:
     """Classify only native callables whose executable semantics can be sealed."""
+    if (numpy_kind := _numpy_callable_kind(value)) is not None:
+        return numpy_kind
     if type(value) is _JAX_CUSTOM_JVP_TYPE:
         return "jax-custom-jvp"
     if _is_captured_jax_python_function(value):
@@ -2082,6 +2175,21 @@ def _native_numeric_callable_kind(value: object) -> str | None:
         value=value, candidates=_JAX_NUMPY_UFUNCS
     ):
         return "jax-ufunc"
+    return None
+
+
+def _numpy_callable_kind(value: object) -> str | None:
+    """Recognize captured public NumPy numerical implementations."""
+    if any(
+        value is func and func.__code__ is code
+        for func, code in _NUMPY_PYTHON_FUNCTIONS
+    ):
+        return "numpy-function"
+    if any(
+        value is func and func.__wrapped__ is wrapped and wrapped.__code__ is code
+        for func, wrapped, code in _NUMPY_ARRAY_FUNCTIONS
+    ):
+        return "numpy-array-function"
     if type(value) is np.ufunc and _contains_identity(
         value=value, candidates=_NUMPY_UFUNCS
     ):
@@ -2116,7 +2224,7 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     _active: set[int] | None = None,
 ) -> bool:
     """Whether the semantic serializer closes direct use of this exact value."""
-    if value is Ellipsis or value is _DATACLASSES_MISSING:
+    if value is Ellipsis or value is _DATACLASSES_MISSING or value is _NUMPY_NO_VALUE:
         return True
     if _dataclasses_field_marker_name(value) is not None:
         return True
@@ -2126,11 +2234,15 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         return True
     if value is _beartype_decorator:
         return True
-    if _has_exact_type(value=value, candidates=(slice, typing.TypeAliasType)):
+    if _has_exact_type(
+        value=value, candidates=(slice, typing.TypeAliasType, datetime.date)
+    ):
         return True
     if _has_exact_type(
         value=value, candidates=_TRUSTED_TERMINAL_OBJECT_TYPES
     ) or isinstance(value, CertaintyEquivalent):
+        return True
+    if is_external_declaration(value) or external_parameter_record(value) is not None:
         return True
     if isinstance(value, Fraction | Enum | DiscreteGrid | Phased):
         return True
@@ -2160,11 +2272,18 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     active.add(identity)
     try:
         if isinstance(value, functools.partial):
-            return _is_closed_terminal_reference(
-                value=value.func, _active=active
-            ) and all(
-                _is_closed_terminal_reference(value=item, _active=active)
-                for item in (*value.args, *(value.keywords or {}).values())
+            backend = external_backend_binding(value)
+            return (
+                _is_closed_terminal_reference(value=value.func, _active=active)
+                and all(
+                    _is_closed_terminal_reference(value=item, _active=active)
+                    for item in value.args
+                )
+                and all(
+                    (name == "xnp" and backend is not None)
+                    or _is_closed_terminal_reference(value=item, _active=active)
+                    for name, item in (value.keywords or {}).items()
+                )
             )
         if _has_exact_type(value=value, candidates=(tuple, list, frozenset, set)):
             return all(
