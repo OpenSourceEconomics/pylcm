@@ -393,7 +393,7 @@ _SOURCE_SEALS = {
     WORKSPACE_PLANNING_SOURCE: "0d7054688b1946a06d0f0dabb2377c767f5d2a254b5b77b6411bd58dbc4abcef",
     SIMULATION_PROGRAMS_SOURCE: "66fb5cd52ab3cf2e55d7b9baceba318c702ac646a98d367d557d0254eb98e489",
     SIMULATION_PROGRAM_TYPES_SOURCE: "222cb4d5053a26f333b0c2f97393badc50182b0ae8d90f2fccc6b8faa4eb6169",
-    SIMULATION_RUNTIME_SOURCE: "79e3d9bb79ae93c3332f1196f9f01cd2e9fcb3657c5daea7331ad98ebbe8226c",
+    SIMULATION_RUNTIME_SOURCE: "845b135b268b64133349f972a309d9c6fd06ee0b8d0e0ba03e50e2977c67fd55",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
@@ -3120,7 +3120,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_RUNTIME_SOURCE: (
-            "2c1b9b4c443afb047e19a93bed6dfe22e2b68be644e3607b682261650dba11aa",
+            "63e35be984cb990c857ae73f0e1d7bfa3395a6b3e4337502c2384e05c94336e3",
             {
                 "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
                 "SimulationRuntime.dispatch": "8ba6cd9386f3210c6478c5f31684f9f0dd9acff0533e272dbc34bbbb4cf89463",
@@ -3130,7 +3130,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
                 "_prepared_route_key": "ff75bfb0ea43f52496bd27c049f0ab34e6ca1285f919cb69fad3d78d89e54e1e",
                 "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
                 "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
-                "SimulationRuntime._prepare_materialized": "0c75c1f87a894fb68668f1c1b91cba0846b45f795058c8e6a19f58b847e9e284",
+                "SimulationRuntime._prepare_materialized": "3bb08504989dddee6748dec912a78f12b013ccc232a74070e05dabbb80727c95",
                 "execute_simulation_program": "da913ce854658373c080a13dc50150f6b71ee2aedb929bb6499b3cab8cc2fa2b",
                 "_SimulationCandidateCompiler.__call__": "003bac5cdf6c9211bde9f92dfe5562875b5882b68c9c438c58d26609a84e036a",
                 "_with_subject_extent": "c48502d31e8f9fb29221122b0de6d10f38f3d6f740854a82512c2b964079e463",
@@ -4317,11 +4317,11 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/runtime.py": (
-        "2c1b9b4c443afb047e19a93bed6dfe22e2b68be644e3607b682261650dba11aa",
+        "63e35be984cb990c857ae73f0e1d7bfa3395a6b3e4337502c2384e05c94336e3",
         {
             "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
             "SimulationRuntime.prepare_abstract": "842dba8c1e48637eba99548bebb2858a25116785451901451be656ad3ab55a76",
-            "_dispatch_widths": "b69e48a579baa53d8f031edfd871cd8781920419c1a173125d4ed2772836a67c",
+            "_dispatch_widths": "d68b9429ae1eed54ed99a49ce6793880f52bb5c09fa6248e1ffdf85f81806406",
             "_unbudgeted_subject_width": "2abdeb21c827cce18a98efda59515ac14649d7f20b797fa433b0765368c5457d",
             "_subject_slice_bytes": "8f5c1eabf55dec703079531a5d44138ceeeac5f66dd21384f873598096bfb5b3",
             "_require_abstract_arguments": "c99bca4f2c8dad3b1454441b13b5e25f81ca67fc44b98acddc00d325458bb073",
