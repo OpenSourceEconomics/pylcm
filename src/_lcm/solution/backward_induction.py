@@ -5116,6 +5116,7 @@ def _lowering_keys(
             _donated_arguments(donations=donations[candidate]),
             regime.solution.submesh_device_ids,
             resolved.compiler_options,
+            _trace_settings_key(),
         )
     return keys
 

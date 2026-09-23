@@ -1638,6 +1638,19 @@ def _run_profiled_feasibility(
     return result
 
 
+def _regime_feasibility_function(
+    *, regime: Regime, memory: SimulationMemory | None
+) -> Callable[..., BoolND]:
+    """Compose the regime's feasibility, reusing the budgeted owner's composition."""
+    inputs = {
+        "functions": regime.simulation.functions,
+        "constraints": regime.simulation.constraints,
+    }
+    if memory is None:
+        return _get_feasibility(**inputs)
+    return memory.producers.built(builder=_get_feasibility, **inputs)
+
+
 def _age_specialized_feasibility_message(
     *,
     regime: Regime,
@@ -1846,18 +1859,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     if age_specialized_message is not None:
         raise UnsupportedOperationError(age_specialized_message)
 
-    feasibility_func = (
-        _get_feasibility(
-            functions=regime.simulation.functions,
-            constraints=regime.simulation.constraints,
-        )
-        if memory is None
-        else memory.producers.built(
-            builder=_get_feasibility,
-            functions=regime.simulation.functions,
-            constraints=regime.simulation.constraints,
-        )
-    )
+    feasibility_func = _regime_feasibility_function(regime=regime, memory=memory)
     accepted = get_union_of_args([feasibility_func])
 
     action_names = list(regime.solution.action_names)
