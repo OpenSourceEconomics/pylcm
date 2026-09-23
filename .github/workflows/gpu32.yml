@@ -82,6 +82,7 @@ jobs:
       - tests
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Fail unless the bounded GPU policy succeeded
         run: test "${{ needs.tests.result }}" = "success"
@@ -91,6 +92,7 @@ jobs:
       - tests
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Fail unless the bounded GPU policy succeeded
         run: test "${{ needs.tests.result }}" = "success"
