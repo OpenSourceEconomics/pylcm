@@ -112,7 +112,9 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from _lcm.execution.workspace_planning import (
+    BoundedWidthSelector,
     CompilerMemoryReservation,
+    WorkspacePlan,
     compiler_memory_reservation,
     plan_workspace,
     workspace_width_candidates,
@@ -165,6 +167,7 @@ from _lcm.solution.solve_inputs import (
     register_rolled_inputs,
     substitute_artifact,
 )
+from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.solution.undeclared_reads import undeclared_read_pins
 from _lcm.solution.v_topology import (
@@ -188,6 +191,7 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     ModelInitializationError,
 )
+from lcm.execution import WidthSearch
 from lcm.solver_api import (
     SIMULATION_POLICY,
     ArtifactKey,
@@ -227,6 +231,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
     retained_input_arrays: object = (),
     process_grid_resolver: ProcessGridResolver | None = None,
+    call_id: CallId | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -275,6 +280,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             beside this solve, including automatic simulation's original and
             normalized initial conditions. These enter fixed residency by actual
             physical storage; they are not solve operands or cache entries.
+        call_id: Identifier of the public call this solve serves, stamped on
+            the host-phase records. `None` emits no phase records.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -305,25 +312,27 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # `regimes` and `flat_params`, so a colliding model is rejected before a
     # single kernel is compiled rather than after every regime-period has been
     # AOT-compiled.
-    base_state_action_spaces = _build_base_state_action_spaces(
-        regimes=regimes,
-        flat_params=flat_params,
-        process_grid_resolver=process_grid_resolver,
-    )
-    _reject_edge_fold_state_param_collisions(
-        regimes=regimes,
-        base_state_action_spaces=base_state_action_spaces,
-        flat_params=flat_params,
-    )
-
-    next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
-        _build_continuation_templates(
+    with solve_phase(name="state_action_spaces", logger=logger, call_id=call_id):
+        base_state_action_spaces = _build_base_state_action_spaces(
             regimes=regimes,
             flat_params=flat_params,
-            device_ids=resolved_execution.device_ids,
             process_grid_resolver=process_grid_resolver,
         )
-    )
+        _reject_edge_fold_state_param_collisions(
+            regimes=regimes,
+            base_state_action_spaces=base_state_action_spaces,
+            flat_params=flat_params,
+        )
+
+    with solve_phase(name="continuation_templates", logger=logger, call_id=call_id):
+        next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
+            _build_continuation_templates(
+                regimes=regimes,
+                flat_params=flat_params,
+                device_ids=resolved_execution.device_ids,
+                process_grid_resolver=process_grid_resolver,
+            )
+        )
 
     # Resolve every solve program, then compile unique lowerings when enabled.
     compiled_programs = _compile_all_functions(
@@ -349,6 +358,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             ),
         ),
         process_grid_resolver=process_grid_resolver,
+        call_id=call_id,
     )
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
@@ -498,356 +508,461 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         if resolved_execution.device_memory_bytes is not None
         else None
     )
-    try:
-        for period in reversed(range(ages.n_periods)):
-            period_start = time.monotonic()
-            period_solution: dict[RegimeName, FloatND] = {}
-            period_continuations: dict[RegimeName, ContinuationPayload] = {}
-            period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
-            period_generated_replay_authorities: dict[
-                RegimeName, GeneratedReplayAuthority
-            ] = {}
-            period_dissolution_flags: dict[RegimeName, BoolND] = {}
-            period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
-            period_retained_continuations: dict[
-                tuple[RegimeName, ArtifactKey], object
-            ] = {}
-            period_replay_artifacts: dict[tuple[RegimeName, ArtifactKey], object] = {}
-            period_auxiliary_artifacts: dict[
-                tuple[RegimeName, ArtifactKey], object
-            ] = {}
+    with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
+        try:
+            for period in reversed(range(ages.n_periods)):
+                period_start = time.monotonic()
+                period_solution: dict[RegimeName, FloatND] = {}
+                period_continuations: dict[RegimeName, ContinuationPayload] = {}
+                period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
+                period_generated_replay_authorities: dict[
+                    RegimeName, GeneratedReplayAuthority
+                ] = {}
+                period_dissolution_flags: dict[RegimeName, BoolND] = {}
+                period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
+                period_retained_continuations: dict[
+                    tuple[RegimeName, ArtifactKey], object
+                ] = {}
+                period_replay_artifacts: dict[
+                    tuple[RegimeName, ArtifactKey], object
+                ] = {}
+                period_auxiliary_artifacts: dict[
+                    tuple[RegimeName, ArtifactKey], object
+                ] = {}
 
-            period_inputs = SolveInputMappings(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                next_edge_to_V_arr=next_edge_to_V_arr,
-            )
-            register_rolled_inputs(
-                inputs=period_inputs,
-                next_period=period + 1,
-                ledger=input_liveness,
-                registry=buffer_registry,
-            )
-            period_pending_outputs: list[FloatND] = []
-            period_release_candidates: dict[ValueArtifactAddress, _InputDispatch] = {}
+                period_inputs = SolveInputMappings(
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    next_regime_to_continuation=next_regime_to_continuation,
+                    next_edge_to_V_arr=next_edge_to_V_arr,
+                )
+                register_rolled_inputs(
+                    inputs=period_inputs,
+                    next_period=period + 1,
+                    ledger=input_liveness,
+                    registry=buffer_registry,
+                )
+                period_pending_outputs: list[FloatND] = []
+                period_release_candidates: dict[
+                    ValueArtifactAddress, _InputDispatch
+                ] = {}
 
-            active_regimes = {
-                regime_name: regime
-                for regime_name, regime in regimes.items()
-                if period in regime.active_periods
-            }
+                active_regimes = {
+                    regime_name: regime
+                    for regime_name, regime in regimes.items()
+                    if period in regime.active_periods
+                }
 
-            log_period_header(
-                logger=logger,
-                age=ages.values[period],
-                n_active_regimes=len(active_regimes),
-            )
+                log_period_header(
+                    logger=logger,
+                    age=ages.values[period],
+                    n_active_regimes=len(active_regimes),
+                )
 
-            shared_transfer_counts, regime_shared_transfer_keys = (
-                _period_shared_transfer_plan(
-                    compiled_cores_by_regime=MappingProxyType(
-                        {
-                            regime_name: compiled_functions[(regime_name, period)]
-                            for regime_name in active_regimes
-                        }
+                shared_transfer_counts, regime_shared_transfer_keys = (
+                    _period_shared_transfer_plan(
+                        compiled_cores_by_regime=MappingProxyType(
+                            {
+                                regime_name: compiled_functions[(regime_name, period)]
+                                for regime_name in active_regimes
+                            }
+                        )
                     )
                 )
-            )
-            period_transfer_cache = PeriodTransferCache(
-                registry=buffer_registry,
-                consumer_counts=shared_transfer_counts,
-                pending_outputs=period_pending_outputs,
-                release_enabled=enable_jit,
-                logger=logger,
-                before_delete=None
-                if pending_work is None
-                else pending_work.before_delete,
-            )
+                period_transfer_cache = PeriodTransferCache(
+                    registry=buffer_registry,
+                    consumer_counts=shared_transfer_counts,
+                    pending_outputs=period_pending_outputs,
+                    release_enabled=enable_jit,
+                    logger=logger,
+                    before_delete=None
+                    if pending_work is None
+                    else pending_work.before_delete,
+                )
 
-            # Regimes declaring `same_period_refs` read other regimes' V of
-            # THIS period, so a reference regime is planned into an earlier wave
-            # than its reader. Independent regimes whose device sets are disjoint
-            # share a wave and dispatch back to back, which is what a submesh
-            # placement buys; regimes sharing a device keep one unit per wave, in
-            # declaration order among regimes without a reference.
-            waves = plan_period_waves(
-                nodes=tuple(
-                    ScheduledNode(period=period, regime=regime_name, program=core_key)
-                    for regime_name in active_regimes
-                    for core_key in compiled_functions[(regime_name, period)]
-                ),
-                same_period_dependencies=MappingProxyType(
-                    {
-                        regime_name: regime.same_period_ref_regimes
-                        for regime_name, regime in active_regimes.items()
-                    }
-                ),
-                device_sets=MappingProxyType(
-                    {
-                        regime_name: device_ids_by_regime[regime_name]
+                # Regimes declaring `same_period_refs` read other regimes' V of
+                # THIS period, so a reference regime is planned into an earlier wave
+                # than its reader. Independent regimes whose device sets are disjoint
+                # share a wave and dispatch back to back, which is what a submesh
+                # placement buys; regimes sharing a device keep one unit per wave, in
+                # declaration order among regimes without a reference.
+                waves = plan_period_waves(
+                    nodes=tuple(
+                        ScheduledNode(
+                            period=period, regime=regime_name, program=core_key
+                        )
                         for regime_name in active_regimes
-                    }
-                ),
-            )
-            for wave in waves:
-                for unit in wave:
-                    regime_name = unit.regime
-                    regime = active_regimes[regime_name]
-                    regime_retains_replay = (regime_name, period) in replay_dispatches
-                    selected_artifact_keys = _selected_artifact_keys_for_cell(
-                        persistable_artifact_refs=persistable_artifact_refs,
-                        regime_name=regime_name,
-                        period=period,
-                    )
-                    selected_cores, selected_donations = _select_runtime_donation_cores(
-                        compiled_programs=compiled_programs,
-                        unit=unit,
-                        inputs=SolveInputMappings(
-                            next_regime_to_V_arr=next_regime_to_V_arr,
-                            next_regime_to_continuation=next_regime_to_continuation,
-                            next_edge_to_V_arr=next_edge_to_V_arr,
-                        ),
-                        templates=input_templates,
-                        registry=buffer_registry,
-                        logger=logger,
-                    )
-                    donated_inputs = _donated_input_arrays(
-                        donations=selected_donations,
-                        unit=unit,
-                        inputs=SolveInputMappings(
-                            next_regime_to_V_arr=next_regime_to_V_arr,
-                            next_regime_to_continuation=next_regime_to_continuation,
-                            next_edge_to_V_arr=next_edge_to_V_arr,
-                        ),
-                        templates=input_templates,
-                        registry=buffer_registry,
-                    )
-                    output = _run_period_kernel(
-                        regime=regime,
-                        regime_name=regime_name,
-                        period=period,
-                        compiled_cores=_cores_with_transfer_cache(
-                            cores=selected_cores,
-                            cache=period_transfer_cache,
-                            pending_work=pending_work,
-                        ),
-                        capture_target=capture_target,
-                        state_action_space=base_state_action_spaces[regime_name],
-                        flat_params=flat_params,
-                        ages=ages,
-                        next_regime_to_V_arr=next_regime_to_V_arr,
-                        next_regime_to_continuation=next_regime_to_continuation,
-                        logger=logger,
-                        next_edge_to_V_arr=next_edge_to_V_arr,
-                        period_solution=period_solution,
-                        retain_replay=_regime_retains_replay(
-                            regime=regime,
-                            retain_replay=retain_replay,
-                        ),
-                        selected_artifact_keys=selected_artifact_keys,
-                    )
-                    continuation_spec = regime.solution.continuation_spec
-                    result = consume_kernel_output(
-                        output=output,
-                        continuation_key=(
-                            None
-                            if continuation_spec is None
-                            else continuation_spec.artifact_key
-                        ),
-                        regime_name=regime_name,
-                        period=period,
-                        artifact_authorities=regime.solution.artifact_authorities,
-                    )
-                    V_arr = result.value
-                    # The published V mapping is the calling convention for every
-                    # downstream consumer — the parents' cores and the AOT-lowered
-                    # simulate programs are both compiled against the per-regime V
-                    # topology — so a kernel value must leave its compiled program on
-                    # the template's placement; it is asserted here, never re-placed.
-                    V_arr = _publish_kernel_value(
-                        value=V_arr,
-                        compiled_cores=compiled_functions[(regime_name, period)],
-                    )
-                    _fail_if_continuation_publisher_returned_none(
-                        result=result,
-                        regime_name=regime_name,
-                        period=period,
-                        continuation_publishers=next_regime_to_continuation,
-                    )
-                    if result.continuation is not None:
-                        period_continuations[regime_name] = result.continuation
-                    if retain_all_artifacts:
-                        period_retained_continuations.update(
-                            {
-                                (regime_name, key): payload
-                                for key, payload in (
-                                    result.continuation_artifacts.items()
-                                )
-                                if ArtifactRef(
-                                    period=period,
-                                    regime=regime_name,
-                                    key=key,
-                                )
-                                in persistable_artifact_refs
-                            }
-                        )
-                    # A policy is kept only where the regime's declared simulation route
-                    # reads it; replay authority travels with its policy.
-                    if result.simulation_policy is not None and regime_retains_replay:
-                        period_simulation_policies[regime_name] = (
-                            result.simulation_policy
-                        )
-                        if result.generated_replay_authority is not None:
-                            period_generated_replay_authorities[regime_name] = (
-                                result.generated_replay_authority
-                            )
-                    period_replay_artifacts.update(
+                        for core_key in compiled_functions[(regime_name, period)]
+                    ),
+                    same_period_dependencies=MappingProxyType(
                         {
-                            (regime_name, key): payload
-                            for key, payload in result.replay_artifacts.items()
-                            if key != SIMULATION_POLICY
-                            and (
-                                retain_replay
-                                or ArtifactRef(
-                                    period=period,
-                                    regime=regime_name,
-                                    key=key,
-                                )
-                                in persistable_artifact_refs
-                            )
+                            regime_name: regime.same_period_ref_regimes
+                            for regime_name, regime in active_regimes.items()
                         }
-                    )
-                    if retain_all_artifacts:
-                        period_auxiliary_artifacts.update(
+                    ),
+                    device_sets=MappingProxyType(
+                        {
+                            regime_name: device_ids_by_regime[regime_name]
+                            for regime_name in active_regimes
+                        }
+                    ),
+                )
+                for wave in waves:
+                    for unit in wave:
+                        regime_name = unit.regime
+                        regime = active_regimes[regime_name]
+                        regime_retains_replay = (
+                            regime_name,
+                            period,
+                        ) in replay_dispatches
+                        selected_artifact_keys = _selected_artifact_keys_for_cell(
+                            persistable_artifact_refs=persistable_artifact_refs,
+                            regime_name=regime_name,
+                            period=period,
+                        )
+                        selected_cores, selected_donations = (
+                            _select_runtime_donation_cores(
+                                compiled_programs=compiled_programs,
+                                unit=unit,
+                                inputs=SolveInputMappings(
+                                    next_regime_to_V_arr=next_regime_to_V_arr,
+                                    next_regime_to_continuation=next_regime_to_continuation,
+                                    next_edge_to_V_arr=next_edge_to_V_arr,
+                                ),
+                                templates=input_templates,
+                                registry=buffer_registry,
+                                logger=logger,
+                            )
+                        )
+                        donated_inputs = _donated_input_arrays(
+                            donations=selected_donations,
+                            unit=unit,
+                            inputs=SolveInputMappings(
+                                next_regime_to_V_arr=next_regime_to_V_arr,
+                                next_regime_to_continuation=next_regime_to_continuation,
+                                next_edge_to_V_arr=next_edge_to_V_arr,
+                            ),
+                            templates=input_templates,
+                            registry=buffer_registry,
+                        )
+                        output = _run_period_kernel(
+                            regime=regime,
+                            regime_name=regime_name,
+                            period=period,
+                            compiled_cores=_cores_with_transfer_cache(
+                                cores=selected_cores,
+                                cache=period_transfer_cache,
+                                pending_work=pending_work,
+                            ),
+                            capture_target=capture_target,
+                            state_action_space=base_state_action_spaces[regime_name],
+                            flat_params=flat_params,
+                            ages=ages,
+                            next_regime_to_V_arr=next_regime_to_V_arr,
+                            next_regime_to_continuation=next_regime_to_continuation,
+                            logger=logger,
+                            next_edge_to_V_arr=next_edge_to_V_arr,
+                            period_solution=period_solution,
+                            retain_replay=_regime_retains_replay(
+                                regime=regime,
+                                retain_replay=retain_replay,
+                            ),
+                            selected_artifact_keys=selected_artifact_keys,
+                        )
+                        continuation_spec = regime.solution.continuation_spec
+                        result = consume_kernel_output(
+                            output=output,
+                            continuation_key=(
+                                None
+                                if continuation_spec is None
+                                else continuation_spec.artifact_key
+                            ),
+                            regime_name=regime_name,
+                            period=period,
+                            artifact_authorities=regime.solution.artifact_authorities,
+                        )
+                        V_arr = result.value
+                        # The published V mapping is the calling convention for every
+                        # downstream consumer — the parents' cores and the AOT-lowered
+                        # simulate programs are both compiled against the per-regime V
+                        # topology — so a kernel value must leave its compiled
+                        # program on the template's placement; it is asserted
+                        # here, never re-placed.
+                        V_arr = _publish_kernel_value(
+                            value=V_arr,
+                            compiled_cores=compiled_functions[(regime_name, period)],
+                        )
+                        _fail_if_continuation_publisher_returned_none(
+                            result=result,
+                            regime_name=regime_name,
+                            period=period,
+                            continuation_publishers=next_regime_to_continuation,
+                        )
+                        if result.continuation is not None:
+                            period_continuations[regime_name] = result.continuation
+                        if retain_all_artifacts:
+                            period_retained_continuations.update(
+                                {
+                                    (regime_name, key): payload
+                                    for key, payload in (
+                                        result.continuation_artifacts.items()
+                                    )
+                                    if ArtifactRef(
+                                        period=period,
+                                        regime=regime_name,
+                                        key=key,
+                                    )
+                                    in persistable_artifact_refs
+                                }
+                            )
+                        # A policy is kept only where the regime's declared
+                        # simulation route reads it; replay authority travels
+                        # with its policy.
+                        if (
+                            result.simulation_policy is not None
+                            and regime_retains_replay
+                        ):
+                            period_simulation_policies[regime_name] = (
+                                result.simulation_policy
+                            )
+                            if result.generated_replay_authority is not None:
+                                period_generated_replay_authorities[regime_name] = (
+                                    result.generated_replay_authority
+                                )
+                        period_replay_artifacts.update(
                             {
                                 (regime_name, key): payload
-                                for key, payload in result.auxiliary_artifacts.items()
-                                if ArtifactRef(
-                                    period=period,
-                                    regime=regime_name,
-                                    key=key,
+                                for key, payload in result.replay_artifacts.items()
+                                if key != SIMULATION_POLICY
+                                and (
+                                    retain_replay
+                                    or ArtifactRef(
+                                        period=period,
+                                        regime=regime_name,
+                                        key=key,
+                                    )
+                                    in persistable_artifact_refs
                                 )
-                                in persistable_artifact_refs
                             }
                         )
-                    # A collective regime publishes its
-                    # empty-mask dissolution flag D alongside V; singleton regimes
-                    # leave it None and never touch this mapping.
-                    if result.dissolution is not None:
-                        period_dissolution_flags[regime_name] = result.dissolution
-                    if (
-                        collect_solver_diagnostics
-                        and diagnostics_enabled
-                        and result.diagnostics is not None
-                    ):
-                        period_solver_diagnostics[regime_name] = result.diagnostics
-                    running_any_nan, running_any_inf = _fold_period_diagnostics(
-                        V_arr=V_arr,
-                        regime_name=regime_name,
-                        period=period,
-                        ages=ages,
-                        diagnostics_enabled=diagnostics_enabled,
-                        stats_enabled=stats_enabled,
-                        diagnostic_rows=diagnostic_rows,
-                        diagnostic_min=diagnostic_min,
-                        diagnostic_max=diagnostic_max,
-                        diagnostic_mean=diagnostic_mean,
-                        running_any_nan=running_any_nan,
-                        running_any_inf=running_any_inf,
-                    )
-
-                    period_solution[regime_name] = V_arr
-                    period_pending_outputs.append(V_arr)
-                    if result.continuation is not None:
-                        period_pending_outputs.extend(
-                            jax.tree.leaves(result.continuation)
+                        if retain_all_artifacts:
+                            period_auxiliary_artifacts.update(
+                                {
+                                    (regime_name, key): payload
+                                    for key, payload in (
+                                        result.auxiliary_artifacts.items()
+                                    )
+                                    if ArtifactRef(
+                                        period=period,
+                                        regime=regime_name,
+                                        key=key,
+                                    )
+                                    in persistable_artifact_refs
+                                }
+                            )
+                        # A collective regime publishes its
+                        # empty-mask dissolution flag D alongside V; singleton regimes
+                        # leave it None and never touch this mapping.
+                        if result.dissolution is not None:
+                            period_dissolution_flags[regime_name] = result.dissolution
+                        if (
+                            collect_solver_diagnostics
+                            and diagnostics_enabled
+                            and result.diagnostics is not None
+                        ):
+                            period_solver_diagnostics[regime_name] = result.diagnostics
+                        running_any_nan, running_any_inf = _fold_period_diagnostics(
+                            V_arr=V_arr,
+                            regime_name=regime_name,
+                            period=period,
+                            ages=ages,
+                            diagnostics_enabled=diagnostics_enabled,
+                            stats_enabled=stats_enabled,
+                            diagnostic_rows=diagnostic_rows,
+                            diagnostic_min=diagnostic_min,
+                            diagnostic_max=diagnostic_max,
+                            diagnostic_mean=diagnostic_mean,
+                            running_any_nan=running_any_nan,
+                            running_any_inf=running_any_inf,
                         )
-                    dispatch_outputs = (
-                        V_arr,
-                        result.continuation,
-                        result.continuation_artifacts,
-                        result.replay_artifacts,
-                        result.auxiliary_artifacts,
-                        result.simulation_policy,
-                        result.dissolution,
-                        _diagnostic_arrays(
-                            diagnostics=()
-                            if result.diagnostics is None
-                            else (result.diagnostics,)
-                        ),
-                    )
-                    # Whatever this dispatch handed straight back out, it did not
-                    # produce. The inputs are read the way the dispatch reads them —
-                    # through the same period-axis overlay — so an age-specialized
-                    # axis is compared as the dispatch actually saw it, and including
-                    # this period's own values, which a same-period-ref regime reads.
-                    buffer_registry.declare_passed_through(
-                        inputs=(
-                            _states_for_period(
-                                regime=regime,
-                                state_action_space=base_state_action_spaces[
-                                    regime_name
-                                ],
-                                period=period,
+
+                        period_solution[regime_name] = V_arr
+                        period_pending_outputs.append(V_arr)
+                        if result.continuation is not None:
+                            period_pending_outputs.extend(
+                                jax.tree.leaves(result.continuation)
+                            )
+                        dispatch_outputs = (
+                            V_arr,
+                            result.continuation,
+                            result.continuation_artifacts,
+                            result.replay_artifacts,
+                            result.auxiliary_artifacts,
+                            result.simulation_policy,
+                            result.dissolution,
+                            _diagnostic_arrays(
+                                diagnostics=()
+                                if result.diagnostics is None
+                                else (result.diagnostics,)
                             ),
+                        )
+                        # Whatever this dispatch handed straight back out, it did not
+                        # produce. The inputs are read the way the dispatch reads them —
+                        # through the same period-axis overlay — so an age-specialized
+                        # axis is compared as the dispatch actually saw it, and
+                        # including this period's own values, which a
+                        # same-period-ref regime reads.
+                        buffer_registry.declare_passed_through(
+                            inputs=(
+                                _states_for_period(
+                                    regime=regime,
+                                    state_action_space=base_state_action_spaces[
+                                        regime_name
+                                    ],
+                                    period=period,
+                                ),
+                                next_regime_to_V_arr,
+                                next_regime_to_continuation,
+                                next_edge_to_V_arr,
+                                period_solution,
+                            ),
+                            outputs=dispatch_outputs,
+                        )
+                        # The result keeps these payloads, and what would make them
+                        # independent runs only once the period is finished — after the
+                        # releases below, and for the dissolution flags not at all. Two
+                        # channels carrying one array is enough for a release
+                        # addressed at one of them to reach the other, so every
+                        # retained channel is declared before this period's first
+                        # release.
+                        buffer_registry.declare_not_produced(
+                            tree=(
+                                period_retained_continuations,
+                                period_replay_artifacts,
+                                period_auxiliary_artifacts,
+                                period_simulation_policies,
+                                period_dissolution_flags,
+                                _diagnostic_arrays(
+                                    diagnostics=tuple(
+                                        period_solver_diagnostics.values()
+                                    )
+                                ),
+                            )
+                        )
+                        (
                             next_regime_to_V_arr,
                             next_regime_to_continuation,
                             next_edge_to_V_arr,
-                            period_solution,
-                        ),
-                        outputs=dispatch_outputs,
-                    )
-                    # The result keeps these payloads, and what would make them
-                    # independent runs only once the period is finished — after the
-                    # releases below, and for the dissolution flags not at all. Two
-                    # channels carrying one array is enough for a release addressed at
-                    # one of them to reach the other, so every retained channel is
-                    # declared before this period's first release.
-                    buffer_registry.declare_not_produced(
-                        tree=(
-                            period_retained_continuations,
-                            period_replay_artifacts,
-                            period_auxiliary_artifacts,
-                            period_simulation_policies,
-                            period_dissolution_flags,
-                            _diagnostic_arrays(
-                                diagnostics=tuple(period_solver_diagnostics.values())
+                        ) = _retire_donated_inputs(
+                            donated_inputs=donated_inputs,
+                            dispatch=(period, regime_name),
+                            inputs=SolveInputMappings(
+                                next_regime_to_V_arr=next_regime_to_V_arr,
+                                next_regime_to_continuation=next_regime_to_continuation,
+                                next_edge_to_V_arr=next_edge_to_V_arr,
                             ),
+                            templates=input_templates,
+                            pending_outputs=(
+                                tuple(period_pending_outputs),
+                                dispatch_outputs,
+                            ),
+                            registry=buffer_registry,
+                            logger=logger,
+                            before_delete=None
+                            if pending_work is None
+                            else pending_work.before_delete,
                         )
-                    )
+                    for unit in wave:
+                        for key in regime_shared_transfer_keys.get(
+                            unit.regime, frozenset()
+                        ):
+                            period_transfer_cache.commit_consumer(key=key)
+                        for closed in input_liveness.commit_successful_dispatch(
+                            dispatch=(period, unit.regime)
+                        ):
+                            period_release_candidates.setdefault(
+                                closed, (period, unit.regime)
+                            )
                     (
                         next_regime_to_V_arr,
                         next_regime_to_continuation,
                         next_edge_to_V_arr,
-                    ) = _retire_donated_inputs(
-                        donated_inputs=donated_inputs,
-                        dispatch=(period, regime_name),
+                    ) = _release_closed_period_inputs(
+                        ledger=input_liveness,
+                        registry=buffer_registry,
+                        candidates=period_release_candidates,
                         inputs=SolveInputMappings(
                             next_regime_to_V_arr=next_regime_to_V_arr,
                             next_regime_to_continuation=next_regime_to_continuation,
                             next_edge_to_V_arr=next_edge_to_V_arr,
                         ),
                         templates=input_templates,
-                        pending_outputs=(
-                            tuple(period_pending_outputs),
-                            dispatch_outputs,
-                        ),
-                        registry=buffer_registry,
+                        pending_outputs=period_pending_outputs,
                         logger=logger,
+                        release_enabled=enable_jit,
                         before_delete=None
                         if pending_work is None
                         else pending_work.before_delete,
                     )
-                for unit in wave:
-                    for key in regime_shared_transfer_keys.get(
-                        unit.regime, frozenset()
-                    ):
-                        period_transfer_cache.commit_consumer(key=key)
+
+                # Force the device-side reduction kernels to finish before the
+                # next period dispatches, so each period's `isnan` / `isinf`
+                # (and min/max/mean) intermediate buffers can be freed instead
+                # of stacking up. `block_until_ready` does NOT transfer to host
+                # — it is a device-side wait, cheap when the dominant
+                # per-period kernel (`max_Q_over_a`) is the actual bottleneck.
+                if diagnostics_enabled:
+                    running_any_nan.block_until_ready()
+                    running_any_inf.block_until_ready()
+                    if stats_enabled and diagnostic_mean:
+                        # Blocking on the last-appended stat suffices: XLA
+                        # serialises dispatch order, so a finished `mean`
+                        # implies a finished `min`/`max` too.
+                        diagnostic_mean[-1].block_until_ready()
+
+                # Fold each declared gated edge whose target
+                # was solved this period onto the target grid, and roll the resulting
+                # Wbar into the edge continuation the source reads next period. Reads
+                # only the still-live period-t arrays (`period_solution`,
+                # `period_dissolution_flags`). The node fold is streamed to cap peak
+                # memory; parents then read Wbar in place of the raw target V via the
+                # existing next_regime_to_V_arr threading.
+                folded_edge_to_V_arr = _roll_gated_edges(
+                    regimes=regimes,
+                    ages=ages,
+                    period=period,
+                    period_solution=period_solution,
+                    period_dissolution_flags=period_dissolution_flags,
+                    base_state_action_spaces=base_state_action_spaces,
+                    flat_params=flat_params,
+                    next_edge_to_V_arr=next_edge_to_V_arr,
+                )
+                # The fold is a dispatch unit in its own right, and it passes a great
+                # deal through: an edge it does not fold keeps its previous Wbar, and
+                # the sharding match a folded one ends in returns its argument whenever
+                # the shardings already agree. Its grids and params need no mention —
+                # those are declared for the whole solve before the first dispatch.
+                buffer_registry.declare_passed_through(
+                    inputs=(
+                        next_edge_to_V_arr,
+                        period_solution,
+                        period_dissolution_flags,
+                    ),
+                    outputs=folded_edge_to_V_arr,
+                )
+                next_edge_to_V_arr = folded_edge_to_V_arr
+                # A fold is a consumer of the period's raw values in its own right, so
+                # each edge folded above commits the dispatch declared for it. An edge
+                # the same enumeration left unfolded declared none and commits nothing.
+                for folded_edge in _folded_edge_keys_at_period(
+                    regimes=regimes,
+                    period=period,
+                    solved_regimes=period_solution,
+                ):
                     for closed in input_liveness.commit_successful_dispatch(
-                        dispatch=(period, unit.regime)
+                        dispatch=(period, *folded_edge)
                     ):
                         period_release_candidates.setdefault(
-                            closed, (period, unit.regime)
+                            closed, (period, *folded_edge)
                         )
                 (
                     next_regime_to_V_arr,
@@ -870,197 +985,122 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     if pending_work is None
                     else pending_work.before_delete,
                 )
-
-            # Force the device-side reduction kernels to finish before the
-            # next period dispatches, so each period's `isnan` / `isinf`
-            # (and min/max/mean) intermediate buffers can be freed instead
-            # of stacking up. `block_until_ready` does NOT transfer to host
-            # — it is a device-side wait, cheap when the dominant
-            # per-period kernel (`max_Q_over_a`) is the actual bottleneck.
-            if diagnostics_enabled:
-                running_any_nan.block_until_ready()
-                running_any_inf.block_until_ready()
-                if stats_enabled and diagnostic_mean:
-                    # Blocking on the last-appended stat suffices: XLA
-                    # serialises dispatch order, so a finished `mean`
-                    # implies a finished `min`/`max` too.
-                    diagnostic_mean[-1].block_until_ready()
-
-            # Fold each declared gated edge whose target
-            # was solved this period onto the target grid, and roll the resulting
-            # Wbar into the edge continuation the source reads next period. Reads
-            # only the still-live period-t arrays (`period_solution`,
-            # `period_dissolution_flags`). The node fold is streamed to cap peak
-            # memory; parents then read Wbar in place of the raw target V via the
-            # existing next_regime_to_V_arr threading.
-            folded_edge_to_V_arr = _roll_gated_edges(
-                regimes=regimes,
-                ages=ages,
-                period=period,
-                period_solution=period_solution,
-                period_dissolution_flags=period_dissolution_flags,
-                base_state_action_spaces=base_state_action_spaces,
-                flat_params=flat_params,
-                next_edge_to_V_arr=next_edge_to_V_arr,
-            )
-            # The fold is a dispatch unit in its own right, and it passes a great
-            # deal through: an edge it does not fold keeps its previous Wbar, and
-            # the sharding match a folded one ends in returns its argument whenever
-            # the shardings already agree. Its grids and params need no mention —
-            # those are declared for the whole solve before the first dispatch.
-            buffer_registry.declare_passed_through(
-                inputs=(
-                    next_edge_to_V_arr,
-                    period_solution,
-                    period_dissolution_flags,
-                ),
-                outputs=folded_edge_to_V_arr,
-            )
-            next_edge_to_V_arr = folded_edge_to_V_arr
-            # A fold is a consumer of the period's raw values in its own right, so
-            # each edge folded above commits the dispatch declared for it. An edge
-            # the same enumeration left unfolded declared none and commits nothing.
-            for folded_edge in _folded_edge_keys_at_period(
-                regimes=regimes,
-                period=period,
-                solved_regimes=period_solution,
-            ):
-                for closed in input_liveness.commit_successful_dispatch(
-                    dispatch=(period, *folded_edge)
-                ):
-                    period_release_candidates.setdefault(closed, (period, *folded_edge))
-            next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
-                _release_closed_period_inputs(
-                    ledger=input_liveness,
-                    registry=buffer_registry,
-                    candidates=period_release_candidates,
-                    inputs=SolveInputMappings(
+                next_regime_to_V_arr, next_regime_to_continuation = (
+                    _roll_continuation_inputs(
+                        regimes=regimes,
+                        period_solution=period_solution,
+                        period_continuations=period_continuations,
                         next_regime_to_V_arr=next_regime_to_V_arr,
                         next_regime_to_continuation=next_regime_to_continuation,
-                        next_edge_to_V_arr=next_edge_to_V_arr,
-                    ),
-                    templates=input_templates,
-                    pending_outputs=period_pending_outputs,
-                    logger=logger,
-                    release_enabled=enable_jit,
-                    before_delete=None
-                    if pending_work is None
-                    else pending_work.before_delete,
+                    )
                 )
-            )
-            next_regime_to_V_arr, next_regime_to_continuation = (
-                _roll_continuation_inputs(
-                    regimes=regimes,
-                    period_solution=period_solution,
-                    period_continuations=period_continuations,
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    next_regime_to_continuation=next_regime_to_continuation,
+                solution[period] = MappingProxyType(period_solution)
+                # Publish each collective regime's dissolution
+                # flag D alongside V, where a reader exists. Kept as a plain per-period
+                # mapping (not rolled like `next_regime_to_V_arr`): nothing consumes a
+                # NEXT-period D — a gated edge's gate reads the still-live per-period
+                # flags at each period's end, before the roll (above). The period keys
+                # match `solution`'s either way; only the arrays behind them differ.
+                dissolution_flags[period] = (
+                    MappingProxyType(period_dissolution_flags)
+                    if publish_dissolution_flags
+                    else _NO_DISSOLUTION_FLAGS
                 )
-            )
-            solution[period] = MappingProxyType(period_solution)
-            # Publish each collective regime's dissolution
-            # flag D alongside V, where a reader exists. Kept as a plain per-period
-            # mapping (not rolled like `next_regime_to_V_arr`): nothing consumes a
-            # NEXT-period D — a gated edge's gate reads the still-live per-period
-            # flags at each period's end, before the roll (above). The period keys
-            # match `solution`'s either way; only the arrays behind them differ.
-            dissolution_flags[period] = (
-                MappingProxyType(period_dissolution_flags)
-                if publish_dissolution_flags
-                else _NO_DISSOLUTION_FLAGS
-            )
-            if retain_replay or period_simulation_policies:
-                assert host_device is not None  # noqa: S101
-                simulation_policies[period] = MappingProxyType(
-                    {
-                        regime_name: jax.block_until_ready(
-                            jax.device_put(simulation_policy, host_device)
-                        )
-                        for regime_name, simulation_policy in (
-                            period_simulation_policies.items()
-                        )
-                    }
-                )
-            if period_generated_replay_authorities:
-                generated_replay_authorities[period] = MappingProxyType(
-                    period_generated_replay_authorities
-                )
-            if period_solver_diagnostics:
-                assert host_device is not None  # noqa: S101
-                solver_diagnostics[period] = MappingProxyType(
-                    {
-                        regime_name: _copy_solver_diagnostics_to_host(
-                            diagnostics=diagnostics,
-                            host_device=host_device,
-                        )
-                        for regime_name, diagnostics in (
-                            period_solver_diagnostics.items()
-                        )
-                    }
-                )
-            if retain_all_artifacts:
-                assert host_device is not None  # noqa: S101
-                for (
-                    regime_name,
-                    key,
-                ), payload in period_retained_continuations.items():
-                    retained_continuations[
-                        ArtifactRef(period=period, regime=regime_name, key=key)
-                    ] = jax.block_until_ready(jax.device_put(payload, host_device))
-                for (regime_name, key), payload in period_auxiliary_artifacts.items():
-                    auxiliary_artifacts[
-                        ArtifactRef(period=period, regime=regime_name, key=key)
-                    ] = jax.block_until_ready(jax.device_put(payload, host_device))
-            if retain_replay or period_replay_artifacts:
-                assert host_device is not None  # noqa: S101
-                for (regime_name, key), payload in period_replay_artifacts.items():
-                    replay_artifacts[
-                        ArtifactRef(period=period, regime=regime_name, key=key)
-                    ] = jax.block_until_ready(jax.device_put(payload, host_device))
+                if retain_replay or period_simulation_policies:
+                    assert host_device is not None  # noqa: S101
+                    simulation_policies[period] = MappingProxyType(
+                        {
+                            regime_name: jax.block_until_ready(
+                                jax.device_put(simulation_policy, host_device)
+                            )
+                            for regime_name, simulation_policy in (
+                                period_simulation_policies.items()
+                            )
+                        }
+                    )
+                if period_generated_replay_authorities:
+                    generated_replay_authorities[period] = MappingProxyType(
+                        period_generated_replay_authorities
+                    )
+                if period_solver_diagnostics:
+                    assert host_device is not None  # noqa: S101
+                    solver_diagnostics[period] = MappingProxyType(
+                        {
+                            regime_name: _copy_solver_diagnostics_to_host(
+                                diagnostics=diagnostics,
+                                host_device=host_device,
+                            )
+                            for regime_name, diagnostics in (
+                                period_solver_diagnostics.items()
+                            )
+                        }
+                    )
+                if retain_all_artifacts:
+                    assert host_device is not None  # noqa: S101
+                    for (
+                        regime_name,
+                        key,
+                    ), payload in period_retained_continuations.items():
+                        retained_continuations[
+                            ArtifactRef(period=period, regime=regime_name, key=key)
+                        ] = jax.block_until_ready(jax.device_put(payload, host_device))
+                    for (
+                        regime_name,
+                        key,
+                    ), payload in period_auxiliary_artifacts.items():
+                        auxiliary_artifacts[
+                            ArtifactRef(period=period, regime=regime_name, key=key)
+                        ] = jax.block_until_ready(jax.device_put(payload, host_device))
+                if retain_replay or period_replay_artifacts:
+                    assert host_device is not None  # noqa: S101
+                    for (regime_name, key), payload in period_replay_artifacts.items():
+                        replay_artifacts[
+                            ArtifactRef(period=period, regime=regime_name, key=key)
+                        ] = jax.block_until_ready(jax.device_put(payload, host_device))
 
-            elapsed = time.monotonic() - period_start
-            log_period_timing(logger=logger, elapsed=elapsed)
+                elapsed = time.monotonic() - period_start
+                log_period_timing(logger=logger, elapsed=elapsed)
 
-            # Fail-fast on NaN: surface the offending period immediately
-            # instead of finishing the whole backward induction. Costs one
-            # host transfer of a scalar bool per period — negligible next
-            # to the per-period `max_Q_over_a` kernel. Inf is non-fatal so
-            # we don't break on it; the post-loop emitter still raises a
-            # warning if any period flagged Inf.
-            #
-            # Only raise mode fails fast. Raise mode is the loudest level, so
-            # diagnostics are on and `running_any_nan` has been tracked. In warn
-            # mode induction runs to completion so `solve` returns a complete
-            # (NaN-bearing) solution rather than a truncated one.
-            if validation_raises(logger) and running_any_nan.item():
-                break
+                # Fail-fast on NaN: surface the offending period immediately
+                # instead of finishing the whole backward induction. Costs one
+                # host transfer of a scalar bool per period — negligible next
+                # to the per-period `max_Q_over_a` kernel. Inf is non-fatal so
+                # we don't break on it; the post-loop emitter still raises a
+                # warning if any period flagged Inf.
+                #
+                # Only raise mode fails fast. Raise mode is the loudest level, so
+                # diagnostics are on and `running_any_nan` has been tracked. In warn
+                # mode induction runs to completion so `solve` returns a complete
+                # (NaN-bearing) solution rather than a truncated one.
+                if validation_raises(logger) and running_any_nan.item():
+                    break
 
-            _release_rolled_continuations(period_continuations=period_continuations)
+                _release_rolled_continuations(period_continuations=period_continuations)
 
-        if diagnostics_enabled:
-            try:
-                _emit_post_loop_diagnostics(
-                    logger=logger,
-                    diagnostic_rows=diagnostic_rows,
-                    solution=MappingProxyType(solution),
-                    regimes=regimes,
-                    flat_params=flat_params,
-                    running_any_nan=running_any_nan,
-                    running_any_inf=running_any_inf,
-                    diagnostic_min=diagnostic_min if stats_enabled else None,
-                    diagnostic_max=diagnostic_max if stats_enabled else None,
-                    diagnostic_mean=diagnostic_mean if stats_enabled else None,
-                    process_grid_resolver=process_grid_resolver,
-                )
-            except InvalidValueFunctionError as error:
-                raise_or_warn(logger=logger, error=error)
+            if diagnostics_enabled:
+                try:
+                    _emit_post_loop_diagnostics(
+                        logger=logger,
+                        diagnostic_rows=diagnostic_rows,
+                        solution=MappingProxyType(solution),
+                        regimes=regimes,
+                        flat_params=flat_params,
+                        running_any_nan=running_any_nan,
+                        running_any_inf=running_any_inf,
+                        diagnostic_min=diagnostic_min if stats_enabled else None,
+                        diagnostic_max=diagnostic_max if stats_enabled else None,
+                        diagnostic_mean=diagnostic_mean if stats_enabled else None,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+                except InvalidValueFunctionError as error:
+                    raise_or_warn(logger=logger, error=error)
 
-        _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
-        input_liveness.assert_solve_complete()
+            _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
+            input_liveness.assert_solve_complete()
 
-    finally:
-        if pending_work is not None:
-            pending_work.close()
+        finally:
+            if pending_work is not None:
+                pending_work.close()
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
@@ -3157,6 +3197,7 @@ def _width_selection_failure(
     budget_bytes: int,
     execution: ResolvedExecution,
     error: ExecutionPlanningError,
+    skipped_fallback_evaluations: int = 0,
 ) -> ExecutionPlanningError:
     """Name the cell a workspace refusal belongs to and what it competed with.
 
@@ -3176,6 +3217,12 @@ def _width_selection_failure(
         f"on a single device."
         f"{execution.device_memory_cap_note()} {error}"
     )
+    if skipped_fallback_evaluations:
+        msg += (
+            f" Fallback evaluation skipped for {skipped_fallback_evaluations} "
+            "rejected candidate(s) whose donating variant already exceeded the "
+            "budget."
+        )
     return ExecutionPlanningError(msg)
 
 
@@ -3241,6 +3288,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     persistable_artifact_refs: frozenset[ArtifactRef],
     max_compilation_workers: int | None,
     logger: logging.Logger,
+    call_id: CallId | None = None,
     fixed_input_arrays: object = (),
     process_grid_resolver: ProcessGridResolver | None = None,
 ) -> _CompiledPrograms:
@@ -3295,76 +3343,78 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
 
     """
     # Collect every kernel's native graph, narrowed to the retention's scope.
-    all_programs: dict[_CoreTriple, CoreProgram] = {}
-    for regime_name, regime in regimes.items():
-        for period in regime.active_periods:
-            graph = _select_period_programs(
-                regime=regime,
-                regime_name=regime_name,
-                period=period,
-                retain_replay=retain_replay,
-                persistable_artifact_refs=persistable_artifact_refs,
-            )
-            for core_name, program in graph.items():
-                all_programs[(regime_name, period, core_name)] = program
+    with solve_phase(name="program_graphs", logger=logger, call_id=call_id):
+        all_programs: dict[_CoreTriple, CoreProgram] = {}
+        for regime_name, regime in regimes.items():
+            for period in regime.active_periods:
+                graph = _select_period_programs(
+                    regime=regime,
+                    regime_name=regime_name,
+                    period=period,
+                    retain_replay=retain_replay,
+                    persistable_artifact_refs=persistable_artifact_refs,
+                )
+                for core_name, program in graph.items():
+                    all_programs[(regime_name, period, core_name)] = program
 
     # Materialize each named core's exact program before representative selection.
     # The resulting function, arguments, roles, specialization, and layout form
     # one lowering source of truth.
-    (
-        all_layouts,
-        lowering_keys,
-        resolved_programs,
-        internal_templates,
-        input_liveness,
-        donations,
-        representative_metadata,
-        frontier,
-    ) = _resolve_output_layouts_and_lowering_keys(
-        all_programs=all_programs,
-        regimes=regimes,
-        model_fingerprint=model_fingerprint,
-        flat_params=flat_params,
-        ages=ages,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        next_regime_to_continuation=next_regime_to_continuation,
-        next_edge_to_V_arr=next_edge_to_V_arr,
-        budget_bytes=execution.device_memory_bytes,
-        execution_widths=execution,
-        enable_jit=enable_jit,
-        continuous_sharded_state=execution.continuous_sharded_state,
-        donate_buffers=execution.donate_buffers,
-        retain_all_artifacts=retain_all_artifacts,
-        persistable_artifact_refs=persistable_artifact_refs,
-        process_grid_resolver=process_grid_resolver,
-    )
+    with solve_phase(name="structural_resolution", logger=logger, call_id=call_id):
+        (
+            all_layouts,
+            lowering_keys,
+            resolved_programs,
+            internal_templates,
+            input_liveness,
+            donations,
+            representative_metadata,
+            frontier,
+        ) = _resolve_output_layouts_and_lowering_keys(
+            all_programs=all_programs,
+            regimes=regimes,
+            model_fingerprint=model_fingerprint,
+            flat_params=flat_params,
+            ages=ages,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+            budget_bytes=execution.device_memory_bytes,
+            execution_widths=execution,
+            enable_jit=enable_jit,
+            continuous_sharded_state=execution.continuous_sharded_state,
+            donate_buffers=execution.donate_buffers,
+            retain_all_artifacts=retain_all_artifacts,
+            persistable_artifact_refs=persistable_artifact_refs,
+            process_grid_resolver=process_grid_resolver,
+        )
 
-    _fail_if_one_key_covers_two_callables(
-        lowering_keys=lowering_keys, resolved_programs=resolved_programs
-    )
-    fallback_programs = {
-        candidate: resolved_programs[candidate]
-        for candidate, decisions in donations.items()
-        if _donated_arguments(donations=decisions)
-    }
-    fallback_donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]] = (
-        dict.fromkeys(fallback_programs, ())
-    )
-    fallback_argument_keys: dict[_CoreTriple, Hashable] = {}
-    fallback_keys = _lowering_keys(
-        resolved_programs=fallback_programs,
-        internal_templates=internal_templates,
-        layouts=all_layouts,
-        donations=fallback_donations,
-        regimes=regimes,
-        model_fingerprint=model_fingerprint,
-        argument_keys=fallback_argument_keys,
-    )
-    frontier.bind_fallbacks(
-        fallback_keys=fallback_keys,
-        fallback_donations=fallback_donations,
-        argument_keys=fallback_argument_keys,
-    )
+        _fail_if_one_key_covers_two_callables(
+            lowering_keys=lowering_keys, resolved_programs=resolved_programs
+        )
+        fallback_programs = {
+            candidate: resolved_programs[candidate]
+            for candidate, decisions in donations.items()
+            if _donated_arguments(donations=decisions)
+        }
+        fallback_donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]] = (
+            dict.fromkeys(fallback_programs, ())
+        )
+        fallback_argument_keys: dict[_CoreTriple, Hashable] = {}
+        fallback_keys = _lowering_keys(
+            resolved_programs=fallback_programs,
+            internal_templates=internal_templates,
+            layouts=all_layouts,
+            donations=fallback_donations,
+            regimes=regimes,
+            model_fingerprint=model_fingerprint,
+            argument_keys=fallback_argument_keys,
+        )
+        frontier.bind_fallbacks(
+            fallback_keys=fallback_keys,
+            fallback_donations=fallback_donations,
+            argument_keys=fallback_argument_keys,
+        )
 
     # Bound candidates, in rank order, of each core. The frontier appends to these
     # lists as refusals ask for narrower candidates; `frontier_lengths` is the
@@ -3381,6 +3431,15 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 "compiler can report peak workspace."
             )
             raise ExecutionPlanningError(msg)
+        # The eager route resolves no residency, compiles no wave and plans no
+        # workspace; the empty brackets keep one record sequence for every solve.
+        for skipped in (
+            "residency_inventory",
+            "compilation_waves",
+            "workspace_selection",
+        ):
+            with solve_phase(name=skipped, logger=logger, call_id=call_id):
+                pass
         selected_candidates = {
             triple: candidates[0] for triple, candidates in candidates_by_triple.items()
         }
@@ -3424,70 +3483,71 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     # one program, not its whole frontier. Each wave deduplicates
     # by lowering key across triples, lowers sequentially (tracing is
     # single-threaded), and compiles in parallel.
-    budget_bytes = execution.device_memory_bytes
-    fixed_bytes = (
-        MappingProxyType({})
-        if budget_bytes is None
-        else concrete_device_bytes(
-            tree=(
-                fixed_input_arrays,
-                flat_params,
-                ages.values,
-                next_regime_to_V_arr,
-                next_regime_to_continuation,
-                next_edge_to_V_arr,
-                tuple(
-                    (
-                        regime.solution.period_state_axes,
-                        regime.solution.resolved_fixed_params,
-                        _retained_base_space_arrays(regime=regime),
-                    )
-                    for regime in regimes.values()
+    with solve_phase(name="residency_inventory", logger=logger, call_id=call_id):
+        budget_bytes = execution.device_memory_bytes
+        fixed_bytes = (
+            MappingProxyType({})
+            if budget_bytes is None
+            else concrete_device_bytes(
+                tree=(
+                    fixed_input_arrays,
+                    flat_params,
+                    ages.values,
+                    next_regime_to_V_arr,
+                    next_regime_to_continuation,
+                    next_edge_to_V_arr,
+                    tuple(
+                        (
+                            regime.solution.period_state_axes,
+                            regime.solution.resolved_fixed_params,
+                            _retained_base_space_arrays(regime=regime),
+                        )
+                        for regime in regimes.values()
+                    ),
                 ),
-            ),
+            )
         )
-    )
-    # A candidate competes with what the plan already keeps on its device at the
-    # node's scheduled position. Without a budget no peak is consulted, so the
-    # position is not walked either.
-    resident_inventory = (
-        MappingProxyType({})
-        if budget_bytes is None
-        else _resident_inventory_by_triple(
-            regimes=regimes,
-            ledger=input_liveness,
-            templates=SolveInputMappings(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                next_edge_to_V_arr=next_edge_to_V_arr,
-            ),
-            program_metadata=representative_metadata,
-            device_ids=execution.device_ids,
-            fixed_bytes=fixed_bytes,
+        # A candidate competes with what the plan already keeps on its device at the
+        # node's scheduled position. Without a budget no peak is consulted, so the
+        # position is not walked either.
+        resident_inventory = (
+            MappingProxyType({})
+            if budget_bytes is None
+            else _resident_inventory_by_triple(
+                regimes=regimes,
+                ledger=input_liveness,
+                templates=SolveInputMappings(
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    next_regime_to_continuation=next_regime_to_continuation,
+                    next_edge_to_V_arr=next_edge_to_V_arr,
+                ),
+                program_metadata=representative_metadata,
+                device_ids=execution.device_ids,
+                fixed_bytes=fixed_bytes,
+            )
         )
-    )
-    if budget_bytes is not None:
-        internal_bytes = _internal_reservations_by_cell(
-            programs=resolved_programs,
-            templates=internal_templates,
-        )
-        resident_inventory = MappingProxyType(
+        if budget_bytes is not None:
+            internal_bytes = _internal_reservations_by_cell(
+                programs=resolved_programs,
+                templates=internal_templates,
+            )
+            resident_inventory = MappingProxyType(
+                {
+                    triple: dataclasses.replace(
+                        inventory,
+                        internal_bytes=internal_bytes[triple[:2]],
+                    )
+                    for triple, inventory in resident_inventory.items()
+                }
+            )
+        resident_bytes_by_triple = MappingProxyType(
             {
-                triple: dataclasses.replace(
-                    inventory,
-                    internal_bytes=internal_bytes[triple[:2]],
-                )
-                for triple, inventory in resident_inventory.items()
+                triple: 0
+                if budget_bytes is None
+                else resident_inventory[triple].resident_bytes()
+                for triple in candidates_by_triple
             }
         )
-    resident_bytes_by_triple = MappingProxyType(
-        {
-            triple: 0
-            if budget_bytes is None
-            else resident_inventory[triple].resident_bytes()
-            for triple in candidates_by_triple
-        }
-    )
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
     )
@@ -3496,234 +3556,353 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation] = {}
     resident_bytes_by_candidate: dict[_CoreCandidate, int] = {}
     admission_keys: dict[_CoreCandidate, Hashable] = {}
-    pending: dict[_CoreTriple, int] = dict.fromkeys(
-        _triples_within_budget(
-            candidates_by_triple=candidates_by_triple,
-            resident_bytes_by_triple=resident_bytes_by_triple,
-            budget_bytes=budget_bytes,
-        ),
-        0,
+    eligible = _triples_within_budget(
+        candidates_by_triple=candidates_by_triple,
+        resident_bytes_by_triple=resident_bytes_by_triple,
+        budget_bytes=budget_bytes,
     )
-    wave = 0
-    while pending:
-        wave_candidates = {
-            triple: frontier.candidate(triple=triple, position=position)
-            for triple, position in pending.items()
-        }
-        wave_lowering_keys = {
-            candidate: lowering_keys[candidate]
-            for candidate in wave_candidates.values()
-        }
-        new_lowerings: dict[Hashable, _CoreCandidate] = {}
-        for candidate, lowering_key in wave_lowering_keys.items():
-            if lowering_key not in compiled:
-                new_lowerings.setdefault(lowering_key, candidate)
-        logger.info(
-            "AOT compilation wave %d: %d unique lowerings for %d regime-period-core "
-            "triples (%d workers)",
-            wave,
-            len(new_lowerings),
-            len(pending),
-            n_workers,
-        )
-        _lower_and_compile_wave(
-            new_lowerings=new_lowerings,
+    # The bounded search only has a question to answer under a budget: without
+    # one no candidate is ever refused, so the ranked walk lowers the one
+    # bootstrap candidate per core either way.
+    bounded = (
+        execution.width_search.kind is WidthSearch.BOUNDED and budget_bytes is not None
+    )
+    source: _RankedCandidateSource | _BoundedCandidateSource
+    if bounded:
+        source = _bounded_candidate_source(
+            frontier=frontier,
+            triples=eligible,
+            candidates_by_triple=candidates_by_triple,
             resolved_programs=resolved_programs,
-            all_layouts=all_layouts,
-            internal_templates=internal_templates,
-            donations=donations,
-            ages=ages,
-            n_triples_per_lowering=_count_triples_per_lowering_key(
-                lowering_keys=wave_lowering_keys
-            ),
-            log_kernel_memory=budget_bytes is None,
-            n_workers=n_workers,
-            logger=logger,
-            compiled=compiled,
-            labels=labels,
+            execution=execution,
         )
-        wave_fallback_keys = {
-            candidate: fallback_keys[candidate]
-            for candidate in wave_candidates.values()
-            if candidate in fallback_keys
-        }
-        new_fallbacks: dict[Hashable, _CoreCandidate] = {}
-        for candidate, lowering_key in wave_fallback_keys.items():
-            if lowering_key not in compiled:
-                new_fallbacks.setdefault(lowering_key, candidate)
-        _lower_and_compile_wave(
-            new_lowerings=new_fallbacks,
-            resolved_programs=resolved_programs,
-            all_layouts=all_layouts,
-            internal_templates=internal_templates,
-            donations=fallback_donations,
-            ages=ages,
-            n_triples_per_lowering=_count_triples_per_lowering_key(
-                lowering_keys=wave_fallback_keys
-            ),
-            log_kernel_memory=budget_bytes is None,
-            n_workers=n_workers,
-            logger=logger,
-            compiled=compiled,
-            labels=labels,
+    else:
+        source = _RankedCandidateSource(
+            frontier=frontier, positions=dict.fromkeys(eligible, 0)
         )
-        admission_keys.update(wave_lowering_keys)
-        if budget_bytes is None:
-            break
-        next_pending: dict[_CoreTriple, int] = {}
-        for triple, position in pending.items():
-            candidate = wave_candidates[triple]
-            variant_keys = tuple(
-                dict.fromkeys(
-                    (
-                        lowering_keys[candidate],
-                        fallback_keys.get(candidate, lowering_keys[candidate]),
-                    )
+    with solve_phase(name="compilation_waves", logger=logger, call_id=call_id):
+        wave = 0
+        skipped_fallback_evaluations: dict[_CoreTriple, int] = {}
+        pending = source.pending()
+        while pending:
+            wave_candidates = {
+                triple: source.candidate(triple=triple) for triple in pending
+            }
+            for triple, candidate in wave_candidates.items():
+                logger.debug(
+                    "candidate evaluation %r %r",
+                    triple,
+                    dict(resolved_programs[candidate].tile_widths),
                 )
+            wave_lowering_keys = {
+                candidate: lowering_keys[candidate]
+                for candidate in wave_candidates.values()
+            }
+            compiled_before_lowerings = frozenset(compiled)
+            new_lowerings = _uncompiled(keys=wave_lowering_keys, compiled=compiled)
+            logger.info(
+                "AOT compilation wave %d: %d unique lowerings for %d "
+                "regime-period-core triples (%d workers)",
+                wave,
+                len(new_lowerings),
+                len(pending),
+                n_workers,
             )
-            variant_residency: dict[Hashable, int] = {}
-            for variant_key in variant_keys:
-                if variant_key not in memory_by_lowering_key:
-                    memory = compiler_memory_reservation(
-                        compiled=compiled[variant_key],
-                        widths=resolved_programs[candidate].tile_widths,
-                    )
-                    memory_by_lowering_key[variant_key] = memory
-                    _log_kernel_memory(
-                        compiled=compiled[variant_key],
-                        label=labels[variant_key],
-                        logger=logger,
-                        precomputed_peak_bytes=memory.peak_bytes,
-                    )
-                variant_residency[variant_key] = _candidate_resident_bytes(
-                    compiled=compiled[variant_key],
-                    program=resolved_programs[candidate],
-                    internal_arguments=internal_templates[candidate],
-                    inventory=resident_inventory[triple],
-                )
-            # Keep each variant's compiler reservation paired with its own
-            # kept-input subtraction and retained owners.
-            lowering_key = max(
-                variant_keys,
-                key=lambda key: (
-                    memory_by_lowering_key[key].reservation_bytes
-                    + variant_residency[key]
+            _lower_and_compile_wave(
+                new_lowerings=new_lowerings,
+                resolved_programs=resolved_programs,
+                all_layouts=all_layouts,
+                internal_templates=internal_templates,
+                donations=donations,
+                ages=ages,
+                n_triples_per_lowering=_count_triples_per_lowering_key(
+                    lowering_keys=wave_lowering_keys
                 ),
+                log_kernel_memory=budget_bytes is None,
+                n_workers=n_workers,
+                logger=logger,
+                compiled=compiled,
+                labels=labels,
             )
-            admission_keys[candidate] = lowering_key
-            resident = variant_residency[lowering_key]
-            resident_bytes_by_candidate[candidate] = resident
-            logger.debug(
-                "  resident at %r period %d core %r: %d bytes",
-                triple[0],
-                triple[1],
-                triple[2],
-                resident,
+            admission_keys.update(wave_lowering_keys)
+            for triple, candidate in wave_candidates.items():
+                source.note_variants(
+                    triple=triple,
+                    keys=(lowering_keys[candidate],),
+                    compiled_before=compiled_before_lowerings,
+                )
+            unique_variants_compiled = len(new_lowerings)
+            wave_skipped_fallback_evaluations = 0
+            # A candidate whose donating variant alone exceeds the budget is
+            # refused at every variant, because the paired admission below takes
+            # the larger of the two. Its fallback is therefore never asked for.
+            if budget_bytes is None:
+                survivors = dict(wave_candidates)
+            else:
+                survivors = {}
+                primary_residency: dict[_CoreCandidate, int] = {}
+                for triple in pending:
+                    candidate = wave_candidates[triple]
+                    primary_key = lowering_keys[candidate]
+                    resident = _measure_variant(
+                        variant_key=primary_key,
+                        candidate=candidate,
+                        triple=triple,
+                        compiled=compiled,
+                        labels=labels,
+                        memory_by_lowering_key=memory_by_lowering_key,
+                        resolved_programs=resolved_programs,
+                        internal_templates=internal_templates,
+                        resident_inventory=resident_inventory,
+                        logger=logger,
+                    )
+                    resident_bytes_by_candidate[candidate] = resident
+                    primary_residency[candidate] = resident
+                    logger.debug(
+                        "  resident at %r period %d core %r: %d bytes",
+                        triple[0],
+                        triple[1],
+                        triple[2],
+                        resident,
+                    )
+                    logger.debug(
+                        "  conservative fixed owners: %r; "
+                        "cell internal output reservation: %d bytes/device",
+                        dict(resident_inventory[triple].fixed_bytes),
+                        resident_inventory[triple].internal_bytes,
+                    )
+                    if (
+                        memory_by_lowering_key[primary_key].reservation_bytes + resident
+                        <= budget_bytes
+                    ):
+                        survivors[triple] = candidate
+                        continue
+                    if candidate in fallback_keys:
+                        skipped_fallback_evaluations[triple] = (
+                            skipped_fallback_evaluations.get(triple, 0) + 1
+                        )
+                        wave_skipped_fallback_evaluations += 1
+                    source.record(
+                        triple=triple,
+                        reservation_bytes=memory_by_lowering_key[
+                            primary_key
+                        ].reservation_bytes,
+                        resident_bytes=resident,
+                        peak_bytes=memory_by_lowering_key[primary_key].peak_bytes,
+                        admitted=False,
+                    )
+            wave_fallback_keys = {
+                candidate: fallback_keys[candidate]
+                for candidate in survivors.values()
+                if candidate in fallback_keys
+            }
+            avoided_fallback_requests = len(
+                {
+                    fallback_keys[wave_candidates[triple]]
+                    for triple in pending
+                    if wave_candidates[triple] in fallback_keys
+                    and triple not in survivors
+                }
+                - set(wave_fallback_keys.values())
+                - set(compiled)
             )
-            logger.debug(
-                "  conservative fixed owners: %r; "
-                "cell internal output reservation: %d bytes/device",
-                dict(resident_inventory[triple].fixed_bytes),
-                resident_inventory[triple].internal_bytes,
+            compiled_before_fallbacks = frozenset(compiled)
+            new_fallbacks = _uncompiled(keys=wave_fallback_keys, compiled=compiled)
+            _lower_and_compile_wave(
+                new_lowerings=new_fallbacks,
+                resolved_programs=resolved_programs,
+                all_layouts=all_layouts,
+                internal_templates=internal_templates,
+                donations=fallback_donations,
+                ages=ages,
+                n_triples_per_lowering=_count_triples_per_lowering_key(
+                    lowering_keys=wave_fallback_keys
+                ),
+                log_kernel_memory=budget_bytes is None,
+                n_workers=n_workers,
+                logger=logger,
+                compiled=compiled,
+                labels=labels,
             )
-            if (
-                memory_by_lowering_key[lowering_key].reservation_bytes + resident
-                <= budget_bytes
-            ):
-                continue
-            if position + 1 < frontier.frontier_lengths[triple]:
-                next_pending[triple] = position + 1
+            for triple, candidate in survivors.items():
+                if candidate in fallback_keys:
+                    source.note_variants(
+                        triple=triple,
+                        keys=(fallback_keys[candidate],),
+                        compiled_before=compiled_before_fallbacks,
+                    )
+            unique_variants_compiled += len(new_fallbacks)
+            logger.info(
+                "AOT compilation wave %d: %d unique variants compiled, %d fallback "
+                "evaluations skipped, %d fallback requests avoided",
+                wave,
+                unique_variants_compiled,
+                wave_skipped_fallback_evaluations,
+                avoided_fallback_requests,
+            )
+            if budget_bytes is None:
+                break
+            for triple, candidate in survivors.items():
+                variant_keys = tuple(
+                    dict.fromkeys(
+                        (
+                            lowering_keys[candidate],
+                            fallback_keys.get(candidate, lowering_keys[candidate]),
+                        )
+                    )
+                )
+                # The donating variant was measured when the candidate was
+                # admitted on its own reservation; only the fallback is new.
+                variant_residency = {
+                    variant_key: primary_residency[candidate]
+                    if variant_key == lowering_keys[candidate]
+                    else _measure_variant(
+                        variant_key=variant_key,
+                        candidate=candidate,
+                        triple=triple,
+                        compiled=compiled,
+                        labels=labels,
+                        memory_by_lowering_key=memory_by_lowering_key,
+                        resolved_programs=resolved_programs,
+                        internal_templates=internal_templates,
+                        resident_inventory=resident_inventory,
+                        logger=logger,
+                    )
+                    for variant_key in variant_keys
+                }
+                # Keep each variant's compiler reservation paired with its own
+                # kept-input subtraction and retained owners.
+                lowering_key = max(
+                    variant_keys,
+                    key=lambda key: (
+                        memory_by_lowering_key[key].reservation_bytes
+                        + variant_residency[key]
+                    ),
+                )
+                admission_keys[candidate] = lowering_key
+                resident = variant_residency[lowering_key]
+                resident_bytes_by_candidate[candidate] = resident
+                source.record(
+                    triple=triple,
+                    reservation_bytes=memory_by_lowering_key[
+                        lowering_key
+                    ].reservation_bytes,
+                    resident_bytes=resident,
+                    peak_bytes=memory_by_lowering_key[lowering_key].peak_bytes,
+                    admitted=(
+                        memory_by_lowering_key[lowering_key].reservation_bytes
+                        + resident
+                        <= budget_bytes
+                    ),
+                )
             # A triple that fits at no width has its whole frontier compiled; the
             # planner below reports it with every candidate's peak in hand.
-        pending = next_pending
-        wave += 1
+            pending = source.advance()
+            wave += 1
+        if isinstance(source, _BoundedCandidateSource):
+            for triple in candidates_by_triple:
+                source.report(triple=triple, logger=logger)
 
-    memory_by_compiled_id = {
-        id(compiled[lowering_key]): memory
-        for lowering_key, memory in memory_by_lowering_key.items()
-    }
+    with solve_phase(name="workspace_selection", logger=logger, call_id=call_id):
+        memory_by_compiled_id = {
+            id(compiled[lowering_key]): memory
+            for lowering_key, memory in memory_by_lowering_key.items()
+        }
 
-    # Select within each triple through the planner, which walks the same ranked
-    # frontier and stops at the same first feasible candidate; the waves above
-    # compiled exactly the candidates it asks for, so the winner reaches dispatch
-    # without a second lowering or compilation.
-    selected_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
-    selected_cores: dict[_CoreTriple, PlannedCore] = {}
-    selected_fallbacks: dict[_CoreTriple, PlannedCore] = {}
-    for triple, candidates in candidates_by_triple.items():
-        programs_by_width = {
-            candidate[1]: resolved_programs[candidate] for candidate in candidates
-        }
-        compiled_by_width = {
-            candidate[1]: compiled[admission_keys[candidate]]
-            for candidate in candidates
-            if candidate in admission_keys
-        }
-        representative = resolved_programs[candidates[0]]
-        try:
-            plan = plan_workspace(
-                axes=representative.requirements.axes,
-                fixed_widths=execution.widths_for(regime_name=triple[0]),
-                compile_candidate=_CompiledCandidateLookup(
-                    compiled_by_width=compiled_by_width
-                ),
-                budget_bytes=budget_bytes,
-                memory_for=(
-                    None
-                    if budget_bytes is None
-                    else _CompilerMemoryLookup(
-                        memory_by_compiled_id=memory_by_compiled_id
-                    )
-                ),
-                resident_bytes=resident_bytes_by_triple[triple],
-                resident_bytes_for=(
-                    None
-                    if budget_bytes is None
-                    else _CandidateResidencyLookup(
+        # Select within each triple through the planner, which walks the same ranked
+        # frontier and stops at the same first feasible candidate; the waves above
+        # compiled exactly the candidates it asks for, so the winner reaches dispatch
+        # without a second lowering or compilation.
+        selected_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
+        selected_cores: dict[_CoreTriple, PlannedCore] = {}
+        selected_fallbacks: dict[_CoreTriple, PlannedCore] = {}
+        for triple, candidates in candidates_by_triple.items():
+            programs_by_width = {
+                candidate[1]: resolved_programs[candidate] for candidate in candidates
+            }
+            compiled_by_width = {
+                candidate[1]: compiled[admission_keys[candidate]]
+                for candidate in candidates
+                if candidate in admission_keys
+            }
+            representative = resolved_programs[candidates[0]]
+            try:
+                plan = (
+                    _bounded_plan(
+                        triple=triple,
+                        source=source,
                         compiled_by_width=compiled_by_width,
-                        resident_bytes_by_width={
-                            candidate[1]: resident_bytes_by_candidate[candidate]
-                            for candidate in candidates
-                            if candidate in resident_bytes_by_candidate
-                        },
+                        memory_by_compiled_id=memory_by_compiled_id,
+                        budget_bytes=cast("int", budget_bytes),
                     )
+                    if isinstance(source, _BoundedCandidateSource)
+                    else plan_workspace(
+                        axes=representative.requirements.axes,
+                        fixed_widths=execution.widths_for(regime_name=triple[0]),
+                        compile_candidate=_CompiledCandidateLookup(
+                            compiled_by_width=compiled_by_width
+                        ),
+                        budget_bytes=budget_bytes,
+                        memory_for=(
+                            None
+                            if budget_bytes is None
+                            else _CompilerMemoryLookup(
+                                memory_by_compiled_id=memory_by_compiled_id
+                            )
+                        ),
+                        resident_bytes=resident_bytes_by_triple[triple],
+                        resident_bytes_for=(
+                            None
+                            if budget_bytes is None
+                            else _CandidateResidencyLookup(
+                                compiled_by_width=compiled_by_width,
+                                resident_bytes_by_width={
+                                    candidate[1]: resident_bytes_by_candidate[candidate]
+                                    for candidate in candidates
+                                    if candidate in resident_bytes_by_candidate
+                                },
+                            )
+                        ),
+                    )
+                )
+            except ExecutionPlanningError as error:
+                if budget_bytes is None:
+                    raise
+                raise _width_selection_failure(
+                    triple=triple,
+                    resident_bytes=resident_bytes_by_triple[triple],
+                    transfer_scratch_bytes=resident_inventory[
+                        triple
+                    ].transfer_scratch_bytes,
+                    budget_bytes=budget_bytes,
+                    execution=execution,
+                    error=error,
+                    skipped_fallback_evaluations=skipped_fallback_evaluations.get(
+                        triple, 0
+                    ),
+                ) from error
+            selected_candidate = (triple, _width_key(widths=plan.widths))
+            selected = programs_by_width[selected_candidate[1]]
+            selected_programs[triple] = selected
+            selected_cores[triple] = _attach_resolved_output_layout(
+                compiled=compiled[lowering_keys[selected_candidate]],
+                layout=all_layouts[triple],
+                tile_widths=plan.widths,
+                input_transfer_plan=selected.input_transfer_plan,
+                internal_input_templates=internal_templates[
+                    (triple, _width_key(widths=plan.widths))
+                ],
+                donated_arguments=_donated_arguments(
+                    donations=donations[(triple, _width_key(widths=plan.widths))]
                 ),
+                name=triple[2],
             )
-        except ExecutionPlanningError as error:
-            if budget_bytes is None:
-                raise
-            raise _width_selection_failure(
-                triple=triple,
-                resident_bytes=resident_bytes_by_triple[triple],
-                transfer_scratch_bytes=resident_inventory[
-                    triple
-                ].transfer_scratch_bytes,
-                budget_bytes=budget_bytes,
-                execution=execution,
-                error=error,
-            ) from error
-        selected_candidate = (triple, _width_key(widths=plan.widths))
-        selected = programs_by_width[selected_candidate[1]]
-        selected_programs[triple] = selected
-        selected_cores[triple] = _attach_resolved_output_layout(
-            compiled=compiled[lowering_keys[selected_candidate]],
-            layout=all_layouts[triple],
-            tile_widths=plan.widths,
-            input_transfer_plan=selected.input_transfer_plan,
-            internal_input_templates=internal_templates[
-                (triple, _width_key(widths=plan.widths))
-            ],
-            donated_arguments=_donated_arguments(
-                donations=donations[(triple, _width_key(widths=plan.widths))]
-            ),
-            name=triple[2],
-        )
-        if selected_candidate in fallback_keys:
-            selected_fallbacks[triple] = dataclasses.replace(
-                selected_cores[triple],
-                compiled=compiled[fallback_keys[selected_candidate]],
-                donated_arguments=(),
-            )
+            if selected_candidate in fallback_keys:
+                selected_fallbacks[triple] = dataclasses.replace(
+                    selected_cores[triple],
+                    compiled=compiled[fallback_keys[selected_candidate]],
+                    donated_arguments=(),
+                )
 
     return _CompiledPrograms(
         executables=_group_cores_by_regime_period(selected_cores),
@@ -3786,6 +3965,342 @@ class _CandidateResidencyLookup:
             for width, candidate in self.compiled_by_width.items()
             if candidate is executable and width in self.resident_bytes_by_width
         )
+
+
+def _bounded_candidate_source(
+    *,
+    frontier: _LazyCandidateFrontier,
+    triples: tuple[_CoreTriple, ...],
+    candidates_by_triple: Mapping[_CoreTriple, Sequence[_CoreCandidate]],
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    execution: ResolvedExecution,
+) -> _BoundedCandidateSource:
+    """Open one bounded width search per core, seeded and ready to be compiled.
+
+    The axes come from the core's top-ranked candidate, whose declarations no
+    width changes, and the hint from the policy's entry for the core's regime; a
+    hint the declarations refuse is logged by the search and skipped. A core
+    whose declarations admit a single width runs no search and is offered that
+    width.
+    """
+    policy = execution.width_search
+    selectors: dict[_CoreTriple, BoundedWidthSelector | None] = {}
+    proposals: dict[_CoreTriple, Mapping[str, int]] = {}
+    for triple in triples:
+        representative = resolved_programs[candidates_by_triple[triple][0]]
+        if triple not in frontier.frontiers:
+            selectors[triple] = None
+            proposals[triple] = representative.tile_widths
+            continue
+        selector = BoundedWidthSelector(
+            axes=representative.requirements.axes,
+            fixed_widths=execution.widths_for(regime_name=triple[0]),
+            policy=policy,
+            hint=policy.hints.get(triple[0]),
+            label=_describe_candidate(candidate=(triple, ())),
+        )
+        selectors[triple] = selector
+        proposals[triple] = cast("Mapping[str, int]", selector.propose())
+    return _BoundedCandidateSource(
+        frontier=frontier, selectors=selectors, proposals=proposals
+    )
+
+
+def _bounded_plan(
+    *,
+    triple: _CoreTriple,
+    source: _BoundedCandidateSource,
+    compiled_by_width: Mapping[_WidthKey, jax.stages.Compiled],
+    memory_by_compiled_id: Mapping[int, CompilerMemoryReservation],
+    budget_bytes: int,
+) -> WorkspacePlan[jax.stages.Compiled]:
+    """Return the plan one core's bounded search kept, or say what it spent.
+
+    Raises:
+        ExecutionPlanningError: The search spent its evaluations without an
+            admission, or the core's single admissible width was refused.
+
+    """
+    if triple not in source.selectors:
+        msg = (
+            "No width was searched for "
+            f"{_describe_candidate(candidate=(triple, ()))}: the bytes the plan "
+            "already keeps resident at its position reach the budget, so no "
+            "workspace fits beside them."
+        )
+        raise ExecutionPlanningError(msg)
+    widths = source.selected(triple=triple)
+    if widths is None:
+        selector = source.selectors[triple]
+        if selector is None:
+            msg = (
+                "The only width "
+                f"{_describe_candidate(candidate=(triple, ()))} admits was refused, "
+                "so its bounded width search had nothing narrower to propose."
+            )
+            raise ExecutionPlanningError(msg)
+        raise ExecutionPlanningError(selector.exhaustion_message(budget=budget_bytes))
+    executable = compiled_by_width[_width_key(widths=widths)]
+    memory = memory_by_compiled_id[id(executable)]
+    return WorkspacePlan(
+        widths=widths,
+        peak_bytes=memory.peak_bytes,
+        reservation_bytes=memory.reservation_bytes,
+        compiled=executable,
+    )
+
+
+@dataclasses.dataclass(kw_only=True)
+class _RankedCandidateSource:
+    """Offer every core its next ranked width candidate, widest first.
+
+    One position per core walks the ranked frontier. A refusal advances the
+    position by one, so the next wave asks the frontier for the next candidate
+    and binds it on the way; a core whose frontier is spent is simply left out
+    of the next wave and reported by name when selection reaches it.
+    """
+
+    frontier: _LazyCandidateFrontier
+    positions: dict[_CoreTriple, int]
+    """The rank each still-pending core is being offered."""
+
+    def __post_init__(self) -> None:
+        """Start with no core queued for the wave after this one."""
+        self._queued: dict[_CoreTriple, int] = {}
+
+    def pending(self) -> tuple[_CoreTriple, ...]:
+        """Name the cores this wave evaluates, in their established order."""
+        return tuple(self.positions)
+
+    def candidate(self, *, triple: _CoreTriple) -> _CoreCandidate:
+        """Bind and return the candidate this core is being offered."""
+        return self.frontier.candidate(triple=triple, position=self.positions[triple])
+
+    def record(
+        self,
+        *,
+        triple: _CoreTriple,
+        reservation_bytes: int,
+        resident_bytes: int,
+        peak_bytes: int,
+        admitted: bool,
+    ) -> None:
+        """Advance a refused core to its next rank and leave an admitted one."""
+        del reservation_bytes, resident_bytes, peak_bytes
+        if not admitted:
+            _queue_next_candidate(
+                triple=triple,
+                position=self.positions[triple],
+                frontier_lengths=self.frontier.frontier_lengths,
+                next_pending=self._queued,
+            )
+
+    def note_variants(
+        self,
+        *,
+        triple: _CoreTriple,
+        keys: Iterable[Hashable],
+        compiled_before: Container[Hashable],
+    ) -> None:
+        """Ignore the variants a wave lowered; the ranked walk reports none."""
+        del triple, keys, compiled_before
+
+    def advance(self) -> tuple[_CoreTriple, ...]:
+        """Open the next wave over the cores a refusal queued for it."""
+        self.positions = self._queued
+        self._queued = {}
+        return tuple(self.positions)
+
+
+@dataclasses.dataclass(kw_only=True)
+class _BoundedCandidateSource:
+    """Offer every core the width its bounded search proposes next.
+
+    Each core carries its own `BoundedWidthSelector`, which owns the seed,
+    shrink and refine walk and nothing else: the waves compile what it proposes,
+    admission decides, and the verdict goes back to the selector. A core whose
+    declarations admit a single width has no search to run — it is offered that
+    width once, and a refusal exhausts it.
+    """
+
+    frontier: _LazyCandidateFrontier
+    selectors: Mapping[_CoreTriple, BoundedWidthSelector | None]
+    """The search of each core, or `None` for a core with one admissible width."""
+    proposals: dict[_CoreTriple, Mapping[str, int]]
+    """The width mapping each still-pending core is being offered."""
+
+    def __post_init__(self) -> None:
+        """Start with no core queued and no single-width core decided."""
+        self._queued: dict[_CoreTriple, Mapping[str, int]] = {}
+        self._single_admitted: dict[_CoreTriple, Mapping[str, int]] = {}
+        self._variants: dict[_CoreTriple, dict[Hashable, bool]] = {}
+
+    def pending(self) -> tuple[_CoreTriple, ...]:
+        """Name the cores this wave evaluates, in their established order."""
+        return tuple(self.proposals)
+
+    def candidate(self, *, triple: _CoreTriple) -> _CoreCandidate:
+        """Bind and return the candidate for the width this core was offered."""
+        return self.frontier.bind_widths(triple=triple, widths=self.proposals[triple])
+
+    def record(
+        self,
+        *,
+        triple: _CoreTriple,
+        reservation_bytes: int,
+        resident_bytes: int,
+        peak_bytes: int,
+        admitted: bool,
+    ) -> None:
+        """Hand one verdict to the core's search and queue what it proposes next."""
+        selector = self.selectors[triple]
+        if selector is None:
+            if admitted:
+                self._single_admitted[triple] = self.proposals[triple]
+            return
+        selector.record(
+            widths=self.proposals[triple],
+            reservation_bytes=reservation_bytes,
+            resident_bytes=resident_bytes,
+            peak_bytes=peak_bytes,
+            admitted=admitted,
+        )
+        proposal = selector.propose()
+        if proposal is not None:
+            self._queued[triple] = proposal
+
+    def note_variants(
+        self,
+        *,
+        triple: _CoreTriple,
+        keys: Iterable[Hashable],
+        compiled_before: Container[Hashable],
+    ) -> None:
+        """Attribute the lowering keys one wave's evaluation of a core asked for.
+
+        A key is a compiler request when no wave had compiled it by the time
+        this wave opened, and a cache hit otherwise; `compiled_before` is the
+        set of compiled keys as the wave began. Two cores evaluated in the same
+        wave that share a key therefore each count it as a request, because
+        neither waited on the other. A key reached again by a later evaluation
+        of the same core keeps the verdict of its first appearance.
+        """
+        seen = self._variants.setdefault(triple, {})
+        for key in keys:
+            if key not in seen:
+                seen[key] = key not in compiled_before
+
+    def advance(self) -> tuple[_CoreTriple, ...]:
+        """Open the next wave over the cores whose search proposed another width."""
+        self.proposals = self._queued
+        self._queued = {}
+        return tuple(self.proposals)
+
+    def selected(self, *, triple: _CoreTriple) -> Mapping[str, int] | None:
+        """Return the widths this core's search kept, or `None` when it found none."""
+        selector = self.selectors[triple]
+        if selector is None:
+            return self._single_admitted.get(triple)
+        decision = selector.selected
+        return None if decision is None else decision.widths
+
+    def report(self, *, triple: _CoreTriple, logger: logging.Logger) -> None:
+        """Log what one core's search spent and what it kept.
+
+        The counts are the ones the waves measured: the evaluations the search
+        spent, the distinct lowering keys those evaluations asked for — the
+        donating variant and, where one exists, its fallback — and the split of
+        those keys into the requests that reached the compiler and the hits an
+        earlier wave had already served.
+
+        A core the waves never opened a search for — one with a single
+        admissible width, or one whose residency already reaches the budget —
+        has nothing to report.
+        """
+        selector = self.selectors.get(triple)
+        if selector is None:
+            return
+        variants = self._variants.get(triple, {})
+        requests = sum(variants.values())
+        logger.info(
+            "bounded width search %s: %d evaluations, %d unique variants compiled, "
+            "%d compiler requests, %d cache hits; selected %r",
+            _describe_candidate(candidate=(triple, ())),
+            len(selector.decisions),
+            len(variants),
+            requests,
+            len(variants) - requests,
+            None if selector.selected is None else dict(selector.selected.widths),
+        )
+
+
+def _uncompiled(
+    *,
+    keys: Mapping[_CoreCandidate, Hashable],
+    compiled: Mapping[Hashable, jax.stages.Compiled],
+) -> dict[Hashable, _CoreCandidate]:
+    """Name one representative candidate per key no wave has compiled yet."""
+    new: dict[Hashable, _CoreCandidate] = {}
+    for candidate, key in keys.items():
+        if key not in compiled:
+            new.setdefault(key, candidate)
+    return new
+
+
+def _measure_variant(
+    *,
+    variant_key: Hashable,
+    candidate: _CoreCandidate,
+    triple: _CoreTriple,
+    compiled: Mapping[Hashable, jax.stages.Compiled],
+    labels: Mapping[Hashable, str],
+    memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation],
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    resident_inventory: Mapping[_CoreTriple, ResidentInventory],
+    logger: logging.Logger,
+) -> int:
+    """Report one variant's residency, reserving its compiler memory once.
+
+    The reservation is cached under the variant's own key, so two triples
+    sharing a key read one report; the residency is taken per candidate,
+    because the bytes a variant leaves resident depend on the triple's
+    position in the plan.
+    """
+    if variant_key not in memory_by_lowering_key:
+        memory = compiler_memory_reservation(
+            compiled=compiled[variant_key],
+            widths=resolved_programs[candidate].tile_widths,
+        )
+        memory_by_lowering_key[variant_key] = memory
+        _log_kernel_memory(
+            compiled=compiled[variant_key],
+            label=labels[variant_key],
+            logger=logger,
+            precomputed_peak_bytes=memory.peak_bytes,
+        )
+    return _candidate_resident_bytes(
+        compiled=compiled[variant_key],
+        program=resolved_programs[candidate],
+        internal_arguments=internal_templates[candidate],
+        inventory=resident_inventory[triple],
+    )
+
+
+def _queue_next_candidate(
+    *,
+    triple: _CoreTriple,
+    position: int,
+    frontier_lengths: Mapping[_CoreTriple, int],
+    next_pending: dict[_CoreTriple, int],
+) -> None:
+    """Queue the triple's next ranked candidate when its frontier offers one.
+
+    A triple whose frontier is spent is simply left out of the next wave; the
+    planner reports it by name when selection reaches it.
+    """
+    if position + 1 < frontier_lengths[triple]:
+        next_pending[triple] = position + 1
 
 
 def _lower_and_compile_wave(
@@ -4168,9 +4683,7 @@ class _LazyCandidateFrontier:
     def _bind_next(self, *, triple: _CoreTriple) -> None:
         """Bind one core's next-ranked candidate and everything derived from it."""
         frontier = self.frontiers[triple]
-        bound = self.candidates_by_triple[triple]
-        position = len(bound)
-        templates = frontier.templates
+        position = len(self.candidates_by_triple[triple])
         # A consumed producer was resolved at every width before any consumer
         # of it was lowered, so that the subtrees it publishes could be held
         # against one another over the whole frontier; this reads that
@@ -4185,6 +4698,67 @@ class _LazyCandidateFrontier:
                 abstract_inputs=True,
             )[0]
         )
+        self._bind_resolved(triple=triple, resolved=resolved)
+
+    def bind_widths(
+        self, *, triple: _CoreTriple, widths: Mapping[str, int]
+    ) -> _CoreCandidate:
+        """Bind one core at a width mapping the ranked frontier never offered.
+
+        A bounded width search proposes widths between the ranked candidates, so
+        the mapping handed here is resolved through the same
+        `resolve_core_program_candidates` call a ranked candidate is resolved
+        through, with the same abstract inputs and the same transfer plan. A
+        consumed producer's new candidate is then held against every candidate
+        already resolved for it, so the width-invariance of the subtrees it
+        publishes is established for the proposed width too.
+
+        Args:
+            triple: The regime, period and core the width belongs to.
+            widths: One width per declared execution axis.
+
+        Returns:
+            The bound candidate, which is the one already bound when this width
+            was evaluated before.
+
+        Raises:
+            ValueError: An axis declaration refuses the width.
+            ExecutionPlanningError: The core retains no frontier to bind from,
+                or a candidate publishes a width-dependent internal output.
+
+        """
+        width_key = _width_key(widths=widths)
+        for bound in self.candidates_by_triple[triple]:
+            if bound[1] == width_key:
+                return bound
+        frontier = self.frontiers.get(triple)
+        if frontier is None:
+            msg = (
+                "A width search asked for widths "
+                f"{dict(widths)!r} at {_describe_candidate(candidate=(triple, ()))}, "
+                "whose single admissible width was bound before the search began."
+            )
+            raise ExecutionPlanningError(msg)
+        resolved = resolve_core_program_candidates(
+            program=frontier.program,
+            tile_widths=(MappingProxyType(dict(widths)),),
+            input_transfer_plan=frontier.transfer_plan,
+            abstract_inputs=True,
+        )[0]
+        if frontier.prebound is not None:
+            _checked_producer_records(
+                candidates=(*frontier.prebound, resolved),
+                templates=frontier.templates,
+            )
+        return self._bind_resolved(triple=triple, resolved=resolved)
+
+    def _bind_resolved(
+        self, *, triple: _CoreTriple, resolved: ResolvedCoreProgram
+    ) -> _CoreCandidate:
+        """Derive everything one resolved candidate needs and record it."""
+        frontier = self.frontiers[triple]
+        bound = self.candidates_by_triple[triple]
+        templates = frontier.templates
         candidate = (triple, _width_key(widths=resolved.tile_widths))
         resolved = _apply_transfer_marks(
             programs={candidate: resolved}, consumers=self.transfer_consumers
@@ -4237,6 +4811,7 @@ class _LazyCandidateFrontier:
                 )
             )
         bound.append(candidate)
+        return candidate
 
 
 def _resolve_output_layouts_and_lowering_keys(

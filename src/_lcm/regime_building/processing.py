@@ -5298,10 +5298,17 @@ def _process_regime_core(
         }
     )
 
-    process_transition_keys = {
-        f"{user_regime}__next_{process}"
-        for user_regime, process in (*target_process_grids, *split_entry_process_grids)
-    }
+    # Bundle insertion order fixes the continuation's lottery reduction axes.
+    # Preserve the declared process order independently of Python's hash seed.
+    process_transition_keys = tuple(
+        dict.fromkeys(
+            f"{user_regime}__next_{process}"
+            for user_regime, process in (
+                *target_process_grids,
+                *split_entry_process_grids,
+            )
+        )
+    )
     internal_transition = {
         func_name: processed_functions[func_name]
         for func_name in flat_nested_transitions
@@ -5319,8 +5326,8 @@ def _process_regime_core(
     excluded_from_functions = (
         set(flat_nested_transitions)
         | set(constraints)
-        | process_transition_keys
-        | joint_transition_keys
+        | set(process_transition_keys)
+        | set(joint_transition_keys)
     )
     phase_functions = MappingProxyType(
         {
@@ -5403,9 +5410,9 @@ def _process_joint_transitions(
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     processed_functions: dict[str, EconFunction],
     regime_params_template: RegimeParamsTemplate,
-) -> set[str]:
+) -> tuple[str, ...]:
     """Compile joint kernels into target-local DAG nodes and output laws."""
-    transition_keys: set[str] = set()
+    transition_keys: dict[str, None] = {}
     for target, kernels in joint_transitions.items():
         for kernel_name, kernel in kernels.items():
             axis_name = qname_from_tree_path((target, kernel_name))
@@ -5434,7 +5441,7 @@ def _process_joint_transitions(
                 regime_params_template=regime_params_template,
                 param_key=qname_from_tree_path((target, kernel_name, "probabilities")),
             )
-            transition_keys.update((axis_name, support_name))
+            transition_keys.update(dict.fromkeys((axis_name, support_name)))
 
             for state_name, output in kernel.outputs.items():
                 output_name = qname_from_tree_path((target, f"next_{state_name}"))
@@ -5443,8 +5450,8 @@ def _process_joint_transitions(
                     regime_params_template=regime_params_template,
                     param_key=output_name,
                 )
-                transition_keys.add(output_name)
-    return transition_keys
+                transition_keys[output_name] = None
+    return tuple(transition_keys)
 
 
 def _joint_support_indices(support_size: int) -> EconFunction:

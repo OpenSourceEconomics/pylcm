@@ -123,6 +123,10 @@ from _lcm.solution.model_authority import (
 )
 from _lcm.solution.model_seal import BindingRecorder, SealedBindings
 from _lcm.solution.native_values import NativeValueMaterializer
+from _lcm.solution.period_replay import (
+    DeclaredCoreCompilation,
+    compile_declared_period_cores,
+)
 from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
@@ -139,6 +143,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_solution_metadata,
     snapshot_value_store,
 )
+from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -856,6 +861,48 @@ class Model:
         return cast("UserFacingParamsTemplate", _readable_template(mutable))
 
     @beartype(conf=PARAMS_CONF)
+    def _compile_period_cores(
+        self,
+        *,
+        params: UserParams,
+        regime_name: str,
+        period: int,
+        axis_widths: Mapping[str, int],
+    ) -> tuple[DeclaredCoreCompilation, ...]:
+        """Compile one declared regime-period at fixed widths, without solving.
+
+        Every core the period kernel publishes is materialized against the
+        model's own state-action spaces and continuation templates, lowered and
+        compiled. No period above it is solved, and no compiled program is
+        called, so the result describes the compiled programs and their
+        compiler-reported memory — never a run.
+
+        Args:
+            params: Parameters the cores are materialized against.
+            regime_name: Regime whose period kernel is compiled.
+            period: Index of the period in `self.ages`.
+            axis_widths: Width per execution axis, for the model as a whole.
+                An axis a core declares and this mapping names takes that
+                width; one the mapping omits takes the bootstrap width the
+                unbudgeted route would lower it at. A width that binds no axis
+                of this period is refused.
+
+        Returns:
+            One entry per core, in compilation order, each carrying its widths,
+            its lowering and compile walls, and its compiler memory report.
+
+        """
+        return compile_declared_period_cores(
+            regimes=self._regimes,
+            flat_params=self._process_params(params),
+            ages=self.ages,
+            regime_name=regime_name,
+            period=period,
+            axis_widths=axis_widths,
+            device_ids=self._execution.device_ids,
+        )
+
+    @beartype(conf=PARAMS_CONF)
     def solve(
         self,
         *,
@@ -879,6 +926,13 @@ class Model:
         after save/load, an equivalent fresh model validates that fingerprint instead
         of the producing instance token.
 
+        The returned result's value arrays are complete on return: the call blocks
+        until every period's value leaf has finished computing, so a wall-clock
+        measurement around ``solve`` covers the whole value computation. No other
+        artefact is waited on — retained replay artifacts, diagnostic snapshots and
+        anything written to ``log_path`` may still be in flight when ``solve``
+        returns, and are only guaranteed complete once they are themselves read.
+
         Args:
             params: Model parameters compatible with ``get_params_template()``.
             log_level: Verbosity and runtime-validation policy.
@@ -893,24 +947,35 @@ class Model:
         """
         self._sealed_bindings.fail_if_moved()
         log = get_logger(log_level=log_level)
-        flat_params = self._process_params(params)
-        validate_transitions(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-            logger=log,
-            process_grid_resolver=None,
-        )
-        return self._solve_from_flat_params(
-            flat_params=flat_params,
-            params=params,
-            log=log,
-            retention=retention,
-            max_compilation_workers=max_compilation_workers,
-            log_path=log_path,
-            log_keep_n_latest=log_keep_n_latest,
-            process_grid_resolver=None,
-        )
+        call_id = new_call_id()
+        with solve_phase(name="public_solve", logger=log, call_id=call_id):
+            with solve_phase(name="params_validation", logger=log, call_id=call_id):
+                flat_params = self._process_params(params)
+                validate_transitions(
+                    regimes=self._regimes,
+                    flat_params=flat_params,
+                    ages=self.ages,
+                    logger=log,
+                    process_grid_resolver=None,
+                )
+            result = self._solve_from_flat_params(
+                flat_params=flat_params,
+                params=params,
+                log=log,
+                retention=retention,
+                max_compilation_workers=max_compilation_workers,
+                log_path=log_path,
+                log_keep_n_latest=log_keep_n_latest,
+                process_grid_resolver=None,
+                call_id=call_id,
+            )
+            # Device work dispatched by backward induction can still be in flight
+            # here; its completion belongs to a named phase, not the residual.
+            with solve_phase(name="result_readiness", logger=log, call_id=call_id):
+                solved = result.values  # noqa: PD011
+                if isinstance(solved, ValueStore):
+                    solved._block_until_ready()  # noqa: SLF001
+        return result
 
     def _solve_from_flat_params(
         self,
@@ -924,6 +989,7 @@ class Model:
         log_keep_n_latest: int,
         retained_input_arrays: object = (),
         process_grid_resolver: ProcessGridResolver | None = None,
+        call_id: CallId | None = None,
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
@@ -931,24 +997,27 @@ class Model:
         with the same grid support; the solve's generated replay facts are
         bound into a copy that belongs to this result alone.
         """
-        declared_authority = self._declared_solution_authority(
-            flat_params=flat_params, process_grid_resolver=process_grid_resolver
-        )
-        retain_all_persistable = retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
-        persistable_artifact_refs = (
-            frozenset(
-                ref
-                for ref, artifact_authority in declared_authority.artifacts.items()
-                if artifact_authority.applicable
-                and artifact_authority.descriptor.persistence
-                is PersistencePolicy.MODEL_VERIFIABLE
+        with solve_phase(name="authority_fingerprint", logger=log, call_id=call_id):
+            declared_authority = self._declared_solution_authority(
+                flat_params=flat_params, process_grid_resolver=process_grid_resolver
             )
-            if retain_all_persistable
-            else frozenset()
-        )
-        model_fingerprint = self._model_fingerprint(
-            flat_params=flat_params, process_grid_resolver=process_grid_resolver
-        )
+            retain_all_persistable = (
+                retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+            )
+            persistable_artifact_refs = (
+                frozenset(
+                    ref
+                    for ref, artifact_authority in declared_authority.artifacts.items()
+                    if artifact_authority.applicable
+                    and artifact_authority.descriptor.persistence
+                    is PersistencePolicy.MODEL_VERIFIABLE
+                )
+                if retain_all_persistable
+                else frozenset()
+            )
+            model_fingerprint = self._model_fingerprint(
+                flat_params=flat_params, process_grid_resolver=process_grid_resolver
+            )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
             model_fingerprint=model_fingerprint,
@@ -964,24 +1033,26 @@ class Model:
             collect_solver_diagnostics=True,
             retained_input_arrays=retained_input_arrays,
             process_grid_resolver=process_grid_resolver,
+            call_id=call_id,
         )
-        authority = bind_generated_solution_authority(
-            authority=declared_authority,
-            internal_result=internal_result,
-            regimes=self._regimes,
-            flat_params=flat_params,
-        )
-        return build_solution_result(
-            internal_result=internal_result,
-            retention=retention,
-            regimes=self._regimes,
-            user_regimes=self.user_regimes,
-            n_periods=self.n_periods,
-            model_instance_id=self._solution_model_instance_id,
-            params_fingerprint=self._params_fingerprint(flat_params=flat_params),
-            model_fingerprint=model_fingerprint,
-            authority=authority,
-        )
+        with solve_phase(name="result_assembly", logger=log, call_id=call_id):
+            authority = bind_generated_solution_authority(
+                authority=declared_authority,
+                internal_result=internal_result,
+                regimes=self._regimes,
+                flat_params=flat_params,
+            )
+            return build_solution_result(
+                internal_result=internal_result,
+                retention=retention,
+                regimes=self._regimes,
+                user_regimes=self.user_regimes,
+                n_periods=self.n_periods,
+                model_instance_id=self._solution_model_instance_id,
+                params_fingerprint=self._params_fingerprint(flat_params=flat_params),
+                model_fingerprint=model_fingerprint,
+                authority=authority,
+            )
 
     def _solve_compiled(
         self,
@@ -1000,6 +1071,7 @@ class Model:
         collect_solver_diagnostics: bool = False,
         retained_input_arrays: object = (),
         process_grid_resolver: ProcessGridResolver | None = None,
+        call_id: CallId | None = None,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -1019,13 +1091,14 @@ class Model:
         NaN. `_enforce_retention` caps the snapshot count at
         `log_keep_n_latest`.
         """
-        check_solver_params(regimes=self._regimes, flat_params=flat_params)
-        check_pareto_weights(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-            process_grid_resolver=process_grid_resolver,
-        )
+        with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
+            check_solver_params(regimes=self._regimes, flat_params=flat_params)
+            check_pareto_weights(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                ages=self.ages,
+                process_grid_resolver=process_grid_resolver,
+            )
         try:
             internal_result = solve(
                 flat_params=flat_params,
@@ -1043,6 +1116,7 @@ class Model:
                 persistable_artifact_refs=persistable_artifact_refs,
                 retained_input_arrays=retained_input_arrays,
                 process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:

@@ -8,6 +8,7 @@ for dispatch.
 """
 
 import itertools
+import logging
 import math
 import operator
 from collections.abc import Callable, Mapping
@@ -17,6 +18,12 @@ from typing import Protocol, SupportsIndex, cast
 
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from lcm.exceptions import ExecutionPlanningError
+from lcm.execution import WidthSearch, WidthSearchPolicy
+
+_logger = logging.getLogger("lcm")
+
+# The policy a caller who declares none plans under: today's ranked walk.
+_EXHAUSTIVE_POLICY = WidthSearchPolicy()
 
 _MISSING = object()
 
@@ -273,6 +280,577 @@ def plan_workspace[Compiled](
             peak=least_peak,
         )
     raise ExecutionPlanningError(msg)
+
+
+def plan_workspace_bounded[Compiled](
+    *,
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int] = MappingProxyType({}),
+    compile_candidate: Callable[[Mapping[str, int]], Compiled],
+    budget_bytes: int | None = None,
+    memory_for: Callable[[Compiled], CompilerMemoryReservation] | None = None,
+    resident_bytes: int = 0,
+    resident_bytes_for: Callable[[Compiled], int] | None = None,
+    policy: WidthSearchPolicy = _EXHAUSTIVE_POLICY,
+    hint: Mapping[str, int] | None = None,
+    cached_analysis_for: Callable[[Mapping[str, int]], object | None] | None = None,
+) -> WorkspacePlan[Compiled]:
+    """Search a bounded number of widths for one the budget admits.
+
+    Admission is `plan_workspace`'s: a candidate fits when its represented
+    compiler reservation plus the bytes the plan keeps resident at the node's
+    position fits the budget, and the returned executable is the exact object
+    compiled for the selected width. What changes is how many widths are
+    compiled to find it. Under `WidthSearch.EXHAUSTIVE` this is `plan_workspace`
+    itself. Under `WidthSearch.BOUNDED` the search runs:
+
+    - **seed** — a compatible `hint`, else the widest candidate under
+      `seed="widest"`, else the conservative bootstrap anchor (`bootstrap_widths`),
+      which is narrower than the full extent on every unfixed axis.
+    - **shrink** — on refusal, halve one unfixed axis and round the half down
+      onto the widths that axis admits. The axis halved is the one declaring the
+      largest extent, ties going to declaration order. An axis already at its
+      narrowest admissible width is passed over, and the search is exhausted once
+      every unfixed axis is.
+    - **refine** — on the first admission, widen one axis at a time, most
+      recently shrunk first, by bisecting between the admitted width and the
+      last width refused on that axis. That refused ceiling was measured while
+      every other axis was still at its wider, pre-shrink width, so it bounds
+      the axis more tightly than the admitted configuration requires and the
+      refinement is conservative. A proposal that rounds back onto the admitted
+      width cannot widen, so that axis is done.
+    - **stop** — at `max_evaluations` distinct width mappings, at
+      `refinement_share` refinement evaluations, or when refinement cannot widen.
+
+    Memory is treated as nonmonotone in the widths throughout: a refusal at one
+    width says nothing about its neighbours, which is why refinement compiles
+    every width it admits rather than inferring one.
+
+    Args:
+        axes: The reduced and tiled axes the core declares, in declaration order.
+        fixed_widths: Widths the caller pinned; a pinned axis is never proposed
+            at another width.
+        compile_candidate: Compiles one width mapping into an executable.
+        budget_bytes: Per-device ceiling, or `None` to compile the bootstrap
+            mapping once without consulting any memory report.
+        memory_for: Reads one executable's reservation, or `None` to read the
+            compiler report directly.
+        resident_bytes: Bytes the plan keeps resident at the node's position.
+        resident_bytes_for: Refines that lower bound per executable.
+        policy: Which search to run and the budget it runs under.
+        hint: A width mapping to evaluate first — the one `policy.hints` holds
+            for this core's regime, selected by the caller. A hint any axis
+            declaration refuses, or one that moves a fixed axis, is logged and
+            skipped.
+        cached_analysis_for: Returns a compiler report the caller already holds
+            for a width mapping, or `None`. A report that refuses the width
+            spends an evaluation and no compilation; one that admits it is
+            followed by the compilation that owns the returned executable.
+
+    Returns:
+        The widest admitted candidate the search reached, with its already
+        compiled executable.
+
+    Raises:
+        ExecutionPlanningError: The node's residency already exhausts the
+            budget, or the search spent its evaluations without an admission.
+
+    """
+    if policy.kind is WidthSearch.EXHAUSTIVE:
+        return plan_workspace(
+            axes=axes,
+            fixed_widths=fixed_widths,
+            compile_candidate=compile_candidate,
+            budget_bytes=budget_bytes,
+            memory_for=memory_for,
+            resident_bytes=resident_bytes,
+            resident_bytes_for=resident_bytes_for,
+        )
+
+    declared_axes = _validate_axes(axes=axes)
+    widths_by_axis = _validate_fixed_widths(fixed_widths=fixed_widths)
+    budget = _validate_budget(budget_bytes=budget_bytes)
+    resident = _validate_resident_bytes(resident_bytes=resident_bytes)
+    if not callable(compile_candidate):
+        raise TypeError("The workspace candidate compiler must be callable.")
+    if memory_for is not None and not callable(memory_for):
+        raise TypeError("The workspace memory lookup must be callable or None.")
+    if resident_bytes_for is not None and not callable(resident_bytes_for):
+        raise TypeError("The workspace residency lookup must be callable or None.")
+    if cached_analysis_for is not None and not callable(cached_analysis_for):
+        raise TypeError("The workspace profile lookup must be callable or None.")
+
+    if budget is None:
+        widths = bootstrap_widths(axes=declared_axes, fixed_widths=widths_by_axis)
+        return WorkspacePlan(
+            widths=widths, peak_bytes=None, compiled=compile_candidate(widths)
+        )
+    if resident >= budget:
+        raise ExecutionPlanningError(
+            _resident_exhausts_budget_message(resident=resident, budget=budget)
+        )
+
+    search = _BoundedWidthSearch(
+        axes=declared_axes,
+        fixed_widths=widths_by_axis,
+        compile_candidate=compile_candidate,
+        budget=budget,
+        memory_for=memory_for,
+        resident=resident,
+        resident_bytes_for=resident_bytes_for,
+        policy=policy,
+        cached_analysis_for=cached_analysis_for,
+    )
+    return search.run(hint=hint)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Evaluation[Compiled]:
+    """One width mapping the bounded search compiled or read a profile for."""
+
+    widths: MappingProxyType[str, int]
+    """The mapping evaluated, in axis declaration order."""
+    reservation_bytes: int
+    """Represented compiler requirement the report carried for this mapping."""
+    resident_bytes: int
+    """Bytes the plan keeps resident at the node's position for this mapping."""
+    peak_bytes: int
+    """Raw compiler peak the report carried for this mapping."""
+    compiled: Compiled | None
+    """The executable, or `None` for a mapping a cached profile refused."""
+
+    @property
+    def admitted(self) -> bool:
+        """Report whether the budget admitted this mapping."""
+        return self.compiled is not None
+
+
+class _CachedReport:
+    """A compiler report the caller already holds, shaped like an executable."""
+
+    def __init__(self, *, analysis: object) -> None:
+        self.analysis = analysis
+
+    def memory_analysis(self) -> object:
+        """Return the report the caller handed the planner."""
+        return self.analysis
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WidthDecision:
+    """One width mapping's accounting and the admission decision it earned."""
+
+    widths: MappingProxyType[str, int]
+    """The mapping evaluated, in axis declaration order."""
+    reservation_bytes: int
+    """Represented compiler requirement the report carried for this mapping."""
+    resident_bytes: int
+    """Bytes the plan keeps resident at the node's position for this mapping."""
+    peak_bytes: int
+    """Raw compiler peak the report carried for this mapping."""
+    admitted: bool
+    """Whether the budget admitted this mapping."""
+
+
+@dataclass(kw_only=True)
+class BoundedWidthSelector:
+    """Propose one core's next width, decision by decision.
+
+    The selector owns the bounded policy and nothing else: it never compiles,
+    never reads a compiler report and never consults a budget. A caller asks it
+    for the next width mapping to evaluate, evaluates that mapping however its
+    own admission arithmetic requires, and hands back the reservation, the
+    residency and the verdict. The walk is the policy's:
+
+    - **seed** — a compatible `hint`, else the widest mapping under
+      `seed="widest"`, else the conservative bootstrap anchor.
+    - **shrink** — on refusal, halve the unfixed axis declaring the largest
+      extent, ties going to declaration order, rounded down onto the widths that
+      axis admits. An axis already at its narrowest is passed over, and the
+      search is exhausted once every unfixed axis is.
+    - **refine** — on the first admission, widen one axis at a time, most
+      recently shrunk first, by bisecting between the admitted width and the
+      last width refused on that axis.
+    - **stop** — at `max_evaluations` decisions, at `refinement_share`
+      refinement decisions, or when refinement cannot widen.
+
+    Memory is treated as nonmonotone in the widths throughout: a refusal at one
+    width says nothing about its neighbours, which is why every width the
+    selector keeps was evaluated rather than inferred.
+    """
+
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...]
+    """The core's declared axes, in declaration order."""
+    fixed_widths: Mapping[str, int]
+    """Widths the caller pinned; a pinned axis is never proposed at another width."""
+    policy: WidthSearchPolicy
+    """Which search to run and the evaluation budget it runs under."""
+    hint: Mapping[str, int] | None = None
+    """A mapping to evaluate first; a declaration that refuses it logs and skips it."""
+    label: str = ""
+    """What the diagnostics call this core."""
+
+    def __post_init__(self) -> None:
+        """Announce the policy and compute the seed the first proposal carries."""
+        self._declared = {axis.name: axis for axis in self.axes}
+        self._decisions: list[WidthDecision] = []
+        self._seen: set[tuple[tuple[str, int], ...]] = set()
+        self._last_refused: dict[str, int] = {}
+        self._shrunk: list[str] = []
+        self._best: WidthDecision | None = None
+        self._refining = False
+        self._refine_queue: list[str] = []
+        self._ceiling: int | None = None
+        self._spent = 0
+        self._pending: MappingProxyType[str, int] | None = self._seed()
+        _logger.info(
+            "bounded width search %s: policy %s, seed rule %r, at most %d "
+            "evaluations of which %d refine; first widths %r",
+            self.label,
+            self.policy.kind.value,
+            self.policy.seed,
+            self.policy.max_evaluations,
+            self.policy.refinement_share,
+            dict(self._pending),
+        )
+
+    @property
+    def decisions(self) -> tuple[WidthDecision, ...]:
+        """Return every decision recorded so far, in decision order."""
+        return tuple(self._decisions)
+
+    @property
+    def selected(self) -> WidthDecision | None:
+        """Return the widest admitted mapping, or `None` while none was admitted."""
+        return self._best
+
+    @property
+    def refinement_decisions(self) -> int:
+        """Return how many decisions were spent widening after the first admission."""
+        return self._spent
+
+    def propose(self) -> MappingProxyType[str, int] | None:
+        """Return the next mapping to evaluate, or `None` when the search is done."""
+        return self._pending
+
+    def record(
+        self,
+        *,
+        widths: Mapping[str, int],
+        reservation_bytes: int,
+        resident_bytes: int,
+        peak_bytes: int,
+        admitted: bool,
+    ) -> None:
+        """Take one mapping's verdict and compute what the search proposes next.
+
+        Args:
+            widths: The mapping that was evaluated, as `propose` handed it over.
+            reservation_bytes: Represented compiler requirement of that mapping.
+            resident_bytes: Bytes the plan keeps resident for that mapping.
+            peak_bytes: Raw compiler peak of that mapping.
+            admitted: Whether the caller's admission arithmetic kept it.
+
+        Raises:
+            ExecutionPlanningError: A shrink proposed a mapping already evaluated.
+
+        """
+        frozen = _width_mapping(
+            axes=self.axes, values=tuple(widths[axis.name] for axis in self.axes)
+        )
+        decision = WidthDecision(
+            widths=frozen,
+            reservation_bytes=reservation_bytes,
+            resident_bytes=resident_bytes,
+            peak_bytes=peak_bytes,
+            admitted=admitted,
+        )
+        self._decisions.append(decision)
+        self._seen.add(_widths_key(widths=frozen))
+        _logger.info(
+            "bounded width search %s: evaluation %d at %r — %d reservation plus %d "
+            "resident bytes, %s",
+            self.label,
+            len(self._decisions),
+            dict(frozen),
+            reservation_bytes,
+            resident_bytes,
+            "admitted" if admitted else "refused",
+        )
+        if self._refining:
+            self._spent += 1
+            if admitted:
+                self._best = decision
+            elif self._refine_queue:
+                self._ceiling = frozen[self._refine_queue[0]]
+            self._pending = self._next_refinement()
+            return
+        if admitted:
+            self._best = decision
+            self._refining = True
+            self._refine_queue = [
+                name
+                for name in _most_recent_first(names=self._shrunk)
+                if name in self._last_refused
+            ]
+            self._ceiling = (
+                self._last_refused[self._refine_queue[0]]
+                if self._refine_queue
+                else None
+            )
+            self._pending = self._next_refinement()
+            return
+        self._pending = self._shrink_from(widths=frozen)
+
+    def exhaustion_message(self, *, budget: int) -> str:
+        """State that the search, not the model, ran out of candidates."""
+        return _search_exhausted_message(
+            budget=budget, policy=self.policy, decisions=self._decisions
+        )
+
+    def _shrink_from(
+        self, *, widths: MappingProxyType[str, int]
+    ) -> MappingProxyType[str, int] | None:
+        """Record the refusal on one axis and return the narrower mapping."""
+        shrunk = self._shrink(widths=widths)
+        if shrunk is None:
+            return None
+        name, narrower = shrunk
+        self._last_refused[name] = widths[name]
+        self._shrunk.append(name)
+        if len(self._decisions) >= self.policy.max_evaluations:
+            return None
+        if _widths_key(widths=narrower) in self._seen:
+            msg = (
+                "The bounded width search proposed the already evaluated widths "
+                f"{dict(narrower)!r} a second time. Every shrink narrows one axis "
+                "and leaves the rest, so a repeat cannot arise."
+            )
+            raise ExecutionPlanningError(msg)
+        return narrower
+
+    def _seed(self) -> MappingProxyType[str, int]:
+        """Return the first mapping to evaluate under the policy's seed rule."""
+        if self.hint is not None:
+            reason = self._hint_refusal(hint=self.hint)
+            if reason is None:
+                return _width_mapping(
+                    axes=self.axes,
+                    values=tuple(self.hint[axis.name] for axis in self.axes),
+                )
+            _logger.warning("hint incompatible: %s", reason)
+        if self.policy.seed == "widest":
+            return _width_mapping(
+                axes=self.axes,
+                values=tuple(
+                    _fixed_width(axis=axis, fixed_widths=self.fixed_widths)
+                    if axis.name in self.fixed_widths
+                    else axis.extent
+                    for axis in self.axes
+                ),
+            )
+        return bootstrap_widths(axes=self.axes, fixed_widths=self.fixed_widths)
+
+    def _hint_refusal(self, *, hint: Mapping[str, int]) -> str | None:
+        """Name what makes a hint unusable, or `None` when every axis admits it."""
+        undeclared = tuple(sorted(set(hint) - set(self._declared)))
+        if undeclared:
+            return f"the core declares no axis named {undeclared[0]!r}."
+        missing = tuple(axis.name for axis in self.axes if axis.name not in hint)
+        if missing:
+            return f"it names no width for axis {missing[0]!r}."
+        for axis in self.axes:
+            width = hint[axis.name]
+            if axis.name in self.fixed_widths:
+                fixed = _fixed_width(axis=axis, fixed_widths=self.fixed_widths)
+                if width != fixed:
+                    return (
+                        f"axis {axis.name!r} is fixed at {fixed} and the hint asks "
+                        f"for {width}."
+                    )
+            elif _admissible_width(axis=axis, width=width) != width:
+                return (
+                    f"axis {axis.name!r} admits no width {width} under alignment "
+                    f"{axis.alignment}, floor {axis.minimum_width} and extent "
+                    f"{axis.extent}."
+                )
+        return None
+
+    def _shrink(
+        self, *, widths: Mapping[str, int]
+    ) -> tuple[str, MappingProxyType[str, int]] | None:
+        """Halve the widest-extent unfixed axis that is not already at its floor."""
+        movable = sorted(
+            (axis for axis in self.axes if axis.name not in self.fixed_widths),
+            key=lambda axis: -axis.extent,
+        )
+        for axis in movable:
+            current = widths[axis.name]
+            narrower = _admissible_width(axis=axis, width=current // 2)
+            if narrower < current:
+                return axis.name, _width_mapping(
+                    axes=self.axes,
+                    values=tuple(
+                        narrower if other.name == axis.name else widths[other.name]
+                        for other in self.axes
+                    ),
+                )
+        return None
+
+    def _next_refinement(self) -> MappingProxyType[str, int] | None:
+        """Return the next widening proposal, or `None` when none can widen."""
+        best = cast("WidthDecision", self._best)
+        while self._refine_queue:
+            if (
+                self._spent >= self.policy.refinement_share
+                or len(self._decisions) >= self.policy.max_evaluations
+            ):
+                return None
+            name = self._refine_queue[0]
+            floor = best.widths[name]
+            ceiling = cast("int", self._ceiling)
+            proposal = (
+                0
+                if ceiling <= floor
+                else _admissible_width(
+                    axis=self._declared[name], width=(floor + ceiling) // 2
+                )
+            )
+            if proposal > floor:
+                widths = _width_mapping(
+                    axes=self.axes,
+                    values=tuple(
+                        proposal if axis.name == name else best.widths[axis.name]
+                        for axis in self.axes
+                    ),
+                )
+                if _widths_key(widths=widths) not in self._seen:
+                    return widths
+            self._refine_queue.pop(0)
+            self._ceiling = (
+                self._last_refused[self._refine_queue[0]]
+                if self._refine_queue
+                else None
+            )
+        return None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _BoundedWidthSearch[Compiled]:
+    """The seed, shrink and refine walk of one core's width declarations."""
+
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...]
+    fixed_widths: Mapping[str, int]
+    compile_candidate: Callable[[Mapping[str, int]], Compiled]
+    budget: int
+    memory_for: Callable[[Compiled], CompilerMemoryReservation] | None
+    resident: int
+    resident_bytes_for: Callable[[Compiled], int] | None
+    policy: WidthSearchPolicy
+    cached_analysis_for: Callable[[Mapping[str, int]], object | None] | None
+
+    def run(self, *, hint: Mapping[str, int] | None) -> WorkspacePlan[Compiled]:
+        """Walk the policy and return its widest admitted candidate."""
+        selector = BoundedWidthSelector(
+            axes=self.axes,
+            fixed_widths=self.fixed_widths,
+            policy=self.policy,
+            hint=hint,
+        )
+        compiled_by_widths: dict[tuple[tuple[str, int], ...], Compiled] = {}
+        while (widths := selector.propose()) is not None:
+            evaluation = self._evaluate(widths=widths)
+            if evaluation.compiled is not None:
+                compiled_by_widths[_widths_key(widths=widths)] = evaluation.compiled
+            selector.record(
+                widths=widths,
+                reservation_bytes=evaluation.reservation_bytes,
+                resident_bytes=evaluation.resident_bytes,
+                peak_bytes=evaluation.peak_bytes,
+                admitted=evaluation.admitted,
+            )
+        best = selector.selected
+        if best is None:
+            raise ExecutionPlanningError(
+                selector.exhaustion_message(budget=self.budget)
+            )
+        return WorkspacePlan(
+            widths=best.widths,
+            peak_bytes=best.peak_bytes,
+            reservation_bytes=best.reservation_bytes,
+            compiled=compiled_by_widths[_widths_key(widths=best.widths)],
+        )
+
+    def _evaluate(self, *, widths: MappingProxyType[str, int]) -> _Evaluation[Compiled]:
+        """Read one mapping's accounting, compiling it unless a profile refuses it."""
+        cached = (
+            None
+            if self.cached_analysis_for is None
+            else self.cached_analysis_for(widths)
+        )
+        if cached is not None:
+            memory = compiler_memory_reservation(
+                compiled=_CachedReport(analysis=cached), widths=widths
+            )
+            if memory.reservation_bytes + self.resident > self.budget:
+                return _Evaluation(
+                    widths=widths,
+                    reservation_bytes=memory.reservation_bytes,
+                    resident_bytes=self.resident,
+                    peak_bytes=memory.peak_bytes,
+                    compiled=None,
+                )
+        compiled = self.compile_candidate(widths)
+        memory = _memory_for_candidate(
+            compiled=compiled, widths=widths, memory_for=self.memory_for
+        )
+        candidate_resident = _resident_bytes_for_candidate(
+            compiled=compiled,
+            widths=widths,
+            lower_bound=self.resident,
+            resident_bytes_for=self.resident_bytes_for,
+        )
+        fits = memory.reservation_bytes + candidate_resident <= self.budget
+        return _Evaluation(
+            widths=widths,
+            reservation_bytes=memory.reservation_bytes,
+            resident_bytes=candidate_resident,
+            peak_bytes=memory.peak_bytes,
+            compiled=compiled if fits else None,
+        )
+
+
+def _most_recent_first(*, names: list[str]) -> tuple[str, ...]:
+    """Return each axis name once, the most recently shrunk one first."""
+    ordered: list[str] = []
+    for name in reversed(names):
+        if name not in ordered:
+            ordered.append(name)
+    return tuple(ordered)
+
+
+def _widths_key(*, widths: Mapping[str, int]) -> tuple[tuple[str, int], ...]:
+    """Return the hashable identity of one width mapping."""
+    return tuple(sorted(widths.items()))
+
+
+def _search_exhausted_message(
+    *, budget: int, policy: WidthSearchPolicy, decisions: list[WidthDecision]
+) -> str:
+    """State that the search, not the model, ran out of candidates."""
+    trail = "; ".join(
+        f"{dict(item.widths)!r}: {item.reservation_bytes} reservation plus "
+        f"{item.resident_bytes} resident bytes, "
+        f"{'admitted' if item.admitted else 'refused'}"
+        for item in decisions
+    )
+    return (
+        "The bounded width search found no admitted candidate within the evaluation "
+        f"budget of {policy.max_evaluations} against the {budget}-byte budget. "
+        f"Seed rule {policy.seed!r}, refinement share {policy.refinement_share}. "
+        f"Evaluations: {trail}. Those widths are not an exhaustive test of the "
+        "frontier; a width the search never proposed may still fit."
+    )
 
 
 def plan_axis_free_workspace[Compiled](
