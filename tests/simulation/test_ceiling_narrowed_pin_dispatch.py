@@ -28,9 +28,9 @@ from tests.simulation.test_unbudgeted_subject_width import (
     _materialized,
 )
 
-# A single-subject population carries no subject planner axis, so extent 1 is
-# outside the dispatch domain.
-_CASES = tuple(case for case in cases() if case[0].extent > 1)
+_CASES = tuple(cases())
+_SINGLETON = tuple(c for c in _CASES if c[0].extent == 1)
+_NON_SINGLETON = tuple(c for c in _CASES if c[0].extent > 1)
 
 
 def _kw(case: tuple[Axis, int, int]) -> dict[str, Any]:
@@ -45,6 +45,11 @@ def _program(axis: Axis) -> Any:
     key = (axis.extent, axis.alignment, axis.minimum)
     if key not in _PROGRAMS:
         template = _materialized(n_subjects=axis.extent)
+        if axis.extent == 1:
+            # Real materialization omits the trivial subject planner axis. Keep
+            # that representation instead of indexing or inventing an axis.
+            _PROGRAMS[key] = template
+            return template
         tiled = dataclasses.replace(
             template.requirements.tiled_axes[0],
             alignment=axis.alignment,
@@ -66,8 +71,8 @@ def _expected(*, axis: Axis, pin: int, ceiling: int) -> int | None:
         return None
 
 
-_LEGAL = tuple(c for c in _CASES if _expected(**_kw(c)) is not None)
-_IMPOSSIBLE = tuple(c for c in _CASES if _expected(**_kw(c)) is None)
+_LEGAL = tuple(c for c in _NON_SINGLETON if _expected(**_kw(c)) is not None)
+_IMPOSSIBLE = tuple(c for c in _NON_SINGLETON if _expected(**_kw(c)) is None)
 _CONTESTED = tuple(c for c in _LEGAL if len(legal_widths(axis=c[0], ceiling=c[2])) > 1)
 
 
@@ -105,8 +110,67 @@ def _dispatch(
 
 
 def test_reference_neighbourhood_covers_every_branch() -> None:
-    """The case set holds legal, impossible and multi-width (contested) cases."""
-    assert min(len(_LEGAL), len(_IMPOSSIBLE), len(_CONTESTED)) > 0
+    """The case set holds singleton, legal, impossible and contested cases."""
+    assert min(len(_SINGLETON), len(_LEGAL), len(_IMPOSSIBLE), len(_CONTESTED)) > 0
+
+
+def test_reference_partition_covers_every_case() -> None:
+    """Singleton, legal and impossible cases partition the reference neighbourhood."""
+    assert len(_SINGLETON) + len(_LEGAL) + len(_IMPOSSIBLE) == len(_CASES)
+
+
+@pytest.mark.parametrize("case", _SINGLETON, ids=_ids)
+def test_singleton_materialization_omits_the_subject_planner_axis(case: tuple) -> None:
+    """One subject has implicit width one, not a declared tiled planner axis."""
+    assert _program(case[0]).requirements.axes == ()
+
+
+@pytest.mark.parametrize("case", _SINGLETON, ids=_ids)
+def test_singleton_reference_width_is_one(case: tuple) -> None:
+    """The reference assigns a single subject the physical width one."""
+    assert _expected(**_kw(case)) == 1
+
+
+@pytest.mark.parametrize("case", _SINGLETON, ids=_ids)
+def test_singleton_admission_plans_no_width(case: tuple) -> None:
+    """Admission has no subject axis to plan for a single subject."""
+    assert dict(_admit(**_kw(case))) == {}
+
+
+def _singleton_reservations(case: tuple) -> tuple[int | None, ...]:
+    return (None, 1, case[1])
+
+
+_SINGLETON_RESERVED = tuple(
+    (case, reserved)
+    for case in _SINGLETON
+    for reserved in _singleton_reservations(case)
+)
+
+
+def _singleton_ids(item: tuple) -> str:
+    case, reserved = item
+    return f"{_ids(case)}-r{reserved}"
+
+
+@pytest.mark.parametrize("item", _SINGLETON_RESERVED, ids=_singleton_ids)
+def test_singleton_dispatch_forwards_the_pin_under_any_reservation(item: tuple) -> None:
+    """An omitted subject axis cannot conflict with any reservation map."""
+    case, reserved = item
+    assert dict(_dispatch(**_kw(case), reserved=reserved)) == {"subject": case[1]}
+
+
+@pytest.mark.parametrize("item", _SINGLETON_RESERVED, ids=_singleton_ids)
+def test_singleton_forwarded_pin_plans_no_width(item: tuple) -> None:
+    """Planning the forwarded pin against the singleton program selects nothing."""
+    case, reserved = item
+    forwarded = _dispatch(**_kw(case), reserved=reserved)
+    planned = bootstrap_widths(
+        axes=_program(case[0]).requirements.axes,
+        fixed_widths=forwarded,
+        width_ceilings=MappingProxyType({"subject": case[2]}),
+    )
+    assert dict(planned) == {}
 
 
 @pytest.mark.parametrize("case", _LEGAL, ids=_ids)
