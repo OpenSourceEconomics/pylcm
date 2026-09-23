@@ -421,7 +421,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "70bcee6fee35c767cb33be5b6a3ef4b0c4bb2c91a9c087da3b7e1619133e9a34",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "c0bc16913862a06c2856e39f917f6614093d5ff36ed7d6c728df734ba329cb59",
+    BACKWARD_INDUCTION_SOURCE: "20ba95355b1ca6f38282a7bb9777e3c00f3d781ef1852ced65bca9214fce99c3",
     PERIOD_REPLAY_SOURCE: "ae1879ebc56c90ce5a14dcdfe70f0520b61df96c786932fac7f4a9dfc22ee1be",
     INITIAL_CONDITIONS_SOURCE: "567cf1ecaf670aca5c8484aba0b936c478fcf16fbdf5fdd2f0d021efb5e53118",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
@@ -4438,7 +4438,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_evaluate_edge_fold": "1da268a4d4b0f6b5499bd8522803f916d0a194b8cd3be02b190e0797bb9a28ff",
-            "_lower_and_compile_wave": "5861fc4d596eafe76732a20b20a831e2abe1b55a24b3d1c19968b5bc89e821ff",
+            "_lower_and_compile_wave": "69281f013eb80511d998c767c5cd388aa7ef11c8d2135c17c4f01c66a7d6c3c5",
             "_run_period_kernel": "7507b0912580b34a2e83b9d82d5cf7e5c2f2e0606b2f3e8e8bcf5718a169ffd6",
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
@@ -10105,12 +10105,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=backward_induction_source,
                 old=(
-                    "            resolved.function,\n"
-                    "            static_argnames=tuple(static_kwargs),"
+                    "                resolved.function,\n"
+                    "                static_argnames=tuple(static_kwargs),"
                 ),
                 new=(
-                    "            candidate_filter(resolved.function),\n"
-                    "            static_argnames=tuple(static_kwargs),"
+                    "                candidate_filter(resolved.function),\n"
+                    "                static_argnames=tuple(static_kwargs),"
                 ),
                 label="AOT resolved function",
             ),
@@ -10120,12 +10120,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=backward_induction_source,
                 old=(
-                    "        low = jitted.lower(\n"
-                    "            **resolved.arguments, "
+                    "            low = jitted.lower(\n"
+                    "                **resolved.arguments, "
                     "**internal_templates[candidate], **static_kwargs\n"
-                    "        )"
+                    "            )"
                 ),
-                new="        low = jitted.lower(**static_kwargs)",
+                new="            low = jitted.lower(**static_kwargs)",
                 label="AOT resolved arguments",
             ),
         },
@@ -10158,8 +10158,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            out_shardings=layout.out_shardings,",
-                new="            out_shardings=None,",
+                old="                out_shardings=layout.out_shardings,",
+                new="                out_shardings=None,",
                 label="planned JIT output sharding",
             ),
         },

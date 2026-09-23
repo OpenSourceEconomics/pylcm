@@ -128,8 +128,13 @@ def _axes(*, regimes: object, n_subjects: int) -> tuple[TiledOutputAxis, ...]:
 
 
 def _width_choices(
-    *, axes: tuple[Any, ...], fixed_widths: Mapping[str, int], budget_bytes: int | None
+    *,
+    axes: tuple[Any, ...],
+    fixed_widths: Mapping[str, int],
+    budget_bytes: int | None,
+    width_ceilings: Mapping[str, int],
 ) -> tuple[dict[str, int], ...]:
+    assert not width_ceilings
     assert budget_bytes is None
     return (
         {axis.name: min(fixed_widths.get(axis.name, 4), axis.extent) for axis in axes},
