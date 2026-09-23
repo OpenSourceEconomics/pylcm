@@ -24,7 +24,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from types import MappingProxyType
 from typing import cast
 
@@ -4323,67 +4323,68 @@ def _lower_and_compile_wave(
     compiled: dict[Hashable, jax.stages.Compiled],
     labels: dict[Hashable, str],
 ) -> None:
-    """Lower one wave's new candidates sequentially and compile them in parallel.
+    """Lower one wave's new candidates sequentially, compiling each as it lands.
 
     Tracing is single-threaded, so lowering runs on the calling thread; XLA releases
-    the GIL, so compilation fans out over a thread pool. Executables and their log
-    labels land in `compiled` and `labels`, keyed by lowering key.
+    the GIL, so each lowered program goes to a compile thread pool at once and
+    compiles while the next one is being lowered. Executables and their log labels
+    land in `compiled` and `labels`, keyed by lowering key.
     """
-    lowered: dict[Hashable, jax.stages.Lowered] = {}
     n_unique = len(new_lowerings)
-    for i, (lowering_key, candidate) in enumerate(new_lowerings.items(), 1):
-        triple, _ = candidate
-        regime_name, period, core_key = triple
-        resolved = resolved_programs[candidate]
-        static_kwargs = resolved.static_kwargs
-        label = (
-            f"{regime_name} {core_key} (age {ages.values[period].item()}, "
-            f"widths={dict(resolved.tile_widths)!r})"
-        )
-        labels[lowering_key] = label
-        log_module_fanout(
-            label=label,
-            n_triples=n_triples_per_lowering[lowering_key],
-            logger=logger,
-        )
-        logger.info("%d/%d  %s", i, n_unique, label)
-        logger.info("  lowering ...")
-        start = time.monotonic()
-        layout = all_layouts[triple]
-        donated = _donated_arguments(donations=donations[candidate])
-        jitted = jax.jit(
-            resolved.function,
-            static_argnames=tuple(static_kwargs),
-            out_shardings=layout.out_shardings,
-            donate_argnames=donated or None,
-        )
-        low = jitted.lower(
-            **resolved.arguments, **internal_templates[candidate], **static_kwargs
-        )
-        _assert_lowered_output_roles(
-            lowered=low,
-            output_roles=resolved.output_roles,
-            layout=layout,
-            label=label,
-        )
-        lowered[lowering_key] = low
-        elapsed = time.monotonic() - start
-        logger.info("  lowered in %s", format_duration(seconds=elapsed))
-
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = [
-            pool.submit(
+        futures: dict[Future[tuple[Hashable, jax.stages.Compiled]], str] = {}
+        for i, (lowering_key, candidate) in enumerate(new_lowerings.items(), 1):
+            triple, _ = candidate
+            regime_name, period, core_key = triple
+            resolved = resolved_programs[candidate]
+            static_kwargs = resolved.static_kwargs
+            label = (
+                f"{regime_name} {core_key} (age {ages.values[period].item()}, "
+                f"widths={dict(resolved.tile_widths)!r})"
+            )
+            labels[lowering_key] = label
+            log_module_fanout(
+                label=label,
+                n_triples=n_triples_per_lowering[lowering_key],
+                logger=logger,
+            )
+            logger.info("%d/%d  %s", i, n_unique, label)
+            logger.info("  lowering ...")
+            start = time.monotonic()
+            layout = all_layouts[triple]
+            donated = _donated_arguments(donations=donations[candidate])
+            jitted = jax.jit(
+                resolved.function,
+                static_argnames=tuple(static_kwargs),
+                out_shardings=layout.out_shardings,
+                donate_argnames=donated or None,
+            )
+            low = jitted.lower(
+                **resolved.arguments, **internal_templates[candidate], **static_kwargs
+            )
+            _assert_lowered_output_roles(
+                lowered=low,
+                output_roles=resolved.output_roles,
+                layout=layout,
+                label=label,
+            )
+            elapsed = time.monotonic() - start
+            logger.info("  lowered in %s", format_duration(seconds=elapsed))
+            future = pool.submit(
                 _compile_and_log,
                 lowering_key=lowering_key,
                 low=low,
-                label=labels[lowering_key],
+                label=label,
                 log_kernel_memory=log_kernel_memory,
                 logger=logger,
             )
-            for lowering_key, low in lowered.items()
-        ]
+            futures[future] = label
         for future in as_completed(futures):
-            lowering_key, comp = future.result()
+            try:
+                lowering_key, comp = future.result()
+            except Exception as exc:
+                exc.add_note(f"while compiling {futures[future]}")
+                raise
             compiled[lowering_key] = comp
 
 
