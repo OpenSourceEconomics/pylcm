@@ -30,6 +30,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     _admissible_width,
+    bootstrap_widths,
     compiler_memory_reservation,
     plan_workspace,
 )
@@ -494,6 +495,7 @@ class SimulationRuntime:
                 program=program,
                 configured=self.execution.axis_widths,
                 residency=residency,
+                width_ceilings=self.execution.axis_width_ceilings,
             ),
             width_ceilings=self.execution.axis_width_ceilings,
             compile_candidate=_CachedSimulationCandidateCompiler(
@@ -754,6 +756,7 @@ def _dispatch_widths(
     program: MaterializedCoreProgram,
     configured: Mapping[str, int],
     residency: SimulationDispatchContext | None,
+    width_ceilings: Mapping[str, int] = MappingProxyType({}),
 ) -> Mapping[str, int]:
     """Resolve explicit, budgeted, or derived inner simulation widths.
 
@@ -779,14 +782,22 @@ def _dispatch_widths(
                     program=program, axis=subject_axis
                 )
         return MappingProxyType(fixed)
+    # Admission normalizes pins against the axis policy and its ceiling. Compare
+    # the reservation with that same effective pin, not the original request.
+    # Keep the equality guard: an actually different reservation is still an
+    # incompatible specialization, even when it would fit under the ceiling.
+    effective_pins = bootstrap_widths(
+        axes=tuple(
+            axis for axis in program.requirements.axes if axis.name in configured
+        ),
+        fixed_widths=configured,
+        width_ceilings=width_ceilings,
+    )
     for axis in program.requirements.axes:
         if axis.name not in residency.axis_widths:
             continue
         selected = min(residency.axis_widths[axis.name], axis.extent)
-        if (
-            axis.name in configured
-            and min(configured[axis.name], axis.extent) != selected
-        ):
+        if axis.name in configured and effective_pins[axis.name] != selected:
             raise ExecutionPlanningError(
                 f"Reserved width for {axis.name!r} conflicts with "
                 "explicit ExecutionConfig."
