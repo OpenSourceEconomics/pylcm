@@ -1003,9 +1003,12 @@ class Model:
                 process_grid_resolver=None,
                 call_id=call_id,
             )
-            solved = result.values  # noqa: PD011
-            if isinstance(solved, ValueStore):
-                solved._block_until_ready()  # noqa: SLF001
+            # Device work dispatched by backward induction can still be in flight
+            # here; its completion belongs to a named phase, not the residual.
+            with solve_phase(name="result_readiness", logger=log, call_id=call_id):
+                solved = result.values  # noqa: PD011
+                if isinstance(solved, ValueStore):
+                    solved._block_until_ready()  # noqa: SLF001
         return result
 
     def _solve_from_flat_params(

@@ -35,6 +35,7 @@ _PHASES = (
     "workspace_selection",
     "backward_induction",
     "result_assembly",
+    "result_readiness",
 )
 _RECORD = re.compile(
     r"^solve call (?P<call>[0-9a-f]+) phase (?P<name>[a-z_]+) "
