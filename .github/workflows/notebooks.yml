@@ -19,6 +19,7 @@ jobs:
   run:
     name: Run explanation notebooks for docs
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: prefix-dev/setup-pixi@v0.10.2
@@ -58,6 +59,7 @@ jobs:
       - run
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Fail unless the check succeeded
         run: |-
