@@ -254,7 +254,9 @@ def test_singleton_anchor_retains_subject_pin_without_manufacturing_axis() -> No
     assert admission._independent_outer_candidates(
         population=3, alignment=1, subject_width=1
     ) == (1, 2, 3)
-    choices = admission._independent_anchor_widths(axes=(), configured={"subject": 1})
+    choices = admission._independent_anchor_widths(
+        axes=(), configured={"subject": 1}, ceilings={}
+    )
     assert choices == ({"subject": 1},)
 
 
