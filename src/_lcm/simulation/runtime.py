@@ -495,6 +495,7 @@ class SimulationRuntime:
                 configured=self.execution.axis_widths,
                 residency=residency,
             ),
+            width_ceilings=self.execution.axis_width_ceilings,
             compile_candidate=_CachedSimulationCandidateCompiler(
                 runtime=self, program=program, n_subjects=n_subjects
             ),
