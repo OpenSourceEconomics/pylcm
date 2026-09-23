@@ -24,7 +24,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from types import MappingProxyType
 from typing import cast
 
@@ -4334,7 +4334,7 @@ def _lower_and_compile_wave(
     """
     n_unique = len(new_lowerings)
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = []
+        futures: dict[Future[tuple[Hashable, jax.stages.Compiled]], str] = {}
         for i, (lowering_key, candidate) in enumerate(new_lowerings.items(), 1):
             triple, _ = candidate
             regime_name, period, core_key = triple
@@ -4372,18 +4372,21 @@ def _lower_and_compile_wave(
             )
             elapsed = time.monotonic() - start
             logger.info("  lowered in %s", format_duration(seconds=elapsed))
-            futures.append(
-                pool.submit(
-                    _compile_and_log,
-                    lowering_key=lowering_key,
-                    low=low,
-                    label=label,
-                    log_kernel_memory=log_kernel_memory,
-                    logger=logger,
-                )
+            future = pool.submit(
+                _compile_and_log,
+                lowering_key=lowering_key,
+                low=low,
+                label=label,
+                log_kernel_memory=log_kernel_memory,
+                logger=logger,
             )
+            futures[future] = label
         for future in as_completed(futures):
-            lowering_key, comp = future.result()
+            try:
+                lowering_key, comp = future.result()
+            except Exception as exc:
+                exc.add_note(f"while compiling {futures[future]}")
+                raise
             compiled[lowering_key] = comp
 
 
