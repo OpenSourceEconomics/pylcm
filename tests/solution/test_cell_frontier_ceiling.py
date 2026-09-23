@@ -1,19 +1,24 @@
-"""An opt-in ceiling caps the widths the planner may tile a cell axis at.
+"""An opt-in ceiling caps the widths the planner may tile a solve or simulate axis at.
 
 `ExecutionConfig.axis_width_ceilings` names an upper bound per planner axis. The
 planner intersects its legal candidates with it: no axis extent shortens, no
-output shape changes, and every other axis keeps the widths it had.
+output shape changes, and every other axis keeps the widths it had. Solve cell axes
+and simulate subject axes are both bound, budgeted or not.
 """
 
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 import cloudpickle
+import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
+import _lcm.simulation.runtime as simulation_runtime
 from _lcm.execution.workspace_planning import (
     bootstrap_widths,
     workspace_width_candidates,
@@ -95,7 +100,11 @@ def test_execution_config_rejects_a_per_regime_ceiling() -> None:
         ExecutionConfig(axis_width_ceilings={"cell": {"working_life": 2}})  # ty: ignore[invalid-argument-type]
 
 
-def _model(*, axis_width_ceilings: Mapping[str, int] = MappingProxyType({})) -> Model:
+def _model(
+    *,
+    axis_width_ceilings: Mapping[str, int] = MappingProxyType({}),
+    device_memory_bytes: int | None = None,
+) -> Model:
     """Build a two-period GridSearch model whose cell axis has extent `_N_WEALTH`."""
     final_age_alive = START_AGE + _N_PERIODS - 2
     return Model(
@@ -113,7 +122,10 @@ def _model(*, axis_width_ceilings: Mapping[str, int] = MappingProxyType({})) -> 
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
-        execution_config=ExecutionConfig(axis_width_ceilings=axis_width_ceilings),
+        execution_config=ExecutionConfig(
+            axis_width_ceilings=axis_width_ceilings,
+            device_memory_bytes=device_memory_bytes,
+        ),
     )
 
 
@@ -176,3 +188,93 @@ def test_ceiling_leaves_the_solved_values_unchanged() -> None:
         expected=np.asarray(unbounded.values[0]["working_life"]),
         n_ulp=0,
     )
+
+
+_N_SUBJECTS = 8
+_SUBJECT_CEILING = 2
+_SIMULATION_BUDGETS = [None, 2**30]
+
+
+def _simulate_recording_widths(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    axis_width_ceilings: Mapping[str, int],
+    device_memory_bytes: int | None,
+) -> tuple[pd.DataFrame, list[Mapping[str, int]]]:
+    """Simulate `_N_SUBJECTS` subjects, recording every width a dispatch selects."""
+    selected: list[Mapping[str, int]] = []
+    plan_workspace = simulation_runtime.plan_workspace
+
+    def record(**arguments: Any) -> Any:
+        plan = plan_workspace(**arguments)
+        selected.append(plan.widths)
+        return plan
+
+    monkeypatch.setattr(simulation_runtime, "plan_workspace", record)
+    model = _model(
+        axis_width_ceilings=axis_width_ceilings, device_memory_bytes=device_memory_bytes
+    )
+    params = get_params(n_periods=_N_PERIODS)
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            "wealth": jnp.linspace(1.0, 3.0, _N_SUBJECTS),
+            "age": jnp.full(_N_SUBJECTS, float(START_AGE)),
+            "regime_id": jnp.full(_N_SUBJECTS, RegimeId.working_life, dtype=jnp.int32),
+        },
+        solution=model.solve(params=params, log_level="off"),
+        seed=7,
+        log_level="off",
+    )
+    return result.to_dataframe(), selected
+
+
+def _subject_widths(selected: list[Mapping[str, int]]) -> set[int]:
+    return {widths["subject"] for widths in selected if "subject" in widths}
+
+
+@pytest.mark.parametrize("device_memory_bytes", _SIMULATION_BUDGETS)
+def test_ceiling_caps_every_simulated_subject_width(
+    *, monkeypatch: pytest.MonkeyPatch, device_memory_bytes: int | None
+) -> None:
+    """Every simulation dispatch tiles subjects at the declared ceiling."""
+    _, selected = _simulate_recording_widths(
+        monkeypatch=monkeypatch,
+        axis_width_ceilings={"subject": _SUBJECT_CEILING},
+        device_memory_bytes=device_memory_bytes,
+    )
+
+    assert _subject_widths(selected) == {_SUBJECT_CEILING}
+
+
+@pytest.mark.parametrize("device_memory_bytes", _SIMULATION_BUDGETS)
+def test_no_ceiling_tiles_subjects_wider_than_the_ceiling(
+    *, monkeypatch: pytest.MonkeyPatch, device_memory_bytes: int | None
+) -> None:
+    """Without a ceiling the same simulation tiles subjects wider than it."""
+    _, selected = _simulate_recording_widths(
+        monkeypatch=monkeypatch,
+        axis_width_ceilings={},
+        device_memory_bytes=device_memory_bytes,
+    )
+
+    assert min(_subject_widths(selected)) > _SUBJECT_CEILING
+
+
+@pytest.mark.parametrize("device_memory_bytes", _SIMULATION_BUDGETS)
+def test_subject_ceiling_leaves_the_simulated_panel_unchanged(
+    *, monkeypatch: pytest.MonkeyPatch, device_memory_bytes: int | None
+) -> None:
+    """Narrower subject tiles partition the same panel, value for value."""
+    unbounded, _ = _simulate_recording_widths(
+        monkeypatch=monkeypatch,
+        axis_width_ceilings={},
+        device_memory_bytes=device_memory_bytes,
+    )
+    bounded, _ = _simulate_recording_widths(
+        monkeypatch=monkeypatch,
+        axis_width_ceilings={"subject": _SUBJECT_CEILING},
+        device_memory_bytes=device_memory_bytes,
+    )
+
+    pd.testing.assert_frame_equal(bounded, unbounded, check_exact=True)
