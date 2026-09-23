@@ -29,6 +29,7 @@ from types import MappingProxyType
 from typing import cast
 
 import jax
+from jax._src import config as jax_config
 
 from _lcm.engine import (
     Regime,
@@ -5615,18 +5616,17 @@ def _lowering_key(
 
 
 def _trace_settings_key() -> Hashable:
-    """Return the current trace settings that change a traced program.
+    """Return JAX's effective trace context, which a traced program depends on.
 
-    - `jax_enable_x64` selects the default integer and float widths.
-    - `jax_default_matmul_precision` selects the contraction precision.
+    It is the context JAX keys its own trace caches on. It changes with, among
+    others:
+    - `jax_enable_x64`, the default integer and float widths;
+    - `jax_numpy_dtype_promotion`, which decides whether a mixed-type operation
+      traces at all;
+    - `jax_default_matmul_precision`, the contraction precision;
+    - the ambient mesh set by `jax.set_mesh`.
     """
-    return (
-        ("jax_enable_x64", bool(jax.config.jax_enable_x64)),
-        (
-            "jax_default_matmul_precision",
-            jax.config.jax_default_matmul_precision,
-        ),
-    )
+    return ("trace_context", jax_config.trace_context())
 
 
 def _abstract_arguments_key(

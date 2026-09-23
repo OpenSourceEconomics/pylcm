@@ -375,7 +375,7 @@ _SOURCE_SEALS = {
     COMPILER_INPUTS_SOURCE: "c28ac1ab4acab2166120867158dec5eb866c082cdd05f7cb7877f2dc3c52ef8a",
     SIMULATION_OPERANDS_SOURCE: "ff1f5458bc2f2cc3f68ae8adbe574fb099cb90f9ddf76f084e09a9533c03b56a",
     SIMULATION_UNIT_SOURCE: "aa8b1c83d4de223ae1ea1cc0d9f95e08b8db54d7c41fde8e82754ffe2f7944df",
-    SIMULATION_HOST_SOURCE: "c115af3bbbe86e96ec1aabb17bc1f17a1ccbb19eb9cff613b5b737d79cf2481f",
+    SIMULATION_HOST_SOURCE: "0c3dc3bb2a6cde0a46235760e9f5f9ed1ba221461e41feecd1315b7962e0191d",
     SIMULATION_MEMORY_SOURCE: "5d425bd115783f2184855b6bdf074f37c35db76fb1a0e80bd1ea4f97fe92b6b1",
     SIMULATION_PERIOD_INPUTS_SOURCE: "e29c50dd464cd01f5f48a2c6574e13d454c577afb979e51195fa8394d1099c7f",
     SIMULATION_REPLAY_INPUTS_SOURCE: "6a8f9e1eafbebb264b11d7b6be5535c1e9cdf90e2ec1e17f2343eddc222b01b9",
@@ -393,7 +393,7 @@ _SOURCE_SEALS = {
     WORKSPACE_PLANNING_SOURCE: "0d7054688b1946a06d0f0dabb2377c767f5d2a254b5b77b6411bd58dbc4abcef",
     SIMULATION_PROGRAMS_SOURCE: "66fb5cd52ab3cf2e55d7b9baceba318c702ac646a98d367d557d0254eb98e489",
     SIMULATION_PROGRAM_TYPES_SOURCE: "222cb4d5053a26f333b0c2f97393badc50182b0ae8d90f2fccc6b8faa4eb6169",
-    SIMULATION_RUNTIME_SOURCE: "fa8427cf1c10f0564b3f77f239853bc64b9f81d8baa203b6f3c209eec509a038",
+    SIMULATION_RUNTIME_SOURCE: "09bc38dca66f43a6a4b7344ee45f118138cb020de75ca384d825b28f08fbbec0",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
@@ -421,7 +421,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "d00b9918f3e1432d9bb7f67757be20689ed6d8c85c880eeead72283f40996372",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "5c15e13ca1417cb897e1aad0c140b472aa04bf983db897fdf12037b46661626c",
+    BACKWARD_INDUCTION_SOURCE: "637867f538cf17d70243d52abdbab834f041b33bd371d48c7d2fdb87f15114ec",
     PERIOD_REPLAY_SOURCE: "ae1879ebc56c90ce5a14dcdfe70f0520b61df96c786932fac7f4a9dfc22ee1be",
     INITIAL_CONDITIONS_SOURCE: "f81657aa614684a2a91baa3fce5b6b823a30d938b9f7895ef9b1edd55609bbee",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
@@ -3120,14 +3120,14 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             },
         ),
         SIMULATION_RUNTIME_SOURCE: (
-            "49bef93ca14a3371de78170635b29b84883e5f876e686212d607ee23bbc35d3e",
+            "2c1b9b4c443afb047e19a93bed6dfe22e2b68be644e3607b682261650dba11aa",
             {
                 "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
                 "SimulationRuntime.dispatch": "8ba6cd9386f3210c6478c5f31684f9f0dd9acff0533e272dbc34bbbb4cf89463",
                 "SimulationRuntime._bind_prepared_route": "096e7a9fb3488df5c2b3cd44c1bba2231bc17806c00c3b4e988d30f0732a3617",
                 "SimulationRuntime._publish_prepared_route": "01e0eac9f1d73abe967ffcb570f7e6ec1e98eb139205ee0c50709e8028b637c1",
                 "_operand_signature": "baafdf01b0e315e7edf3e12555ddf94901382991391470e28bfc0c41fa6b747f",
-                "_prepared_route_key": "c24e6727be651d6e766953a595de9094ad87bbd0c51223e98f23bfd99a855369",
+                "_prepared_route_key": "ff75bfb0ea43f52496bd27c049f0ab34e6ca1285f919cb69fad3d78d89e54e1e",
                 "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
                 "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
                 "SimulationRuntime._prepare_materialized": "2fedd149d390a67bc1dacd7606c148e808d49df548143fedec9b221f57d9240f",
@@ -3887,7 +3887,7 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "33c1a9811b6d4691b73b4874ea34ab09fe7ce6b689f50fa4d61249089b59d059",
+        "9cb00bf7b9b2ef17111bccf2f7da6899ff598d7c688ccbf408bd3a367b555afe",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -3971,7 +3971,7 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "33c1a9811b6d4691b73b4874ea34ab09fe7ce6b689f50fa4d61249089b59d059",
+        "9cb00bf7b9b2ef17111bccf2f7da6899ff598d7c688ccbf408bd3a367b555afe",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4240,7 +4240,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "33c1a9811b6d4691b73b4874ea34ab09fe7ce6b689f50fa4d61249089b59d059",
+        "9cb00bf7b9b2ef17111bccf2f7da6899ff598d7c688ccbf408bd3a367b555afe",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4317,7 +4317,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/runtime.py": (
-        "49bef93ca14a3371de78170635b29b84883e5f876e686212d607ee23bbc35d3e",
+        "2c1b9b4c443afb047e19a93bed6dfe22e2b68be644e3607b682261650dba11aa",
         {
             "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
             "SimulationRuntime.prepare_abstract": "842dba8c1e48637eba99548bebb2858a25116785451901451be656ad3ab55a76",
@@ -4473,7 +4473,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "33c1a9811b6d4691b73b4874ea34ab09fe7ce6b689f50fa4d61249089b59d059"
+        != "9cb00bf7b9b2ef17111bccf2f7da6899ff598d7c688ccbf408bd3a367b555afe"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6329,7 +6329,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "33c1a9811b6d4691b73b4874ea34ab09fe7ce6b689f50fa4d61249089b59d059",
+        "9cb00bf7b9b2ef17111bccf2f7da6899ff598d7c688ccbf408bd3a367b555afe",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",

@@ -9,6 +9,7 @@ import pytest
 
 from _lcm.simulation.host_operations import ProfiledSimulationOperations, _operation_key
 from _lcm.simulation.initial_conditions import _PREFLIGHT_OPERATIONS
+from _lcm.solution.backward_induction import _trace_settings_key
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm.execution import ExecutionConfig
 from lcm_examples import precautionary_savings
@@ -151,3 +152,79 @@ def test_same_program_traced_with_and_without_x64_gets_separate_executables() ->
     with jax.enable_x64(new_val=False):
         narrow = _compile(owner=owner, function=_integer_range, x=x)
     assert (wide.out_info.dtype, narrow.out_info.dtype) == (jnp.int64, jnp.int32)
+
+
+def _add_integer_range(*, x: jax.Array) -> jax.Array:
+    return x + jnp.arange(3)
+
+
+def _constrain_to_mesh_axis(*, x: jax.Array) -> jax.Array:
+    return jax.lax.with_sharding_constraint(x, jax.sharding.PartitionSpec("d"))
+
+
+def _single_device_mesh() -> jax.sharding.Mesh:
+    return jax.make_mesh(
+        (1,),
+        ("d",),
+        axis_types=(jax.sharding.AxisType.Auto,),
+        devices=jax.devices()[:1],
+    )
+
+
+def _add_first_keyword(*, x: jax.Array, **offsets: float) -> jax.Array:
+    return x + next(iter(offsets.values()))
+
+
+def test_strict_dtype_promotion_gets_its_own_executable() -> None:
+    owner = ProfiledSimulationOperations()
+    x = jnp.ones(3, dtype=jnp.float32)
+    _compile(owner=owner, function=_add_integer_range, x=x)
+    with (
+        jax.numpy_dtype_promotion("strict"),
+        pytest.raises(jax.dtypes.TypePromotionError),
+    ):
+        _compile(owner=owner, function=_add_integer_range, x=x)
+
+
+def test_lowering_outside_a_mesh_gets_its_own_executable() -> None:
+    owner = ProfiledSimulationOperations()
+    x = jnp.ones(3)
+    with jax.set_mesh(_single_device_mesh()):
+        _compile(owner=owner, function=_constrain_to_mesh_axis, x=x)
+    with pytest.raises(RuntimeError):
+        _compile(owner=owner, function=_constrain_to_mesh_axis, x=x)
+
+
+def test_partial_keyword_order_gets_separate_executables() -> None:
+    owner = ProfiledSimulationOperations()
+    x = jnp.zeros(2)
+    first_a = _compile(
+        owner=owner,
+        function=functools.partial(_add_first_keyword, a=1.0, b=2.0),
+        x=x,
+    )
+    first_b = _compile(
+        owner=owner,
+        function=functools.partial(_add_first_keyword, b=2.0, a=1.0),
+        x=x,
+    )
+    assert (float(first_a(x=x)[0]), float(first_b(x=x)[0])) == (1.0, 2.0)
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        lambda: jax.enable_x64(new_val=not jax.config.jax_enable_x64),
+        lambda: jax.numpy_dtype_promotion("strict"),
+        lambda: jax.default_matmul_precision(
+            "bfloat16" if jax.config.jax_default_matmul_precision else "highest"
+        ),
+        lambda: jax.set_mesh(_single_device_mesh()),
+    ],
+    ids=["x64", "dtype_promotion", "matmul_precision", "mesh"],
+)
+def test_trace_settings_key_changes_with_each_trace_setting(setting) -> None:
+    outside = _trace_settings_key()
+    with setting():
+        inside = _trace_settings_key()
+    assert inside != outside

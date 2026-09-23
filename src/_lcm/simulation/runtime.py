@@ -63,6 +63,7 @@ from _lcm.solution.backward_induction import (
     _assert_lowered_output_tree,
     _func_dedup_key,
     _lowering_key,
+    _trace_settings_key,
 )
 from lcm.exceptions import ExecutionPlanningError
 
@@ -654,7 +655,8 @@ def _prepared_route_key(
 
     Built from the caller's own arguments before anything is materialized, so a
     warm hit reaches the record without constructing a static descriptor or a
-    width frontier first. `None` means no route can be keyed for this call.
+    width frontier first. The trace context is part of the key, because the
+    record holds compiled code. `None` means no route can be keyed for this call.
     """
     signature = _operand_signature(arguments=arguments)
     if signature is None:
@@ -667,6 +669,7 @@ def _prepared_route_key(
         program.compiler_options,
         n_subjects,
         signature,
+        _trace_settings_key(),
     )
 
 

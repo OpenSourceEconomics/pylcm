@@ -248,7 +248,10 @@ class ProfiledSimulationOperations:
 
         Inputs are identified by typed value where they have one and by object
         identity otherwise, so the same model-owned inputs return the same
-        callable and its executables stay reusable.
+        callable and its executables stay reusable. Every input the builder reads
+        must be named, and identity stands for content only because a Model's
+        regime mappings are never changed after the Model is built: a
+        `MappingProxyType` keeps its identity when its backing dict changes.
         """
         key = (
             builder,
@@ -422,7 +425,10 @@ def _program_identity(function: Callable[..., object]) -> Hashable:
     """Identify a callable, resolving a `functools.partial` to its bound values.
 
     Equal bound values give equal identities, so a partial rebuilt per call from
-    the same function and values reuses one executable.
+    the same function and values reuses one executable. Only an exact
+    `functools.partial` is resolved, keeping positional values and keyword
+    insertion order, which the function can observe. Any other callable, a
+    partial subclass or a `functools.wraps` wrapper included, is its own identity.
     """
     if type(function) is not partial:
         return _bound_identity(function)
@@ -431,8 +437,7 @@ def _program_identity(function: Callable[..., object]) -> Hashable:
         _program_identity(function.func),
         tuple(_bound_identity(value) for value in function.args),
         tuple(
-            (name, _bound_identity(value))
-            for name, value in sorted(function.keywords.items())
+            (name, _bound_identity(value)) for name, value in function.keywords.items()
         ),
     )
 
