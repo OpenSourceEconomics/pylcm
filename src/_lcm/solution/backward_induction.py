@@ -4730,7 +4730,13 @@ def _compile_and_log(
     start = time.monotonic()
     result = low.compile()
     elapsed = time.monotonic() - start
-    logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
+    # The record carries the compiled program, so a handler can read its HLO.
+    logger.info(
+        "  compiled  %s  %s",
+        label,
+        format_duration(seconds=elapsed),
+        extra={"lcm_compiled": result},
+    )
     if log_kernel_memory:
         _log_kernel_memory(compiled=result, label=label, logger=logger)
     return lowering_key, result
