@@ -24,6 +24,7 @@ inside `public_solve`:
 - `workspace_selection` — the planner's width choice per core
 - `backward_induction` — the period loop, as host wall including every wait
 - `result_assembly` — binding the generated authority and building the result
+- `result_readiness` — waiting for the returned values' device work to finish
 
 A reader reconciles the children against `public_solve` and reports what is
 left over as an explicit residual rather than normalising it away.
@@ -51,6 +52,7 @@ PHASE_NAMES = (
     "workspace_selection",
     "backward_induction",
     "result_assembly",
+    "result_readiness",
 )
 
 # Name of the bracket every other phase is nested inside.

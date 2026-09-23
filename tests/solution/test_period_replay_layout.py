@@ -51,6 +51,15 @@ directory = root / "alive@1"
 payload_path = directory / period_capture._PAYLOAD_NAME
 
 
+def replay_devices(order=None):
+    # As many devices as the capture recorded, taken in the given order.
+    with payload_path.open("rb") as stream:
+        layouts = cloudpickle.load(stream)[period_capture.LAYOUTS_KEY]
+    n_recorded = len(layouts.device_ids)
+    pool = jax.devices() if order is None else [jax.devices()[i] for i in order]
+    return pool[:n_recorded]
+
+
 def rewrite(mutate):
     with payload_path.open("rb") as stream:
         payload = cloudpickle.load(stream)
@@ -98,7 +107,7 @@ def test_every_captured_array_leaf_round_trips_to_its_recorded_descriptor(tmp_pa
         kernel_kwargs=payload["kernel_kwargs"],
         leaves=layouts.leaves,
         device_by_recorded_id=period_replay._device_substitution(
-            recorded_ids=layouts.device_ids, devices=jax.devices()
+            recorded_ids=layouts.device_ids, devices=replay_devices()
         ),
     )
     observed = period_capture.describe_array_leaves(tree=restored)
@@ -119,7 +128,7 @@ def test_a_layout_replay_validates_every_recorded_compiled_sharding(tmp_path):
 
     period_replay._assert_recorded_sharding = record
     period_replay.replay_period_on_recorded_layout(
-        directory=directory, devices=jax.devices()
+        directory=directory, devices=replay_devices()
     )
     print("COMPARED", sum("compiled" in label for label in compared))
     """
@@ -148,7 +157,7 @@ def test_a_mismatched_recorded_output_sharding_is_refused_naming_both_values(tmp
     rewrite(break_output_sharding)
     try:
         period_replay.replay_period_on_recorded_layout(
-            directory=directory, devices=jax.devices()
+            directory=directory, devices=replay_devices()
         )
     except ValueError as error:
         message = str(error)
@@ -168,15 +177,45 @@ def test_a_wrong_device_count_is_refused_naming_recorded_and_given(tmp_path):
     body = """
     try:
         period_replay.replay_period_on_recorded_layout(
-            directory=directory, devices=jax.devices()[:3]
+            directory=directory, devices=replay_devices()[:-1]
         )
     except ValueError as error:
         message = str(error)
     else:
         message = "NO-REFUSAL"
-    print("REFUSED", "recorded 4" in message and "given 3" in message)
+    n_recorded = len(replay_devices())
+    print(
+        "REFUSED",
+        f"recorded {n_recorded}" in message and f"given {n_recorded - 1}" in message,
+    )
     """
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "True"
+
+
+def test_a_capture_on_a_device_subset_records_and_replays_only_that_subset(tmp_path):
+    """A model solved on two of four devices replays on any two devices."""
+    body = """
+    import lcm
+
+    subset = root / "subset"
+    os.environ["LCM_CAPTURE_DIR"] = str(subset)
+    toy.build_model(
+        variant="brute",
+        n_periods=4,
+        n_liquid=24,
+        n_consumption=16,
+        n_savings=32,
+        distributed_kind=True,
+        execution_config=lcm.ExecutionConfig(devices=(2, 3)),
+    ).solve(params=toy.build_params(), log_level="off")
+    with (subset / "alive@1" / period_capture._PAYLOAD_NAME).open("rb") as stream:
+        recorded = cloudpickle.load(stream)[period_capture.LAYOUTS_KEY].device_ids
+    period_replay.replay_period_on_recorded_layout(
+        directory=subset / "alive@1", devices=jax.devices()[:2]
+    )
+    print("RECORDED", *recorded)
+    """
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-3:] == ["RECORDED", "2", "3"]
 
 
 def test_an_unsupported_route_is_refused_by_name(tmp_path):
@@ -194,7 +233,7 @@ def test_an_unsupported_route_is_refused_by_name(tmp_path):
     )
     try:
         period_replay.replay_period_on_recorded_layout(
-            directory=directory, devices=jax.devices()
+            directory=directory, devices=replay_devices()
         )
     except ValueError as error:
         message = str(error)
@@ -244,7 +283,7 @@ def test_a_layout_replay_reproduces_the_value_array_of_the_full_solve(tmp_path):
     """The layout-faithful replay returns exactly the array the solve published."""
     body = """
     replay = period_replay.replay_period_on_recorded_layout(
-        directory=directory, devices=jax.devices()
+        directory=directory, devices=replay_devices()
     )
     print(
         "VALUE",
@@ -263,7 +302,7 @@ def test_a_layout_replay_reports_scope_layout(tmp_path):
     """A replay that reinstated and validated the recorded layout says so."""
     body = """
     replay = period_replay.replay_period_on_recorded_layout(
-        directory=directory, devices=jax.devices()
+        directory=directory, devices=replay_devices()
     )
     print("SCOPE", replay.scope)
     """
@@ -306,7 +345,7 @@ def test_a_recorded_donation_is_reinstated_and_replays_on_its_layout(tmp_path):
 
     rewrite(record_a_donation)
     replay = period_replay.replay_period_on_recorded_layout(
-        directory=directory, devices=jax.devices()
+        directory=directory, devices=replay_devices()
     )
     print("DONATING", replay.scope)
     """
@@ -335,7 +374,7 @@ def test_a_mismatched_recorded_variant_is_refused_naming_both_values(tmp_path):
     rewrite(claim_a_donation_without_naming_one)
     try:
         period_replay.replay_period_on_recorded_layout(
-            directory=directory, devices=jax.devices()
+            directory=directory, devices=replay_devices()
         )
     except ValueError as error:
         message = str(error)
@@ -384,7 +423,7 @@ def test_a_recorded_donation_reaches_the_compiled_executable(tmp_path):
 
     rewrite(record_a_donation)
     period_replay.replay_period_on_recorded_layout(
-        directory=directory, devices=jax.devices()
+        directory=directory, devices=replay_devices()
     )
     print("DONATED", len(seen[0]))
     """
@@ -448,7 +487,7 @@ def test_capture_preserves_consumer_layout_under_device_substitution(
         )
     solution = model.solve(params=toy.build_params(), log_level="off")
     replay = period_replay.replay_period_on_recorded_layout(
-        directory=directory, devices=[jax.devices()[i] for i in {order!r}]
+        directory=directory, devices=replay_devices({order!r})
     )
     observed = np.asarray(replay.output.value)
     assert observed.dtype == np.dtype({dtype!r})
