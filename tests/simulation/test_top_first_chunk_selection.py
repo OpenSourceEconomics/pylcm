@@ -58,6 +58,7 @@ class _Profiler:
             execution=SimpleNamespace(
                 device_memory_bytes=budget,
                 axis_widths=MappingProxyType(pins),
+                axis_width_ceilings=MappingProxyType({}),
                 device_memory_cap_note=lambda: "",
             )
         )
