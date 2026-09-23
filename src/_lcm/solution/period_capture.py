@@ -164,7 +164,7 @@ class PeriodLayouts:
     """Fully qualified class name of the period kernel that ran."""
 
     device_ids: tuple[int, ...]
-    """Ids of the capturing host's devices, in `jax.devices()` order."""
+    """Ids of the devices the recorded placements use, in `jax.devices()` order."""
 
     leaves: tuple[LeafLayoutDescriptor, ...]
     """One descriptor per array leaf of `kernel_kwargs`, in leaf order."""
@@ -341,15 +341,47 @@ def _period_layouts(
     """Collect the layout descriptors of one regime-period."""
     kernel = regime.solution.period_kernels[period]
     kernel_type = type(kernel)
+    leaves = describe_array_leaves(tree=kernel_kwargs)
+    cores = {
+        core_name: describe_core(name=core_name, core=core)
+        for core_name, core in compiled_cores.items()
+    }
     return PeriodLayouts(
         route=f"{kernel_type.__module__}.{kernel_type.__qualname__}",
-        device_ids=tuple(int(device.id) for device in jax.devices()),
-        leaves=describe_array_leaves(tree=kernel_kwargs),
-        cores={
-            core_name: describe_core(name=core_name, core=core)
-            for core_name, core in compiled_cores.items()
-        },
+        device_ids=_layout_device_ids(leaves=leaves, cores=cores),
+        leaves=leaves,
+        cores=cores,
     )
+
+
+def _layout_device_ids(
+    *,
+    leaves: tuple[LeafLayoutDescriptor, ...],
+    cores: Mapping[str, CoreLayoutDescriptor | None],
+) -> tuple[int, ...]:
+    """Return the ids of the devices the recorded placements use, in host order.
+
+    Only these devices need a stand-in at replay, so a capture taken on a subset of
+    the visible devices replays on any host with as many devices. An uncommitted
+    leaf is left where the backend puts it at replay and is never substituted, so
+    its default device is not part of the layout.
+    """
+    shardings = [leaf.sharding for leaf in leaves if leaf.committed]
+    for core in cores.values():
+        if core is None:
+            continue
+        shardings.extend(core.lowered_out_shardings)
+        shardings.extend(
+            sharding
+            for _, sharding in (
+                *core.compiled_input_shardings,
+                *core.compiled_output_shardings,
+            )
+        )
+        for transfer in core.input_transfer_plan:
+            shardings.extend((transfer.stored_sharding, transfer.source_sharding))
+    used = {device_id for sharding in shardings for device_id in sharding.device_ids}
+    return tuple(int(device.id) for device in jax.devices() if int(device.id) in used)
 
 
 def _describe_named_shardings(
