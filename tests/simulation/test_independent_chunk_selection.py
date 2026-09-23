@@ -47,6 +47,7 @@ def _selector(
             execution=SimpleNamespace(
                 device_memory_bytes=100,
                 axis_widths=pins,
+                axis_width_ceilings=MappingProxyType({}),
                 device_memory_cap_note=lambda: "",
             )
         ),
@@ -327,6 +328,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
             execution=SimpleNamespace(
                 device_memory_bytes=totals[64],
                 axis_widths={"subject": 64},
+                axis_width_ceilings=MappingProxyType({}),
                 device_memory_cap_note=lambda: "",
             )
         ),
