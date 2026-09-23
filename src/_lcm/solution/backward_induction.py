@@ -47,7 +47,9 @@ from _lcm.execution.core_program import (
     CoreProgram,
     MaterializedCoreProgram,
     ProgramScope,
+    ReducedAxis,
     ResolvedCoreProgram,
+    TiledOutputAxis,
     ValueRead,
     _value_read_argument_leaf,
     core_program_graph,
@@ -76,6 +78,7 @@ from _lcm.execution.footprint import (
     per_device_footprint,
     plan_resident_inventory,
 )
+from _lcm.execution.hlo_fusions import ReduceFusionVerdict, classify_reduce_fusions
 from _lcm.execution.internal_outputs import (
     ResolvedProducer,
     assert_width_invariant_internal_outputs,
@@ -117,6 +120,7 @@ from _lcm.execution.workspace_planning import (
     BoundedWidthSelector,
     CompilerMemoryReservation,
     WorkspacePlan,
+    _admissible_width,
     compiler_memory_reservation,
     plan_workspace,
     workspace_width_candidates,
@@ -3887,6 +3891,37 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                         triple, 0
                     ),
                 ) from error
+            if execution.halve_on_materialised_gather:
+                plan = _halve_while_gather_materialises(
+                    triple=triple,
+                    plan=plan,
+                    axes=representative.requirements.axes,
+                    fixed_widths=execution.widths_for(regime_name=triple[0]),
+                    width_ceilings=execution.axis_width_ceilings,
+                    frontier=frontier,
+                    compile_candidate=functools.partial(
+                        _lower_and_compile_candidate,
+                        fallback_keys=fallback_keys,
+                        fallback_donations=fallback_donations,
+                        lowering_keys=lowering_keys,
+                        resolved_programs=resolved_programs,
+                        all_layouts=all_layouts,
+                        internal_templates=internal_templates,
+                        donations=donations,
+                        ages=ages,
+                        budget_bytes=budget_bytes,
+                        n_workers=n_workers,
+                        logger=logger,
+                        compiled=compiled,
+                        labels=labels,
+                        memory_by_lowering_key=memory_by_lowering_key,
+                        resident_inventory=resident_inventory,
+                    ),
+                    logger=logger,
+                )
+                programs_by_width[_width_key(widths=plan.widths)] = resolved_programs[
+                    (triple, _width_key(widths=plan.widths))
+                ]
             selected_candidate = (triple, _width_key(widths=plan.widths))
             selected = programs_by_width[selected_candidate[1]]
             selected_programs[triple] = selected
@@ -3924,6 +3959,180 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         ),
         donation_fallbacks=MappingProxyType(selected_fallbacks),
     )
+
+
+def _halve_while_gather_materialises(
+    *,
+    triple: _CoreTriple,
+    plan: WorkspacePlan[jax.stages.Compiled],
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int],
+    width_ceilings: Mapping[str, int],
+    frontier: _LazyCandidateFrontier,
+    compile_candidate: Callable[..., jax.stages.Compiled],
+    logger: logging.Logger,
+) -> WorkspacePlan[jax.stages.Compiled]:
+    """Halve the cell width while the compiled program materialises a gather table.
+
+    Whether XLA recomputes a gathered table inside the reduction or writes it to
+    device memory and reads it back depends on the device, the whole program and
+    the cell count, so it is read off the compiled program rather than predicted.
+    Inside the fused region the width does not move the kernel's throughput, so
+    halving is enough; no finer search follows. Each halving is rounded onto the
+    widths the axis admits and never exceeds its ceiling.
+
+    Raises:
+        ExecutionPlanningError: The program still materialises a gather table at
+            the narrowest width its axis admits.
+
+    """
+    axis = _halvable_axis(axes=axes, fixed_widths=fixed_widths)
+    if axis is None:
+        return plan
+    widths = plan.widths
+    executable = plan.compiled
+    while (
+        fusion := _materialised_gather_fusion(compiled=executable, widths=widths)
+    ) is not None:
+        width = widths[axis.name]
+        narrower = _admissible_width(
+            axis=axis, width=width // 2, ceiling=width_ceilings.get(axis.name)
+        )
+        if narrower >= width:
+            msg = (
+                f"The compiled program {_describe_candidate(candidate=(triple, ()))} "
+                f"materialises a gather table in reduce fusion {fusion!r} at "
+                f"{axis.name!r} width {width}, the narrowest width the axis admits. "
+                "Set `ExecutionConfig(halve_on_materialised_gather=False)` to keep "
+                "the materialised program."
+            )
+            raise ExecutionPlanningError(msg)
+        logger.info(
+            "  %r at %r period %d: reduce fusion %r materialises a gather table at "
+            "%r width %d; recompiling at %d",
+            triple[2],
+            triple[0],
+            triple[1],
+            fusion,
+            axis.name,
+            width,
+            narrower,
+        )
+        widths = MappingProxyType({**widths, axis.name: narrower})
+        executable = compile_candidate(
+            candidate=frontier.bind_widths(triple=triple, widths=widths)
+        )
+    return WorkspacePlan(widths=widths, peak_bytes=None, compiled=executable)
+
+
+def _halvable_axis(
+    *,
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int],
+) -> TiledOutputAxis | None:
+    """Return the axis halved while a gather materialises, unless its width is fixed."""
+    for axis in axes:
+        if (
+            isinstance(axis, TiledOutputAxis)
+            and axis.halve_on_materialised_gather
+            and axis.name not in fixed_widths
+        ):
+            return axis
+    return None
+
+
+def _materialised_gather_fusion(
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
+) -> str | None:
+    """Name one reduce fusion reading a gather table another fusion wrote, if any."""
+    del widths
+    text = compiled.as_text()
+    if text is None:
+        msg = "A compiled solve program has no HLO text to classify."
+        raise RuntimeError(msg)
+    return next(
+        (
+            name
+            for name, verdict in classify_reduce_fusions(text).items()
+            if verdict is ReduceFusionVerdict.MATERIALISED_GATHER
+        ),
+        None,
+    )
+
+
+def _lower_and_compile_candidate(
+    *,
+    candidate: _CoreCandidate,
+    fallback_keys: Mapping[_CoreCandidate, Hashable],
+    fallback_donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    lowering_keys: Mapping[_CoreCandidate, Hashable],
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
+    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    ages: AgeGrid,
+    budget_bytes: int | None,
+    n_workers: int,
+    logger: logging.Logger,
+    compiled: dict[Hashable, jax.stages.Compiled],
+    labels: dict[Hashable, str],
+    memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation],
+    resident_inventory: Mapping[_CoreTriple, ResidentInventory],
+) -> jax.stages.Compiled:
+    """Compile one bound candidate and its donation-free variant outside the waves.
+
+    Under a budget every variant is admitted as a wave admits it, on its compiler
+    reservation plus the bytes it leaves resident at the core's position.
+
+    Raises:
+        ExecutionPlanningError: A variant of the candidate exceeds the budget.
+
+    """
+    variants = (
+        (lowering_keys, donations),
+        *(((fallback_keys, fallback_donations),) if candidate in fallback_keys else ()),
+    )
+    for keys, variant_donations in variants:
+        new = _uncompiled(keys={candidate: keys[candidate]}, compiled=compiled)
+        _lower_and_compile_wave(
+            new_lowerings=new,
+            resolved_programs=resolved_programs,
+            all_layouts=all_layouts,
+            internal_templates=internal_templates,
+            donations=variant_donations,
+            ages=ages,
+            n_triples_per_lowering=dict.fromkeys(new, 1),
+            log_kernel_memory=budget_bytes is None,
+            n_workers=n_workers,
+            logger=logger,
+            compiled=compiled,
+            labels=labels,
+        )
+        if budget_bytes is None:
+            continue
+        triple = candidate[0]
+        resident = _measure_variant(
+            variant_key=keys[candidate],
+            candidate=candidate,
+            triple=triple,
+            compiled=compiled,
+            labels=labels,
+            memory_by_lowering_key=memory_by_lowering_key,
+            resolved_programs=resolved_programs,
+            internal_templates=internal_templates,
+            resident_inventory=resident_inventory,
+            logger=logger,
+        )
+        reservation = memory_by_lowering_key[keys[candidate]].reservation_bytes
+        if reservation + resident > budget_bytes:
+            msg = (
+                f"The narrower width {dict(resolved_programs[candidate].tile_widths)!r}"
+                f" of {_describe_candidate(candidate=candidate)} needs {reservation} "
+                f"reservation bytes beside {resident} resident bytes, exceeding the "
+                f"{budget_bytes}-byte budget."
+            )
+            raise ExecutionPlanningError(msg)
+    return compiled[lowering_keys[candidate]]
 
 
 # The planner's lookups are instances of module-level classes rather than functions
@@ -4974,7 +5183,16 @@ def _resolve_output_layouts_and_lowering_keys(
             input_transfer_plan=transfer_plan,
             abstract_inputs=True,
         )
-        if len(width_candidates) > 1:
+        # A core whose cell axis may be halved after compilation keeps its
+        # frontier even at one ranked width, so the narrower width can be bound.
+        if len(width_candidates) > 1 or (
+            execution_widths.halve_on_materialised_gather
+            and _halvable_axis(
+                axes=materialized.requirements.axes,
+                fixed_widths=execution_widths.widths_for(regime_name=regime_name),
+            )
+            is not None
+        ):
             frontiers[triple] = _CoreFrontier(
                 program=materialized,
                 transfer_plan=transfer_plan,

@@ -246,6 +246,19 @@ class ExecutionConfig:
     donate_buffers: bool = True
     """Allow eligible owned inputs to be donated by compiled solve programs."""
 
+    halve_on_materialised_gather: bool = True
+    """Halve a GridSearch cell width while its compiled reduce materialises a gather.
+
+    Past a device- and program-dependent cell count, XLA writes the continuation
+    lookup table to device memory and the reduction reads it back, instead of
+    recomputing it inside the reduction. The planner reads each compiled GridSearch
+    solve program and, while one of its reduce fusions reads a gather table another
+    fusion wrote, recompiles it at half the cell width. A width fixed through
+    `axis_widths` is kept as given. A program that still materialises at the
+    narrowest width its cell axis admits fails loudly. Other solvers and simulation
+    are not checked.
+    """
+
     width_search: WidthSearchPolicy = WidthSearchPolicy()
     """How much of the width frontier a budgeted solve is willing to compile.
 
@@ -267,6 +280,10 @@ class ExecutionConfig:
             raise TypeError(msg)
         if type(self.donate_buffers) is not bool:
             raise TypeError("ExecutionConfig.donate_buffers must be an exact bool.")
+        if type(self.halve_on_materialised_gather) is not bool:
+            raise TypeError(
+                "ExecutionConfig.halve_on_materialised_gather must be an exact bool."
+            )
         if type(self.simulation_sharding) is not str:
             raise TypeError("ExecutionConfig.simulation_sharding must be an exact str.")
         if self.simulation_sharding not in ("legacy", "subjects"):

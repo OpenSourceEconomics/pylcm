@@ -78,6 +78,9 @@ class ResolvedExecution:
     donate_buffers: bool = True
     """Whether eligible solve inputs may be donated to a compiled executable."""
 
+    halve_on_materialised_gather: bool = True
+    """Whether GridSearch cell widths are halved while a gather materialises."""
+
     width_search: WidthSearchPolicy = dataclasses.field(
         default_factory=WidthSearchPolicy
     )
@@ -267,6 +270,7 @@ def resolve_execution_config(
         device_memory_headroom_fraction=config.device_memory_headroom_fraction,
         device_pool_limit_bytes=selected_limits,
         donate_buffers=config.donate_buffers,
+        halve_on_materialised_gather=config.halve_on_materialised_gather,
         width_search=config.width_search,
         simulation_sharding=config.simulation_sharding,
     )
