@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.execution.hlo_fusions import UnrecognisedHloError
 from _lcm.solution import backward_induction
@@ -167,7 +168,7 @@ def test_a_fixed_cell_width_is_never_halved() -> None:
 
 
 def test_execution_config_refuses_a_non_bool_halving_switch() -> None:
-    with pytest.raises(TypeError, match="halve_on_materialised_gather"):
+    with pytest.raises(BeartypeCallHintViolation, match="halve_on_materialised_gather"):
         ExecutionConfig(halve_on_materialised_gather=1)  # ty: ignore[invalid-argument-type]
 
 
