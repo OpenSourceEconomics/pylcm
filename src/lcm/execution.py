@@ -248,6 +248,10 @@ class ExecutionConfig:
     needs no remainder program. A fixed width or a ceiling below the extent
     still binds. A bounded search refused at the covered width proposes the
     power-of-two width next. An empty tuple covers nothing.
+
+    Only solve planning reads this option. Forward simulation plans its programs
+    without it, so naming an axis that only simulation programs declare is
+    accepted but covers nothing.
     """
 
     devices: tuple[int, ...] | None = None

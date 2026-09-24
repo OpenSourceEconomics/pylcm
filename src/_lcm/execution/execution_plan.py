@@ -46,7 +46,7 @@ class ResolvedExecution:
     """Widest block the planner may compile each named axis at; empty means none."""
 
     covered_axes: frozenset[str] = frozenset()
-    """Axis names whose conservative seed covers the whole extent."""
+    """Axis names whose conservative seed covers the whole extent; solve only."""
 
     device_memory_bytes: int | None
     """Effective per-device workspace budget every phase admits against, or `None`.
