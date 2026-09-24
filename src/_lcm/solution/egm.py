@@ -1222,11 +1222,12 @@ class _RegimeMassGuardedCore:
     ) -> tuple[FloatND, EGMCarry]:
         """Run the core and poison its value and carry channels on lost mass."""
         value, carry = self.core(**kwargs)
+        leaves = carry.leaves()
         return jnp.where(retains_regime_mass, value, jnp.nan), replace(
             carry,
-            value=jnp.where(retains_regime_mass, carry.value, jnp.nan),
+            value=jnp.where(retains_regime_mass, leaves[("value",)], jnp.nan),
             marginal_utility=jnp.where(
-                retains_regime_mass, carry.marginal_utility, jnp.nan
+                retains_regime_mass, leaves[("marginal_utility",)], jnp.nan
             ),
         )
 
