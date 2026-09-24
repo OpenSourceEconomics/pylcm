@@ -664,7 +664,7 @@ def test_the_declared_route_names_are_the_route_tables_names() -> None:
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, action_in_costate=True, **_SMALL
         ),
-        build_params=nbegm_ride_discrete_toy.build_params,
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(final_age_alive=2.0),
     ),
 """,
                 "",
