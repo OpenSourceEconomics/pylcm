@@ -288,3 +288,21 @@ def test_each_compiled_program_is_classified_once_per_solve(*, halvings: int) ->
     )
 
     assert set(counts.values()) == {1}
+
+
+def test_a_second_solve_of_the_same_model_classifies_no_program() -> None:
+    """Verdicts outlive the solve that read them, so a warm solve reads no HLO."""
+    model = _model_with(ExecutionConfig())
+    first: collections.Counter[int] = collections.Counter()
+    second: collections.Counter[int] = collections.Counter()
+    for counts in (first, second):
+        _solve(
+            config=ExecutionConfig(),
+            limit=None,
+            model=model,
+            check=functools.partial(
+                _counting, counts=counts, limit=_planned_width() // 2
+            ),
+        )
+
+    assert (first.total() > 0, second.total()) == (True, 0)
