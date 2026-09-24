@@ -421,7 +421,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "3a4c5719c3dbd7dc37901b266a7fbb3a4694c945f12832d7c2da5c080a72d12a",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "fac1af553a8985bfda9997e605d7056b7e7bba2e0c315a0a67091cf245d0e952",
+    BACKWARD_INDUCTION_SOURCE: "fb7dcc5ccca9c19cf568f9ef723036b1d3425e3893ca9681c9d2e33fceb2b34c",
     PERIOD_REPLAY_SOURCE: "ae1879ebc56c90ce5a14dcdfe70f0520b61df96c786932fac7f4a9dfc22ee1be",
     INITIAL_CONDITIONS_SOURCE: "a3e4c4ecbb5ed4a1160b584d446e61f54c0123ebd8fb4799eadcd04a2c7e5210",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
@@ -3888,7 +3888,7 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2af9d63bbefc849413af28164cf88baba1d2233c41db2831f8048aec753bb29e",
+        "f4034eeaf2348715d642613160b298f7f91a35b57f92f26bb96e0c9cd45864cc",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -3972,7 +3972,7 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2af9d63bbefc849413af28164cf88baba1d2233c41db2831f8048aec753bb29e",
+        "f4034eeaf2348715d642613160b298f7f91a35b57f92f26bb96e0c9cd45864cc",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4241,7 +4241,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2af9d63bbefc849413af28164cf88baba1d2233c41db2831f8048aec753bb29e",
+        "f4034eeaf2348715d642613160b298f7f91a35b57f92f26bb96e0c9cd45864cc",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4438,7 +4438,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_evaluate_edge_fold": "1da268a4d4b0f6b5499bd8522803f916d0a194b8cd3be02b190e0797bb9a28ff",
-            "_lower_and_compile_wave": "5861fc4d596eafe76732a20b20a831e2abe1b55a24b3d1c19968b5bc89e821ff",
+            "_lower_and_compile_wave": "d628b07c696967d383f5c3346c1da43c4c2ffb1cf283ef472e2769834313d86b",
             "_run_period_kernel": "7507b0912580b34a2e83b9d82d5cf7e5c2f2e0606b2f3e8e8bcf5718a169ffd6",
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
@@ -4474,7 +4474,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "2af9d63bbefc849413af28164cf88baba1d2233c41db2831f8048aec753bb29e"
+        != "f4034eeaf2348715d642613160b298f7f91a35b57f92f26bb96e0c9cd45864cc"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6334,7 +6334,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2af9d63bbefc849413af28164cf88baba1d2233c41db2831f8048aec753bb29e",
+        "f4034eeaf2348715d642613160b298f7f91a35b57f92f26bb96e0c9cd45864cc",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -10108,12 +10108,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=backward_induction_source,
                 old=(
-                    "            resolved.function,\n"
-                    "            static_argnames=tuple(static_kwargs),"
+                    "                resolved.function,\n"
+                    "                static_argnames=tuple(static_kwargs),"
                 ),
                 new=(
-                    "            candidate_filter(resolved.function),\n"
-                    "            static_argnames=tuple(static_kwargs),"
+                    "                candidate_filter(resolved.function),\n"
+                    "                static_argnames=tuple(static_kwargs),"
                 ),
                 label="AOT resolved function",
             ),
@@ -10123,12 +10123,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=backward_induction_source,
                 old=(
-                    "        low = jitted.lower(\n"
-                    "            **resolved.arguments, "
+                    "            low = jitted.lower(\n"
+                    "                **resolved.arguments, "
                     "**internal_templates[candidate], **static_kwargs\n"
-                    "        )"
+                    "            )"
                 ),
-                new="        low = jitted.lower(**static_kwargs)",
+                new="            low = jitted.lower(**static_kwargs)",
                 label="AOT resolved arguments",
             ),
         },
@@ -10161,8 +10161,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            out_shardings=layout.out_shardings,",
-                new="            out_shardings=None,",
+                old="                out_shardings=layout.out_shardings,",
+                new="                out_shardings=None,",
                 label="planned JIT output sharding",
             ),
         },
