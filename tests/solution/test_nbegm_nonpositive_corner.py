@@ -7,9 +7,11 @@ exactly zero an infinity — so an unguarded corner wins the upper envelope
 wherever it brackets and reports a positive value, a negative consumption
 policy, or a magnitude no feasible action can reach.
 
-Every step therefore NaN-deads its corner where cash-on-hand is non-positive:
-the liquid points with no feasible action publish NaN, and the points that do
-have one are untouched by the corner that could not exist beside them.
+Every step therefore NaN-deads its corner where cash-on-hand is non-positive,
+and the points that do have a feasible action are untouched by the corner that
+could not exist beside them. A per-case sub-step then reports NaN at a point with
+no feasible action, since it has no candidate there; a published step reports the
+infeasible carry, a `-inf` value.
 """
 
 import jax.numpy as jnp
@@ -109,8 +111,9 @@ def test_case_step_matches_the_dense_brute_on_the_feasible_nodes():
     )
 
 
-def test_multi_interval_step_publishes_nan_where_cash_on_hand_is_non_positive():
-    """The piecewise-affine step drops its borrowing corner below a zero budget."""
+def test_multi_interval_step_publishes_minus_inf_where_cash_on_hand_is_non_positive():
+    """The piecewise-affine step drops its borrowing corner below a zero budget and
+    publishes the infeasible carry there."""
     value, _marginal, _policy = nbegm_multi_interval_step(
         next_value=NEXT_VALUE,
         next_marginal=NEXT_MARGINAL,
@@ -125,7 +128,7 @@ def test_multi_interval_step_publishes_nan_where_cash_on_hand_is_non_positive():
         coh_intercepts=jnp.asarray([0.0]),
         breakpoints=jnp.zeros((0,)),
     )
-    assert np.isnan(np.asarray(value)[INFEASIBLE]).all()
+    assert np.isneginf(np.asarray(value)[INFEASIBLE]).all()
 
 
 def test_recurring_jump_case_marks_its_non_positive_corner_dead():
