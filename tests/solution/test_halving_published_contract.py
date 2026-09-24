@@ -28,7 +28,6 @@ from tests.solution.test_grid_search_cell_axis import (
 from tests.solution.test_grid_search_cell_axis import (
     _params,
     _RegimeId,
-    _Work,
 )
 
 _KINDS = ("singleton", "ev1", "collective")
@@ -204,7 +203,7 @@ def test_singleton_reference_simulation_chooses_to_work() -> None:
     """The fixture's discrete optimum is separated, so the choice is deterministic."""
     model, solution, _ = _reference(kind="singleton")
     choices = _choices(model=model, solution=solution)
-    assert set(choices["work"].dropna().unique()) == {_Work.on}
+    assert set(choices["work"].dropna().astype(str).unique()) == {"on"}
 
 
 @pytest.mark.parametrize("firing", [False, True])
