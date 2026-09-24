@@ -45,7 +45,6 @@ import pandas as pd
 from dags.tree import tree_path_from_qname
 
 from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
-from _lcm.execution.workspace_planning import plan_workspace
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
 from _lcm.simulation.host_operations import StaticArgument
@@ -927,11 +926,19 @@ def validate_joint_transitions_all_periods(
                     }
                     if not joint_laws:
                         continue
-                    compute_weights = get_next_stochastic_weights_function(
-                        regime_name=target,
-                        functions=functions,
-                        transitions=phase.transitions[target],
-                        transition_plans=phase.transition_plans,
+                    weight_inputs = {
+                        "regime_name": target,
+                        "functions": functions,
+                        "transitions": phase.transitions[target],
+                        "transition_plans": phase.transition_plans,
+                    }
+                    compute_weights = (
+                        get_next_stochastic_weights_function(**weight_inputs)
+                        if current_memory is None
+                        else current_memory.producers.built(
+                            builder=get_next_stochastic_weights_function,
+                            **weight_inputs,
+                        )
                     )
                     evaluated = _evaluate_joint_weights(
                         func=compute_weights,
@@ -1583,22 +1590,19 @@ def _evaluate_state_probability_law(
         stored_sharding=jax.sharding.SingleDeviceSharding(memory.subject_devices[0]),
         devices=(memory.subject_devices[0],),
     )
-    compiler = _TransitionLawCompiler(
+    executable = memory.producers.admit_producer(
         function=partial(
             _state_probability_law,
             grid_names=tuple(grid_args),
             func=func,
         ),
         arguments=jax.tree.map(_abstract_transition_operand, dict(placed)),
+        devices=memory.subject_devices,
         output_sharding=output_sharding,
-    )
-    plan = plan_workspace(
-        axes=(),
-        compile_candidate=compiler,
         budget_bytes=memory.budget_bytes,
         resident_bytes=max(external.values()),
     )
-    return cast("FloatND", plan.compiled(**placed).block_until_ready())
+    return cast("FloatND", executable(**placed).block_until_ready())
 
 
 def _evaluate_admitted_transition_producer(
@@ -1628,18 +1632,15 @@ def _evaluate_admitted_transition_producer(
         stored_sharding=jax.sharding.SingleDeviceSharding(memory.subject_devices[0]),
         devices=(memory.subject_devices[0],),
     )
-    compiler = _TransitionLawCompiler(
+    executable = memory.producers.admit_producer(
         function=function,
         arguments=jax.tree.map(_abstract_transition_operand, dict(placed)),
+        devices=memory.subject_devices,
         output_sharding=output_sharding,
-    )
-    plan = plan_workspace(
-        axes=(),
-        compile_candidate=compiler,
         budget_bytes=memory.budget_bytes,
         resident_bytes=max(external.values()),
     )
-    return jax.block_until_ready(plan.compiled(**placed))
+    return jax.block_until_ready(executable(**placed))
 
 
 def _state_probability_law(
@@ -1657,31 +1658,6 @@ def _state_probability_law(
     return jax.vmap(
         _GridPointCall(names=grid_names, scalar_kwargs=scalar_kwargs, func=func)
     )(*flat_arrays)
-
-
-@dataclass(frozen=True, kw_only=True)
-class _TransitionLawCompiler:
-    """Keep one user law call-local while compiling its concrete producer shape."""
-
-    function: Callable[..., object]
-    """Complete user-law producer with grid construction inside its boundary."""
-
-    arguments: Mapping[str, object]
-    """Placed abstract operands retained in the compiler allocation report."""
-
-    output_sharding: jax.sharding.Sharding
-    """Selected-device placement fixed before admission and first dispatch."""
-
-    def __call__(self, widths: Mapping[str, int]) -> jax.stages.Compiled:
-        """Lower the complete producer without allocating its result."""
-        if widths:
-            raise ExecutionPlanningError("Transition validation declares no axes.")
-        lowered = jax.jit(
-            self.function,
-            keep_unused=True,
-            out_shardings=self.output_sharding,
-        ).lower(**self.arguments)
-        return lowered.compile()
 
 
 def _abstract_transition_operand(value: object) -> object:

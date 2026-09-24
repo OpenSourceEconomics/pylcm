@@ -29,6 +29,8 @@ from types import MappingProxyType
 from typing import cast
 
 import jax
+from jax._src import config as jax_config
+from jax._src import core as jax_core
 
 from _lcm.engine import (
     Regime,
@@ -5116,6 +5118,7 @@ def _lowering_keys(
             _donated_arguments(donations=donations[candidate]),
             regime.solution.submesh_device_ids,
             resolved.compiler_options,
+            _trace_settings_key(),
         )
     return keys
 
@@ -5596,7 +5599,12 @@ def _lowering_key(
     placement_key: Hashable | None = None,
     compiler_options: tuple[tuple[str, int], ...] = (),
 ) -> Hashable:
-    """Identify a program's tree, specialization, layout, donations and devices."""
+    """Identify a program's tree, specialization, layout, donations and devices.
+
+    The trace settings that change what a traced program computes are part of the
+    identity, so a program traced under different settings is a different
+    executable.
+    """
     return (
         program_identity,
         (None if arguments is None else _abstract_arguments_key(arguments=arguments)),
@@ -5606,6 +5614,40 @@ def _lowering_key(
         donated_arguments,
         placement_key,
         compiler_options,
+        _trace_settings_key(),
+    )
+
+
+def _trace_settings_key() -> Hashable:
+    """Return JAX's effective trace context, which a traced program depends on.
+
+    It is the context JAX keys its own trace caches on. It changes with, among
+    others:
+    - `jax_enable_x64`, the default integer and float widths;
+    - `jax_numpy_dtype_promotion`, which decides whether a mixed-type operation
+      traces at all;
+    - `jax_default_matmul_precision`, the contraction precision;
+    - the ambient mesh set by `jax.set_mesh`.
+
+    The context holds JAX's interned axis environment as an object whose repr
+    is its address, so it is spelled by its contents: a key then reads the same
+    in every process that traces under the same context.
+    """
+    return (
+        "trace_context",
+        tuple(_spelled_trace_value(value) for value in jax_config.trace_context()),
+    )
+
+
+def _spelled_trace_value(value: object) -> object:
+    """Replace an axis environment by the axis names and sizes it binds."""
+    if not isinstance(value, jax_core.AxisEnv):
+        return value
+    return (
+        "axis_env",
+        tuple(sorted(value.axis_sizes.items(), key=repr)),
+        tuple(sorted(value.spmd_axis_names, key=repr)),
+        tuple(sorted(value.explicit_mesh_axis_names, key=repr)),
     )
 
 

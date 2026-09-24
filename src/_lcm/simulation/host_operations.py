@@ -1,8 +1,12 @@
 """Profile exact pure forward operations against current owned device payloads.
 
-Only module-level functions with immutable static bindings belong here. The cache
-owns abstract signatures and executable code; argument arrays and live-footprint
-providers belong to the calling simulation unit. No compiler options are supplied.
+An executable is determined by its callable (its code and the values it captured
+when traced), the trace settings, and the abstract operands. Every value that
+differs between calls reaches an operation as an operand, so caching a callable,
+closures included, is exact under JAX's purity contract; the owner's lifetime is a
+memory question only. The cache owns abstract signatures and executable code;
+argument arrays and live-footprint providers belong to the calling simulation
+unit. No compiler options are supplied.
 """
 
 import dataclasses
@@ -13,6 +17,7 @@ from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import Future
 from functools import cache, partial
 from types import FunctionType, MappingProxyType
+from typing import cast
 
 import jax
 
@@ -68,6 +73,8 @@ class ProfiledSimulationOperations:
     in_flight: dict[Hashable, Future[_ProfiledOperation]] = dataclasses.field(
         default_factory=dict, repr=False
     )
+    builds: dict[Hashable, object] = dataclasses.field(default_factory=dict, repr=False)
+    """Callables composed by `built`, keyed by builder and input identities."""
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock, repr=False)
 
     def dispatch(
@@ -197,6 +204,66 @@ class ProfiledSimulationOperations:
             output_sharding=subject if subject_outputs else None,
         )
 
+    def admit_producer(
+        self,
+        *,
+        function: Callable[..., object],
+        arguments: Mapping[str, object],
+        devices: tuple[jax.Device, ...],
+        output_sharding: jax.sharding.Sharding | None,
+        budget_bytes: int,
+        resident_bytes: int,
+    ) -> jax.stages.Compiled:
+        """Admit one producer over placed abstract operands and return its code.
+
+        Admission runs on every call; only the executable and its compiler
+        accounting are reused for the same program, operands and placement.
+        """
+        static = MappingProxyType({})
+        key = _operation_key(
+            function=function,
+            arguments=arguments,
+            static_arguments=static,
+            subject_outputs=False,
+            devices=devices,
+            output_sharding=output_sharding,
+        )
+        plan = plan_axis_free_workspace(
+            compile_candidate=partial(
+                self.compile_candidate,
+                key=key,
+                function=function,
+                arguments=arguments,
+                static_arguments=static,
+                output_sharding=output_sharding,
+            ),
+            budget_bytes=budget_bytes,
+            resident_bytes=resident_bytes,
+            memory_for=_operation_memory,
+        )
+        return plan.compiled.executable
+
+    def built[T](self, *, builder: Callable[..., T], **inputs: object) -> T:
+        """Return the callable `builder` composes from these input objects.
+
+        Inputs are identified by typed value where they have one and by object
+        identity otherwise, so the same model-owned inputs return the same
+        callable and its executables stay reusable. Every input the builder reads
+        must be named, and identity stands for content only because a Model's
+        regime mappings are never changed after the Model is built: a
+        `MappingProxyType` keeps its identity when its backing dict changes.
+        """
+        key = (
+            builder,
+            tuple((name, _bound_identity(value)) for name, value in inputs.items()),
+        )
+        with self.lock:
+            if key in self.builds:
+                return cast("T", self.builds[key])
+        composed = builder(**inputs)
+        with self.lock:
+            return cast("T", self.builds.setdefault(key, composed))
+
     def compile_candidate(
         self,
         *,
@@ -290,21 +357,19 @@ def _validated_operation_function(
 ) -> Callable[..., object]:
     """Validate a profiled operation's function identity once at registration.
 
-    `inspect.unwrap`, the module-level/closure/qualname checks and the default
-    values below depend only on the function object, never on a call's current
+    The executable is determined by the function (its code and captured values),
+    the trace settings and the abstract operands, so a pure function qualifies
+    whether or not it closes over values. `inspect.unwrap` and the default values
+    below depend only on the function object, never on a call's current
     arguments; they cannot change between calls with the same `function`. Cache
     them per function so a warm dispatch does no re-inspection, while every
     value-dependent check in `_validated_static_arguments` stays on the per-call
     path below.
     """
     original = inspect.unwrap(function)
-    if (
-        not isinstance(original, FunctionType)
-        or original.__closure__
-        or "<locals>" in original.__qualname__
-    ):
+    if not isinstance(original, FunctionType):
         raise ExecutionPlanningError(
-            "Profiled simulation operations require module-level pure functions."
+            "Profiled simulation operations require pure Python functions."
         )
     for default in (
         *tuple(original.__defaults__ or ()),
@@ -342,17 +407,66 @@ def _operation_key(
     static_arguments: Mapping[str, object],
     subject_outputs: bool,
     devices: tuple[jax.Device, ...],
+    output_sharding: jax.sharding.Sharding | None = None,
 ) -> Hashable:
     """Identify the same abstract executable at preparation and concrete dispatch."""
     return _lowering_key(
-        program_identity=function,
+        program_identity=_program_identity(function),
         arguments=arguments,
         specialization_key=tuple(
             (name, _static_identity(value)) for name, value in static_arguments.items()
         ),
-        layout_key=("simulation_host_operation", subject_outputs),
+        layout_key=("simulation_host_operation", subject_outputs, output_sharding),
         placement_key=devices,
     )
+
+
+def _program_identity(function: Callable[..., object]) -> Hashable:
+    """Identify a callable, resolving a `functools.partial` to its bound values.
+
+    Equal bound values give equal identities, so a partial rebuilt per call from
+    the same function and values reuses one executable. Only an exact
+    `functools.partial` is resolved, keeping positional values and keyword
+    insertion order, which the function can observe. Any other callable, a
+    partial subclass or a `functools.wraps` wrapper included, is its own identity.
+    """
+    if type(function) is not partial:
+        return _bound_identity(function)
+    return (
+        partial,
+        _program_identity(function.func),
+        tuple(_bound_identity(value) for value in function.args),
+        tuple(
+            (name, _bound_identity(value)) for name, value in function.keywords.items()
+        ),
+    )
+
+
+def _bound_identity(value: object) -> Hashable:
+    """Identify a bound value by typed value, else by the object it is."""
+    try:
+        return _static_identity(value)
+    except ExecutionPlanningError:
+        return _HeldObject(value)
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class _HeldObject:
+    """Compare one object by identity while holding it alive in a cache key.
+
+    Holding the object keeps its `id` from being reused by another object for as
+    long as the key exists.
+    """
+
+    value: object
+
+    def __eq__(self, other: object) -> bool:
+        """Equal only to a holder of the very same object."""
+        return type(other) is _HeldObject and other.value is self.value
+
+    def __hash__(self) -> int:
+        """Hash the held object's identity."""
+        return id(self.value)
 
 
 def _abstract_operation_tree(

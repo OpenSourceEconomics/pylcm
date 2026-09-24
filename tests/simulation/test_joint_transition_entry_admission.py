@@ -184,6 +184,7 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
     import jax
 
     from _lcm import transition_checks
+    from _lcm.simulation.host_operations import ProfiledSimulationOperations
     from lcm.exceptions import InvalidStateTransitionProbabilitiesError
     from tests.simulation.test_joint_transition_entry_admission import (
         _inputs,
@@ -204,13 +205,14 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
     compiled = []
     weight_devices = []
     support_devices = []
-    original_compile = transition_checks._TransitionLawCompiler.__call__
+    original_admit = ProfiledSimulationOperations.admit_producer
     original_weights = transition_checks._evaluate_joint_weights
     original_support = transition_checks._evaluate_joint_support
 
-    def compile_and_record(self, widths):
-        executable = original_compile(self, widths)
-        compiled.append(executable)
+    def admit_and_record(self, **kwargs):
+        executable = original_admit(self, **kwargs)
+        if kwargs["output_sharding"] is not None:
+            compiled.append(executable)
         return executable
 
     def weights_and_record(**kwargs):
@@ -231,7 +233,7 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
             )
         return support
 
-    transition_checks._TransitionLawCompiler.__call__ = compile_and_record
+    ProfiledSimulationOperations.admit_producer = admit_and_record
     transition_checks._evaluate_joint_weights = weights_and_record
     transition_checks._evaluate_joint_support = support_and_record
     try:
