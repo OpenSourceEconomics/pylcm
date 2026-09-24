@@ -18,6 +18,13 @@ _HLO_INSTRUCTION = re.compile(
 _HLO_OPERAND = re.compile(r"%([^\s,)]+)")
 _HLO_CALLS = re.compile(r"\bcalls=%(?P<name>[^\s,]+)")
 _HLO_TUPLE_INDEX = re.compile(r"\bindex=(?P<index>\d+)")
+_HLO_REFERENCE = re.compile(r"%(?P<name>[^\s,}]+)")
+_HLO_PASSED_CALLEE = re.compile(r"\b(?P<key>calls|to_apply|body)=%(?P<name>[^\s,}]+)")
+# The attribute through which each caller passes its operands to a computation's
+# parameters; a while loop passes its one operand as the body's loop state.
+_HLO_PASSING_KEYS = MappingProxyType(
+    {"fusion": "calls", "call": "to_apply", "while": "body"}
+)
 _HLO_VIEWS = frozenset({"bitcast", "copy"})
 # Producers whose result comes from a computation or runtime the classifier does
 # not follow; a gather table one of them produced has no proved origin.
@@ -62,8 +69,11 @@ def classify_reduce_fusions(hlo_text: str) -> Mapping[str, ReduceFusionVerdict]:
     reads to have parsed completely and every table's origin to be proved. A
     fusion for which either fails is `UNKNOWN`, never assumed fused. A table
     reached through a tuple projection needs its origin proved outside the
-    fusion. An empty result needs every computation that can call a fusion to
-    have parsed completely, so no reduce fusion goes unlisted.
+    fusion. A table reaching a computation as a parameter is proved only at an
+    entry parameter, or through the one fusion, call or while loop calling that
+    computation; a while loop passes it on only when its body carries that
+    table unchanged. An empty result needs every computation that can call a
+    fusion to have parsed completely, so no reduce fusion goes unlisted.
 
     Args:
         hlo_text: One optimized module, as `jax.stages.Compiled.as_text()`
@@ -126,20 +136,24 @@ class _HloModule:
     """Name of each computation's root instruction."""
     incomplete: frozenset[str]
     """Computations with a line the parser did not recognise, or without a root."""
+    entry: str
+    """Name of the entry computation."""
+    callers: Mapping[str, tuple[tuple[str, _HloInstruction], ...]]
+    """Instructions naming each computation in their attributes, with their caller."""
 
     @classmethod
     def parse(cls, text: str) -> _HloModule:
         computations: dict[str, dict[str, _HloInstruction]] = {}
         roots: dict[str, str] = {}
         incomplete: set[str] = set()
-        has_entry = False
+        entry: str | None = None
         current: str | None = None
         for line in text.splitlines():
             stripped = line.strip()
             header = _HLO_COMPUTATION.match(line)
             if header is not None:
                 current = header["name"]
-                has_entry = has_entry or stripped.startswith("ENTRY")
+                entry = current if stripped.startswith("ENTRY") else entry
                 computations[current] = {}
                 continue
             if current is None:
@@ -163,13 +177,15 @@ class _HloModule:
             )
             if match["root"]:
                 roots[current] = match["name"]
-        if not has_entry:
+        if entry is None:
             msg = "The HLO text has no recognised entry computation."
             raise UnrecognisedHloError(msg)
         return cls(
             computations=computations,
             roots=roots,
             incomplete=frozenset(incomplete | (set(computations) - set(roots))),
+            entry=entry,
+            callers=_callers(computations),
         )
 
     def classify(
@@ -243,7 +259,8 @@ class _HloModule:
 
         Views and tuple projections are followed inside the caller and, through a
         producing fusion, inside that fusion's root, so a gathered table reached
-        through a root copy or bitcast keeps its origin.
+        through a root copy or bitcast keeps its origin. A parameter is followed
+        to the operand its caller passes.
         """
         instruction, index = _producer(
             name=name, instructions=self.computations[computation], index=index
@@ -257,6 +274,10 @@ class _HloModule:
             return self._origin(
                 name=self.roots[callee], computation=callee, index=index
             )
+        if instruction.opcode == "parameter":
+            return self._parameter_origin(
+                parameter=instruction, computation=computation, index=index
+            )
         if instruction.opcode == "gather" and index is None:
             return ReduceFusionVerdict.MATERIALISED_GATHER
         opaque = (
@@ -267,6 +288,86 @@ class _HloModule:
         return (
             ReduceFusionVerdict.UNKNOWN if opaque else ReduceFusionVerdict.FUSED_GATHER
         )
+
+    def _parameter_origin(
+        self, *, parameter: _HloInstruction, computation: str, index: int | None
+    ) -> ReduceFusionVerdict:
+        """Classify a parameter of `computation` by what its one caller passes.
+
+        - An entry parameter is a proved origin unless a tuple element is still
+          to be selected from it.
+        - Through the one fusion or call calling `computation`, the parameter is
+          the operand at its position.
+        - Through the one while loop running `computation` as its body, the loop
+          state is the loop's operand, when the body's root carries the selected
+          element unchanged.
+        - Anything else is `UNKNOWN`.
+        """
+        if computation == self.entry:
+            return (
+                ReduceFusionVerdict.FUSED_GATHER
+                if index is None
+                else ReduceFusionVerdict.UNKNOWN
+            )
+        passed = self._passed_operand(
+            parameter=parameter, computation=computation, index=index
+        )
+        if passed is None:
+            return ReduceFusionVerdict.UNKNOWN
+        caller, operand = passed
+        return self._origin(name=operand, computation=caller, index=index)
+
+    def _passed_operand(
+        self, *, parameter: _HloInstruction, computation: str, index: int | None
+    ) -> tuple[str, str] | None:
+        """The one caller of `computation` and the operand it passes to `parameter`.
+
+        `None` when `computation` has other than one caller, either was not read
+        completely, or a while body does not carry element `index` unchanged.
+        """
+        sites = self.callers.get(computation, ())
+        if len(sites) != 1 or computation in self.incomplete:
+            return None
+        caller, site = sites[0]
+        passed = {
+            found["key"]: found["name"]
+            for found in _HLO_PASSED_CALLEE.finditer(site.attributes)
+        }
+        key = _HLO_PASSING_KEYS.get(site.opcode)
+        if (
+            key is None
+            or passed.get(key) != computation
+            or caller in self.incomplete
+            or not parameter.raw_operands.isdigit()
+        ):
+            return None
+        position = int(parameter.raw_operands)
+        if site.opcode == "while":
+            carried, carried_index = _producer(
+                name=self.roots[computation],
+                instructions=self.computations[computation],
+                index=index,
+            )
+            if position != 0 or carried is not parameter or carried_index != index:
+                return None
+        operand = _operand(instruction=site, position=position)
+        return None if operand is None else (caller, operand)
+
+
+def _callers(
+    computations: Mapping[str, Mapping[str, _HloInstruction]],
+) -> Mapping[str, tuple[tuple[str, _HloInstruction], ...]]:
+    """Map each computation to the instructions naming it, with their caller."""
+    callers: dict[str, list[tuple[str, _HloInstruction]]] = {}
+    for caller, instructions in computations.items():
+        for instruction in instructions.values():
+            named = {
+                found["name"]
+                for found in _HLO_REFERENCE.finditer(instruction.attributes)
+            }
+            for callee in named & set(computations):
+                callers.setdefault(callee, []).append((caller, instruction))
+    return MappingProxyType({callee: tuple(sites) for callee, sites in callers.items()})
 
 
 def _producer(
