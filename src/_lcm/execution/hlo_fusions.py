@@ -60,7 +60,10 @@ def classify_reduce_fusions(hlo_text: str) -> Mapping[str, ReduceFusionVerdict]:
 
     A negative verdict (`FUSED_GATHER`, `NO_GATHER`) needs every computation it
     reads to have parsed completely and every table's origin to be proved. A
-    fusion for which either fails is `UNKNOWN`, never assumed fused.
+    fusion for which either fails is `UNKNOWN`, never assumed fused. A table
+    reached through a tuple projection needs its origin proved outside the
+    fusion. An empty result needs every computation that can call a fusion to
+    have parsed completely, so no reduce fusion goes unlisted.
 
     Args:
         hlo_text: One optimized module, as `jax.stages.Compiled.as_text()`
@@ -71,11 +74,23 @@ def classify_reduce_fusions(hlo_text: str) -> Mapping[str, ReduceFusionVerdict]:
         completely parsed module without reduce fusions maps to nothing.
 
     Raises:
-        UnrecognisedHloError: The text has no recognised entry computation, or an
-            instruction outside any recognised computation.
+        UnrecognisedHloError: The text has no recognised entry computation, an
+            instruction outside any recognised computation, or a line the parser
+            does not read in a computation other than a fusion body.
 
     """
     module = _HloModule.parse(hlo_text)
+    fusion_bodies = {
+        found["name"]
+        for instructions in module.computations.values()
+        for instruction in instructions.values()
+        if instruction.opcode == "fusion"
+        and (found := _HLO_CALLS.search(instruction.attributes)) is not None
+    }
+    unlisted = sorted(module.incomplete - fusion_bodies)
+    if unlisted:
+        msg = f"Computations {unlisted!r} were not read completely."
+        raise UnrecognisedHloError(msg)
     verdicts: dict[str, ReduceFusionVerdict] = {}
     for caller, instructions in module.computations.items():
         for name, call in instructions.items():
@@ -200,19 +215,26 @@ class _HloModule:
         - `MATERIALISED_GATHER`: another gather outside the fusion produced it.
         - `FUSED_GATHER`: its origin is proved to be anything else.
         - `UNKNOWN`: the chain leads somewhere the classifier does not read.
+
+        Views and tuple projections are followed inside the fusion; a projection
+        still unresolved at a fusion parameter is resolved in the caller.
         """
         if not gather.operands:
             return ReduceFusionVerdict.UNKNOWN
-        table = body.get(_skip_views(name=gather.operands[0], instructions=body))
+        table, index = _producer(name=gather.operands[0], instructions=body, index=None)
         if table is None:
             return ReduceFusionVerdict.UNKNOWN
         if table.opcode != "parameter":
-            return ReduceFusionVerdict.FUSED_GATHER
+            return (
+                ReduceFusionVerdict.UNKNOWN
+                if index is not None
+                else ReduceFusionVerdict.FUSED_GATHER
+            )
         try:
             operand = call.operands[int(table.raw_operands)]
         except ValueError, IndexError:
             return ReduceFusionVerdict.UNKNOWN
-        return self._origin(name=operand, computation=caller, index=None)
+        return self._origin(name=operand, computation=caller, index=index)
 
     def _origin(
         self, *, name: str, computation: str, index: int | None
@@ -279,12 +301,3 @@ def _operand(*, instruction: _HloInstruction, position: int) -> str | None:
     if position < len(instruction.operands):
         return instruction.operands[position]
     return None
-
-
-def _skip_views(*, name: str, instructions: Mapping[str, _HloInstruction]) -> str:
-    """Follow bitcasts and copies back to the instruction they view."""
-    while (instruction := instructions.get(name)) is not None and (
-        instruction.opcode in _HLO_VIEWS
-    ):
-        name = instruction.operands[0]
-    return name
