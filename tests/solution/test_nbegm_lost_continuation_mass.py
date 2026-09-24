@@ -9,17 +9,23 @@ with NaN instead, at every log level:
 - the grid-search route and simulation divide by the retained mass and poison a
   mass away from one;
 - the NB-EGM linear blend and its Epstein-Zin blend poison the same mass with the
-  same tolerance.
+  same tolerance;
+- the one-row EGM and NB-EGM kernels, which read the single active target's carry
+  alone, poison that target's probability with the same tolerance.
 
 So the solve publishes NaN with `log_level="off"`, and at `log_level="warning"`
 the value-function check reports the NaN rather than passing a finite value. At
 `log_level="debug"` the transition validation refuses the lost mass before any
-value is computed. Two specimens lose mass:
+value is computed. The blend specimens lose mass as follows:
 
 - the two-period multi-discrete toy whose survival law keeps every agent alive
   into a period where the alive regime is inactive;
 - a stochastic-survival Epstein-Zin model whose living regime ends one period
   before its survival law stops sending mass to it.
+
+The one-row specimens are the Medicaid case-piece toy under `NBEGM` and the
+closed-form consumption--saving lifecycle under `EGM`, each with a survival law
+that outlives the source regime.
 
 Each has a correctly configured control that stays finite.
 """
@@ -45,8 +51,10 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
-from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
+from lcm.solvers import EGM, NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.solution import test_egm_solver as egm_toy
+from tests.test_models import nbegm_medicaid_toy
 from tests.test_models import nbegm_multi_discrete_toy as toy
 
 _ALIVE = "alive"
@@ -267,3 +275,69 @@ def test_kept_regime_mass_publishes_finite_value(*, preferences: str) -> None:
     )
 
     assert np.isfinite(value).all()
+
+
+_ONE_ROW_NBEGM = "one_row_nbegm"
+_ONE_ROW_EGM = "one_row_egm"
+
+
+def _one_row_model_and_params(
+    *, specimen: str, lost_mass: bool
+) -> tuple[Model, Mapping[str, Any], str]:
+    """Build one one-row specimen with its parameters and its source regime."""
+    if specimen == _ONE_ROW_NBEGM:
+        # Three periods: alive at ages 0 and 1. `final_age_alive = 2` kills every
+        # agent into age 2; `final_age_alive = 3` keeps them in the alive regime.
+        model = nbegm_medicaid_toy.build_model(
+            variant=_NBEGM,
+            n_periods=3,
+            n_liquid=10,
+            n_consumption=12,
+            n_savings=10,
+            envelope_arithmetic="ordinary",
+        )
+        params = nbegm_medicaid_toy.build_params(
+            final_age_alive=3.0 if lost_mass else 2.0
+        )
+        return model, params, _ALIVE
+    # Four periods: saving at ages 0 to 2. `last_age = 3` stops every agent into
+    # age 3; `last_age = 4` keeps them in the saving regime.
+    last_age = 4.0 if lost_mass else 3.0
+    params = egm_toy._params()
+    for target in ("saving", "done"):
+        params["saving"][target]["next_regime"]["last_age"] = last_age
+    model = egm_toy._model(solver=EGM(savings_grid=egm_toy._SAVINGS_GRID))
+    return model, params, "saving"
+
+
+def _one_row_source_values(*, specimen: str, lost_mass: bool) -> np.ndarray:
+    """Solve with `log_level="off"` and stack the source regime's values."""
+    model, params, source = _one_row_model_and_params(
+        specimen=specimen, lost_mass=lost_mass
+    )
+    values = model.solve(params=params, log_level="off").values
+    return np.stack(
+        [
+            np.asarray(regime_to_V[source])
+            for regime_to_V in values.values()
+            if source in regime_to_V
+        ]
+    )
+
+
+@pytest.mark.parametrize("specimen", [_ONE_ROW_NBEGM, _ONE_ROW_EGM])
+def test_one_row_lost_regime_mass_publishes_nan_value(*, specimen: str) -> None:
+    """A one-row kernel whose survivors reach an inactive regime publishes NaN in
+    every period of the source regime."""
+    values = _one_row_source_values(specimen=specimen, lost_mass=True)
+
+    assert np.isnan(values).all()
+
+
+@pytest.mark.parametrize("specimen", [_ONE_ROW_NBEGM, _ONE_ROW_EGM])
+def test_one_row_kept_regime_mass_publishes_finite_value(*, specimen: str) -> None:
+    """With the survival law matching the active ages, every value of the one-row
+    source regime is finite."""
+    values = _one_row_source_values(specimen=specimen, lost_mass=False)
+
+    assert np.isfinite(values).all()
