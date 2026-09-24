@@ -1,5 +1,6 @@
 """Chunk planning compiles forward programs on worker threads without changing them."""
 
+import re
 import threading
 from typing import Any, cast
 
@@ -17,6 +18,23 @@ from tests.simulation.test_budget_lifecycle import (
 )
 
 _PARAMS = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
+_DEBUG_SECTIONS = frozenset(
+    {"FileNames", "FunctionNames", "FileLocations", "StackFrames"}
+)
+
+
+def _program_text(*, hlo: str) -> str:
+    """Return compiled HLO without source-location metadata.
+
+    The metadata names source files and wrapper addresses, which differ between
+    two otherwise identical compilations.
+    """
+    blocks = (
+        block
+        for block in hlo.split("\n\n")
+        if block.strip().split("\n", 1)[0] not in _DEBUG_SECTIONS
+    )
+    return re.sub(r", metadata=\{[^}]*\}", "", "\n\n".join(blocks))
 
 
 def _simulate_and_observe(
@@ -31,7 +49,7 @@ def _simulate_and_observe(
     }
     solution = model.solve(params=_PARAMS, log_level="off")
     planning = [False]
-    compiles: list[tuple[bool, str, tuple[tuple[str, int], ...], str | None]] = []
+    compiles: list[tuple[bool, str, tuple[tuple[str, int], ...], str]] = []
     plans: list[SimulationChunkPlan] = []
     lock = threading.Lock()
     compile_body = _SimulationCandidateCompiler.__call__
@@ -47,7 +65,12 @@ def _simulate_and_observe(
                         threading.current_thread() is threading.main_thread(),
                         self.program.name,
                         tuple(sorted(widths.items())),
-                        cast("jax.stages.Compiled", compiled.executable).as_text(),
+                        _program_text(
+                            hlo=cast(
+                                "jax.stages.Compiled", compiled.executable
+                            ).as_text()
+                            or ""
+                        ),
                     )
                 )
         return compiled
@@ -126,6 +149,7 @@ def test_parallel_chunk_planning_compiles_the_same_executables_as_serial(
     def executables(workers: int) -> list[tuple[str, tuple, str]]:
         return sorted(entry[1:] for entry in serial_and_parallel[workers]["compiles"])
 
+    assert all("ENTRY" in entry[-1] for entry in executables(1))
     assert executables(2) == executables(1)
 
 
