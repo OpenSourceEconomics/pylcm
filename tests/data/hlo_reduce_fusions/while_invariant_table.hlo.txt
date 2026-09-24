@@ -1,0 +1,60 @@
+HloModule jit__unnamed_function, is_scheduled=true
+
+%region_65.65 (Arg_0.1: f32[], Arg_1.1: f32[]) -> f32[] {
+  %Arg_0.1 = f32[] parameter(0)
+  %Arg_1.1 = f32[] parameter(1)
+  ROOT %add.1 = f32[] add(%Arg_0.1, %Arg_1.1)
+}
+
+%fused_reduce (param_27.237: f32[1,3,5,24,38], param_1.8140: s32[945,3], param_0.6246: s32[13,7,2]) -> f32[13,38,7] {
+  %param_27.237 = f32[1,3,5,24,38]{4,3,2,1,0} parameter(0)
+  %param_1.8140 = s32[945,3]{1,0} parameter(1)
+  %gather.3477.3 = f32[945,1,1,1,24,38]{5,4,3,2,1,0} gather(%param_27.237, %param_1.8140), offset_dims={1,2,3,4,5}, collapsed_slice_dims={}, start_index_map={0,1,2}, index_vector_dim=1, slice_sizes={1,1,1,24,38}
+  %bitcast.278.60 = f32[1,7,135,24,38]{4,3,2,1,0} bitcast(%gather.3477.3)
+  %param_0.6246 = s32[13,7,2]{2,1,0} parameter(2)
+  %gather.3478.15 = f32[13,7,1,24,38]{4,3,2,1,0} gather(%bitcast.278.60, %param_0.6246), offset_dims={2,3,4}, collapsed_slice_dims={}, start_index_map={1,2}, index_vector_dim=2, slice_sizes={1,1,1,24,38}
+  %bitcast.682.1 = f32[13,38,7,24]{3,2,1,0} bitcast(%gather.3478.15)
+  %constant_7772_clone_15 = f32[] constant(0)
+  ROOT %reduce.70.1 = f32[13,38,7]{2,1,0} reduce(%bitcast.682.1, %constant_7772_clone_15), dimensions={3}, to_apply=%region_65.65
+}
+
+%fused_compare (param_0.1: s64[]) -> pred[] {
+  %param_0.1 = s64[] parameter(0)
+  %constant_3 = s64[] constant(4)
+  ROOT %compare.1 = pred[] compare(%param_0.1, %constant_3), direction=LT
+}
+
+%fused_add (param_0.2: s64[]) -> s64[] {
+  %param_0.2 = s64[] parameter(0)
+  %constant_4 = s64[] constant(1)
+  ROOT %add.2 = s64[] add(%param_0.2, %constant_4)
+}
+
+%region_63.240 (arg_tuple.27: (s64[], f32[1,3,5,24,38], s32[945,3], s32[13,7,2], f32[13,38,7])) -> pred[] {
+  %arg_tuple.27 = (s64[], f32[1,3,5,24,38]{4,3,2,1,0}, s32[945,3]{1,0}, s32[13,7,2]{2,1,0}, f32[13,38,7]{2,1,0}) parameter(0)
+  %get-tuple-element.225 = s64[] get-tuple-element(%arg_tuple.27), index=0
+  ROOT %loop_compare_fusion = pred[] fusion(%get-tuple-element.225), kind=kLoop, calls=%fused_compare
+}
+
+%region_0.239 (arg_tuple.25: (s64[], f32[1,3,5,24,38], s32[945,3], s32[13,7,2], f32[13,38,7])) -> (s64[], f32[1,3,5,24,38], s32[945,3], s32[13,7,2], f32[13,38,7]) {
+  %arg_tuple.25 = (s64[], f32[1,3,5,24,38]{4,3,2,1,0}, s32[945,3]{1,0}, s32[13,7,2]{2,1,0}, f32[13,38,7]{2,1,0}) parameter(0)
+  %get-tuple-element.1976 = s64[] get-tuple-element(%arg_tuple.25), index=0
+  %get-tuple-element.1980 = f32[1,3,5,24,38]{4,3,2,1,0} get-tuple-element(%arg_tuple.25), index=1
+  %get-tuple-element.1981 = s32[945,3]{1,0} get-tuple-element(%arg_tuple.25), index=2
+  %get-tuple-element.1982 = s32[13,7,2]{2,1,0} get-tuple-element(%arg_tuple.25), index=3
+  %input_reduce_fusion = f32[13,38,7]{2,1,0} fusion(%get-tuple-element.1980, %get-tuple-element.1981, %get-tuple-element.1982), kind=kInput, calls=%fused_reduce
+  %loop_add_fusion = s64[] fusion(%get-tuple-element.1976), kind=kLoop, calls=%fused_add
+  ROOT %tuple.572 = (s64[], f32[1,3,5,24,38]{4,3,2,1,0}, s32[945,3]{1,0}, s32[13,7,2]{2,1,0}, f32[13,38,7]{2,1,0}) tuple(%loop_add_fusion, %get-tuple-element.1980, %get-tuple-element.1981, %get-tuple-element.1982, %input_reduce_fusion)
+}
+
+ENTRY %main.241 (Arg_0.1: f32[1,3,5,24,38], Arg_1.2: s32[945,3], Arg_2.3: s32[13,7,2]) -> f32[13,38,7] {
+  %Arg_0.1 = f32[1,3,5,24,38]{4,3,2,1,0} parameter(0)
+  %Arg_1.2 = s32[945,3]{1,0} parameter(1)
+  %Arg_2.3 = s32[13,7,2]{2,1,0} parameter(2)
+  %constant_0 = s64[] constant(0)
+  %constant_2 = f32[] constant(0)
+  %broadcast.1 = f32[13,38,7]{2,1,0} broadcast(%constant_2), dimensions={}
+  %tuple.593 = (s64[], f32[1,3,5,24,38]{4,3,2,1,0}, s32[945,3]{1,0}, s32[13,7,2]{2,1,0}, f32[13,38,7]{2,1,0}) tuple(%constant_0, %Arg_0.1, %Arg_1.2, %Arg_2.3, %broadcast.1)
+  %while.65 = (s64[], f32[1,3,5,24,38]{4,3,2,1,0}, s32[945,3]{1,0}, s32[13,7,2]{2,1,0}, f32[13,38,7]{2,1,0}) while(%tuple.593), condition=%region_63.240, body=%region_0.239
+  ROOT %get-tuple-element.1614 = f32[13,38,7]{2,1,0} get-tuple-element(%while.65), index=4
+}

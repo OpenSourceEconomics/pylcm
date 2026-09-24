@@ -23,7 +23,9 @@ def _hlo(name: str) -> str:
 #   elementwise, which reads a gather result but not as a gather table;
 # - `materialised_root_copy` / `materialised_root_bitcast`: a gather fusion whose
 #   root is a copy or a reshaping bitcast of its gather, read as a gather table;
-# - `unrecognised_syntax`: a reduce fusion with a line the parser does not read.
+# - `unrecognised_syntax`: a reduce fusion with a line the parser does not read;
+# - `while_invariant_table`: the fused core inside a loop body, gathering from
+#   tables the loop carries unchanged from the entry parameters.
 @pytest.mark.parametrize(
     ("fixture", "verdict"),
     [
@@ -36,6 +38,7 @@ def _hlo(name: str) -> str:
             ReduceFusionVerdict.MATERIALISED_GATHER,
         ),
         ("unrecognised_syntax.hlo.txt", ReduceFusionVerdict.UNKNOWN),
+        ("while_invariant_table.hlo.txt", ReduceFusionVerdict.FUSED_GATHER),
     ],
 )
 def test_classify_reduce_fusions_reads_the_table_source(
