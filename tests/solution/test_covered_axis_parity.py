@@ -20,9 +20,14 @@ Parity of the published arrays is a two-tier gate:
 - on the CPU backend, every published array is byte-for-byte unchanged;
 - on every backend, shapes and dtypes are unchanged, the NaN, +Inf and -Inf
   entries of every float array sit at exactly the same places, every integer or
-  boolean array (discrete action codes) is exactly unchanged, and every finite
-  float moves by at most `_MAX_ULP[dtype]`: 4 ULP in float64, 1 ULP in float32.
-  A wider tile can reorder rounding in fused reductions off the CPU backend.
+  boolean array is exactly unchanged, and every finite float moves by at most
+  `_MAX_ULP[dtype]`: 4 ULP in float64, 1 ULP in float32. A wider tile can
+  reorder rounding in fused reductions off the CPU backend.
+
+The NB-EGM toy publishes no discrete action code: its EGM carries are pinned
+to the float dtype, and both of its regimes replay by grid recomputation, which
+retains no policy artifact. The integer and boolean tier compares nothing for
+that model; it applies to any integer or boolean array a solve publishes.
 
 Each distinct solve runs once per worker and is shared across tests.
 """
@@ -64,7 +69,6 @@ _SMALL_CASES = tuple(
     for arm in (_UNBUDGETED, _BOUNDED)
 )
 _CASES = (*_SMALL_CASES, (_NBEGM, _DEFAULT_SIZE))
-_NBEGM_CASES = tuple(case for case in _CASES if case[0] == _NBEGM)
 _NON_FINITE_CLASSES: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "nan": np.isnan,
     "posinf": np.isposinf,
@@ -269,18 +273,10 @@ def test_covering_keeps_every_non_finite_entry_in_place(
 
 @pytest.mark.parametrize("case", _CASES, ids=_case_id)
 def test_covering_keeps_every_discrete_array_exact(*, case: tuple[str, str]) -> None:
-    """Integer and boolean arrays, such as discrete action codes, are unchanged."""
+    """Every published integer or boolean array is unchanged."""
     covered, uncovered = _covered_and_uncovered(case)
 
     assert _discrete_bytes(covered) == _discrete_bytes(uncovered)
-
-
-@pytest.mark.parametrize("case", _NBEGM_CASES, ids=_case_id)
-def test_nbegm_solve_publishes_a_discrete_array(*, case: tuple[str, str]) -> None:
-    """The NB-EGM toy publishes integer discrete action codes to compare."""
-    covered, _ = _covered_and_uncovered(case)
-
-    assert len(_discrete_bytes(covered)) > 0
 
 
 @pytest.mark.parametrize("case", _CASES, ids=_case_id)
