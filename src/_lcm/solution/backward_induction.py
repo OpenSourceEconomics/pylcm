@@ -4010,12 +4010,17 @@ def _halve_while_gather_materialises(
     device memory and reads it back depends on the device, the whole program and
     the cell count, so it is read off the compiled program rather than predicted.
     Halving is a bounded heuristic over that compiled executable, not a guarantee
-    that a fused program is faster: the walk stops at the first width that fuses
-    and does not search further. Each halving is rounded onto the widths the axis
-    admits and never exceeds its ceiling.
+    that a fused program is faster. Each halving is rounded onto the widths the
+    axis admits and never exceeds its ceiling. The walk ends at:
 
-    A program whose structure the classifier does not read completely keeps its
-    current, memory-admitted width, is not assumed fused, and ends the walk.
+    - the first width whose program is proved fused, which is kept;
+    - a width whose program the classifier does not read completely;
+    - the narrowest width the axis admits.
+
+    A narrower width is kept only when its program is proved fused. In the other
+    two cases the walk returns the memory-admitted plan it started from, with that
+    plan's executable, so a narrowing that bought no fusion never costs smaller
+    tiles.
 
     Args:
         triple: The core being planned.
@@ -4031,40 +4036,31 @@ def _halve_while_gather_materialises(
         logger: Receives each trial, its compile-or-reuse outcome, and the width
             the walk ends at.
 
-    Raises:
-        ExecutionPlanningError: The program still materialises a gather table at
-            the narrowest width its axis admits.
-
     """
     axis = _halvable_axis(axes=axes, fixed_widths=fixed_widths)
     if axis is None:
+        return plan
+    check = _checked_gather_fusion(
+        compiled=plan.compiled,
+        widths=plan.widths,
+        gather_checks=gather_checks,
+        triple=triple,
+        logger=logger,
+    )
+    if check.materialised is None:
         return plan
     widths = plan.widths
     executable = plan.compiled
     trials = 0
     misses = 0
-    while (
-        fusion := _checked_gather_fusion(
-            compiled=executable,
-            widths=widths,
-            gather_checks=gather_checks,
-            triple=triple,
-            logger=logger,
-        )
-    ) is not None:
+    while check.materialised is not None:
+        fusion = check.materialised
         width = widths[axis.name]
         narrower = _admissible_width(
             axis=axis, width=width // 2, ceiling=width_ceilings.get(axis.name)
         )
         if narrower >= width:
-            msg = (
-                f"The compiled program {_describe_candidate(candidate=(triple, ()))} "
-                f"materialises a gather table in reduce fusion {fusion!r} at "
-                f"{axis.name!r} width {width}, the narrowest width the axis admits. "
-                "Set `ExecutionConfig(halve_on_materialised_gather=False)` to keep "
-                "the materialised program."
-            )
-            raise ExecutionPlanningError(msg)
+            break
         widths = MappingProxyType({**widths, axis.name: narrower})
         executable, missed = compile_candidate(
             candidate=frontier.bind_widths(triple=triple, widths=widths)
@@ -4083,7 +4079,14 @@ def _halve_while_gather_materialises(
             "recompiling at" if missed else "reusing the program compiled at",
             narrower,
         )
-    if trials:
+        check = _checked_gather_fusion(
+            compiled=executable,
+            widths=widths,
+            gather_checks=gather_checks,
+            triple=triple,
+            logger=logger,
+        )
+    if check.materialised is None and not check.unknown:
         logger.info(
             "  %r at %r period %d: fusion check selected %r width %d after %d "
             "halving trials (%d compiled, %d reused)",
@@ -4096,7 +4099,23 @@ def _halve_while_gather_materialises(
             misses,
             trials - misses,
         )
-    return WorkspacePlan(widths=widths, peak_bytes=None, compiled=executable)
+        return WorkspacePlan(widths=widths, peak_bytes=None, compiled=executable)
+    logger.info(
+        "  %r at %r period %d: no halving proved fused (the program at %r width %d "
+        "%s); reverting to the admitted width %d after %d halving trials "
+        "(%d compiled, %d reused), with its gather table materialised",
+        triple[2],
+        triple[0],
+        triple[1],
+        axis.name,
+        widths[axis.name],
+        "could not be read" if check.unknown else "still materialises",
+        plan.widths[axis.name],
+        trials,
+        misses,
+        trials - misses,
+    )
+    return plan
 
 
 def _checked_gather_fusion(
@@ -4106,11 +4125,11 @@ def _checked_gather_fusion(
     gather_checks: GatherChecks,
     triple: _CoreTriple,
     logger: logging.Logger,
-) -> str | None:
-    """Name a materialising reduce fusion, reading each executable only once.
+) -> _GatherCheck:
+    """Read whether a program materialises a gather table, each executable once.
 
     An executable the classifier cannot read completely is diagnosed once, when
-    it is first read, and answers `None` so the walk keeps its width.
+    it is first read, and is reported unknown, never fused.
     """
     executable = compiled.runtime_executable() or compiled
     cached = gather_checks.get(id(executable))
@@ -4126,17 +4145,17 @@ def _checked_gather_fusion(
         except UnrecognisedHloError as error:
             logger.warning(
                 "  %r at %r period %d: the fusion check could not read the compiled "
-                "program (%s); keeping width %r, not assumed fused",
+                "program at width %r (%s); not assumed fused",
                 triple[2],
                 triple[0],
                 triple[1],
-                error,
                 dict(widths),
+                error,
             )
             check = _GatherCheck(materialised=None, unknown=True)
         # The entry holds the executable, so its id is not reused while cached.
         gather_checks[id(executable)] = (executable, check)
-    return check.materialised
+    return check
 
 
 def _halvable_axis(

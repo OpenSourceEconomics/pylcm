@@ -22,7 +22,6 @@ from beartype.roar import BeartypeCallHintViolation
 from _lcm.execution.hlo_fusions import UnrecognisedHloError
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig, Model
-from lcm.exceptions import ExecutionPlanningError
 from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
 from tests.test_models.processes import (
     MultiRegimeId,
@@ -145,9 +144,39 @@ def test_halving_the_cell_width_preserves_the_solved_values() -> None:
             )
 
 
-def test_a_program_materialising_at_its_narrowest_width_fails_loudly() -> None:
-    with pytest.raises(ExecutionPlanningError, match="loop_reduce_fusion"):
-        _solve(config=ExecutionConfig(), limit=0)
+def test_a_program_fusing_after_one_halving_keeps_the_halved_width() -> None:
+    planned = _planned_width()
+    widths, _ = _solve(config=ExecutionConfig(), limit=planned // 2)
+
+    assert set().union(*widths.values()) == {planned // 2}
+
+
+def test_a_program_materialising_at_every_width_keeps_the_planned_width() -> None:
+    """No halving is kept unless its compiled program is proved fused."""
+    widths, _ = _solve(config=ExecutionConfig(), limit=0)
+
+    assert set().union(*widths.values()) == {_planned_width()}
+
+
+def _materialised_then_unreadable(
+    *, compiled: object, widths: Any, limit: int
+) -> str | None:
+    """Materialise above `limit`, and fail to read the program at or below it."""
+    if widths.get(_CELL_AXIS, 0) > limit:
+        return "loop_reduce_fusion"
+    return _unreadable(compiled=compiled, widths=widths)
+
+
+def test_an_unreadable_program_after_halving_keeps_the_planned_width() -> None:
+    """A halving whose program cannot be read is not kept, even after narrower ones."""
+    planned = _planned_width()
+    widths, _ = _solve(
+        config=ExecutionConfig(),
+        limit=None,
+        check=functools.partial(_materialised_then_unreadable, limit=planned // 4),
+    )
+
+    assert set().union(*widths.values()) == {planned}
 
 
 def test_the_opt_out_keeps_a_materialised_width() -> None:
