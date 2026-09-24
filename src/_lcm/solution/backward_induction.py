@@ -230,6 +230,9 @@ class _GatherCheck:
     """A reduce fusion reading a gather table another fusion wrote, if any."""
     unknown: bool
     """Whether the classifier could not read the program completely."""
+    walk_ends: Mapping[Hashable, tuple[tuple[str, int], ...]] = MappingProxyType({})
+    """Widths each halving walk that started from this executable ended at, by core,
+    halved axis and that axis's ceiling."""
 
 
 # Fusion verdicts by runtime-executable identity, each held with its executable.
@@ -4021,6 +4024,22 @@ def _halve_while_gather_materialises(
     plan's executable, so a narrowing that bought no fusion never costs smaller
     tiles.
 
+    A plan whose axis admits no narrower width is returned unread: the walk can
+    only return that plan whatever the program's verdict, so reading its HLO
+    cannot change the outcome.
+
+    Where the walk ends is recorded with the starting executable's verdict, by
+    core, axis and ceiling, and a later solve starting from the same executable
+    takes the recorded end instead of walking again:
+
+    - a walk that kept the admitted plan keeps it again, which is the plan the
+      solve would run with halving disabled;
+    - a walk that kept a narrower width binds and compiles that width once, and
+      keeps it only when that executable's verdict is still proved fused; any
+      other verdict walks again from the admitted plan.
+
+    So a replayed narrower width is proved fused exactly as a walked one is.
+
     Args:
         triple: The core being planned.
         plan: The width the admission search selected, with its executable.
@@ -4039,6 +4058,10 @@ def _halve_while_gather_materialises(
     axis = _halvable_axis(axes=axes, fixed_widths=fixed_widths)
     if axis is None:
         return plan
+    ceiling = width_ceilings.get(axis.name)
+    admitted = plan.widths[axis.name]
+    if _admissible_width(axis=axis, width=admitted // 2, ceiling=ceiling) >= admitted:
+        return plan
     check = _checked_gather_fusion(
         compiled=plan.compiled,
         widths=plan.widths,
@@ -4048,6 +4071,18 @@ def _halve_while_gather_materialises(
     )
     if check.materialised is None:
         return plan
+    walk = (triple, axis.name, ceiling)
+    replayed = _replayed_walk_end(
+        triple=triple,
+        plan=plan,
+        ended=check.walk_ends.get(walk),
+        frontier=frontier,
+        gather_checks=gather_checks,
+        compile_candidate=compile_candidate,
+        logger=logger,
+    )
+    if replayed is not None:
+        return replayed
     widths = plan.widths
     executable = plan.compiled
     trials = 0
@@ -4055,9 +4090,7 @@ def _halve_while_gather_materialises(
     while check.materialised is not None:
         fusion = check.materialised
         width = widths[axis.name]
-        narrower = _admissible_width(
-            axis=axis, width=width // 2, ceiling=width_ceilings.get(axis.name)
-        )
+        narrower = _admissible_width(axis=axis, width=width // 2, ceiling=ceiling)
         if narrower >= width:
             break
         widths = MappingProxyType({**widths, axis.name: narrower})
@@ -4098,6 +4131,12 @@ def _halve_while_gather_materialises(
             misses,
             trials - misses,
         )
+        _record_walk_end(
+            compiled=plan.compiled,
+            walk=walk,
+            widths=widths,
+            gather_checks=gather_checks,
+        )
         return WorkspacePlan(widths=widths, peak_bytes=None, compiled=executable)
     logger.info(
         "  %r at %r period %d: no halving proved fused (the program at %r width %d "
@@ -4114,7 +4153,68 @@ def _halve_while_gather_materialises(
         misses,
         trials - misses,
     )
+    _record_walk_end(
+        compiled=plan.compiled,
+        walk=walk,
+        widths=plan.widths,
+        gather_checks=gather_checks,
+    )
     return plan
+
+
+def _replayed_walk_end(
+    *,
+    triple: _CoreTriple,
+    plan: WorkspacePlan[jax.stages.Compiled],
+    ended: tuple[tuple[str, int], ...] | None,
+    frontier: _LazyCandidateFrontier,
+    gather_checks: GatherChecks,
+    compile_candidate: Callable[..., tuple[jax.stages.Compiled, bool]],
+    logger: logging.Logger,
+) -> WorkspacePlan[jax.stages.Compiled] | None:
+    """Return the plan a recorded halving walk ended at, or `None` to walk again.
+
+    A recorded narrower width is returned only when its executable is proved fused.
+    """
+    if ended is None:
+        return None
+    if ended == _width_key(widths=plan.widths):
+        return plan
+    widths = MappingProxyType(dict(ended))
+    executable, _ = compile_candidate(
+        candidate=frontier.bind_widths(triple=triple, widths=widths)
+    )
+    check = _checked_gather_fusion(
+        compiled=executable,
+        widths=widths,
+        gather_checks=gather_checks,
+        triple=triple,
+        logger=logger,
+    )
+    if check.materialised is None and not check.unknown:
+        return WorkspacePlan(widths=widths, peak_bytes=None, compiled=executable)
+    return None
+
+
+def _record_walk_end(
+    *,
+    compiled: jax.stages.Compiled,
+    walk: Hashable,
+    widths: Mapping[str, int],
+    gather_checks: GatherChecks,
+) -> None:
+    """Record where a halving walk from an already classified executable ended."""
+    executable = compiled.runtime_executable() or compiled
+    held, check = gather_checks[id(executable)]
+    gather_checks[id(executable)] = (
+        held,
+        dataclasses.replace(
+            check,
+            walk_ends=MappingProxyType(
+                {**check.walk_ends, walk: _width_key(widths=widths)}
+            ),
+        ),
+    )
 
 
 def _checked_gather_fusion(
