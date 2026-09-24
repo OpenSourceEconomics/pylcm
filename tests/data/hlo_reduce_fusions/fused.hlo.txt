@@ -1,0 +1,26 @@
+HloModule jit__unnamed_function, is_scheduled=true
+
+%region_65.65 (Arg_0.1: f32[], Arg_1.1: f32[]) -> f32[] {
+  %Arg_0.1 = f32[] parameter(0)
+  %Arg_1.1 = f32[] parameter(1)
+  ROOT %add.1 = f32[] add(%Arg_0.1, %Arg_1.1)
+}
+
+%fused_reduce (param_27.237: f32[1,3,5,24,38], param_1.8140: s32[945,3], param_0.6246: s32[13,7,2]) -> f32[13,38,7] {
+  %param_27.237 = f32[1,3,5,24,38]{4,3,2,1,0} parameter(0)
+  %param_1.8140 = s32[945,3]{1,0} parameter(1)
+  %gather.3477.3 = f32[945,1,1,1,24,38]{5,4,3,2,1,0} gather(%param_27.237, %param_1.8140), offset_dims={1,2,3,4,5}, collapsed_slice_dims={}, start_index_map={0,1,2}, index_vector_dim=1, slice_sizes={1,1,1,24,38}
+  %bitcast.278.60 = f32[1,7,135,24,38]{4,3,2,1,0} bitcast(%gather.3477.3)
+  %param_0.6246 = s32[13,7,2]{2,1,0} parameter(2)
+  %gather.3478.15 = f32[13,7,1,24,38]{4,3,2,1,0} gather(%bitcast.278.60, %param_0.6246), offset_dims={2,3,4}, collapsed_slice_dims={}, start_index_map={1,2}, index_vector_dim=2, slice_sizes={1,1,1,24,38}
+  %bitcast.682.1 = f32[13,38,7,24]{3,2,1,0} bitcast(%gather.3478.15)
+  %constant_7772_clone_15 = f32[] constant(0)
+  ROOT %reduce.70.1 = f32[13,38,7]{2,1,0} reduce(%bitcast.682.1, %constant_7772_clone_15), dimensions={3}, to_apply=%region_65.65
+}
+
+ENTRY %main.1 (Arg_0.1: f32[1,3,5,24,38], Arg_1.2: s32[945,3], Arg_2.3: s32[13,7,2]) -> f32[13,38,7] {
+  %Arg_0.1 = f32[1,3,5,24,38]{4,3,2,1,0} parameter(0)
+  %Arg_1.2 = s32[945,3]{1,0} parameter(1)
+  %Arg_2.3 = s32[13,7,2]{2,1,0} parameter(2)
+  ROOT %input_reduce_fusion = f32[13,38,7]{2,1,0} fusion(%Arg_0.1, %Arg_1.2, %Arg_2.3), kind=kInput, calls=%fused_reduce
+}

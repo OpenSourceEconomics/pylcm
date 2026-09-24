@@ -225,9 +225,9 @@ def test_bounded_search_closes_by_counting_the_variants_its_evaluations_compiled
         _solve_with(execution_config=_bounded(seed="widest"), log_level="progress")
 
     assert (
-        "bounded width search regime 'alive', core 'main', period 0: 1 evaluations, "
-        "2 unique variants compiled, 2 compiler requests, 0 cache hits; "
-        "selected {'cell': 2}" in caplog.text
+        "bounded width search regime 'alive', core 'main', period 0: 1 admission "
+        "evaluations, 2 unique variants compiled, 2 compiler requests, 0 cache "
+        "hits; selected {'cell': 2} before the fusion check" in caplog.text
     )
 
 

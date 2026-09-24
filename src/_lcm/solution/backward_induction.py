@@ -29,6 +29,8 @@ from types import MappingProxyType
 from typing import cast
 
 import jax
+from jax._src import config as jax_config
+from jax._src import core as jax_core
 
 from _lcm.engine import (
     Regime,
@@ -45,7 +47,9 @@ from _lcm.execution.core_program import (
     CoreProgram,
     MaterializedCoreProgram,
     ProgramScope,
+    ReducedAxis,
     ResolvedCoreProgram,
+    TiledOutputAxis,
     ValueRead,
     _value_read_argument_leaf,
     core_program_graph,
@@ -73,6 +77,11 @@ from _lcm.execution.footprint import (
     layout_footprint,
     per_device_footprint,
     plan_resident_inventory,
+)
+from _lcm.execution.hlo_fusions import (
+    ReduceFusionVerdict,
+    UnrecognisedHloError,
+    classify_reduce_fusions,
 )
 from _lcm.execution.internal_outputs import (
     ResolvedProducer,
@@ -115,6 +124,7 @@ from _lcm.execution.workspace_planning import (
     BoundedWidthSelector,
     CompilerMemoryReservation,
     WorkspacePlan,
+    _admissible_width,
     compiler_memory_reservation,
     plan_workspace,
     workspace_width_candidates,
@@ -3819,6 +3829,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         selected_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
         selected_cores: dict[_CoreTriple, PlannedCore] = {}
         selected_fallbacks: dict[_CoreTriple, PlannedCore] = {}
+        gather_checks: dict[int, _GatherCheck] = {}
         for triple, candidates in candidates_by_triple.items():
             programs_by_width = {
                 candidate[1]: resolved_programs[candidate] for candidate in candidates
@@ -3886,6 +3897,38 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                         triple, 0
                     ),
                 ) from error
+            if execution.halve_on_materialised_gather:
+                plan = _halve_while_gather_materialises(
+                    triple=triple,
+                    plan=plan,
+                    axes=representative.requirements.axes,
+                    fixed_widths=execution.widths_for(regime_name=triple[0]),
+                    width_ceilings=execution.axis_width_ceilings,
+                    frontier=frontier,
+                    gather_checks=gather_checks,
+                    compile_candidate=functools.partial(
+                        _lower_and_compile_candidate,
+                        fallback_keys=fallback_keys,
+                        fallback_donations=fallback_donations,
+                        lowering_keys=lowering_keys,
+                        resolved_programs=resolved_programs,
+                        all_layouts=all_layouts,
+                        internal_templates=internal_templates,
+                        donations=donations,
+                        ages=ages,
+                        budget_bytes=budget_bytes,
+                        n_workers=n_workers,
+                        logger=logger,
+                        compiled=compiled,
+                        labels=labels,
+                        memory_by_lowering_key=memory_by_lowering_key,
+                        resident_inventory=resident_inventory,
+                    ),
+                    logger=logger,
+                )
+                programs_by_width[_width_key(widths=plan.widths)] = resolved_programs[
+                    (triple, _width_key(widths=plan.widths))
+                ]
             selected_candidate = (triple, _width_key(widths=plan.widths))
             selected = programs_by_width[selected_candidate[1]]
             selected_programs[triple] = selected
@@ -3923,6 +3966,292 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         ),
         donation_fallbacks=MappingProxyType(selected_fallbacks),
     )
+
+
+def _halve_while_gather_materialises(
+    *,
+    triple: _CoreTriple,
+    plan: WorkspacePlan[jax.stages.Compiled],
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int],
+    width_ceilings: Mapping[str, int],
+    frontier: _LazyCandidateFrontier,
+    gather_checks: dict[int, _GatherCheck],
+    compile_candidate: Callable[..., tuple[jax.stages.Compiled, bool]],
+    logger: logging.Logger,
+) -> WorkspacePlan[jax.stages.Compiled]:
+    """Halve the cell width while the compiled program materialises a gather table.
+
+    Whether XLA recomputes a gathered table inside the reduction or writes it to
+    device memory and reads it back depends on the device, the whole program and
+    the cell count, so it is read off the compiled program rather than predicted.
+    Halving is a bounded heuristic over that compiled executable, not a guarantee
+    that a fused program is faster: the walk stops at the first width that fuses
+    and does not search further. Each halving is rounded onto the widths the axis
+    admits and never exceeds its ceiling.
+
+    A program whose structure the classifier does not read completely keeps its
+    current, memory-admitted width, is not assumed fused, and ends the walk.
+
+    Args:
+        triple: The core being planned.
+        plan: The width the admission search selected, with its executable.
+        axes: The core's reduced and tiled axes.
+        fixed_widths: Widths the user pinned; a pinned cell axis is never halved.
+        width_ceilings: Upper bounds on each axis's width.
+        frontier: Binds a width mapping to a compilable candidate.
+        gather_checks: Verdicts already read in this solve, by executable
+            identity, so an executable shared by several cores is read once.
+        compile_candidate: Compiles a candidate and reports whether that reached
+            the compiler (`True`) or reused a program compiled earlier (`False`).
+        logger: Receives each trial, its compile-or-reuse outcome, and the width
+            the walk ends at.
+
+    Raises:
+        ExecutionPlanningError: The program still materialises a gather table at
+            the narrowest width its axis admits.
+
+    """
+    axis = _halvable_axis(axes=axes, fixed_widths=fixed_widths)
+    if axis is None:
+        return plan
+    widths = plan.widths
+    executable = plan.compiled
+    trials = 0
+    misses = 0
+    while (
+        fusion := _checked_gather_fusion(
+            compiled=executable,
+            widths=widths,
+            gather_checks=gather_checks,
+            triple=triple,
+            logger=logger,
+        )
+    ) is not None:
+        width = widths[axis.name]
+        narrower = _admissible_width(
+            axis=axis, width=width // 2, ceiling=width_ceilings.get(axis.name)
+        )
+        if narrower >= width:
+            msg = (
+                f"The compiled program {_describe_candidate(candidate=(triple, ()))} "
+                f"materialises a gather table in reduce fusion {fusion!r} at "
+                f"{axis.name!r} width {width}, the narrowest width the axis admits. "
+                "Set `ExecutionConfig(halve_on_materialised_gather=False)` to keep "
+                "the materialised program."
+            )
+            raise ExecutionPlanningError(msg)
+        widths = MappingProxyType({**widths, axis.name: narrower})
+        executable, missed = compile_candidate(
+            candidate=frontier.bind_widths(triple=triple, widths=widths)
+        )
+        trials += 1
+        misses += missed
+        logger.info(
+            "  %r at %r period %d: reduce fusion %r materialises a gather table at "
+            "%r width %d; %s %d",
+            triple[2],
+            triple[0],
+            triple[1],
+            fusion,
+            axis.name,
+            width,
+            "recompiling at" if missed else "reusing the program compiled at",
+            narrower,
+        )
+    if trials:
+        logger.info(
+            "  %r at %r period %d: fusion check selected %r width %d after %d "
+            "halving trials (%d compiled, %d reused)",
+            triple[2],
+            triple[0],
+            triple[1],
+            axis.name,
+            widths[axis.name],
+            trials,
+            misses,
+            trials - misses,
+        )
+    return WorkspacePlan(widths=widths, peak_bytes=None, compiled=executable)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _GatherCheck:
+    """One executable's fusion verdict, small enough to keep for the whole solve."""
+
+    materialised: str | None
+    """A reduce fusion reading a gather table another fusion wrote, if any."""
+    unknown: bool
+    """Whether the classifier could not read the program completely."""
+
+
+def _checked_gather_fusion(
+    *,
+    compiled: jax.stages.Compiled,
+    widths: Mapping[str, int],
+    gather_checks: dict[int, _GatherCheck],
+    triple: _CoreTriple,
+    logger: logging.Logger,
+) -> str | None:
+    """Name a materialising reduce fusion, reading each executable only once.
+
+    An executable the classifier cannot read completely is diagnosed once, when
+    it is first read, and answers `None` so the walk keeps its width.
+    """
+    check = gather_checks.get(id(compiled))
+    if check is None:
+        try:
+            check = _GatherCheck(
+                materialised=_materialised_gather_fusion(
+                    compiled=compiled, widths=widths
+                ),
+                unknown=False,
+            )
+        except UnrecognisedHloError as error:
+            logger.warning(
+                "  %r at %r period %d: the fusion check could not read the compiled "
+                "program (%s); keeping width %r, not assumed fused",
+                triple[2],
+                triple[0],
+                triple[1],
+                error,
+                dict(widths),
+            )
+            check = _GatherCheck(materialised=None, unknown=True)
+        gather_checks[id(compiled)] = check
+    return check.materialised
+
+
+def _halvable_axis(
+    *,
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int],
+) -> TiledOutputAxis | None:
+    """Return the axis halved while a gather materialises, unless its width is fixed."""
+    for axis in axes:
+        if (
+            isinstance(axis, TiledOutputAxis)
+            and axis.halve_on_materialised_gather
+            and axis.name not in fixed_widths
+        ):
+            return axis
+    return None
+
+
+def _materialised_gather_fusion(
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
+) -> str | None:
+    """Name one reduce fusion reading a gather table another fusion wrote, if any.
+
+    Raises:
+        UnrecognisedHloError: No fusion materialises, and the program has no
+            HLO text or a reduce fusion the classifier could not read completely.
+
+    """
+    del widths
+    text = compiled.as_text()
+    if text is None:
+        msg = "The compiled program has no HLO text to classify."
+        raise UnrecognisedHloError(msg)
+    verdicts = classify_reduce_fusions(text)
+    unknown = [
+        name
+        for name, verdict in verdicts.items()
+        if verdict is ReduceFusionVerdict.UNKNOWN
+    ]
+    materialised = next(
+        (
+            name
+            for name, verdict in verdicts.items()
+            if verdict is ReduceFusionVerdict.MATERIALISED_GATHER
+        ),
+        None,
+    )
+    if materialised is None and unknown:
+        msg = f"reduce fusions {unknown!r} were not read completely"
+        raise UnrecognisedHloError(msg)
+    return materialised
+
+
+def _lower_and_compile_candidate(
+    *,
+    candidate: _CoreCandidate,
+    fallback_keys: Mapping[_CoreCandidate, Hashable],
+    fallback_donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    lowering_keys: Mapping[_CoreCandidate, Hashable],
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
+    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    ages: AgeGrid,
+    budget_bytes: int | None,
+    n_workers: int,
+    logger: logging.Logger,
+    compiled: dict[Hashable, jax.stages.Compiled],
+    labels: dict[Hashable, str],
+    memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation],
+    resident_inventory: Mapping[_CoreTriple, ResidentInventory],
+) -> tuple[jax.stages.Compiled, bool]:
+    """Compile one bound candidate and its donation-free variant outside the waves.
+
+    Under a budget every variant is admitted as a wave admits it, on its compiler
+    reservation plus the bytes it leaves resident at the core's position, even
+    when an earlier core already compiled it.
+
+    Returns:
+        The candidate's executable, and whether its primary variant reached the
+        compiler rather than reusing a program compiled earlier in the solve.
+
+    Raises:
+        ExecutionPlanningError: A variant of the candidate exceeds the budget.
+
+    """
+    missed = lowering_keys[candidate] not in compiled
+    variants = (
+        (lowering_keys, donations),
+        *(((fallback_keys, fallback_donations),) if candidate in fallback_keys else ()),
+    )
+    for keys, variant_donations in variants:
+        new = _uncompiled(keys={candidate: keys[candidate]}, compiled=compiled)
+        _lower_and_compile_wave(
+            new_lowerings=new,
+            resolved_programs=resolved_programs,
+            all_layouts=all_layouts,
+            internal_templates=internal_templates,
+            donations=variant_donations,
+            ages=ages,
+            n_triples_per_lowering=dict.fromkeys(new, 1),
+            log_kernel_memory=budget_bytes is None,
+            n_workers=n_workers,
+            logger=logger,
+            compiled=compiled,
+            labels=labels,
+        )
+        if budget_bytes is None:
+            continue
+        triple = candidate[0]
+        resident = _measure_variant(
+            variant_key=keys[candidate],
+            candidate=candidate,
+            triple=triple,
+            compiled=compiled,
+            labels=labels,
+            memory_by_lowering_key=memory_by_lowering_key,
+            resolved_programs=resolved_programs,
+            internal_templates=internal_templates,
+            resident_inventory=resident_inventory,
+            logger=logger,
+        )
+        reservation = memory_by_lowering_key[keys[candidate]].reservation_bytes
+        if reservation + resident > budget_bytes:
+            msg = (
+                f"The narrower width {dict(resolved_programs[candidate].tile_widths)!r}"
+                f" of {_describe_candidate(candidate=candidate)} needs {reservation} "
+                f"reservation bytes beside {resident} resident bytes, exceeding the "
+                f"{budget_bytes}-byte budget."
+            )
+            raise ExecutionPlanningError(msg)
+    return compiled[lowering_keys[candidate]], missed
 
 
 # The planner's lookups are instances of module-level classes rather than functions
@@ -4230,8 +4559,9 @@ class _BoundedCandidateSource:
         variants = self._variants.get(triple, {})
         requests = sum(variants.values())
         logger.info(
-            "bounded width search %s: %d evaluations, %d unique variants compiled, "
-            "%d compiler requests, %d cache hits; selected %r",
+            "bounded width search %s: %d admission evaluations, %d unique variants "
+            "compiled, %d compiler requests, %d cache hits; selected %r before the "
+            "fusion check",
             _describe_candidate(candidate=(triple, ())),
             len(selector.decisions),
             len(variants),
@@ -4403,7 +4733,13 @@ def _compile_and_log(
     start = time.monotonic()
     result = low.compile()
     elapsed = time.monotonic() - start
-    logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
+    # The record carries the compiled program, so a handler can read its HLO.
+    logger.info(
+        "  compiled  %s  %s",
+        label,
+        format_duration(seconds=elapsed),
+        extra={"lcm_compiled": result},
+    )
     if log_kernel_memory:
         _log_kernel_memory(compiled=result, label=label, logger=logger)
     return lowering_key, result
@@ -4976,7 +5312,16 @@ def _resolve_output_layouts_and_lowering_keys(
             input_transfer_plan=transfer_plan,
             abstract_inputs=True,
         )
-        if len(width_candidates) > 1:
+        # A core whose cell axis may be halved after compilation keeps its
+        # frontier even at one ranked width, so the narrower width can be bound.
+        if len(width_candidates) > 1 or (
+            execution_widths.halve_on_materialised_gather
+            and _halvable_axis(
+                axes=materialized.requirements.axes,
+                fixed_widths=execution_widths.widths_for(regime_name=regime_name),
+            )
+            is not None
+        ):
             frontiers[triple] = _CoreFrontier(
                 program=materialized,
                 transfer_plan=transfer_plan,
@@ -5119,6 +5464,7 @@ def _lowering_keys(
             _donated_arguments(donations=donations[candidate]),
             regime.solution.submesh_device_ids,
             resolved.compiler_options,
+            _trace_settings_key(),
         )
     return keys
 
@@ -5599,7 +5945,12 @@ def _lowering_key(
     placement_key: Hashable | None = None,
     compiler_options: tuple[tuple[str, int], ...] = (),
 ) -> Hashable:
-    """Identify a program's tree, specialization, layout, donations and devices."""
+    """Identify a program's tree, specialization, layout, donations and devices.
+
+    The trace settings that change what a traced program computes are part of the
+    identity, so a program traced under different settings is a different
+    executable.
+    """
     return (
         program_identity,
         (None if arguments is None else _abstract_arguments_key(arguments=arguments)),
@@ -5609,6 +5960,40 @@ def _lowering_key(
         donated_arguments,
         placement_key,
         compiler_options,
+        _trace_settings_key(),
+    )
+
+
+def _trace_settings_key() -> Hashable:
+    """Return JAX's effective trace context, which a traced program depends on.
+
+    It is the context JAX keys its own trace caches on. It changes with, among
+    others:
+    - `jax_enable_x64`, the default integer and float widths;
+    - `jax_numpy_dtype_promotion`, which decides whether a mixed-type operation
+      traces at all;
+    - `jax_default_matmul_precision`, the contraction precision;
+    - the ambient mesh set by `jax.set_mesh`.
+
+    The context holds JAX's interned axis environment as an object whose repr
+    is its address, so it is spelled by its contents: a key then reads the same
+    in every process that traces under the same context.
+    """
+    return (
+        "trace_context",
+        tuple(_spelled_trace_value(value) for value in jax_config.trace_context()),
+    )
+
+
+def _spelled_trace_value(value: object) -> object:
+    """Replace an axis environment by the axis names and sizes it binds."""
+    if not isinstance(value, jax_core.AxisEnv):
+        return value
+    return (
+        "axis_env",
+        tuple(sorted(value.axis_sizes.items(), key=repr)),
+        tuple(sorted(value.spmd_axis_names, key=repr)),
+        tuple(sorted(value.explicit_mesh_axis_names, key=repr)),
     )
 
 

@@ -40,7 +40,12 @@ class WidthSearchPolicy:
     kind: WidthSearch = WidthSearch.EXHAUSTIVE
     """Which of the two searches a budgeted solve runs."""
     max_evaluations: int = 24
-    """Distinct width candidates evaluated per core, cache hits included."""
+    """Distinct width candidates evaluated by the memory-admission search per core,
+    cache hits included. The optional post-selection materialised-gather pass
+    has a separate, finite halving walk and is not charged to this count.
+    Disable `halve_on_materialised_gather` when this admission-search count
+    must also be the total width-evaluation ceiling.
+    """
     refinement_share: int = 8
     """Of `max_evaluations`, how many may be spent widening after admission."""
     seed: Literal["conservative", "widest"] = "conservative"
@@ -258,6 +263,27 @@ class ExecutionConfig:
     donate_buffers: bool = True
     """Allow eligible owned inputs to be donated by compiled solve programs."""
 
+    halve_on_materialised_gather: bool = True
+    """Halve a GridSearch cell width while its compiled reduce materialises a gather.
+
+    Past a device- and program-dependent cell count, XLA writes the continuation
+    lookup table to device memory and the reduction reads it back, instead of
+    recomputing it inside the reduction. The planner reads each compiled GridSearch
+    solve program and, while one of its reduce fusions reads a gather table another
+    fusion wrote, recompiles it at half the cell width. A width fixed through
+    `axis_widths` is kept as given. A program that still materialises at the
+    narrowest width its cell axis admits fails loudly. A program whose structure
+    the planner does not read completely keeps its admitted width, with one
+    diagnostic, and is never assumed fused. Each halving is a trial beyond
+    `WidthSearchPolicy.max_evaluations`, and is compiled only when no earlier
+    program shares its lowering. Other solvers and simulation are not checked.
+
+    Halving is a bounded heuristic over the compiled executable, not a guarantee
+    that the fused program is faster: the compiler's choice need not be monotone in
+    the width, so the walk can miss a useful width or refuse at its floor although
+    an unvisited width fuses.
+    """
+
     width_search: WidthSearchPolicy = WidthSearchPolicy()
     """How much of the width frontier a budgeted solve is willing to compile.
 
@@ -279,6 +305,10 @@ class ExecutionConfig:
             raise TypeError(msg)
         if type(self.donate_buffers) is not bool:
             raise TypeError("ExecutionConfig.donate_buffers must be an exact bool.")
+        if type(self.halve_on_materialised_gather) is not bool:
+            raise TypeError(
+                "ExecutionConfig.halve_on_materialised_gather must be an exact bool."
+            )
         if type(self.simulation_sharding) is not str:
             raise TypeError("ExecutionConfig.simulation_sharding must be an exact str.")
         if self.simulation_sharding not in ("legacy", "subjects"):

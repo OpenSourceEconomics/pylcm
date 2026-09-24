@@ -360,6 +360,7 @@ class GridSearch(Solver):
                             state_names=inner_state_names,
                             extent=cell_extent,
                             width_keyword=cell_width_keyword,
+                            halve_on_materialised_gather=True,
                         ),
                     )
                     if cell_width_keyword is not None
