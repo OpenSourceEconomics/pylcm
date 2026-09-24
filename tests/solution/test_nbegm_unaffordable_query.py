@@ -14,6 +14,17 @@ candidate brackets. The budget is `coh = liquid + intercept` on a liquid grid
 starting at `0.1`: an intercept of `-1` leaves the two lowest nodes with
 cash-on-hand `-0.9` and `-0.2`, and an intercept of `+1` is the control where
 every node affords an action.
+
+Every envelope reduction publishes NaN at a node where no winner is decided,
+whether the reduction is the ordinary one, the certified one, or the streamed
+interval fold; only the step knows whether that node affords an action. So the
+carry is checked on every step and route, including the streamed per-interval
+route, and a node that does afford an action but whose every candidate is
+non-finite keeps NaN:
+
+- a NaN continuation, where no candidate value exists;
+- a felicity that overflows to `+inf`, which must not surface as a finite value
+  or as the `-inf` of a node without an action.
 """
 
 from collections.abc import Callable
@@ -34,8 +45,9 @@ from _lcm.egm.nbegm_step import (
     nbegm_unified_step,
     nbegm_unified_step_savings,
 )
+from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
-from lcm.typing import Float1D, FloatND
+from lcm.typing import Float1D, FloatND, IntND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.solution._crra_preferences import crra_preferences
 
@@ -53,6 +65,9 @@ _INCOME = 0.5
 # The steps built around a jump take one at a liquid level above both
 # unaffordable nodes, with the same budget on either side of it.
 _CLIFF = 2.5
+_SMOOTH = "smooth"
+_NAN_CONTINUATION = "nan_continuation"
+_OVERFLOWING_FELICITY = "overflowing_felicity"
 
 type _Channels = tuple[FloatND, FloatND, FloatND]
 type _Step = Callable[..., _Channels]
@@ -87,35 +102,46 @@ class _Grids:
     """The landing point's derivative with respect to savings."""
 
 
-def _grids() -> _Grids:
+def _grids(*, specimen: str) -> _Grids:
+    """Build the grids; `_NAN_CONTINUATION` makes both continuation values NaN."""
     liquid = jnp.linspace(0.1, 5.0, _N_LIQUID)
     savings = jnp.linspace(0.0, 5.0, 10)
+    poison = jnp.nan if specimen == _NAN_CONTINUATION else 0.0
     return _Grids(
         liquid=liquid,
         savings=savings,
-        cont_value=-1.0 / (1.0 + savings),
+        cont_value=-1.0 / (1.0 + savings) + poison,
         cont_marginal=(1.0 + savings) ** -2.0,
-        next_value=-1.0 / (_INCOME + liquid),
+        next_value=-1.0 / (_INCOME + liquid) + poison,
         next_marginal=(_INCOME + liquid) ** -2.0,
         next_liquid=_GROSS_RETURN * savings + _INCOME,
         marginal_return=jnp.full_like(savings, _GROSS_RETURN),
     )
 
 
-_PREFERENCES = crra_preferences(crra=2.0)
+def _preferences(*, specimen: str) -> Preferences:
+    """CRRA(2), whose felicity is `+inf` everywhere for `_OVERFLOWING_FELICITY`."""
+    crra = crra_preferences(crra=2.0)
+    if specimen != _OVERFLOWING_FELICITY:
+        return crra
+    return Preferences(
+        utility=lambda consumption: jnp.full_like(consumption, jnp.inf),
+        marginal_utility=crra.marginal_utility,
+        inverse_marginal_utility=crra.inverse_marginal_utility,
+    )
 
 
 def _multi_interval_step_savings(
-    *, intercept: FloatND, arithmetic: ComparisonArithmetic
+    *, intercept: FloatND, arithmetic: ComparisonArithmetic, specimen: str
 ) -> _Channels:
-    grids = _grids()
+    grids = _grids(specimen=specimen)
     return nbegm_multi_interval_step_savings(
         cont_value=grids.cont_value,
         cont_marginal=grids.cont_marginal,
         liquid_grid=grids.liquid,
         savings_grid=grids.savings,
         discount_factor=jnp.asarray(_DISCOUNT),
-        preferences=_PREFERENCES,
+        preferences=_preferences(specimen=specimen),
         coh_slopes=jnp.ones(1),
         coh_intercepts=jnp.reshape(intercept, (1,)),
         breakpoints=jnp.zeros((0,)),
@@ -124,16 +150,16 @@ def _multi_interval_step_savings(
 
 
 def _per_interval_continuation_step_savings(
-    *, intercept: FloatND, arithmetic: ComparisonArithmetic
+    *, intercept: FloatND, arithmetic: ComparisonArithmetic, specimen: str
 ) -> _Channels:
-    grids = _grids()
+    grids = _grids(specimen=specimen)
     value, marginal, policy = nbegm_per_interval_continuation_step_savings(
         cont_value=grids.cont_value[None, :],
         cont_marginal=grids.cont_marginal[None, :],
         liquid_grid=grids.liquid,
         savings_grid=grids.savings,
         discount_factor=jnp.asarray(_DISCOUNT),
-        preferences=_PREFERENCES,
+        preferences=_preferences(specimen=specimen),
         coh_slopes=jnp.ones(1),
         coh_intercepts=jnp.reshape(intercept, (1,)),
         breakpoints=jnp.zeros((0,)),
@@ -142,17 +168,45 @@ def _per_interval_continuation_step_savings(
     return value, marginal, policy
 
 
-def _unified_step_savings(
-    *, intercept: FloatND, arithmetic: ComparisonArithmetic
+def _per_interval_continuation_step_savings_streamed(
+    *, intercept: FloatND, arithmetic: ComparisonArithmetic, specimen: str
 ) -> _Channels:
-    grids = _grids()
+    grids = _grids(specimen=specimen)
+
+    def read(interval_indices: IntND) -> tuple[FloatND, FloatND]:
+        return (
+            grids.cont_value[None, :][interval_indices],
+            grids.cont_marginal[None, :][interval_indices],
+        )
+
+    value, marginal, policy = nbegm_per_interval_continuation_step_savings(
+        cont_value=None,
+        cont_marginal=None,
+        liquid_grid=grids.liquid,
+        savings_grid=grids.savings,
+        discount_factor=jnp.asarray(_DISCOUNT),
+        preferences=_preferences(specimen=specimen),
+        coh_slopes=jnp.ones(1),
+        coh_intercepts=jnp.reshape(intercept, (1,)),
+        breakpoints=jnp.zeros((0,)),
+        arithmetic=arithmetic,
+        interval_block_reader=read,
+        interval_width=1,
+    )
+    return value, marginal, policy
+
+
+def _unified_step_savings(
+    *, intercept: FloatND, arithmetic: ComparisonArithmetic, specimen: str
+) -> _Channels:
+    grids = _grids(specimen=specimen)
     return nbegm_unified_step_savings(
         cont_value=grids.cont_value,
         cont_marginal=grids.cont_marginal,
         liquid_grid=grids.liquid,
         savings_grid=grids.savings,
         discount_factor=jnp.asarray(_DISCOUNT),
-        preferences=_PREFERENCES,
+        preferences=_preferences(specimen=specimen),
         coh_slopes=jnp.ones(1),
         coh_intercepts=jnp.reshape(intercept, (1,)),
         breakpoints=jnp.zeros((0,)),
@@ -162,9 +216,9 @@ def _unified_step_savings(
 
 
 def _multi_interval_step(
-    *, intercept: FloatND, arithmetic: ComparisonArithmetic
+    *, intercept: FloatND, arithmetic: ComparisonArithmetic, specimen: str
 ) -> _Channels:
-    grids = _grids()
+    grids = _grids(specimen=specimen)
     return nbegm_multi_interval_step(
         next_value=grids.next_value,
         next_marginal=grids.next_marginal,
@@ -172,7 +226,7 @@ def _multi_interval_step(
         next_liquid_grid=grids.liquid,
         savings_grid=grids.savings,
         discount_factor=_DISCOUNT,
-        preferences=_PREFERENCES,
+        preferences=_preferences(specimen=specimen),
         next_liquid=grids.next_liquid,
         marginal_return=grids.marginal_return,
         coh_slopes=jnp.ones(1),
@@ -182,8 +236,10 @@ def _multi_interval_step(
     )
 
 
-def _unified_step(*, intercept: FloatND, arithmetic: ComparisonArithmetic) -> _Channels:
-    grids = _grids()
+def _unified_step(
+    *, intercept: FloatND, arithmetic: ComparisonArithmetic, specimen: str
+) -> _Channels:
+    grids = _grids(specimen=specimen)
     return nbegm_unified_step(
         next_value=grids.next_value,
         next_marginal=grids.next_marginal,
@@ -191,7 +247,7 @@ def _unified_step(*, intercept: FloatND, arithmetic: ComparisonArithmetic) -> _C
         next_liquid_grid=grids.liquid,
         savings_grid=grids.savings,
         discount_factor=_DISCOUNT,
-        preferences=_PREFERENCES,
+        preferences=_preferences(specimen=specimen),
         next_liquid=grids.next_liquid,
         marginal_return=grids.marginal_return,
         coh_slopes=jnp.ones(2),
@@ -203,9 +259,9 @@ def _unified_step(*, intercept: FloatND, arithmetic: ComparisonArithmetic) -> _C
 
 
 def _recurring_jump_step(
-    *, intercept: FloatND, arithmetic: ComparisonArithmetic
+    *, intercept: FloatND, arithmetic: ComparisonArithmetic, specimen: str
 ) -> _Channels:
-    grids = _grids()
+    grids = _grids(specimen=specimen)
     return nbegm_recurring_jump_step(
         next_value=grids.next_value,
         next_marginal=grids.next_marginal,
@@ -213,7 +269,7 @@ def _recurring_jump_step(
         next_liquid_grid=grids.liquid,
         savings_grid=grids.savings,
         discount_factor=_DISCOUNT,
-        preferences=_PREFERENCES,
+        preferences=_preferences(specimen=specimen),
         next_liquid=grids.next_liquid,
         marginal_return=grids.marginal_return,
         subsidy_levels=jnp.full((2,), intercept),
@@ -223,9 +279,9 @@ def _recurring_jump_step(
 
 
 def _one_asset_step(
-    *, intercept: FloatND, arithmetic: ComparisonArithmetic
+    *, intercept: FloatND, arithmetic: ComparisonArithmetic, specimen: str
 ) -> _Channels:
-    grids = _grids()
+    grids = _grids(specimen=specimen)
     return nbegm_one_asset_step(
         next_value=grids.next_value,
         next_marginal=grids.next_marginal,
@@ -233,7 +289,7 @@ def _one_asset_step(
         next_liquid_grid=grids.liquid,
         savings_grid=grids.savings,
         discount_factor=_DISCOUNT,
-        preferences=_PREFERENCES,
+        preferences=_preferences(specimen=specimen),
         next_liquid=grids.next_liquid,
         marginal_return=grids.marginal_return,
         subsidy_when=intercept,
@@ -245,9 +301,9 @@ def _one_asset_step(
 
 
 def _discrete_envelope_step(
-    *, intercept: FloatND, arithmetic: ComparisonArithmetic
+    *, intercept: FloatND, arithmetic: ComparisonArithmetic, specimen: str
 ) -> _Channels:
-    grids = _grids()
+    grids = _grids(specimen=specimen)
     value, marginal, policy, _ = nbegm_discrete_envelope_step(
         next_value=grids.next_value,
         next_marginal=grids.next_marginal,
@@ -255,7 +311,7 @@ def _discrete_envelope_step(
         next_liquid_grid=grids.liquid,
         savings_grid=grids.savings,
         discount_factor=_DISCOUNT,
-        preferences=_PREFERENCES,
+        preferences=_preferences(specimen=specimen),
         next_liquid=grids.next_liquid,
         marginal_return=grids.marginal_return,
         choices=(
@@ -273,6 +329,9 @@ def _discrete_envelope_step(
 _STEPS: dict[str, _Step] = {
     "multi_interval_step_savings": _multi_interval_step_savings,
     "per_interval_continuation_step_savings": _per_interval_continuation_step_savings,
+    "per_interval_continuation_step_savings_streamed": (
+        _per_interval_continuation_step_savings_streamed
+    ),
     "unified_step_savings": _unified_step_savings,
     "multi_interval_step": _multi_interval_step,
     "unified_step": _unified_step,
@@ -287,11 +346,15 @@ _ARITHMETICS = (
 
 
 def _solve(
-    *, step: str, intercept: float, arithmetic: ComparisonArithmetic
+    *,
+    step: str,
+    intercept: float,
+    arithmetic: ComparisonArithmetic,
+    specimen: str = _SMOOTH,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run one step eagerly at a scalar budget intercept."""
     value, marginal, policy = _STEPS[step](
-        intercept=jnp.asarray(intercept), arithmetic=arithmetic
+        intercept=jnp.asarray(intercept), arithmetic=arithmetic, specimen=specimen
     )
     return np.asarray(value), np.asarray(marginal), np.asarray(policy)
 
@@ -308,7 +371,9 @@ def _solve_transformed(
     step_func = _STEPS[step]
 
     def value_at(intercept: FloatND) -> FloatND:
-        return step_func(intercept=intercept, arithmetic=arithmetic)[0]
+        return step_func(intercept=intercept, arithmetic=arithmetic, specimen=_SMOOTH)[
+            0
+        ]
 
     if transform == "jit":
         return np.asarray(jax.jit(value_at)(jnp.asarray(_UNAFFORDABLE_INTERCEPT)))
@@ -391,3 +456,21 @@ def test_unaffordable_node_publishes_minus_inf_value_under_transforms(
     value = _solve_transformed(step=step, transform=transform, arithmetic="ordinary")
 
     np.testing.assert_array_equal(np.isneginf(value), _UNAFFORDABLE_NODES)
+
+
+@pytest.mark.parametrize("specimen", [_NAN_CONTINUATION, _OVERFLOWING_FELICITY])
+@pytest.mark.parametrize("arithmetic", _ARITHMETICS)
+@pytest.mark.parametrize("step", tuple(_STEPS))
+def test_affordable_node_without_a_finite_candidate_publishes_nan(
+    *, step: str, arithmetic: ComparisonArithmetic, specimen: str
+) -> None:
+    """A node that affords an action but has no finite candidate publishes NaN,
+    never `-inf` and never a finite value."""
+    value, _, _ = _solve(
+        step=step,
+        intercept=_AFFORDABLE_INTERCEPT,
+        arithmetic=arithmetic,
+        specimen=specimen,
+    )
+
+    assert np.isnan(value).all()

@@ -36,6 +36,9 @@ from tests.test_models import nbegm_multi_discrete_toy, nbegm_ride_discrete_toy
 
 _SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16, "n_consumption": 24}
 _PERIOD = 0
+# The three-period toy is alive at ages 0 and 1 only, so its survival law ends
+# life after age 1.
+_THREE_PERIOD_FINAL_AGE_ALIVE = 2.0
 
 _Route = tuple[Callable[[], Any], Callable[[], Any]]
 
@@ -56,7 +59,9 @@ def _ride_discrete(**variant: bool) -> _Route:
         lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL, **variant
         ),
-        lambda: nbegm_ride_discrete_toy.build_params(**params_flags),
+        lambda: nbegm_ride_discrete_toy.build_params(
+            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE, **params_flags
+        ),
     )
 
 

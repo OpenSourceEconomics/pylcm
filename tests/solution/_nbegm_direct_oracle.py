@@ -1405,6 +1405,16 @@ def _solve_cell_step(
     marginal_row = np.empty(len(query_grid))
     policy_row = np.empty(len(query_grid))
     for point, liquid in enumerate(query_grid):
+        # A point whose cash-on-hand net of the lowest savings node is not
+        # positive affords no action and carries value -inf, policy NaN and
+        # marginal 0.
+        if not budget.coh(float(liquid)) - float(savings_grid[0]) > 0.0:
+            value_row[point], policy_row[point], marginal_row[point] = (
+                -math.inf,
+                math.nan,
+                0.0,
+            )
+            continue
         value_row[point], policy_row[point], marginal_row[point] = candidates.envelope(
             query=float(liquid)
         )
