@@ -1176,13 +1176,14 @@ class Model:
                 validation_raises(log) or contains_nan(internal_result.value_functions)
             )
         ):
-            _save_solve_snapshot(
-                model=self,
-                params=params,
-                period_to_regime_to_V_arr=internal_result.value_functions,
-                log_path=Path(log_path),
-                log_keep_n_latest=log_keep_n_latest,
-            )
+            with solve_phase(name="solve_snapshot", logger=log, call_id=call_id):
+                _save_solve_snapshot(
+                    model=self,
+                    params=params,
+                    period_to_regime_to_V_arr=internal_result.value_functions,
+                    log_path=Path(log_path),
+                    log_keep_n_latest=log_keep_n_latest,
+                )
         return internal_result
 
     def _runtime_regimes_for_shape(
@@ -2417,283 +2418,309 @@ class Model:
         self._sealed_bindings.fail_if_moved()
         _fail_if_invalid_taste_shock_seed(taste_shock_seed=taste_shock_seed)
         log = get_logger(log_level=log_level)
-        self._fail_if_simulation_is_unsupported()
-        entry_inputs = capture_simulation_entry_inputs(
-            execution=self._execution,
-            params=params,
-            initial_conditions=initial_conditions,
-            solution=solution,
-        )
-        entry_allocations = (
-            None
-            if entry_inputs is None
-            else SimulationEntryAllocations(
-                operations=self._simulate_entry_operations,
-                original_inputs=entry_inputs,
-                solution=solution,
-                model_roots=(
-                    self.ages.values,  # noqa: PD011
-                    self.regime_names_to_ids,
-                    tuple(
-                        (
-                            regime.resolved_fixed_params,
-                            regime.solution.resolved_fixed_params,
-                            regime.solution._base_state_action_space.states,  # noqa: SLF001
-                            regime.solution._base_state_action_space.actions,  # noqa: SLF001
-                        )
-                        for regime in self._regimes.values()
-                    ),
-                ),
-                devices=placed_devices_for_ids(
-                    submesh_device_ids=(), visible_device_ids=self._execution.device_ids
-                ),
-                budget_bytes=cast("int", self._execution.device_memory_bytes),
-            )
-        )
-        # The canonical parameters bind both the supplied result preflight and an
-        # automatic solve. Process them once and keep one model-authoritative seam.
-        flat_params = (
-            self._process_params(params)
-            if entry_allocations is None
-            else self._process_params(params, array_writer=entry_allocations)
-        )
-        process_grid_resolver = (
-            None
-            if entry_allocations is None
-            else entry_allocations.process_grid_resolver
-        )
-        if process_grid_resolver is not None:
-            for regime_name, regime in self._regimes.items():
-                regime.solution.resolve_process_grids(
-                    regime_params=flat_params[regime_name],
-                    process_grid_resolver=process_grid_resolver,
-                )
-            process_grid_resolver.seal()
-        if solution is not None:
-            (
-                period_to_regime_to_V_arr,
-                period_to_regime_to_sim_policy,
-                period_to_regime_to_dissolution_flags,
-                period_to_regime_to_replay_reader,
-            ) = self._resolve_solution_result(
-                solution=solution,
-                flat_params=flat_params,
-                entry_allocations=entry_allocations,
-                process_grid_resolver=process_grid_resolver,
-            )
-        else:
-            period_to_regime_to_V_arr = None
-            period_to_regime_to_sim_policy = None
-            period_to_regime_to_dissolution_flags = None
-            period_to_regime_to_replay_reader = None
-        if entry_allocations is not None:
-            entry_allocations.update_solution(
-                solution=solution,
-                resolved_inputs=(
-                    period_to_regime_to_V_arr,
-                    period_to_regime_to_sim_policy,
-                    period_to_regime_to_dissolution_flags,
-                    period_to_regime_to_replay_reader,
-                ),
-            )
-        if isinstance(initial_conditions, pd.DataFrame):
-            initial_conditions = initial_conditions_from_dataframe(
-                df=initial_conditions,
-                user_regimes=self.user_regimes,
-                regime_names_to_ids=self.regime_names_to_ids,
-                array_writer=entry_allocations,
-            )
-        if entry_allocations is not None:
-            entry_allocations.publish(stage="initial", tree=initial_conditions)
-        initial_conditions = canonicalize_initial_conditions(
-            initial_conditions=initial_conditions,
-            regimes=self._regimes,
-            array_writer=entry_allocations,
-        )
-        if entry_allocations is not None:
-            entry_allocations.publish(stage="initial", tree=initial_conditions)
-        # Validate canonical device-aligned inputs before automatic solving.
-        # Additional chunk padding follows selection with actual solution owners.
-        subject_batch_size = self._execution.axis_widths.get("subject", 0)
-        n_devices = len(self._execution.device_ids)
-        distributes = self._distributes_subjects() and n_devices > 1
-        alignment = n_devices if distributes else 1
-        if entry_allocations is None:
-            initial_conditions, original_n_subjects = (
-                pad_initial_conditions_to_multiple(
+        call_id = new_call_id()
+        with solve_phase(name="public_simulate", logger=log, call_id=call_id):
+            with solve_phase(name="params_validation", logger=log, call_id=call_id):
+                self._fail_if_simulation_is_unsupported()
+                entry_inputs = capture_simulation_entry_inputs(
+                    execution=self._execution,
+                    params=params,
                     initial_conditions=initial_conditions,
-                    multiple=alignment,
+                    solution=solution,
                 )
-            )
-        else:
-            initial_conditions, original_n_subjects = entry_allocations.pad(
-                initial_conditions=initial_conditions,
-                multiple=alignment,
-            )
-            entry_allocations.publish(stage="initial", tree=initial_conditions)
-        # The edge-fold state/source-param collision guard runs on simulation as
-        # well as solve because a supplied SolutionResult skips backward induction.
-        # Running it before compilation or routing covers both entry paths.
-        if any(regime.gated_edges for regime in self._regimes.values()):
-            _reject_edge_fold_state_param_collisions(
-                regimes=self._regimes,
-                base_state_action_spaces=_build_base_state_action_spaces(
-                    regimes=self._regimes,
-                    flat_params=flat_params,
-                    process_grid_resolver=process_grid_resolver,
-                ),
-                flat_params=flat_params,
-            )
-        validate_simulation_inputs(
-            initial_conditions=initial_conditions,
-            regimes=self._regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            flat_params=flat_params,
-            ages=self.ages,
-            logger=log,
-            execution=self._execution,
-            retained_footprint=(
-                entry_allocations.snapshot()
-                if entry_allocations is not None and validation_enabled(log)
-                else None
-            ),
-            process_grid_resolver=process_grid_resolver,
-            producers=self._simulate_entry_operations,
-        )
-        padded_n_subjects = len(next(iter(initial_conditions.values())))
-        if solution is None:
-            solve_params = (
-                flat_params
-                if entry_allocations is None
-                else entry_allocations.place_solve_parameters(
-                    flat_params=flat_params, regimes=self._regimes
+                entry_allocations = (
+                    None
+                    if entry_inputs is None
+                    else SimulationEntryAllocations(
+                        operations=self._simulate_entry_operations,
+                        original_inputs=entry_inputs,
+                        solution=solution,
+                        model_roots=(
+                            self.ages.values,  # noqa: PD011
+                            self.regime_names_to_ids,
+                            tuple(
+                                (
+                                    regime.resolved_fixed_params,
+                                    regime.solution.resolved_fixed_params,
+                                    regime.solution._base_state_action_space.states,  # noqa: SLF001
+                                    regime.solution._base_state_action_space.actions,  # noqa: SLF001
+                                )
+                                for regime in self._regimes.values()
+                            ),
+                        ),
+                        devices=placed_devices_for_ids(
+                            submesh_device_ids=(),
+                            visible_device_ids=self._execution.device_ids,
+                        ),
+                        budget_bytes=cast("int", self._execution.device_memory_bytes),
+                    )
                 )
-            )
-            solution = self._solve_from_flat_params(
-                flat_params=solve_params,
-                params=params,
-                log=log,
-                retention=ResultRetention.VALUES_AND_REPLAY,
-                max_compilation_workers=max_compilation_workers,
-                log_path=log_path,
-                log_keep_n_latest=log_keep_n_latest,
-                retained_input_arrays=(
-                    ()
+                # The canonical parameters bind both the supplied result preflight
+                # and an automatic solve. Process them once and keep one
+                # model-authoritative seam.
+                flat_params = (
+                    self._process_params(params)
                     if entry_allocations is None
-                    else entry_allocations.solve_input_roots()
-                ),
-                process_grid_resolver=process_grid_resolver,
-            )
-            (
-                period_to_regime_to_V_arr,
-                period_to_regime_to_sim_policy,
-                period_to_regime_to_dissolution_flags,
-                period_to_regime_to_replay_reader,
-            ) = self._resolve_solution_result(
-                solution=solution,
+                    else self._process_params(params, array_writer=entry_allocations)
+                )
+                process_grid_resolver = (
+                    None
+                    if entry_allocations is None
+                    else entry_allocations.process_grid_resolver
+                )
+                if process_grid_resolver is not None:
+                    for regime_name, regime in self._regimes.items():
+                        regime.solution.resolve_process_grids(
+                            regime_params=flat_params[regime_name],
+                            process_grid_resolver=process_grid_resolver,
+                        )
+                    process_grid_resolver.seal()
+            if solution is not None:
+                with solve_phase(
+                    name="solution_resolution", logger=log, call_id=call_id
+                ):
+                    (
+                        period_to_regime_to_V_arr,
+                        period_to_regime_to_sim_policy,
+                        period_to_regime_to_dissolution_flags,
+                        period_to_regime_to_replay_reader,
+                    ) = self._resolve_solution_result(
+                        solution=solution,
+                        flat_params=flat_params,
+                        entry_allocations=entry_allocations,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+            else:
+                period_to_regime_to_V_arr = None
+                period_to_regime_to_sim_policy = None
+                period_to_regime_to_dissolution_flags = None
+                period_to_regime_to_replay_reader = None
+            with solve_phase(name="simulation_inputs", logger=log, call_id=call_id):
+                if entry_allocations is not None:
+                    entry_allocations.update_solution(
+                        solution=solution,
+                        resolved_inputs=(
+                            period_to_regime_to_V_arr,
+                            period_to_regime_to_sim_policy,
+                            period_to_regime_to_dissolution_flags,
+                            period_to_regime_to_replay_reader,
+                        ),
+                    )
+                if isinstance(initial_conditions, pd.DataFrame):
+                    initial_conditions = initial_conditions_from_dataframe(
+                        df=initial_conditions,
+                        user_regimes=self.user_regimes,
+                        regime_names_to_ids=self.regime_names_to_ids,
+                        array_writer=entry_allocations,
+                    )
+                if entry_allocations is not None:
+                    entry_allocations.publish(stage="initial", tree=initial_conditions)
+                initial_conditions = canonicalize_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    regimes=self._regimes,
+                    array_writer=entry_allocations,
+                )
+                if entry_allocations is not None:
+                    entry_allocations.publish(stage="initial", tree=initial_conditions)
+                # Validate canonical device-aligned inputs before automatic
+                # solving. Additional chunk padding follows selection with actual
+                # solution owners.
+                subject_batch_size = self._execution.axis_widths.get("subject", 0)
+                n_devices = len(self._execution.device_ids)
+                distributes = self._distributes_subjects() and n_devices > 1
+                alignment = n_devices if distributes else 1
+                if entry_allocations is None:
+                    initial_conditions, original_n_subjects = (
+                        pad_initial_conditions_to_multiple(
+                            initial_conditions=initial_conditions,
+                            multiple=alignment,
+                        )
+                    )
+                else:
+                    initial_conditions, original_n_subjects = entry_allocations.pad(
+                        initial_conditions=initial_conditions,
+                        multiple=alignment,
+                    )
+                    entry_allocations.publish(stage="initial", tree=initial_conditions)
+                # The edge-fold state/source-param collision guard runs on
+                # simulation as well as solve because a supplied SolutionResult
+                # skips backward induction. Running it before compilation or
+                # routing covers both entry paths.
+                if any(regime.gated_edges for regime in self._regimes.values()):
+                    _reject_edge_fold_state_param_collisions(
+                        regimes=self._regimes,
+                        base_state_action_spaces=_build_base_state_action_spaces(
+                            regimes=self._regimes,
+                            flat_params=flat_params,
+                            process_grid_resolver=process_grid_resolver,
+                        ),
+                        flat_params=flat_params,
+                    )
+                validate_simulation_inputs(
+                    initial_conditions=initial_conditions,
+                    regimes=self._regimes,
+                    regime_names_to_ids=self.regime_names_to_ids,
+                    flat_params=flat_params,
+                    ages=self.ages,
+                    logger=log,
+                    execution=self._execution,
+                    retained_footprint=(
+                        entry_allocations.snapshot()
+                        if entry_allocations is not None and validation_enabled(log)
+                        else None
+                    ),
+                    process_grid_resolver=process_grid_resolver,
+                    producers=self._simulate_entry_operations,
+                )
+                padded_n_subjects = len(next(iter(initial_conditions.values())))
+            if solution is None:
+                solve_params = (
+                    flat_params
+                    if entry_allocations is None
+                    else entry_allocations.place_solve_parameters(
+                        flat_params=flat_params, regimes=self._regimes
+                    )
+                )
+                solution = self._solve_from_flat_params(
+                    flat_params=solve_params,
+                    params=params,
+                    log=log,
+                    retention=ResultRetention.VALUES_AND_REPLAY,
+                    max_compilation_workers=max_compilation_workers,
+                    log_path=log_path,
+                    log_keep_n_latest=log_keep_n_latest,
+                    retained_input_arrays=(
+                        ()
+                        if entry_allocations is None
+                        else entry_allocations.solve_input_roots()
+                    ),
+                    process_grid_resolver=process_grid_resolver,
+                    call_id=call_id,
+                )
+                with solve_phase(
+                    name="solution_resolution", logger=log, call_id=call_id
+                ):
+                    (
+                        period_to_regime_to_V_arr,
+                        period_to_regime_to_sim_policy,
+                        period_to_regime_to_dissolution_flags,
+                        period_to_regime_to_replay_reader,
+                    ) = self._resolve_solution_result(
+                        solution=solution,
+                        flat_params=flat_params,
+                        entry_allocations=entry_allocations,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+            with solve_phase(name="solution_handover", logger=log, call_id=call_id):
+                if (
+                    period_to_regime_to_V_arr is None
+                    or period_to_regime_to_sim_policy is None
+                    or period_to_regime_to_dissolution_flags is None
+                    or period_to_regime_to_replay_reader is None
+                ):
+                    raise AssertionError(
+                        "Simulation solution inputs were not resolved."
+                    )
+                if entry_allocations is not None:
+                    entry_allocations.update_solution(
+                        solution=solution,
+                        resolved_inputs=(
+                            period_to_regime_to_V_arr,
+                            period_to_regime_to_sim_policy,
+                            period_to_regime_to_dissolution_flags,
+                            period_to_regime_to_replay_reader,
+                        ),
+                    )
+                    entry_allocations.publish(stage="initial", tree=initial_conditions)
+            with solve_phase(name="chunk_planning", logger=log, call_id=call_id):
+                # Values and replay artifacts retain their solve placement. The forward
+                # period owner acquires only the copies consumed by that period's units.
+                prepared_chunks = None
+                if entry_allocations is not None:
+                    simulate_regimes = self._runtime_regimes_for_shape(
+                        compile_batch_size=padded_n_subjects,
+                    )
+                    prepared_chunks = prepare_simulation_chunks(
+                        regimes=simulate_regimes,
+                        flat_params=flat_params,
+                        values=period_to_regime_to_V_arr,
+                        flags=period_to_regime_to_dissolution_flags,
+                        policies=period_to_regime_to_sim_policy,
+                        ages=self.ages,
+                        initial_conditions=initial_conditions,
+                        regime_names_to_ids=self.regime_names_to_ids,
+                        original_population=original_n_subjects,
+                        retained_footprint=entry_allocations.snapshot(),
+                        independent_taste=taste_shock_seed is not None,
+                        log_level=log_level,
+                        process_grid_resolver=process_grid_resolver,
+                    )
+                    compile_batch_size = prepared_chunks.plan.profile.n_subjects
+                    initial_conditions, _ = entry_allocations.pad(
+                        initial_conditions=initial_conditions,
+                        multiple=compile_batch_size,
+                    )
+                    entry_allocations.publish(stage="initial", tree=initial_conditions)
+                else:
+                    compile_batch_size = self._resolve_compile_batch_size(
+                        subject_batch_size=subject_batch_size,
+                        padded_n_subjects=padded_n_subjects,
+                    )
+                    initial_conditions, _ = pad_initial_conditions_to_multiple(
+                        initial_conditions=initial_conditions,
+                        multiple=compile_batch_size,
+                    )
+                    simulate_regimes = self._runtime_regimes_for_shape(
+                        compile_batch_size=compile_batch_size,
+                    )
+            result = simulate(
                 flat_params=flat_params,
-                entry_allocations=entry_allocations,
-                process_grid_resolver=process_grid_resolver,
-            )
-        if (
-            period_to_regime_to_V_arr is None
-            or period_to_regime_to_sim_policy is None
-            or period_to_regime_to_dissolution_flags is None
-            or period_to_regime_to_replay_reader is None
-        ):
-            raise AssertionError("Simulation solution inputs were not resolved.")
-        if entry_allocations is not None:
-            entry_allocations.update_solution(
-                solution=solution,
-                resolved_inputs=(
-                    period_to_regime_to_V_arr,
-                    period_to_regime_to_sim_policy,
-                    period_to_regime_to_dissolution_flags,
-                    period_to_regime_to_replay_reader,
-                ),
-            )
-            entry_allocations.publish(stage="initial", tree=initial_conditions)
-        # Values and replay artifacts retain their solve placement. The forward
-        # period owner acquires only the copies consumed by that period's units.
-        prepared_chunks = None
-        if entry_allocations is not None:
-            simulate_regimes = self._runtime_regimes_for_shape(
-                compile_batch_size=padded_n_subjects,
-            )
-            prepared_chunks = prepare_simulation_chunks(
+                initial_conditions=initial_conditions,
                 regimes=simulate_regimes,
-                flat_params=flat_params,
-                values=period_to_regime_to_V_arr,
-                flags=period_to_regime_to_dissolution_flags,
-                policies=period_to_regime_to_sim_policy,
-                ages=self.ages,
-                initial_conditions=initial_conditions,
                 regime_names_to_ids=self.regime_names_to_ids,
-                original_population=original_n_subjects,
-                retained_footprint=entry_allocations.snapshot(),
-                independent_taste=taste_shock_seed is not None,
-                log_level=log_level,
-                process_grid_resolver=process_grid_resolver,
-            )
-            compile_batch_size = prepared_chunks.plan.profile.n_subjects
-            initial_conditions, _ = entry_allocations.pad(
-                initial_conditions=initial_conditions, multiple=compile_batch_size
-            )
-            entry_allocations.publish(stage="initial", tree=initial_conditions)
-        else:
-            compile_batch_size = self._resolve_compile_batch_size(
-                subject_batch_size=subject_batch_size,
-                padded_n_subjects=padded_n_subjects,
-            )
-            initial_conditions, _ = pad_initial_conditions_to_multiple(
-                initial_conditions=initial_conditions, multiple=compile_batch_size
-            )
-            simulate_regimes = self._runtime_regimes_for_shape(
-                compile_batch_size=compile_batch_size,
-            )
-        result = simulate(
-            flat_params=flat_params,
-            initial_conditions=initial_conditions,
-            regimes=simulate_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            logger=log,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            period_to_regime_to_dissolution_flags=(
-                period_to_regime_to_dissolution_flags
-            ),
-            period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
-            period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
-            ages=self.ages,
-            simulation_output_dtypes=self.simulation_output_dtypes,
-            seed=seed,
-            taste_shock_seed=taste_shock_seed,
-            subject_batch_size=compile_batch_size,
-            original_n_subjects=original_n_subjects,
-            device_ids=self._execution.device_ids,
-            prepared_chunks=prepared_chunks,
-            retained_footprint=(
-                entry_allocations.snapshot() if entry_allocations is not None else None
-            ),
-            process_grid_resolver=process_grid_resolver,
-        )
-        if entry_allocations is not None:
-            entry_allocations.close()
-        # DataFrame materialization reads canonical DAG functions; call-local
-        # executors retain compiled programs that cannot cross a pickle boundary.
-        if simulate_regimes is not self._regimes:
-            result._regimes = self._regimes  # noqa: SLF001
-        result._solution = solution  # noqa: SLF001
-        if log_path is not None and validation_raises(log):
-            _save_simulate_snapshot(
-                model=self,
-                params=params,
-                initial_conditions=initial_conditions,
+                logger=log,
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                result=result,
-                log_path=Path(log_path),
-                log_keep_n_latest=log_keep_n_latest,
+                period_to_regime_to_dissolution_flags=(
+                    period_to_regime_to_dissolution_flags
+                ),
+                period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
+                period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
+                ages=self.ages,
+                simulation_output_dtypes=self.simulation_output_dtypes,
+                seed=seed,
+                taste_shock_seed=taste_shock_seed,
+                subject_batch_size=compile_batch_size,
+                original_n_subjects=original_n_subjects,
+                device_ids=self._execution.device_ids,
+                prepared_chunks=prepared_chunks,
+                retained_footprint=(
+                    entry_allocations.snapshot()
+                    if entry_allocations is not None
+                    else None
+                ),
+                process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
             )
-        return result
+            with solve_phase(name="result_finalization", logger=log, call_id=call_id):
+                if entry_allocations is not None:
+                    entry_allocations.close()
+                # DataFrame materialization reads canonical DAG functions;
+                # call-local executors retain compiled programs that cannot cross a
+                # pickle boundary.
+                if simulate_regimes is not self._regimes:
+                    result._regimes = self._regimes  # noqa: SLF001
+                result._solution = solution  # noqa: SLF001
+                if log_path is not None and validation_raises(log):
+                    _save_simulate_snapshot(
+                        model=self,
+                        params=params,
+                        initial_conditions=initial_conditions,
+                        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                        result=result,
+                        log_path=Path(log_path),
+                        log_keep_n_latest=log_keep_n_latest,
+                    )
+            return result
 
     @beartype(conf=PARAMS_CONF)
     def validate_initial_conditions(
