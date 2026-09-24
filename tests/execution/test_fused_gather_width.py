@@ -335,3 +335,71 @@ def test_a_second_solve_of_the_same_model_classifies_no_program() -> None:
         )
 
     assert (first.total() > 0, second.total()) == (True, 0)
+
+
+@pytest.mark.parametrize(("ceiling", "classified"), [(1, False), (2, True)])
+def test_only_a_program_with_a_narrower_width_is_classified(
+    *, ceiling: int, classified: bool
+) -> None:
+    """A cell width with no narrower admissible width is never read off its HLO."""
+    counts: collections.Counter[int] = collections.Counter()
+    _solve(
+        config=ExecutionConfig(axis_width_ceilings={_CELL_AXIS: ceiling}),
+        limit=None,
+        check=functools.partial(_counting, counts=counts, limit=0),
+    )
+
+    assert (counts.total() > 0) is classified
+
+
+def _counting_trials(
+    *, original: Any, trials: collections.Counter[Any], **kwargs: Any
+) -> Any:
+    trials[kwargs["candidate"][0]] += 1
+    return original(**kwargs)
+
+
+def _solve_counting_trials(
+    *, model: Model, limit: int
+) -> tuple[collections.Counter[Any], dict[str, set[int]]]:
+    """Solve `model` and count, per core, the halving compiles the walk requested."""
+    trials: collections.Counter[Any] = collections.Counter()
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(
+            backward_induction,
+            "_lower_and_compile_candidate",
+            functools.partial(
+                _counting_trials,
+                original=backward_induction._lower_and_compile_candidate,
+                trials=trials,
+            ),
+        )
+        widths, _ = _solve(config=ExecutionConfig(), limit=limit, model=model)
+    return trials, widths
+
+
+def test_a_second_solve_replays_a_reverted_walk_without_trials() -> None:
+    """A walk that kept the admitted width is not walked again on the same model."""
+    model = _model_with(ExecutionConfig())
+    first, first_widths = _solve_counting_trials(model=model, limit=0)
+    second, second_widths = _solve_counting_trials(model=model, limit=0)
+
+    assert (first.total() > 0, second.total(), second_widths) == (
+        True,
+        0,
+        first_widths,
+    )
+
+
+def test_a_second_solve_binds_a_halved_width_without_walking() -> None:
+    """A walk that halved twice is replayed by binding its final width once per core."""
+    model = _model_with(ExecutionConfig())
+    limit = _planned_width() // 4
+    first, first_widths = _solve_counting_trials(model=model, limit=limit)
+    second, second_widths = _solve_counting_trials(model=model, limit=limit)
+
+    assert (set(first.values()), set(second.values()), second_widths) == (
+        {2},
+        {1},
+        first_widths,
+    )
