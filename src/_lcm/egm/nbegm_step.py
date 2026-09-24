@@ -393,7 +393,13 @@ def nbegm_multi_interval_step(
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
     )
-    return value, marginal, policy
+    return _publish_no_action_carry(
+        value=value,
+        marginal=marginal,
+        policy=policy,
+        coh=coh_grid,
+        lowest_savings=savings_grid[0],
+    )
 
 
 def _linear_extension(
@@ -970,7 +976,13 @@ def nbegm_multi_interval_step_savings(
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
     )
-    return value, marginal, policy
+    return _publish_no_action_carry(
+        value=value,
+        marginal=marginal,
+        policy=policy,
+        coh=coh_grid,
+        lowest_savings=savings_grid[0],
+    )
 
 
 def _interval_corner_candidates(
@@ -1285,7 +1297,16 @@ def nbegm_per_interval_continuation_step_savings(
             feasibility_partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
         )
-        return streamed if return_owner else streamed[:3]
+        return _publish_interval_step(
+            published=streamed,
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            coh_grid=coh_grid,
+            return_owner=return_owner,
+        )
 
     if cont_value is None or cont_marginal is None:
         raise ValueError(
@@ -1406,9 +1427,57 @@ def nbegm_per_interval_continuation_step_savings(
         feasible_interval_mask=feasible_interval_mask,
         return_owner=True,
     )
-    if return_owner:
-        return value, marginal, policy, owner
-    return value, marginal, policy
+    return _publish_interval_step(
+        published=(value, marginal, policy, owner),
+        liquid_grid=liquid_grid,
+        savings_grid=savings_grid,
+        coh_slopes=coh_slopes,
+        coh_intercepts=coh_intercepts,
+        breakpoints=breakpoints,
+        coh_grid=coh_grid,
+        return_owner=return_owner,
+    )
+
+
+def _publish_interval_step(
+    *,
+    published: tuple[Float1D, Float1D, Float1D, Int1D],
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None,
+    return_owner: bool,
+) -> tuple[Float1D, Float1D, Float1D] | tuple[Float1D, Float1D, Float1D, Int1D]:
+    """Apply the no-action carry to a per-interval step and name its owners.
+
+    The budget is the true cash-on-hand where supplied and otherwise each node's
+    own interval's affine budget. A node publishing the carry has no finite value,
+    so its owner is `NO_OWNER`.
+    """
+    if coh_grid is None:
+        interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+        coh_grid = (
+            coh_slopes[interval_of_grid] * liquid_grid
+            + coh_intercepts[interval_of_grid]
+        )
+    value, marginal, policy, owner = published
+    value, marginal, policy = _publish_no_action_carry(
+        value=value,
+        marginal=marginal,
+        policy=policy,
+        coh=coh_grid,
+        lowest_savings=savings_grid[0],
+    )
+    if not return_owner:
+        return value, marginal, policy
+    return (
+        value,
+        marginal,
+        policy,
+        published_owner(value=value, stable_index=owner),
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -2287,17 +2356,17 @@ def nbegm_unified_step_savings(
         marginal_parts.append(interior[3])
         segment_parts.append(segment + float(case) * case_stride)
 
-        # Hard borrowing corner (save nothing) over this case's liquid range.
-        s0_consumption = coh_case_grid
-        s0_valid = (liquid_grid >= lower) & (liquid_grid < upper)
-        s0 = mask_dead_candidates(
+        # Hard borrowing corner (save nothing) over this case's liquid range, dead
+        # wherever cash-on-hand affords no action.
+        s0 = _fixed_savings_corner(
             endog_grid=liquid_grid,
-            value=preferences.utility(s0_consumption)
-            + discount_factor * value_at_no_save,
-            policy=s0_consumption,
-            marginal=coh_slopes[case_grid_interval]
-            * preferences.marginal_utility(s0_consumption),
-            valid=s0_valid,
+            coh=coh_case_grid,
+            savings=savings_grid[0],
+            preferences=preferences,
+            discount_factor=discount_factor,
+            continuation=value_at_no_save,
+            coh_slope=coh_slopes[case_grid_interval],
+            valid=(liquid_grid >= lower) & (liquid_grid < upper),
         )
         endog_parts.append(s0[0])
         value_parts.append(s0[1])
@@ -2342,7 +2411,13 @@ def nbegm_unified_step_savings(
         x_query=liquid_grid,
         arithmetic=arithmetic,
     )
-    return value, marginal, policy
+    return _publish_no_action_carry(
+        value=value,
+        marginal=marginal,
+        policy=policy,
+        coh=coh_slopes[grid_interval] * liquid_grid + coh_intercepts[grid_interval],
+        lowest_savings=savings_grid[0],
+    )
 
 
 def _flat_interval_indices(
@@ -2499,9 +2574,13 @@ def nbegm_discrete_envelope_step(
     probabilities = jax.nn.softmax(scaled, axis=0)
     smoothed_value = taste_shock_scale * jax.scipy.special.logsumexp(scaled, axis=0)
     smoothed_marginal = jnp.sum(probabilities * marginal_stack, axis=0)
+    # Where no branch affords an action every value is `-inf` and the softmax
+    # weights are undefined; such a node carries the zero marginal of the
+    # infeasible carry.
+    no_action = jnp.all(jnp.isneginf(value_stack), axis=0)
     return (
         smoothed_value,
-        smoothed_marginal,
+        jnp.where(no_action, 0.0, smoothed_marginal),
         policy_stack[modal, index],
         modal,
     )
@@ -2729,7 +2808,13 @@ def nbegm_unified_step(
         x_query=liquid_grid,
         arithmetic=arithmetic,
     )
-    return value, marginal, policy
+    return _publish_no_action_carry(
+        value=value,
+        marginal=marginal,
+        policy=policy,
+        coh=coh_slopes[grid_interval] * liquid_grid + coh_intercepts[grid_interval],
+        lowest_savings=savings_grid[0],
+    )
 
 
 def _boundary_targeting_coh(
@@ -2935,7 +3020,16 @@ def nbegm_recurring_jump_step(
         x_query=liquid_grid,
         arithmetic=arithmetic,
     )
-    return value, marginal, policy
+    # Case `k` owns the liquid nodes in `[lower_edges[k], upper_edges[k])`, the
+    # same left-closed split its candidates are masked to.
+    case_of_node = jnp.searchsorted(jump_breakpoints, liquid_grid, side="right")
+    return _publish_no_action_carry(
+        value=value,
+        marginal=marginal,
+        policy=policy,
+        coh=liquid_grid + subsidy_levels[case_of_node],
+        lowest_savings=savings_grid[0],
+    )
 
 
 def _recurring_jump_case(
@@ -3241,7 +3335,13 @@ def nbegm_one_asset_step(
         x_query=liquid_grid,
         arithmetic=arithmetic,
     )
-    return env_value, env_marginal, env_policy
+    return _publish_no_action_carry(
+        value=env_value,
+        marginal=env_marginal,
+        policy=env_policy,
+        coh=liquid_grid + jnp.where(when_valid, subsidy_when, subsidy_otherwise),
+        lowest_savings=savings_grid[0],
+    )
 
 
 def _case_step(
@@ -3742,4 +3842,49 @@ def _fixed_savings_corner(
         policy=consumption,
         marginal=coh_slope * preferences.marginal_utility(safe),
         valid=feasible & valid,
+    )
+
+
+def _publish_no_action_carry(
+    *,
+    value: Float1D,
+    marginal: Float1D,
+    policy: Float1D,
+    coh: Float1D,
+    lowest_savings: ScalarFloat,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Publish the infeasible carry wherever a node's budget affords no action.
+
+    A liquid node whose cash-on-hand net of the lowest savings node is not positive
+    has no consumption to choose, so no candidate exists there and the envelope
+    leaves every channel NaN. Such a node publishes the carry contract of a node
+    with no feasible action instead:
+
+    - value `-inf`, so a discrete choice between branches never picks it over a
+      branch that affords an action;
+    - policy NaN;
+    - marginal zero.
+
+    NaN in the value stays reserved for a node that affords an action which no
+    live candidate brackets. A NaN budget decides nothing, so its channels pass
+    through unchanged rather than being turned into the carry.
+
+    Args:
+        value: Published value on the liquid grid.
+        marginal: Published marginal value of liquid on the liquid grid.
+        policy: Published consumption policy on the liquid grid.
+        coh: True cash-on-hand at each liquid node.
+        lowest_savings: The lowest savings node, `savings_grid[0]`.
+
+    Returns:
+        Tuple of the value, marginal, and policy, each carrying the contract at
+        every node whose budget affords no action.
+
+    """
+    budget = coh - lowest_savings
+    no_action = ~affords_an_action(budget) & ~jnp.isnan(budget)
+    return (
+        jnp.where(no_action, -jnp.inf, value),
+        jnp.where(no_action, 0.0, marginal),
+        jnp.where(no_action, jnp.nan, policy),
     )
