@@ -29,20 +29,32 @@ to the float dtype, and both of its regimes replay by grid recomputation, which
 retains no policy artifact. The integer and boolean tier compares nothing for
 that model; it applies to any integer or boolean array a solve publishes.
 
+Covered and uncovered solves must also lead forward simulation to the same
+discrete choices. That check runs on specimens whose parameters make the
+simulated discrete actions vary across subjects:
+
+- the GridSearch model with a lower disutility of work, so that some subjects
+  work and others retire;
+- the NB-EGM toy at its default sizes with a higher insurance premium, so that
+  some subjects buy private insurance and others do not.
+
 Each distinct solve runs once per worker and is shared across tests.
 """
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
-from lcm import ExecutionConfig, LinSpacedGrid
+from lcm import DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.execution import WidthSearch, WidthSearchPolicy
 from lcm.solvers import ACTION_PRODUCT_AXIS, BRANCH_AXIS
+from lcm.typing import UserParams
 from tests.solution._candidate_census import Census, CensusRecorder
 from tests.test_models import nbegm_multi_discrete_toy
 from tests.test_models.deterministic import regression
@@ -69,6 +81,21 @@ _SMALL_CASES = tuple(
     for arm in (_UNBUDGETED, _BOUNDED)
 )
 _CASES = (*_SMALL_CASES, (_NBEGM, _DEFAULT_SIZE))
+# Simulation specimens, one per covered case that yields a non-degenerate panel.
+# The NB-EGM toy's two-period sizes are left out: forward simulation of its
+# single alive period returns a NaN value for every subject, and each discrete
+# action then sits at its first code, so the comparison would be vacuous.
+_SIMULATION_CASES = (
+    (_GRID_SEARCH, _UNBUDGETED),
+    (_GRID_SEARCH, _BOUNDED),
+    (_NBEGM, _DEFAULT_SIZE),
+)
+_SIMULATION_PARAMS: dict[str, dict[str, float]] = {
+    _GRID_SEARCH: {"disutility_of_work": 0.25},
+    _NBEGM: {"premium": 3.0},
+}
+_N_SUBJECTS = 400
+_SIMULATION_SEED = 1
 _NON_FINITE_CLASSES: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "nan": np.isnan,
     "posinf": np.isposinf,
@@ -89,15 +116,27 @@ def _solve(*, solver: str, arm: str, covered: bool) -> tuple[Any, Census]:
         width_search=WidthSearchPolicy(kind=WidthSearch.BOUNDED),
         covered_axes=(_AXIS[solver],) if covered else (),
     )
+    model, params = _build(solver=solver, arm=arm, execution=execution, overrides={})
+    return _solve_with_census(model=model, params=params)
+
+
+def _solve_with_census(*, model: Model, params: UserParams) -> tuple[Any, Census]:
+    """Solve `model`; return the result and the planner census of the solve."""
     recorder = CensusRecorder()
     with pytest.MonkeyPatch.context() as monkeypatch:
         recorder.install(monkeypatch=monkeypatch)
-        result = _build_and_solve(solver=solver, arm=arm, execution=execution)
+        result = model.solve(params=params, log_level="off")
     return result, recorder.census()
 
 
-def _build_and_solve(*, solver: str, arm: str, execution: ExecutionConfig) -> Any:
-    """Build one of the models under `execution` and solve it."""
+def _build(
+    *,
+    solver: str,
+    arm: str,
+    execution: ExecutionConfig,
+    overrides: Mapping[str, float],
+) -> tuple[Model, UserParams]:
+    """Build one of the models under `execution` and its parameters."""
     if solver == _NBEGM:
         sizes: dict[str, Any] = (
             {}
@@ -111,7 +150,7 @@ def _build_and_solve(*, solver: str, arm: str, execution: ExecutionConfig) -> An
             execution_config=execution,
             **sizes,
         )
-        params = nbegm_multi_discrete_toy.build_params(n_actions=3)
+        params = nbegm_multi_discrete_toy.build_params(n_actions=3, **overrides)
     else:
         model = regression.get_model(
             n_periods=3,
@@ -119,8 +158,8 @@ def _build_and_solve(*, solver: str, arm: str, execution: ExecutionConfig) -> An
             consumption_grid=LinSpacedGrid(start=1, stop=400, n_points=10),
             execution_config=execution,
         )
-        params = regression.get_params(n_periods=3)
-    return model.solve(params=params, log_level="off")
+        params = regression.get_params(n_periods=3, **overrides)
+    return model, params
 
 
 def _covered_and_uncovered(case: tuple[str, str]) -> tuple[Any, Any]:
@@ -129,6 +168,73 @@ def _covered_and_uncovered(case: tuple[str, str]) -> tuple[Any, Any]:
     covered, _ = _solve(solver=solver, arm=arm, covered=True)
     uncovered, _ = _solve(solver=solver, arm=arm, covered=False)
     return covered, uncovered
+
+
+@functools.cache
+def _simulate(
+    *, solver: str, arm: str, covered: bool
+) -> tuple[Model, Census, pd.DataFrame]:
+    """Solve a simulation specimen and simulate it from fixed initial conditions.
+
+    Return the model, the planner census of its solve and the simulated panel,
+    with discrete variables as labelled categoricals.
+    """
+    execution = ExecutionConfig(
+        device_memory_bytes=_ARM_BUDGET[arm],
+        width_search=WidthSearchPolicy(kind=WidthSearch.BOUNDED),
+        covered_axes=(_AXIS[solver],) if covered else (),
+    )
+    model, params = _build(
+        solver=solver,
+        arm=arm,
+        execution=execution,
+        overrides=_SIMULATION_PARAMS[solver],
+    )
+    result, census = _solve_with_census(model=model, params=params)
+    simulation = model.simulate(
+        params=params,
+        initial_conditions=_initial_conditions(solver),
+        solution=result,
+        log_level="off",
+        seed=_SIMULATION_SEED,
+    )
+    return model, census, simulation.to_dataframe(terminal_rows="all")
+
+
+def _initial_conditions(solver: str) -> dict[str, jax.Array]:
+    """Subjects spread over the model's wealth-like state, all alive at the start."""
+    regime_id = jnp.zeros(_N_SUBJECTS, dtype=jnp.int32)
+    if solver == _NBEGM:
+        return {
+            "liquid": jnp.linspace(0.0, 30.0, _N_SUBJECTS),
+            "income": jnp.zeros(_N_SUBJECTS),
+            "age": jnp.zeros(_N_SUBJECTS),
+            "regime_id": regime_id,
+        }
+    return {
+        "wealth": jnp.linspace(1.0, 150.0, _N_SUBJECTS),
+        "age": jnp.full(_N_SUBJECTS, float(regression.START_AGE)),
+        "regime_id": regime_id,
+    }
+
+
+def _discrete_action_names(model: Model) -> tuple[str, ...]:
+    """Names of every discrete action of any regime, sorted."""
+    return tuple(
+        sorted(
+            {
+                name
+                for regime in model.user_regimes.values()
+                for name, grid in regime.actions.items()
+                if isinstance(grid, DiscreteGrid)
+            }
+        )
+    )
+
+
+def _discrete_columns(panel: pd.DataFrame) -> tuple[str, ...]:
+    """Columns of a labelled panel holding a discrete state, action or regime."""
+    return tuple(panel.select_dtypes(include="category").columns)
 
 
 def _dispatched_widths(*, census: Census, axis: str) -> set[int]:
@@ -288,3 +394,25 @@ def test_covering_moves_no_finite_value_beyond_the_dtype_ulp_bound(
     covered, uncovered = _covered_and_uncovered(case)
 
     assert _ulp_excess(covered=covered, uncovered=uncovered) == {}
+
+
+@pytest.mark.parametrize("case", _SIMULATION_CASES, ids=_case_id)
+def test_covering_keeps_simulated_discrete_choices_identical(
+    *, case: tuple[str, str]
+) -> None:
+    """Simulating from a covered and an uncovered solve, with the same initial
+    conditions and seed, yields the same label for every discrete action, discrete
+    state and regime of every subject in every period."""
+    solver, arm = case
+    model, covered_census, covered = _simulate(solver=solver, arm=arm, covered=True)
+    _, uncovered_census, uncovered = _simulate(solver=solver, arm=arm, covered=False)
+    axis = _AXIS[solver]
+    assert _dispatched_widths(census=covered_census, axis=axis) == {_EXTENT}
+    assert _dispatched_widths(census=uncovered_census, axis=axis) == {_SEED}
+    finite = covered[np.isfinite(covered["value"].to_numpy())]
+    assert any(finite[name].nunique() >= 2 for name in _discrete_action_names(model)), (
+        "no discrete action takes two distinct values among finite-value rows"
+    )
+
+    columns = sorted({*_discrete_columns(uncovered), *_discrete_action_names(model)})
+    assert covered[columns].equals(uncovered[columns])
