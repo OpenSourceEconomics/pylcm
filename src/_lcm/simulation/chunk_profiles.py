@@ -5,8 +5,11 @@ arrays supply only descriptors. Logical future slots are conservative reservatio
 separate from both actual entry-buffer residency and raw compiler peaks.
 """
 
+import contextvars
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from types import MappingProxyType
 from typing import cast
 
@@ -94,6 +97,7 @@ from _lcm.simulation.transitions import (
     _update_regime_ids,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.solution.backward_induction import _resolve_compilation_workers
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
 from lcm.ages import AgeGrid
@@ -124,12 +128,18 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     independent_taste: bool,
     log_level: LogLevel,
     policies: Mapping[int, Mapping[str, object]] | None = None,
+    max_compilation_workers: int | None = None,
 ) -> SimulationChunkProfile:
     """Prepare actual compiled stages for one proposed outer population extent.
 
     The current route covers declared grid and finite-policy decisions without
     host gated or other replay adapters. Diagnostics, retained storage and outer
     assembly profiles feed the selector before any candidate chunk is allocated.
+
+    With more than one compilation worker, every forward unit is first compiled on
+    a thread pool from the entry carrier; the ordered walk then finds each
+    executable in the runtime's shared cache under its exact abstract key and
+    compiles only what the pool did not.
     """
     if population < original_population or original_population <= 0 or n_subjects <= 0:
         raise ExecutionPlanningError("Chunk profiles need a valid positive population.")
@@ -184,6 +194,36 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     )
     carrier = _profile_initial_carrier(
         inventory=inventory, initial=initial, regimes=regimes
+    )
+    _compile_forward_units_in_parallel(
+        n_workers=_resolve_compilation_workers(
+            max_compilation_workers=max_compilation_workers
+        ),
+        units=tuple(
+            partial(
+                profile_forward_unit,
+                runtime=runtime,
+                regimes=regimes,
+                regime=regime,
+                name=name,
+                period=period,
+                flat_params=flat_params,
+                base=base_spaces[name],
+                base_spaces=base_spaces,
+                values=values,
+                flags=flags,
+                ages=ages,
+                n_subjects=n_subjects,
+                widths=widths,
+                columns=carrier[name],
+                ordinary_key=key,
+                taste_key=taste_key,
+                policy=(policies or {}).get(period, {}).get(name),
+            )
+            for period in range(ages.n_periods)
+            for name, regime in regimes.items()
+            if period in regime.active_periods
+        ),
     )
     regime_ids, own_roles = cast(
         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
@@ -433,6 +473,25 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         axis_widths=widths,
         setup_reservation=setup,
     )
+
+
+def _compile_forward_units_in_parallel(
+    *, n_workers: int, units: tuple[Callable[[], object], ...]
+) -> None:
+    """Fill the runtime's executable cache by profiling forward units concurrently.
+
+    Tracing holds the GIL and XLA compilation releases it, so the pool overlaps
+    compiles the way the solve's compilation waves do. The runtime's cache owns
+    one in-flight compilation per key, so duplicates across units compile once.
+    Each task runs in a copy of the caller's context so its compilation phase
+    records reach the open call. One worker keeps the ordered walk alone.
+    """
+    if n_workers <= 1 or len(units) <= 1:
+        return
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = [pool.submit(contextvars.copy_context().run, unit) for unit in units]
+    for future in futures:
+        future.result()
 
 
 def _profile_next_subjects(

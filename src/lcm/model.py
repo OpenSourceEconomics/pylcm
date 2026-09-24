@@ -2415,9 +2415,9 @@ class Model:
                 every level; snapshots are written only when it is set.
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
             max_compilation_workers: Maximum number of threads for parallel XLA
-                compilation. Only used when ``solution`` is omitted (i.e. when
-                solve runs automatically). Defaults to the number of
-                physical CPU cores.
+                compilation, both in the automatic solve (when ``solution`` is
+                omitted) and in budgeted simulation chunk planning. Defaults to
+                the number of physical CPU cores.
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
             optionally with additional_targets.
@@ -2662,6 +2662,7 @@ class Model:
                         independent_taste=taste_shock_seed is not None,
                         log_level=log_level,
                         process_grid_resolver=process_grid_resolver,
+                        max_compilation_workers=max_compilation_workers,
                     )
                     compile_batch_size = prepared_chunks.plan.profile.n_subjects
                     initial_conditions, _ = entry_allocations.pad(
