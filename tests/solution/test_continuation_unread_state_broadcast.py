@@ -14,10 +14,12 @@ every `habit` point.
 
 Two properties are tested:
 
-- **Structure.** The additive reductions the lowered `alive` programs perform (the
-  expectation over next-period nodes and the regime mixture) keep the same operand
-  shapes when `habit` grows from two to three points. The maximum over actions still
-  grows with it, which shows the reduction census can see a `habit` axis.
+- **Structure.** With the cell width fixed at the whole state product, the additive
+  reductions the lowered `alive` programs perform (the expectation over next-period
+  nodes and the regime mixture) keep the same operand shapes when `habit` grows from
+  two to three points. The maximum over actions still grows with it, which shows the
+  reduction census can see a `habit` axis. A planned width counts every product
+  point, `habit` included, so it moves with the habit count and is not held fixed.
 - **Parity.** Solving with and without the broadcast publishes the same arrays: byte
   for byte on the CPU backend; elsewhere identical shapes, dtypes, non-finite
   entries and discrete arrays, with every finite float within 4 ULP in float64 and
@@ -70,9 +72,13 @@ _N_PERIODS = 3
 _FINAL_AGE_ALIVE = _N_PERIODS - 2
 _N_SUBJECTS = 200
 _SIMULATION_SEED = 1
-_COVERED = "covered"
+_N_HEALTH = 2
+_N_WEALTH = 12
+# The alive cell's width is fixed at its whole extent, so every habit count
+# evaluates the whole state product in one window, or left to the planner.
+_WHOLE = "whole"
 _PLANNED = "planned"
-_CASES = tuple((n_habits, arm) for n_habits in (2, 3) for arm in (_COVERED, _PLANNED))
+_CASES = tuple((n_habits, arm) for n_habits in (2, 3) for arm in (_WHOLE, _PLANNED))
 # `stablehlo.reduce(%x init: %c) applies stablehlo.<op> across dimensions = [..] :
 # (tensor<AxBx..xf32>, ...` — the reduction's body operation and its operand shape.
 _REDUCE = re.compile(
@@ -170,7 +176,7 @@ def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
         states={
             "health": DiscreteGrid(category_class=Health),
             "habit": DiscreteGrid(category_class=_HABITS[n_habits]),
-            "wealth": LinSpacedGrid(start=1, stop=60, n_points=12),
+            "wealth": LinSpacedGrid(start=1, stop=60, n_points=_N_WEALTH),
         },
         state_transitions={
             "health": MarkovTransition(_next_health),
@@ -188,7 +194,11 @@ def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
         ages=AgeGrid(start=0, stop=_FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(
-            covered_axes=(CELL_AXIS,) if arm == _COVERED else ()
+            axis_widths=(
+                {CELL_AXIS: {"alive": _N_HEALTH * n_habits * _N_WEALTH}}
+                if arm == _WHOLE
+                else {}
+            )
         ),
     )
     params: UserParams = {
@@ -282,24 +292,21 @@ def _case_id(case: tuple[int, str]) -> str:
     return f"{case[0]}habits-{case[1]}"
 
 
-@pytest.mark.parametrize("arm", [_COVERED, _PLANNED])
-def test_additive_reductions_do_not_scale_with_a_state_no_law_reads(
-    *, arm: str
-) -> None:
-    """The continuation's sums keep their operand shapes from two to three habits."""
-    two = _run(n_habits=2, arm=arm, broadcast=True)[3]
-    three = _run(n_habits=3, arm=arm, broadcast=True)[3]
+def test_additive_reductions_do_not_scale_with_a_state_no_law_reads() -> None:
+    """With the whole state product in one window, the continuation's sums keep
+    their operand shapes from two to three habits."""
+    two = _run(n_habits=2, arm=_WHOLE, broadcast=True)[3]
+    three = _run(n_habits=3, arm=_WHOLE, broadcast=True)[3]
 
     assert _reduce_shapes(lowered=two, additive=True) == _reduce_shapes(
         lowered=three, additive=True
     )
 
 
-@pytest.mark.parametrize("arm", [_COVERED, _PLANNED])
-def test_the_reduction_census_sees_the_habit_axis(*, arm: str) -> None:
+def test_the_reduction_census_sees_the_habit_axis() -> None:
     """The non-additive reductions of the same programs do grow with `habit`."""
-    two = _run(n_habits=2, arm=arm, broadcast=True)[3]
-    three = _run(n_habits=3, arm=arm, broadcast=True)[3]
+    two = _run(n_habits=2, arm=_WHOLE, broadcast=True)[3]
+    three = _run(n_habits=3, arm=_WHOLE, broadcast=True)[3]
 
     assert _reduce_shapes(lowered=two, additive=False) != _reduce_shapes(
         lowered=three, additive=False
