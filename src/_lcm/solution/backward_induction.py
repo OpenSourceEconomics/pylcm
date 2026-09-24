@@ -218,9 +218,24 @@ from lcm.typing import (
     ScalarInt,
 )
 
+
 # Stands in for a period's flag mapping when the model retains no dissolution
 # flags, so every period key is present with nothing behind it. One shared
 # instance: it is immutable and carries no arrays.
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _GatherCheck:
+    """One executable's fusion verdict, small enough to keep as long as its model."""
+
+    materialised: str | None
+    """A reduce fusion reading a gather table another fusion wrote, if any."""
+    unknown: bool
+    """Whether the classifier could not read the program completely."""
+
+
+# Fusion verdicts by runtime-executable identity, each held with its executable.
+GatherChecks = dict[int, tuple[object, _GatherCheck]]
+
+
 _NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
 
 
@@ -242,6 +257,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retained_input_arrays: object = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
+    gather_checks: GatherChecks | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -294,6 +310,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             physical storage; they are not solve operands or cache entries.
         call_id: Identifier of the public call this solve serves, stamped on
             the host-phase records. `None` emits no phase records.
+        gather_checks: Fusion verdicts that outlive this solve, keyed by the
+            identity of the runtime executable they were read from. `None`
+            keeps them for this solve only.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -371,6 +390,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         ),
         process_grid_resolver=process_grid_resolver,
         call_id=call_id,
+        gather_checks={} if gather_checks is None else gather_checks,
     )
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
@@ -3303,6 +3323,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     call_id: CallId | None = None,
     fixed_input_arrays: object = (),
     process_grid_resolver: ProcessGridResolver | None = None,
+    gather_checks: GatherChecks | None = None,
 ) -> _CompiledPrograms:
     """Resolve every solve program and optionally compile unique lowerings.
 
@@ -3346,6 +3367,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
         fixed_input_arrays: Already-built runtime space arrays retained by solve.
+        gather_checks: Fusion verdicts shared with other solves of the same
+            model; `None` keeps them for this solve only.
 
     Returns:
         Executable mappings by regime-period, the resolved metadata used by
@@ -3829,7 +3852,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         selected_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
         selected_cores: dict[_CoreTriple, PlannedCore] = {}
         selected_fallbacks: dict[_CoreTriple, PlannedCore] = {}
-        gather_checks: dict[int, _GatherCheck] = {}
+        if gather_checks is None:
+            gather_checks = {}
         for triple, candidates in candidates_by_triple.items():
             programs_by_width = {
                 candidate[1]: resolved_programs[candidate] for candidate in candidates
@@ -3975,7 +3999,7 @@ def _halve_while_gather_materialises(
     fixed_widths: Mapping[str, int],
     width_ceilings: Mapping[str, int],
     frontier: _LazyCandidateFrontier,
-    gather_checks: dict[int, _GatherCheck],
+    gather_checks: GatherChecks,
     compile_candidate: Callable[..., tuple[jax.stages.Compiled, bool]],
     logger: logging.Logger,
 ) -> WorkspacePlan[jax.stages.Compiled]:
@@ -3999,8 +4023,8 @@ def _halve_while_gather_materialises(
         fixed_widths: Widths the user pinned; a pinned cell axis is never halved.
         width_ceilings: Upper bounds on each axis's width.
         frontier: Binds a width mapping to a compilable candidate.
-        gather_checks: Verdicts already read in this solve, by executable
-            identity, so an executable shared by several cores is read once.
+        gather_checks: Verdicts already read, by runtime-executable identity, so
+            an executable shared by several cores or solves is read once.
         compile_candidate: Compiles a candidate and reports whether that reached
             the compiler (`True`) or reused a program compiled earlier (`False`).
         logger: Receives each trial, its compile-or-reuse outcome, and the width
@@ -4074,21 +4098,11 @@ def _halve_while_gather_materialises(
     return WorkspacePlan(widths=widths, peak_bytes=None, compiled=executable)
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class _GatherCheck:
-    """One executable's fusion verdict, small enough to keep for the whole solve."""
-
-    materialised: str | None
-    """A reduce fusion reading a gather table another fusion wrote, if any."""
-    unknown: bool
-    """Whether the classifier could not read the program completely."""
-
-
 def _checked_gather_fusion(
     *,
     compiled: jax.stages.Compiled,
     widths: Mapping[str, int],
-    gather_checks: dict[int, _GatherCheck],
+    gather_checks: GatherChecks,
     triple: _CoreTriple,
     logger: logging.Logger,
 ) -> str | None:
@@ -4097,7 +4111,9 @@ def _checked_gather_fusion(
     An executable the classifier cannot read completely is diagnosed once, when
     it is first read, and answers `None` so the walk keeps its width.
     """
-    check = gather_checks.get(id(compiled))
+    executable = compiled.runtime_executable() or compiled
+    cached = gather_checks.get(id(executable))
+    check = None if cached is None else cached[1]
     if check is None:
         try:
             check = _GatherCheck(
@@ -4117,7 +4133,8 @@ def _checked_gather_fusion(
                 dict(widths),
             )
             check = _GatherCheck(materialised=None, unknown=True)
-        gather_checks[id(compiled)] = check
+        # The entry holds the executable, so its id is not reused while cached.
+        gather_checks[id(executable)] = (executable, check)
     return check.materialised
 
 

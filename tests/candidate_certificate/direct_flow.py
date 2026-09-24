@@ -419,9 +419,9 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "1d3383ea8d035eaf7ee0eb1e17f39417d401973ecdf9804a42005d5443d6b2ac",
     SIMULATION_TRANSITIONS_SOURCE: "76ba02db6b40070033d1c6b3fd5769a675ff8c1d27e2bb8b179246c06be8066e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "60fd32c85f577b8c7e0b2fa8d72c3e8747d3f1d7ce1fa6b5bb18025941d4fd18",
+    MODEL_SOURCE: "58cb1ea2ed89d86ffacbcc94089c237870be4a44a0208852fd0efa09b206cd30",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "a8492da7c6d6a884453364d42f67607082fce3d64cacb4ae71a696fa03deaa8f",
+    BACKWARD_INDUCTION_SOURCE: "8460421238afb66026b359a602e7e4c2f606cffe6c9fbf7a7b66736a8ebc74fb",
     PERIOD_REPLAY_SOURCE: "ae1879ebc56c90ce5a14dcdfe70f0520b61df96c786932fac7f4a9dfc22ee1be",
     INITIAL_CONDITIONS_SOURCE: "a3e4c4ecbb5ed4a1160b584d446e61f54c0123ebd8fb4799eadcd04a2c7e5210",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
@@ -3200,18 +3200,18 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "f3fb47bda97177da2dcd43d093085b087782971dc3952d007ff635294809ebc2",
+            "6544d91ddc9e4482f9dd325d7f52153f09be931a6c7d97e53e8a67e9f7451bf7",
             {
                 "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-                "Model.__init__": "4eff36f6fb64c632c0ee60aae41c33e4365c83d42cc1bf3a3fcdb65f2cab5fe5",
+                "Model.__init__": "8c3a061937315d151e38b320f832b3184b66541e9f4b686d5fd438fc22e2f5e2",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "99a508ef7898b9d1310a55a9bb28ee4289c9573bc98fa70a66d6cb7ff2729774",
                 # Fixed caller owners flow through both private automatic-solve
                 # boundaries without becoming numerical operands or cache keys.
                 "Model._solve_from_flat_params": "e65295f1917d77d8b65661d4dd7bb43a5303cba7de45bcf498f2792ea8750d2c",
-                "Model._solve_compiled": "b26ffb42c20436d0e879510401ad2f8b82c99a953fb27c7284f54977d12b37ed",
+                "Model._solve_compiled": "7a827a345f08f6afe9ece1778b2739ab9d18cc28153ce6d79fed63393cc26bdc",
                 "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
                 "Model._process_params": "b08215b65b9edca9a1ef20fb5a64d1f8a42aba81c99d8d62dd32e62ce17cf6e9",
@@ -3851,12 +3851,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "f3fb47bda97177da2dcd43d093085b087782971dc3952d007ff635294809ebc2",
+        "6544d91ddc9e4482f9dd325d7f52153f09be931a6c7d97e53e8a67e9f7451bf7",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "4eff36f6fb64c632c0ee60aae41c33e4365c83d42cc1bf3a3fcdb65f2cab5fe5",
+            "Model.__init__": "8c3a061937315d151e38b320f832b3184b66541e9f4b686d5fd438fc22e2f5e2",
             "Model.simulate": "99a508ef7898b9d1310a55a9bb28ee4289c9573bc98fa70a66d6cb7ff2729774",
         },
     ),
@@ -3888,11 +3888,11 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2086370c1430c319f233a01911a4f124159e4181f36b1d43293b01d7b9a957cb",
+        "99dc09ff292be81e0ce95370b8a26d6f6f4a10241a65b49441fbb52cc71521d6",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_compile_all_functions": "b0ad8ecce6f61a5a90a23000b6e6a0515420d9253988664623da31304cdaf8ae",
+            "_compile_all_functions": "1fdbb8276bd0c79621ba7325598652e56d969809b275cde88c1f4a2b881b1e33",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -3972,11 +3972,11 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2086370c1430c319f233a01911a4f124159e4181f36b1d43293b01d7b9a957cb",
+        "99dc09ff292be81e0ce95370b8a26d6f6f4a10241a65b49441fbb52cc71521d6",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "8d042976e7dd0921a1ee6be10a78e8ba057c17d24aed910d67e5f7a620c68d1b",
+            "solve": "f17f1f67493cb8e9a5d0bde027b01878cf5d6c1b78c2f4750affd49d5d1f769f",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
             "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
             "_retire_donated_inputs": "d5c3862195f2733fa97a5489d8db20d7c55e53431f0b2313b1b4f9a49b34e20c",
@@ -4221,12 +4221,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "f3fb47bda97177da2dcd43d093085b087782971dc3952d007ff635294809ebc2",
+        "6544d91ddc9e4482f9dd325d7f52153f09be931a6c7d97e53e8a67e9f7451bf7",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "4eff36f6fb64c632c0ee60aae41c33e4365c83d42cc1bf3a3fcdb65f2cab5fe5",
+            "Model.__init__": "8c3a061937315d151e38b320f832b3184b66541e9f4b686d5fd438fc22e2f5e2",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "ada74ce5f724d2944b187c777fb43717cd574db5f64e992cad2a6c669b9d08fa",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4241,7 +4241,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2086370c1430c319f233a01911a4f124159e4181f36b1d43293b01d7b9a957cb",
+        "99dc09ff292be81e0ce95370b8a26d6f6f4a10241a65b49441fbb52cc71521d6",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4443,7 +4443,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "b0ad8ecce6f61a5a90a23000b6e6a0515420d9253988664623da31304cdaf8ae",
+            "_compile_all_functions": "1fdbb8276bd0c79621ba7325598652e56d969809b275cde88c1f4a2b881b1e33",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
             "_resolve_output_layouts_and_lowering_keys": "108c0b306eacd2c8b8c1dc6c0ec1a96b78053f0d98ad9d3c01fc692810698bc4",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
@@ -4474,7 +4474,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "2086370c1430c319f233a01911a4f124159e4181f36b1d43293b01d7b9a957cb"
+        != "99dc09ff292be81e0ce95370b8a26d6f6f4a10241a65b49441fbb52cc71521d6"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6330,15 +6330,15 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "2086370c1430c319f233a01911a4f124159e4181f36b1d43293b01d7b9a957cb",
+        "99dc09ff292be81e0ce95370b8a26d6f6f4a10241a65b49441fbb52cc71521d6",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "8d042976e7dd0921a1ee6be10a78e8ba057c17d24aed910d67e5f7a620c68d1b",
+            "solve": "f17f1f67493cb8e9a5d0bde027b01878cf5d6c1b78c2f4750affd49d5d1f769f",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
             "_iter_edge_topologies": "de3078515a59f624e07889c6f3e05c8ac948472416c81a993c8d02f29905789b",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "b0ad8ecce6f61a5a90a23000b6e6a0515420d9253988664623da31304cdaf8ae",
+            "_compile_all_functions": "1fdbb8276bd0c79621ba7325598652e56d969809b275cde88c1f4a2b881b1e33",
             "_resolve_output_layouts_and_lowering_keys": "108c0b306eacd2c8b8c1dc6c0ec1a96b78053f0d98ad9d3c01fc692810698bc4",
         },
     ),
@@ -6412,17 +6412,17 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "f3fb47bda97177da2dcd43d093085b087782971dc3952d007ff635294809ebc2",
+        "6544d91ddc9e4482f9dd325d7f52153f09be931a6c7d97e53e8a67e9f7451bf7",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "4eff36f6fb64c632c0ee60aae41c33e4365c83d42cc1bf3a3fcdb65f2cab5fe5",
+            "Model.__init__": "8c3a061937315d151e38b320f832b3184b66541e9f4b686d5fd438fc22e2f5e2",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "ff9e176801623ee2a12a19ddcc9332ac767c8fd6faee662d6008c448a441d475",
             "Model.solve": "b7447007287a2846e9f8ae2f42f307d6308b98d81b2d38bf7312053aeac4e9bc",
             "Model._solve_from_flat_params": "e65295f1917d77d8b65661d4dd7bb43a5303cba7de45bcf498f2792ea8750d2c",
-            "Model._solve_compiled": "b26ffb42c20436d0e879510401ad2f8b82c99a953fb27c7284f54977d12b37ed",
+            "Model._solve_compiled": "7a827a345f08f6afe9ece1778b2739ab9d18cc28153ce6d79fed63393cc26bdc",
             "Model._resolve_solution_result": "089380ec11cde45fff87c839c2c66d8bba14ffe29637a155411d01a791d4025b",
             "Model._consume_owned_solution": "19c0e7b062f651ee6f7ca4cf11239021eba42d711ac73f603d2b9ea7aac31c3f",
             "Model._consume_foreign_solution": "ada74ce5f724d2944b187c777fb43717cd574db5f64e992cad2a6c669b9d08fa",

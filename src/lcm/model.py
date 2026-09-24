@@ -98,6 +98,7 @@ from _lcm.solution.artifacts import (
     fingerprint_flat_params,
 )
 from _lcm.solution.backward_induction import (
+    GatherChecks,
     _build_base_state_action_spaces,
     _reject_edge_fold_state_param_collisions,
     solve,
@@ -570,6 +571,9 @@ class Model:
             OrderedDict()
         )
         self._declared_authority_lock = threading.Lock()
+        # Fusion verdicts read off compiled solve programs; warm solves reuse the
+        # executables, so they reuse the verdicts instead of re-reading the HLO.
+        self._gather_checks: GatherChecks = {}
 
         # The single canonical activity schedule: every regime's `active`
         # predicate is evaluated exactly once, here, and threaded through
@@ -772,6 +776,7 @@ class Model:
             "_simulate_entry_operations",
             "_declared_authority_cache",
             "_declared_authority_lock",
+            "_gather_checks",
             "_solution_param_projection",
             "_sealed_bindings",
         ):
@@ -794,6 +799,7 @@ class Model:
         self._simulate_compile_lock = threading.Lock()
         self._declared_authority_cache = OrderedDict()
         self._declared_authority_lock = threading.Lock()
+        self._gather_checks = {}
         self._solution_param_projection = solution_param_projection(self._regimes)
         stored_structure = state.get("_model_structure_fingerprint")
         self._seal()
@@ -1150,6 +1156,7 @@ class Model:
                 retained_input_arrays=retained_input_arrays,
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
+                gather_checks=self._gather_checks,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
