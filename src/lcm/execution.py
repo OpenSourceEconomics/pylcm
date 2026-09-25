@@ -52,6 +52,18 @@ class WidthSearchPolicy:
     """Start from the conservative bootstrap anchor, or from the widest candidate."""
     hints: Mapping[RegimeName, Mapping[str, int]] = MappingProxyType({})
     """Regime name to a width mapping tried first; an incompatible hint is skipped."""
+    carry_across_periods: bool = False
+    """Under `EXHAUSTIVE`, walk the ranked frontier once per group of cores.
+
+    A group is the cores of one regime and core name whose ranked frontiers
+    coincide, one per period. One core of the group walks the frontier; every other
+    core starts at the rank it was admitted at and compiles at most the next-wider
+    rank as a local check, walking the whole frontier only when the carried rank is
+    refused or the check is admitted. Every still-wider rank is then taken as
+    refused without being compiled, so the selected width equals the walk's
+    whenever memory refuses every rank above a refused neighbour. `BOUNDED` ignores
+    it.
+    """
 
     def __post_init__(self) -> None:
         """Reject unusable counts, seeds and hints at construction."""
@@ -61,6 +73,8 @@ class WidthSearchPolicy:
             refinement_share=self.refinement_share,
         )
         _fail_if_seed_invalid(seed=self.seed)
+        if type(self.carry_across_periods) is not bool:
+            raise TypeError("WidthSearchPolicy.carry_across_periods must be a bool.")
         object.__setattr__(
             self, "hints", MappingProxyType(_normalized_hints(hints=self.hints))
         )
