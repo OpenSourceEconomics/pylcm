@@ -87,7 +87,13 @@ def _model(*, carry: bool, budget_bytes: int) -> Model:
     )
 
 
-def _solve(*, monkeypatch: pytest.MonkeyPatch, carry: bool, budget_bytes: int) -> dict:
+def _solve(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    carry: bool,
+    budget_bytes: int,
+    disable_carry_path: bool = False,
+) -> dict:
     compiled_candidates: list[tuple] = []
     selected: dict = {}
     original_wave = backward_induction._lower_and_compile_wave
@@ -110,6 +116,8 @@ def _solve(*, monkeypatch: pytest.MonkeyPatch, carry: bool, budget_bytes: int) -
     monkeypatch.setattr(backward_induction, "compiler_memory_reservation", _fake_peak)
     monkeypatch.setattr(backward_induction, "_lower_and_compile_wave", count_wave)
     monkeypatch.setattr(backward_induction, "_compile_all_functions", capture)
+    if disable_carry_path:
+        monkeypatch.setattr(backward_induction, "_carry_groups", lambda **_: {})
     model = _model(carry=carry, budget_bytes=budget_bytes)
     params = cast("dict[str, Any]", model.get_params_template())
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
@@ -139,6 +147,12 @@ def solves() -> dict[str, dict]:
     return {
         "walk": _solve(monkeypatch=monkeypatch, carry=False, budget_bytes=budget),
         "carry": _solve(monkeypatch=monkeypatch, carry=True, budget_bytes=budget),
+        "carry_path_disabled": _solve(
+            monkeypatch=monkeypatch,
+            carry=True,
+            budget_bytes=budget,
+            disable_carry_path=True,
+        ),
     }
 
 
@@ -160,3 +174,8 @@ def test_carrying_the_admitted_rank_leaves_the_values_bitwise_equal(
         np.array_equal(solves["carry"]["values"][period], values)
         for period, values in solves["walk"]["values"].items()
     )
+
+
+def test_the_saving_comes_from_the_carry_groups(solves: dict) -> None:
+    """With the switch on but no carry group formed, every period walks again."""
+    assert solves["carry_path_disabled"]["compiled"] == solves["walk"]["compiled"]
