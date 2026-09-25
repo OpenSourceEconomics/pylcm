@@ -6499,6 +6499,9 @@ _GROUPED_MAPPER_CONTRACTS = {
         "38f6edd08d11b739150f2bea6af2a9fcd14ab1e1ba68e9d061a955102daef513",
         {
             "tiled_productmap": "8123bbf3c807d977a1708811477803fa140f6e06d74bc2cc74d93841135ffbce",
+            "_CountBroadcastExtentInWidth.__call__": (
+                "76615ee1236aa56c22ade8cd7cfcf4a777063be6f28d40601f561da91f905673"
+            ),
             "_TiledProductMap.__call__": "b398eff34df6867799a9dd877766bd16a6e784263e8de139ba6c136e20bb75de",
             "_map_grouped_product": "5aa01e79393201769fc79d10a00ee264b9083ad40a0a23462e4170327e25bc20",
             "_MapOverFinalCoordinate.__call__": "d4934af255cab7f3583631ee376e18eabc6bb6f7742ff945f1e95a260fdf3ece",
