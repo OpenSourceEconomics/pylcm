@@ -66,9 +66,11 @@ from _lcm.solution.periodization import (
 )
 from _lcm.typing import (
     EconFunction,
+    EconFunctionArg,
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
+    RegimeTransitionFunction,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
@@ -82,6 +84,7 @@ from lcm.solver_api import (
 )
 from lcm.typing import (
     ActionName,
+    BoolND,
     Float1D,
     FloatND,
     FunctionName,
@@ -550,7 +553,9 @@ class EGM(OneMarginSolver):
                     ),
                     consumption_action=consumption_action,
                 )
-                cores[group_key] = jax.jit(core) if context.enable_jit else core
+                cores[group_key] = guard_regime_mass(
+                    core=core, enable_jit=context.enable_jit
+                )
                 laws[group_key] = build_declared_liquid_law(
                     transitions=resolved.transitions,
                     functions=resolved.functions,
@@ -563,6 +568,7 @@ class EGM(OneMarginSolver):
             period_kernels[period] = _build_egm_period_kernel(
                 core=cores[group_key],
                 declared_law=laws[group_key],
+                compute_regime_transition_probs=context.compute_regime_transition_probs,
                 savings_grid=savings_grid,
                 regime_name=context.regime_name,
                 continuation_target=target,
@@ -678,6 +684,7 @@ def _build_egm_period_kernel(
     *,
     core: Callable,
     declared_law: Callable[..., tuple[Float1D, Float1D]],
+    compute_regime_transition_probs: RegimeTransitionFunction | None,
     savings_grid: Float1D,
     regime_name: RegimeName,
     continuation_target: RegimeName,
@@ -707,6 +714,7 @@ def _build_egm_period_kernel(
         transition_target_names=transition_target_names,
         declared_law=declared_law,
         savings_grid=savings_grid,
+        compute_regime_transition_probs=compute_regime_transition_probs,
     )
     program = CoreProgram(
         name="main",
@@ -771,6 +779,9 @@ class _EGMArgumentBuilder:
     savings_grid: Float1D
     """The post-decision grid the law is tabulated on."""
 
+    compute_regime_transition_probs: RegimeTransitionFunction | None
+    """The regime's transition probabilities, possibly periodized by age."""
+
     bound_params: Mapping[str, object] = MappingProxyType({})
     """Fixed params bound into the core, kept so the law can read them too."""
 
@@ -805,12 +816,70 @@ class _EGMArgumentBuilder:
                 "boundary_next_liquid": boundary_next_liquid,
                 "next_value": leaves[("value",)],
                 "next_marginal": leaves[("marginal_utility",)],
+                "retains_regime_mass": self._retains_regime_mass(
+                    liquid=state_action_space.states[self.liquid_state],
+                    flat_params=flat_params,
+                    period=context.period,
+                    ages=cast("AgeGrid", context.ages),
+                ),
                 **union_free_params(
                     flat_params=flat_params,
                     regime_name=self.regime_name,
                     transition_target_names=self.transition_target_names,
                 ),
             }
+        )
+
+    def _retains_regime_mass(
+        self, *, liquid: Float1D, flat_params: FlatParams, period: int, ages: AgeGrid
+    ) -> BoolND:
+        """Whether the continuation target carries the regime's whole mass.
+
+        The core reads the target's carry at weight one, so every other target
+        the regime sends probability to is unrepresented. The target's own
+        probability must be a distribution on its own, under the same tolerance
+        and sign test the grid-search continuation applies, at every liquid node.
+        """
+        from _lcm.probability import is_negative  # noqa: PLC0415
+        from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+            resolve_periodized_node,
+        )
+        from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
+            _regime_mass_is_a_distribution,
+        )
+
+        pool = {
+            **self.bound_params,
+            **union_free_params(
+                flat_params=flat_params,
+                regime_name=self.regime_name,
+                transition_target_names=self.transition_target_names,
+            ),
+            "period": jnp.int32(period),
+            "age": ages.values[period],
+        }
+        compute_probs = cast(
+            "RegimeTransitionFunction",
+            resolve_periodized_node(
+                node=self.compute_regime_transition_probs, period=period
+            ),
+        )
+
+        def target_probability(liquid_node: FloatND) -> FloatND:
+            # The solve-phase transition is a scalar DAG. Map the whole call,
+            # including coarse-ID/one-hot conversion, before stacking nodes;
+            # a row call would confuse the state axis with the regime axis.
+            node_pool = cast(
+                "dict[str, EconFunctionArg]",
+                {**pool, self.liquid_state: liquid_node},
+            )
+            return jnp.asarray(compute_probs(**node_pool)[self.continuation_target])
+
+        prob = jax.vmap(target_probability)(liquid)
+        return jnp.all(
+            _regime_mass_is_a_distribution(
+                probability_mass=prob, has_negative_probability=is_negative(prob)
+            )
         )
 
     def _law_readings(
@@ -1137,6 +1206,41 @@ class _EGMCore:
             taste_shock_scale=jnp.asarray(0.0, dtype=step.value.dtype),
         )
         return step.value, carry
+
+
+def guard_regime_mass(*, core: Callable, enable_jit: bool) -> Callable:
+    """Wrap a one-row core in the lost-mass guard, compiled when JIT is enabled."""
+    guarded = _RegimeMassGuardedCore(core=core)
+    return jax.jit(guarded) if enable_jit else guarded
+
+
+@dataclass(frozen=True, eq=False)
+class _RegimeMassGuardedCore:
+    """A one-row core that publishes NaN when its target loses regime mass.
+
+    The one-row core reads its single target's carry at weight one. Where the
+    regime sends mass to a target inactive next period, that weight is wrong and
+    the core's finite output ignores the missing mass. The guard publishes NaN in
+    the value and in both carry channels instead, as the grid-search and blended
+    NB-EGM continuations do. The arithmetic states it, so no log level skips it.
+    """
+
+    core: Callable[..., tuple[FloatND, EGMCarry]]
+    """The one-row core whose output the guard poisons."""
+
+    def __call__(
+        self, *, retains_regime_mass: BoolND, **kwargs: object
+    ) -> tuple[FloatND, EGMCarry]:
+        """Run the core and poison its value and carry channels on lost mass."""
+        value, carry = self.core(**kwargs)
+        leaves = carry.leaves()
+        return jnp.where(retains_regime_mass, value, jnp.nan), replace(
+            carry,
+            value=jnp.where(retains_regime_mass, leaves[("value",)], jnp.nan),
+            marginal_utility=jnp.where(
+                retains_regime_mass, leaves[("marginal_utility",)], jnp.nan
+            ),
+        )
 
 
 def _build_one_asset_carry_template(*, liquid_grid: Float1D) -> EGMCarry:

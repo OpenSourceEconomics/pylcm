@@ -65,48 +65,54 @@ class _Route:
 
 _SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16, "n_consumption": 24}
 
+# The three-period routes are alive at ages 0 and 1 only, so their parameters end
+# life after age 1 with `final_age_alive=2.0`; the toys' default fits four periods.
 _ROUTES = (
     _Route(
         name="ride_along",
         build_model=lambda: nbegm_ride_along_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
         ),
-        build_params=nbegm_ride_along_toy.build_params,
+        build_params=lambda: nbegm_ride_along_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="ride_along_per_kind_crra",
         build_model=lambda: nbegm_ride_along_toy.build_model(
             variant="nbegm", n_periods=3, per_kind_crra=True, **_SMALL
         ),
-        build_params=lambda: nbegm_ride_along_toy.build_params(per_kind_crra=True),
+        build_params=lambda: nbegm_ride_along_toy.build_params(
+            final_age_alive=2.0, per_kind_crra=True
+        ),
     ),
     _Route(
         name="ride_along_per_kind_discount",
         build_model=lambda: nbegm_ride_along_toy.build_model(
             variant="nbegm", n_periods=3, per_kind_discount=True, **_SMALL
         ),
-        build_params=lambda: nbegm_ride_along_toy.build_params(per_kind_discount=True),
+        build_params=lambda: nbegm_ride_along_toy.build_params(
+            final_age_alive=2.0, per_kind_discount=True
+        ),
     ),
     _Route(
         name="ride_along_distributed_kind",
         build_model=lambda: nbegm_ride_along_toy.build_model(
             variant="nbegm", n_periods=3, distributed_kind=True, **_SMALL
         ),
-        build_params=nbegm_ride_along_toy.build_params,
+        build_params=lambda: nbegm_ride_along_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="derived_var",
         build_model=lambda: nbegm_derived_var_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
         ),
-        build_params=nbegm_derived_var_toy.build_params,
+        build_params=lambda: nbegm_derived_var_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="multi_source",
         build_model=lambda: nbegm_multi_source_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
         ),
-        build_params=nbegm_multi_source_toy.build_params,
+        build_params=lambda: nbegm_multi_source_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="multi_target",
@@ -122,7 +128,9 @@ _ROUTES = (
         build_model=lambda: nbegm_stochastic_node_toy.build_model(
             variant="nbegm", n_periods=3, tax_kind="kink", **_SMALL
         ),
-        build_params=nbegm_stochastic_node_toy.build_params,
+        build_params=lambda: nbegm_stochastic_node_toy.build_params(
+            final_age_alive=2.0
+        ),
         period=0,
     ),
     _Route(
@@ -130,7 +138,9 @@ _ROUTES = (
         build_model=lambda: nbegm_stochastic_node_toy.build_model(
             variant="nbegm", n_periods=3, tax_kind="kink", with_kind=True, **_SMALL
         ),
-        build_params=lambda: nbegm_stochastic_node_toy.build_params(with_kind=True),
+        build_params=lambda: nbegm_stochastic_node_toy.build_params(
+            final_age_alive=2.0, with_kind=True
+        ),
         period=0,
     ),
     _Route(
@@ -152,7 +162,7 @@ _ROUTES = (
             **_SMALL,
         ),
         build_params=lambda: nbegm_ces_utility_toy.build_params(
-            breakpoint_kind="continuous_kink"
+            final_age_alive=2.0, breakpoint_kind="continuous_kink"
         ),
     ),
     _Route(
@@ -160,56 +170,72 @@ _ROUTES = (
         build_model=lambda: nbegm_ces_utility_toy.build_model(
             variant="nbegm", breakpoint_kind="jump", n_periods=3, n_wage=3, **_SMALL
         ),
-        build_params=lambda: nbegm_ces_utility_toy.build_params(breakpoint_kind="jump"),
+        build_params=lambda: nbegm_ces_utility_toy.build_params(
+            final_age_alive=2.0, breakpoint_kind="jump"
+        ),
     ),
     _Route(
         name="jump_ride_along",
         build_model=lambda: nbegm_jump_ride_along_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
         ),
-        build_params=nbegm_jump_ride_along_toy.build_params,
+        build_params=lambda: nbegm_jump_ride_along_toy.build_params(
+            final_age_alive=2.0
+        ),
     ),
     _Route(
         name="jump_ride_along_bridged",
         build_model=lambda: nbegm_jump_ride_along_toy.build_model(
             variant="nbegm", n_periods=3, jump_read="bridged", **_SMALL
         ),
-        build_params=nbegm_jump_ride_along_toy.build_params,
+        build_params=lambda: nbegm_jump_ride_along_toy.build_params(
+            final_age_alive=2.0
+        ),
     ),
     _Route(
         name="continuous_ride_along",
         build_model=lambda: nbegm_continuous_ride_along_toy.build_model(
             variant="nbegm", n_periods=3, n_wage=3, **_SMALL
         ),
-        build_params=nbegm_continuous_ride_along_toy.build_params,
+        build_params=lambda: nbegm_continuous_ride_along_toy.build_params(
+            final_age_alive=2.0
+        ),
     ),
     _Route(
         name="indexed_threshold",
         build_model=lambda: nbegm_indexed_threshold_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
         ),
-        build_params=nbegm_indexed_threshold_toy.build_params,
+        build_params=lambda: nbegm_indexed_threshold_toy.build_params(
+            final_age_alive=2.0
+        ),
     ),
     _Route(
         name="mappingleaf_threshold",
         build_model=lambda: nbegm_mappingleaf_threshold_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
         ),
-        build_params=nbegm_mappingleaf_threshold_toy.build_params,
+        build_params=lambda: nbegm_mappingleaf_threshold_toy.build_params(
+            final_age_alive=2.0
+        ),
     ),
     _Route(
         name="multi_source_jump",
         build_model=lambda: nbegm_multi_source_jump_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
         ),
-        build_params=nbegm_multi_source_jump_toy.build_params,
+        build_params=lambda: nbegm_multi_source_jump_toy.build_params(
+            final_age_alive=2.0
+        ),
     ),
     _Route(
         name="stochastic_node_jump",
         build_model=lambda: nbegm_stochastic_node_toy.build_model(
             variant="nbegm", n_periods=3, tax_kind="jump", **_SMALL
         ),
-        build_params=lambda: nbegm_stochastic_node_toy.build_params(tax_lump=1.0),
+        build_params=lambda: nbegm_stochastic_node_toy.build_params(
+            final_age_alive=2.0, tax_lump=1.0
+        ),
         period=0,
     ),
     _Route(
@@ -217,35 +243,37 @@ _ROUTES = (
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
         ),
-        build_params=nbegm_ride_discrete_toy.build_params,
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="ride_discrete_action_in_costate",
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, action_in_costate=True, **_SMALL
         ),
-        build_params=nbegm_ride_discrete_toy.build_params,
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="ride_discrete_action_in_utility",
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, action_in_utility=True, **_SMALL
         ),
-        build_params=nbegm_ride_discrete_toy.build_params,
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="ride_discrete_action_in_regime_transition",
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, action_in_regime_transition=True, **_SMALL
         ),
-        build_params=nbegm_ride_discrete_toy.build_params,
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="ride_discrete_jump_schedule",
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, jump_schedule=True, **_SMALL
         ),
-        build_params=lambda: nbegm_ride_discrete_toy.build_params(jump_schedule=True),
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(
+            final_age_alive=2.0, jump_schedule=True
+        ),
     ),
     _Route(
         name="ride_discrete_action_in_liquid_law",
@@ -253,7 +281,7 @@ _ROUTES = (
             variant="nbegm", n_periods=3, action_in_liquid_law=True, **_SMALL
         ),
         build_params=lambda: nbegm_ride_discrete_toy.build_params(
-            action_in_liquid_law=True
+            final_age_alive=2.0, action_in_liquid_law=True
         ),
     ),
     _Route(
@@ -262,7 +290,7 @@ _ROUTES = (
             variant="nbegm", n_periods=3, action_in_schedule_variable=True, **_SMALL
         ),
         build_params=lambda: nbegm_ride_discrete_toy.build_params(
-            action_in_schedule_variable=True
+            final_age_alive=2.0, action_in_schedule_variable=True
         ),
     ),
     _Route(
@@ -274,14 +302,14 @@ _ROUTES = (
             costate_smooth=False,
             **_SMALL,
         ),
-        build_params=nbegm_ride_discrete_toy.build_params,
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="ride_discrete_transition_reads_liquid",
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, transition_reads_liquid=True, **_SMALL
         ),
-        build_params=nbegm_ride_discrete_toy.build_params,
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(final_age_alive=2.0),
     ),
     _Route(
         name="ride_discrete_schedule_variable_with_interval_continuation",
@@ -293,7 +321,7 @@ _ROUTES = (
             **_SMALL,
         ),
         build_params=lambda: nbegm_ride_discrete_toy.build_params(
-            action_in_schedule_variable=True
+            final_age_alive=2.0, action_in_schedule_variable=True
         ),
     ),
     _Route(
@@ -305,14 +333,16 @@ _ROUTES = (
             jump_schedule=True,
             **_SMALL,
         ),
-        build_params=lambda: nbegm_ride_discrete_toy.build_params(jump_schedule=True),
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(
+            final_age_alive=2.0, jump_schedule=True
+        ),
     ),
     _Route(
         name="ride_discrete_action_in_health_transition",
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, action_in_health_transition=True, **_SMALL
         ),
-        build_params=nbegm_ride_discrete_toy.build_params,
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(final_age_alive=2.0),
         period=0,
     ),
     _Route(
@@ -321,7 +351,7 @@ _ROUTES = (
             variant="nbegm", n_periods=3, action_in_discount=True, **_SMALL
         ),
         build_params=lambda: nbegm_ride_discrete_toy.build_params(
-            action_in_discount=True
+            final_age_alive=2.0, action_in_discount=True
         ),
         period=0,
     ),
@@ -336,7 +366,7 @@ _ROUTES = (
             **_SMALL,
         ),
         build_params=lambda: nbegm_ride_discrete_toy.build_params(
-            action_in_liquid_law=True
+            final_age_alive=2.0, action_in_liquid_law=True
         ),
     ),
     _Route(
@@ -351,7 +381,9 @@ _ROUTES = (
         build_model=lambda: nbegm_next_asset_cliff_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
         ),
-        build_params=nbegm_next_asset_cliff_toy.build_params,
+        build_params=lambda: nbegm_next_asset_cliff_toy.build_params(
+            final_age_alive=2.0
+        ),
     ),
     _Route(
         name="epstein_zin",
@@ -566,7 +598,7 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
         model = nbegm_stochastic_node_toy.build_model(
             variant="nbegm", n_periods=3, tax_kind="kink", **_SMALL
         )
-        params = nbegm_stochastic_node_toy.build_params()
+        params = nbegm_stochastic_node_toy.build_params(final_age_alive=2.0)
         kernel, context = ride_along_kernel(model=model, params=params, period=0)
         plan = kernel.continuation_plan
         (target,) = plan.stateful_targets
@@ -632,7 +664,7 @@ def test_the_declared_route_names_are_the_route_tables_names() -> None:
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, action_in_costate=True, **_SMALL
         ),
-        build_params=nbegm_ride_discrete_toy.build_params,
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(final_age_alive=2.0),
     ),
 """,
                 "",

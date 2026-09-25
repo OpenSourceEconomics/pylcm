@@ -61,10 +61,16 @@ def _kw(**kwargs: object) -> tuple[tuple[str, object], ...]:
     return tuple(sorted(kwargs.items()))
 
 
+# A three-period toy is alive at ages 0 and 1 only, so its survival law must end
+# life after age 1; the toys' own default fits four periods.
+_THREE_PERIOD_SURVIVAL = _kw(final_age_alive=2.0)
+
+
 def _ride(
     *,
     module: str,
     params: tuple[tuple[str, object], ...] = (),
+    survival: tuple[tuple[str, object], ...] = _THREE_PERIOD_SURVIVAL,
     regime_name: str = "alive",
     period: int | None = None,
     **model_kwargs: object,
@@ -72,7 +78,7 @@ def _ride(
     return RouteIdentity(
         module=module,
         model_kwargs=_kw(variant="nbegm", n_periods=3, **model_kwargs),
-        params_kwargs=params,
+        params_kwargs=_kw(**dict(params), **dict(survival)),
         regime_name=regime_name,
         period=period,
     )
@@ -205,7 +211,10 @@ SUPPORTED_ROUTES: Mapping[str, RouteIdentity] = MappingProxyType(
             params=_kw(action_in_liquid_law=True),
         ),
         "multi_discrete": _ride(
-            module="nbegm_multi_discrete_toy", n_actions=2, params=_kw(n_actions=2)
+            module="nbegm_multi_discrete_toy",
+            n_actions=2,
+            params=_kw(n_actions=2),
+            survival=(),
         ),
         "next_asset_cliff": _ride(module="nbegm_next_asset_cliff_toy"),
         "epstein_zin": RouteIdentity(

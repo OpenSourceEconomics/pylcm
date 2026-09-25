@@ -368,7 +368,7 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "a0832b09f6eee730722564fc2ad5c337f7a2bc09510a5e03b4945653067bd0e6",
-    NBEGM_SOURCE: "f40e3d98e9ff7b5a4f8301662d6f4a1a61c883bfbe1c3d0af40bfbc2cb9cc789",
+    NBEGM_SOURCE: "b596a44384f2417173a017c52650ac31878bfed61e3597485ade1edfb2b4180e",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
@@ -4404,7 +4404,7 @@ def _nbegm_donation_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "aff759f48014f8e2fbd0e948b69b6f6c24c32f3edf9bf5242fb0ea2afcee4ebb"
+        != "7f989d5232660b19c428cc2cd1ed7c0d5528c7d39228ee8f6a5527cc7a82f96a"
     ):
         errors.append("NB-EGM donation declaration: module bindings changed")
     return errors

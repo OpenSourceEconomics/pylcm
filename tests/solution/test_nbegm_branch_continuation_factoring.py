@@ -36,6 +36,9 @@ from tests.test_models import nbegm_multi_discrete_toy, nbegm_ride_discrete_toy
 
 _SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16, "n_consumption": 24}
 _PERIOD = 0
+# The three-period toy is alive at ages 0 and 1 only, so its survival law ends
+# life after age 1.
+_THREE_PERIOD_FINAL_AGE_ALIVE = 2.0
 
 _Route = tuple[Callable[[], Any], Callable[[], Any]]
 
@@ -56,7 +59,9 @@ def _ride_discrete(**variant: bool) -> _Route:
         lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL, **variant
         ),
-        lambda: nbegm_ride_discrete_toy.build_params(**params_flags),
+        lambda: nbegm_ride_discrete_toy.build_params(
+            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE, **params_flags
+        ),
     )
 
 
@@ -243,13 +248,17 @@ def test_the_discount_factor_binds_per_branch_not_per_cell():
             lambda: nbegm_ride_discrete_toy.build_model(
                 variant="nbegm", n_periods=3, **_SMALL
             ),
-            lambda: nbegm_ride_discrete_toy.build_params(discount_factor=0.90),
+            lambda: nbegm_ride_discrete_toy.build_params(
+                final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE, discount_factor=0.90
+            ),
         )
     )
     branch_bound = run_production_kernel(kernel=kernel, context=context)
     cell_shared = run_production_kernel(kernel=shared_kernel, context=shared_context)
 
     assert kernel.statics.discount_action_names == ("buy_private",)
+    assert not np.isnan(np.asarray(branch_bound[0])).any()
+    assert not np.isnan(np.asarray(cell_shared[0])).any()
     assert not np.allclose(np.asarray(branch_bound[0]), np.asarray(cell_shared[0]))
     _assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
 
