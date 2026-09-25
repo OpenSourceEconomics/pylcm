@@ -19,7 +19,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import make_dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import cast, no_type_check
 
 import jax.numpy as jnp
 import numpy as np
@@ -149,13 +149,17 @@ def _restricted_law(
     fixed_table = jnp.asarray(fixed_of_code)
     parts_table = jnp.asarray(code_by_parts)
 
-    def restricted(*args: object, **kwargs: object) -> FloatND:
-        bound = signature.bind(*args, **kwargs)
-        full = func(*bound.args, **bound.kwargs)
-        group = fixed_table[bound.arguments[state_name]]
-        return full[..., parts_table[:, group]]
-
     signature = inspect.signature(func)
+    names = tuple(signature.parameters)
+
+    # Generated per model, so the claw must not wrap it: model fingerprinting reads
+    # a plain closure, but refuses a beartype wrapper it did not capture at import.
+    @no_type_check
+    def restricted(*args: object, **kwargs: object) -> FloatND:
+        arguments = dict(zip(names, args, strict=False)) | kwargs
+        full = func(**arguments)
+        return full[..., parts_table[:, fixed_table[arguments[state_name]]]]
+
     if state_name not in signature.parameters:
         msg = (
             f"MarkovTransition.fixed_component needs the law for {state_name!r} to "
@@ -173,6 +177,7 @@ def _recombine(*, name: str, code_by_parts: np.ndarray) -> Callable[..., Discret
     table = jnp.asarray(code_by_parts)
     rest, fixed = f"{name}_rest", f"{name}_fixed"
 
+    @no_type_check
     def recombine(**kwargs: DiscreteState) -> DiscreteState:
         return table[kwargs[rest], kwargs[fixed]]
 
