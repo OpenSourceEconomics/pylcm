@@ -7,7 +7,7 @@ separate from both actual entry-buffer residency and raw compiler peaks.
 
 import contextvars
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from types import MappingProxyType
@@ -97,7 +97,10 @@ from _lcm.simulation.transitions import (
     _update_regime_ids,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
-from _lcm.solution.backward_induction import _resolve_compilation_workers
+from _lcm.solution.backward_induction import (
+    _resolve_compilation_workers,
+    _trace_settings_key,
+)
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
 from lcm.ages import AgeGrid
@@ -483,15 +486,42 @@ def _compile_forward_units_in_parallel(
     Tracing holds the GIL and XLA compilation releases it, so the pool overlaps
     compiles the way the solve's compilation waves do. The runtime's cache owns
     one in-flight compilation per key, so duplicates across units compile once.
-    Each task runs in a copy of the caller's context so its compilation phase
-    records reach the open call. One worker keeps the ordered walk alone.
+    Each task copies the caller's contextvars for compilation phase records.
+    JAX trace settings are thread-local, not contextvars: a worker whose effective
+    settings differ must do no speculative work. The subsequent ordered walk
+    then fills missing entries under the caller's settings. One worker keeps
+    the ordered walk alone.
     """
     if n_workers <= 1 or len(units) <= 1:
         return
+    trace_settings = _trace_settings_key()
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = [pool.submit(contextvars.copy_context().run, unit) for unit in units]
+        futures = [
+            pool.submit(
+                contextvars.copy_context().run,
+                partial(
+                    _compile_forward_unit_if_context_matches,
+                    unit=unit,
+                    trace_settings=trace_settings,
+                ),
+            )
+            for unit in units
+        ]
     for future in futures:
         future.result()
+
+
+def _compile_forward_unit_if_context_matches(
+    *, unit: Callable[[], object], trace_settings: Hashable
+) -> None:
+    """Warm a unit only under the semantic trace context of the calling thread.
+
+    A mismatch is a safe cache-warming miss, not a compilation failure. Never
+    run the unit first and inspect the resulting key afterwards: tracing can
+    itself reject otherwise valid user functions under different settings.
+    """
+    if _trace_settings_key() == trace_settings:
+        unit()
 
 
 def _profile_next_subjects(

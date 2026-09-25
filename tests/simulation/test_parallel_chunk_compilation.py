@@ -163,5 +163,7 @@ def test_parallel_chunk_planning_simulates_the_same_panel_as_serial(
     serial_and_parallel: dict[int, dict[str, Any]],
 ) -> None:
     pd.testing.assert_frame_equal(
-        serial_and_parallel[2]["panel"], serial_and_parallel[1]["panel"]
+        serial_and_parallel[2]["panel"],
+        serial_and_parallel[1]["panel"],
+        check_exact=True,
     )
