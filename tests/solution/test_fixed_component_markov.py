@@ -21,7 +21,13 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 
 
 @categorical(ordered=False)
@@ -53,21 +59,26 @@ class _Health:
 _HEALTH_LAW = jnp.array([[[0.9, 0.1], [0.3, 0.7]], [[0.6, 0.4], [0.2, 0.8]]])
 
 
-def _utility(*, consumption, wealth, kind_health):
+def _utility(
+    *,
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+    kind_health: DiscreteState,
+) -> FloatND:
     return jnp.log(consumption) + 0.1 * kind_health + 0.01 * wealth
 
 
-def _next_kind_health(kind_health):
+def _next_kind_health(kind_health: DiscreteState) -> FloatND:
     kind, health = kind_health // 2, kind_health % 2
     within = _HEALTH_LAW[kind, health]
     return jnp.where(jnp.arange(4) // 2 == kind, within[jnp.arange(4) % 2], 0.0)
 
 
-def _next_health(*, kind, health):
+def _next_health(*, kind: DiscreteState, health: DiscreteState) -> FloatND:
     return _HEALTH_LAW[kind, health]
 
 
-def _kind_health(*, kind, health):
+def _kind_health(*, kind: DiscreteState, health: DiscreteState) -> DiscreteState:
     return 2 * kind + health
 
 
