@@ -1,5 +1,6 @@
 """Grouped mapper controls remain effective after source byte resealing."""
 
+import ast
 import hashlib
 from pathlib import Path
 from shutil import copyfile
@@ -55,3 +56,64 @@ def test_grouped_mapper_mutation_fails_after_byte_reseal(
     assert not result["ok"]
     assert result["offending_paths"] == [spec["path"]], result["errors"]
     assert any("grouped mapper" in error for error in result["errors"])
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "jax.tree.map(lambda value: value * 0, self.func(**kwargs))",
+        'self.func(**{**kwargs, "work": kwargs["work"][:1]})',
+        "self.func(**{**kwargs, self.width_keyword: width})",
+    ],
+    ids=("changed-values", "dropped-candidates", "ignored-counted-width"),
+)
+def test_broadcast_width_body_fails_after_byte_reseal(
+    *, replacement: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The new mapper body cannot alter operands/results behind a class-only pin.
+
+    Keep these new controls separate from the historical mutation populations.
+    All three changes preserve the wrapper's schema and every older callable.
+    """
+    root = Path(__file__).parents[1]
+    clean = direct_flow.verify_direct_candidate_flow(repo_root=root)
+    assert clean["ok"], clean["errors"]
+    sources = clean["certified_corridor_sources"]
+    for relative in sources:
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        copyfile(root / relative, destination)
+
+    path = tmp_path / direct_flow.DISPATCHERS_SOURCE
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    wrapper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "_CountBroadcastExtentInWidth"
+    )
+    method = next(
+        node
+        for node in wrapper.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__call__"
+    )
+    returns = [node for node in method.body if isinstance(node, ast.Return)]
+    assert len(returns) == 1
+    returns[0].value = ast.parse(replacement, mode="eval").body
+    path.write_text(
+        ast.unparse(ast.fix_missing_locations(tree)) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        direct_flow,
+        "_SOURCE_SEALS",
+        {relative: sha256_file(tmp_path / relative) for relative in sources},
+    )
+    result = direct_flow.verify_direct_candidate_flow(repo_root=tmp_path)
+    assert not result["ok"]
+    assert result["offending_paths"] == [direct_flow.DISPATCHERS_SOURCE], result[
+        "errors"
+    ]
+    assert any(
+        "grouped mapper" in error and "_CountBroadcastExtentInWidth.__call__" in error
+        for error in result["errors"]
+    )
