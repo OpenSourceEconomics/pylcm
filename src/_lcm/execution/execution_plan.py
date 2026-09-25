@@ -81,7 +81,7 @@ class ResolvedExecution:
     donate_buffers: bool = True
     """Whether eligible solve inputs may be donated to a compiled executable."""
 
-    halve_on_materialised_gather: bool = True
+    halve_on_materialised_gather: bool = False
     """Whether GridSearch cell widths are halved while a gather materialises."""
 
     width_search: WidthSearchPolicy = dataclasses.field(

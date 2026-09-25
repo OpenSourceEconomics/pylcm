@@ -1,4 +1,4 @@
-"""A GridSearch cell width is halved while its compiled reduce materialises a gather.
+"""Opted in, a GridSearch cell width is halved while its gather materialises.
 
 The compiled-program check is replaced by a fake that answers from the cell width,
 so the planner's response is exercised on any backend.
@@ -9,7 +9,7 @@ import collections
 import functools
 import inspect
 import itertools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -105,15 +105,19 @@ def _solve(
 
 @functools.cache
 def _planned_width() -> int:
-    """The single cell width the planner picks when every program fuses."""
-    widths, _ = _solve(config=ExecutionConfig(), limit=None)
+    """The single cell width selected without the fusion heuristic."""
+    widths, _ = _solve(
+        config=ExecutionConfig(halve_on_materialised_gather=False), limit=None
+    )
     (width,) = set().union(*widths.values())
     assert width >= 4, "the halving tests need a planned width of at least four"
     return width
 
 
 def test_a_fused_program_keeps_the_planned_width() -> None:
-    widths, _ = _solve(config=ExecutionConfig(), limit=10**9)
+    widths, _ = _solve(
+        config=ExecutionConfig(halve_on_materialised_gather=True), limit=10**9
+    )
 
     assert set().union(*widths.values()) == {_planned_width()}
 
@@ -121,15 +125,21 @@ def test_a_fused_program_keeps_the_planned_width() -> None:
 def test_a_materialised_program_is_halved_until_it_fuses() -> None:
     """Materialising above a quarter of the planned width halves it twice."""
     planned = _planned_width()
-    widths, _ = _solve(config=ExecutionConfig(), limit=planned // 4)
+    widths, _ = _solve(
+        config=ExecutionConfig(halve_on_materialised_gather=True), limit=planned // 4
+    )
 
     assert set().union(*widths.values()) == {planned // 4}
 
 
 def test_halving_the_cell_width_preserves_the_solved_values() -> None:
     planned = _planned_width()
-    _, expected_solution = _solve(config=ExecutionConfig(), limit=None)
-    _, halved_solution = _solve(config=ExecutionConfig(), limit=planned // 2)
+    _, expected_solution = _solve(
+        config=ExecutionConfig(halve_on_materialised_gather=True), limit=None
+    )
+    _, halved_solution = _solve(
+        config=ExecutionConfig(halve_on_materialised_gather=True), limit=planned // 2
+    )
 
     expected_values = expected_solution._engine_view.values
     halved_values = halved_solution._engine_view.values
@@ -146,14 +156,18 @@ def test_halving_the_cell_width_preserves_the_solved_values() -> None:
 
 def test_a_program_fusing_after_one_halving_keeps_the_halved_width() -> None:
     planned = _planned_width()
-    widths, _ = _solve(config=ExecutionConfig(), limit=planned // 2)
+    widths, _ = _solve(
+        config=ExecutionConfig(halve_on_materialised_gather=True), limit=planned // 2
+    )
 
     assert set().union(*widths.values()) == {planned // 2}
 
 
 def test_a_program_materialising_at_every_width_keeps_the_planned_width() -> None:
     """No halving is kept unless its compiled program is proved fused."""
-    widths, _ = _solve(config=ExecutionConfig(), limit=0)
+    widths, _ = _solve(
+        config=ExecutionConfig(halve_on_materialised_gather=True), limit=0
+    )
 
     assert set().union(*widths.values()) == {_planned_width()}
 
@@ -171,7 +185,7 @@ def test_an_unreadable_program_after_halving_keeps_the_planned_width() -> None:
     """A halving whose program cannot be read is not kept, even after narrower ones."""
     planned = _planned_width()
     widths, _ = _solve(
-        config=ExecutionConfig(),
+        config=ExecutionConfig(halve_on_materialised_gather=True),
         limit=None,
         check=functools.partial(_materialised_then_unreadable, limit=planned // 4),
     )
@@ -189,7 +203,10 @@ def test_the_opt_out_keeps_a_materialised_width() -> None:
 
 def test_a_fixed_cell_width_is_never_halved() -> None:
     widths, _ = _solve(
-        config=ExecutionConfig(axis_widths=MappingProxyType({_CELL_AXIS: 2})),
+        config=ExecutionConfig(
+            axis_widths=MappingProxyType({_CELL_AXIS: 2}),
+            halve_on_materialised_gather=True,
+        ),
         limit=0,
     )
 
@@ -256,8 +273,12 @@ def test_the_halving_value_check_measures_each_element_at_its_own_spacing() -> N
 
 def _simulated_choices(*, limit: int | None) -> pd.DataFrame:
     """Solve, then replay over every starting wealth and health on the grid."""
-    model = _model_with(ExecutionConfig())
-    _, solution = _solve(config=ExecutionConfig(), limit=limit, model=model)
+    model = _model_with(ExecutionConfig(halve_on_materialised_gather=True))
+    _, solution = _solve(
+        config=ExecutionConfig(halve_on_materialised_gather=True),
+        limit=limit,
+        model=model,
+    )
     wealth, health = np.meshgrid(np.linspace(1, 5, 5), np.arange(2))
     n_subjects = wealth.size
     return model.simulate(
@@ -292,7 +313,11 @@ def _unreadable(*, compiled: object, widths: Any) -> str | None:
 
 
 def test_a_program_the_check_cannot_read_keeps_the_planned_width() -> None:
-    widths, _ = _solve(config=ExecutionConfig(), limit=None, check=_unreadable)
+    widths, _ = _solve(
+        config=ExecutionConfig(halve_on_materialised_gather=True),
+        limit=None,
+        check=_unreadable,
+    )
 
     assert set().union(*widths.values()) == {_planned_width()}
 
@@ -309,7 +334,7 @@ def test_each_compiled_program_is_classified_once_per_solve(*, halvings: int) ->
     """Cores sharing an executable reuse its verdict instead of reading it again."""
     counts: collections.Counter[int] = collections.Counter()
     _solve(
-        config=ExecutionConfig(),
+        config=ExecutionConfig(halve_on_materialised_gather=True),
         limit=None,
         check=functools.partial(
             _counting, counts=counts, limit=_planned_width() // 2**halvings
@@ -321,12 +346,12 @@ def test_each_compiled_program_is_classified_once_per_solve(*, halvings: int) ->
 
 def test_a_second_solve_of_the_same_model_classifies_no_program() -> None:
     """Verdicts outlive the solve that read them, so a warm solve reads no HLO."""
-    model = _model_with(ExecutionConfig())
+    model = _model_with(ExecutionConfig(halve_on_materialised_gather=True))
     first: collections.Counter[int] = collections.Counter()
     second: collections.Counter[int] = collections.Counter()
     for counts in (first, second):
         _solve(
-            config=ExecutionConfig(),
+            config=ExecutionConfig(halve_on_materialised_gather=True),
             limit=None,
             model=model,
             check=functools.partial(
@@ -335,3 +360,62 @@ def test_a_second_solve_of_the_same_model_classifies_no_program() -> None:
         )
 
     assert (first.total() > 0, second.total()) == (True, 0)
+
+
+def _forbid_implicit_halving(**kwargs: Any) -> None:
+    """Fail the test on any entry to the disabled halving walk."""
+    del kwargs
+    pytest.fail("The default/off configuration entered the gather-halving walk.")
+
+
+@pytest.mark.parametrize(
+    ("configuration", "budget"),
+    [
+        ("omitted", None),
+        ("default", None),
+        ("off", None),
+        ("default", 100_000_000),
+        ("off", 100_000_000),
+    ],
+)
+def test_default_or_off_skips_halving_on_cold_warm_and_parameter_calls(
+    *,
+    configuration: str,
+    budget: int | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitted, default and explicit-off configurations never enter the halving walk.
+
+    Cold, warm and parameter-only solves of one Model, with and without a
+    device-memory budget, read no compiled program for gather fusion.
+    """
+    if configuration == "omitted":
+        model = get_multi_regime_model(n_periods=_N_PERIODS, distribution_type="normal")
+    elif configuration == "default":
+        model = _model_with(ExecutionConfig(device_memory_bytes=budget))
+    else:
+        model = _model_with(
+            ExecutionConfig(
+                device_memory_bytes=budget, halve_on_materialised_gather=False
+            )
+        )
+    assert model._execution.halve_on_materialised_gather is False
+    monkeypatch.setattr(
+        backward_induction, "_halve_while_gather_materialises", _forbid_implicit_halving
+    )
+    params = get_multi_regime_params("normal")
+    changed = {
+        regime: (
+            {**values, "discount_factor": 0.95}
+            if isinstance(values, Mapping) and regime != "dead"
+            else values
+        )
+        for regime, values in params.items()
+    }
+    for call_params in (params, params, changed):
+        solution = model.solve(params=call_params, log_level="off")
+        for by_regime in solution.values.values():
+            for value in by_regime.values():
+                value.block_until_ready()
+        del solution
+        assert model._gather_checks == {}
