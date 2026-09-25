@@ -6,6 +6,8 @@ of the model in which `kind` is its own identity-law state, and carry the state 
 group axis and a within-group axis instead of one axis over every code.
 """
 
+import re
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -29,6 +31,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_distributed import _compiled_solve_kernel_hlo
 
 
 @categorical(ordered=False)
@@ -162,3 +165,18 @@ def test_fixed_component_rejects_unequal_groups():
     """Groups of different sizes cannot share one within-group axis."""
     with pytest.raises(RegimeInitializationError, match="equal size"):
         _model(factored=True, fixed_component=(0, 0, 0, 1))
+
+
+def _gather_shapes(model: Model) -> set[str]:
+    hlo = _compiled_solve_kernel_hlo(model=model, regime_name="alive", period=0)
+    return set(re.findall(r"= (\w+\[[\d,]*\])[^\n]*? gather\(", hlo))
+
+
+def test_fixed_component_lowers_the_hand_split_gathers():
+    """The optimized kernel reads next-period values one group at a time.
+
+    Every gather of the hand-split kernel, including the continuation read whose
+    group axis is a size-1 slice, appears in the kernel of the annotated model.
+    """
+    split = _gather_shapes(_model(factored=False))
+    assert split <= _gather_shapes(_model(factored=True))
