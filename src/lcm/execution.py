@@ -43,8 +43,8 @@ class WidthSearchPolicy:
     """Distinct width candidates evaluated by the memory-admission search per core,
     cache hits included. The optional post-selection materialised-gather pass
     has a separate, finite halving walk and is not charged to this count.
-    Disable `halve_on_materialised_gather` when this admission-search count
-    must also be the total width-evaluation ceiling.
+    Leave `halve_on_materialised_gather=False` (the default) when this
+    admission-search count must also be the total width-evaluation ceiling.
     """
     refinement_share: int = 8
     """Of `max_evaluations`, how many may be spent widening after admission."""
@@ -251,8 +251,13 @@ class ExecutionConfig:
     donate_buffers: bool = True
     """Allow eligible owned inputs to be donated by compiled solve programs."""
 
-    halve_on_materialised_gather: bool = True
-    """Halve a GridSearch cell width while its compiled reduce materialises a gather.
+    halve_on_materialised_gather: bool = False
+    """Opt in to halving a GridSearch cell width when its gather materialises.
+
+    Disabled by default. Enable only for a measured workload and compiler/device
+    configuration: unsuccessful trials still cost compilation time, and a fused
+    program is not necessarily faster. Disabling this pass does not disable the
+    ordinary memory-admission search.
 
     Past a device- and program-dependent cell count, XLA writes the continuation
     lookup table to device memory and the reduction reads it back, instead of
@@ -264,10 +269,12 @@ class ExecutionConfig:
     axis admits and every program still materialises, or reaches a program whose
     structure the planner does not read completely, the solve keeps the width that
     passed memory admission, with its materialised gather and its already compiled
-    program. An unreadable program is diagnosed once and is never assumed fused.
-    Each halving is a trial beyond `WidthSearchPolicy.max_evaluations`, and is
-    compiled only when no earlier program shares its lowering. Other solvers and
-    simulation are not checked.
+    program, and logs why no narrower width was kept. An unreadable program is
+    diagnosed once and is never assumed fused. Under a device-memory budget, a
+    narrower candidate is admitted like any other width: one that exceeds the
+    budget raises `ExecutionPlanningError`. Each halving is a trial beyond
+    `WidthSearchPolicy.max_evaluations`, and is compiled only when no earlier
+    program shares its lowering. Other solvers and simulation are not checked.
 
     Halving is a bounded heuristic over the compiled executable, not a guarantee
     that the fused program is faster: the compiler's choice need not be monotone in
