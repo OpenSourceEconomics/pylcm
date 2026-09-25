@@ -149,7 +149,7 @@ def _values(model: Model) -> dict:
 def test_fixed_component_carries_group_and_position_as_separate_axes():
     """The alive value function has a position axis and a group axis, not 4 codes."""
     values = _values(_model(factored=True))
-    assert values[(0, "alive")].shape == (5, 2, 2)
+    assert values[(0, "alive")].shape == (2, 2, 5)
 
 
 def test_fixed_component_solve_equals_the_hand_split_model():
