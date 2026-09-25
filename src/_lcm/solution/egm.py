@@ -66,6 +66,7 @@ from _lcm.solution.periodization import (
 )
 from _lcm.typing import (
     EconFunction,
+    EconFunctionArg,
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
@@ -854,7 +855,6 @@ class _EGMArgumentBuilder:
                 regime_name=self.regime_name,
                 transition_target_names=self.transition_target_names,
             ),
-            self.liquid_state: liquid,
             "period": jnp.int32(period),
             "age": ages.values[period],
         }
@@ -864,7 +864,18 @@ class _EGMArgumentBuilder:
                 node=self.compute_regime_transition_probs, period=period
             ),
         )
-        prob = jnp.asarray(compute_probs(**pool)[self.continuation_target])
+
+        def target_probability(liquid_node: FloatND) -> FloatND:
+            # The solve-phase transition is a scalar DAG. Map the whole call,
+            # including coarse-ID/one-hot conversion, before stacking nodes;
+            # a row call would confuse the state axis with the regime axis.
+            node_pool = cast(
+                "dict[str, EconFunctionArg]",
+                {**pool, self.liquid_state: liquid_node},
+            )
+            return jnp.asarray(compute_probs(**node_pool)[self.continuation_target])
+
+        prob = jax.vmap(target_probability)(liquid)
         return jnp.all(
             _regime_mass_is_a_distribution(
                 probability_mass=prob, has_negative_probability=is_negative(prob)
