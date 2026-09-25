@@ -3,8 +3,8 @@
 A discrete state whose `MarkovTransition` declares `fixed_component` is rewritten,
 before model slots are merged, into three pieces of the ordinary vocabulary:
 
-- `<state>__fixed`, a `DiscreteGrid` over the groups, with `fixed_transition`;
-- `<state>__rest`, a `DiscreteGrid` over the position within a group, whose Markov law
+- `<state>_fixed`, a `DiscreteGrid` over the groups, with `fixed_transition`;
+- `<state>_rest`, a `DiscreteGrid` over the position within a group, whose Markov law
   is the user's law restricted to the current group;
 - a function `<state>` that recombines the two into the original code, so every other
   function, constraint and law keeps reading the code it was written against.
@@ -65,6 +65,15 @@ def factor_fixed_components(
                     f"{regime_name!r} needs a DiscreteGrid state declared there."
                 )
                 raise RegimeInitializationError(msg)
+            taken = sorted(
+                {f"{name}_rest", f"{name}_fixed"} & (states.keys() | functions.keys())
+            )
+            if taken:
+                msg = (
+                    f"Factoring the fixed component of {name!r} needs the names "
+                    f"{taken}, which regime {regime_name!r} already uses."
+                )
+                raise RegimeInitializationError(msg)
             fixed_of_code, code_by_parts = _group_codes(
                 name=name,
                 fixed_component=fixed_component,
@@ -72,14 +81,14 @@ def factor_fixed_components(
             )
             n_rest, n_fixed = code_by_parts.shape
             del states[name], laws[name]
-            states[f"{name}__rest"] = DiscreteGrid(
+            states[f"{name}_rest"] = DiscreteGrid(
                 _labels(prefix=f"{name}_rest", n=n_rest)
             )
-            states[f"{name}__fixed"] = DiscreteGrid(
+            states[f"{name}_fixed"] = DiscreteGrid(
                 _labels(prefix=f"{name}_fixed", n=n_fixed)
             )
-            laws[f"{name}__fixed"] = _IdentityTransition(state_name=f"{name}__fixed")
-            laws[f"{name}__rest"] = MarkovTransition(
+            laws[f"{name}_fixed"] = _IdentityTransition(state_name=f"{name}_fixed")
+            laws[f"{name}_rest"] = MarkovTransition(
                 _restricted_law(
                     func=func,
                     state_name=name,
@@ -89,7 +98,7 @@ def factor_fixed_components(
             )
             functions[name] = _recombine(name=name, code_by_parts=code_by_parts)
             if f"next_{name}" in regime_fixed:
-                regime_fixed[f"next_{name}__rest"] = regime_fixed.pop(f"next_{name}")
+                regime_fixed[f"next_{name}_rest"] = regime_fixed.pop(f"next_{name}")
         new_regimes[regime_name] = dataclasses.replace(
             regime,
             states=MappingProxyType(states),
@@ -155,14 +164,14 @@ def _restricted_law(
         raise RegimeInitializationError(msg)
     restricted.__signature__ = signature  # ty: ignore[unresolved-attribute]
     restricted.__annotations__ = dict(getattr(func, "__annotations__", {}))
-    restricted.__name__ = f"next_{state_name}__rest"
+    restricted.__name__ = f"next_{state_name}_rest"
     return restricted
 
 
 def _recombine(*, name: str, code_by_parts: np.ndarray) -> Callable[..., DiscreteState]:
     """A DAG function named after the state, returning the original code."""
     table = jnp.asarray(code_by_parts)
-    rest, fixed = f"{name}__rest", f"{name}__fixed"
+    rest, fixed = f"{name}_rest", f"{name}_fixed"
 
     def recombine(**kwargs: DiscreteState) -> DiscreteState:
         return table[kwargs[rest], kwargs[fixed]]
