@@ -150,7 +150,7 @@
           },
           {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
-            "sha256": "7635700aa70fc8658529995c239c0641d6177e379e8067c3894555add5dad1d3"
+            "sha256": "a69ea643eba0d6b98ea9b4e0fc5f036a721e79f5703ea9fbc7a21a6a02841b9a"
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
@@ -366,7 +366,7 @@
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "7e5bc279645bc2945b822e672e88f1101a14ff56d8359ba54b654df35b88d30a"
+            "sha256": "a56619a7d0e5a60fc2b4bd4e1bc75131dc0525ea4b22b9acad41082497bee8ed"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -422,7 +422,7 @@
           },
           {
             "path": "src/_lcm/utils/dispatchers.py",
-            "sha256": "c2fb9380250e48c44de560456f0a343ca5623a928b1800cb28f47ca8f2833d8b"
+            "sha256": "74659d1e9cae3ffb9a7aeae9cd3dc2d300cdb5ff15ab8e8bd99918cfe7d958de"
           },
           {
             "path": "src/_lcm/utils/functools.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "ec837bb0b7cf5ce358b5c99bec91e8c95c022f708ffa8400e3edac06527ef909"
+        "source_inventory_sha256": "9d537eb8c9f363d8657d0770966798aca297c756b9c9c2cd969352445edba9a9"
       },
       "fast": {
         "candidate_sources": [
@@ -620,7 +620,7 @@
           },
           {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
-            "sha256": "7635700aa70fc8658529995c239c0641d6177e379e8067c3894555add5dad1d3"
+            "sha256": "a69ea643eba0d6b98ea9b4e0fc5f036a721e79f5703ea9fbc7a21a6a02841b9a"
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
@@ -836,7 +836,7 @@
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "7e5bc279645bc2945b822e672e88f1101a14ff56d8359ba54b654df35b88d30a"
+            "sha256": "a56619a7d0e5a60fc2b4bd4e1bc75131dc0525ea4b22b9acad41082497bee8ed"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -892,7 +892,7 @@
           },
           {
             "path": "src/_lcm/utils/dispatchers.py",
-            "sha256": "c2fb9380250e48c44de560456f0a343ca5623a928b1800cb28f47ca8f2833d8b"
+            "sha256": "74659d1e9cae3ffb9a7aeae9cd3dc2d300cdb5ff15ab8e8bd99918cfe7d958de"
           },
           {
             "path": "src/_lcm/utils/functools.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "ec837bb0b7cf5ce358b5c99bec91e8c95c022f708ffa8400e3edac06527ef909"
+        "source_inventory_sha256": "9d537eb8c9f363d8657d0770966798aca297c756b9c9c2cd969352445edba9a9"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "ec837bb0b7cf5ce358b5c99bec91e8c95c022f708ffa8400e3edac06527ef909",
+  "source_inventory_sha256": "9d537eb8c9f363d8657d0770966798aca297c756b9c9c2cd969352445edba9a9",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1094,7 +1094,7 @@
     },
     {
       "path": "src/_lcm/regime_building/max_Q_over_a.py",
-      "sha256": "7635700aa70fc8658529995c239c0641d6177e379e8067c3894555add5dad1d3"
+      "sha256": "a69ea643eba0d6b98ea9b4e0fc5f036a721e79f5703ea9fbc7a21a6a02841b9a"
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
@@ -1310,7 +1310,7 @@
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "7e5bc279645bc2945b822e672e88f1101a14ff56d8359ba54b654df35b88d30a"
+      "sha256": "a56619a7d0e5a60fc2b4bd4e1bc75131dc0525ea4b22b9acad41082497bee8ed"
     },
     {
       "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -1366,7 +1366,7 @@
     },
     {
       "path": "src/_lcm/utils/dispatchers.py",
-      "sha256": "c2fb9380250e48c44de560456f0a343ca5623a928b1800cb28f47ca8f2833d8b"
+      "sha256": "74659d1e9cae3ffb9a7aeae9cd3dc2d300cdb5ff15ab8e8bd99918cfe7d958de"
     },
     {
       "path": "src/_lcm/utils/functools.py",

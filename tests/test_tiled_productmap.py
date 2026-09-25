@@ -173,7 +173,10 @@ def _evaluate_cell(
 
 
 def _build_mapper(
-    *, variables: tuple[str, ...], untiled_variables: tuple[str, ...] = ()
+    *,
+    variables: tuple[str, ...],
+    untiled_variables: tuple[str, ...] = (),
+    broadcast_variables: tuple[str, ...] = (),
 ) -> Callable[..., Any]:
     """Obtain the new mapping boundary without hiding a missing implementation."""
     build = cast("Callable[..., Callable[..., Any]]", dispatchers.tiled_productmap)
@@ -182,6 +185,7 @@ def _build_mapper(
         variables=variables,
         width_keyword="cell_width",
         untiled_variables=untiled_variables,
+        broadcast_variables=broadcast_variables,
     )
 
 
@@ -430,3 +434,77 @@ def test_whole_coordinate_windows_do_not_move_a_single_bit(
     )
     got = mapped(**arguments, cell_width=width)
     assert_array_equal(np.asarray(got), np.asarray(untiled(**arguments)))
+
+
+@pytest.mark.parametrize("broadcast", [("first",), ("second",)])
+@pytest.mark.parametrize("width", [1, 2, 3, 6])
+def test_broadcast_axes_restore_canonical_product_order(
+    *, broadcast: tuple[str, ...], width: int
+) -> None:
+    """A broadcast axis keeps its declared position in every output leaf."""
+    mapped = _build_mapper(variables=("first", "second"), broadcast_variables=broadcast)
+    values, _flags = jax.jit(functools.partial(mapped, cell_width=width))(
+        first=jnp.asarray([1.0, 3.0]),
+        second=jnp.asarray([2.0, 4.0, 7.0]),
+        offset=jnp.asarray(5.0),
+    )
+    assert_agrees_to_ulp(
+        got=values,
+        expected=np.asarray(
+            [
+                [[17.0, -3.0], [19.0, -7.0], [22.0, -13.0]],
+                [[37.0, -1.0], [39.0, -5.0], [42.0, -11.0]],
+            ]
+        ),
+        n_ulp=4,
+    )
+
+
+def _evaluate_first_blind_work(
+    *, first: FloatND, second: FloatND, last: FloatND
+) -> FloatND:
+    """Mix work reading every coordinate (`sqrt`) with work blind to `first` (`exp`)."""
+    return jnp.sqrt(first + second + last) + jnp.exp(second * last)
+
+
+def _max_operand_size(*, width: int, broadcast: tuple[str, ...], primitive: str) -> int:
+    """Largest operand of `primitive` in the traced 2 x 3 x 5 product."""
+    mapped = functools.partial(
+        cast(
+            "Callable[..., Any]",
+            dispatchers.tiled_productmap(
+                func=_evaluate_first_blind_work,
+                variables=("first", "second", "last"),
+                width_keyword="cell_width",
+                broadcast_variables=broadcast,
+            ),
+        ),
+        cell_width=width,
+    )
+    traced = jax.make_jaxpr(mapped)(
+        first=jnp.asarray([1.0, 2.0]),
+        second=jnp.asarray([1.0, 2.0, 3.0]),
+        last=jnp.asarray([0.0, 0.125, 0.25, 0.375, 0.5]),
+    )
+    return int(
+        max(
+            np.prod(shape)
+            for shape in _primitive_input_shapes(graph=traced, name=primitive)
+        )
+    )
+
+
+@pytest.mark.parametrize(("broadcast", "expected"), [((), 30), (("first",), 15)])
+def test_broadcast_axis_leaves_work_blind_to_it_unbatched(
+    *, broadcast: tuple[str, ...], expected: int
+) -> None:
+    """Work that never reads a broadcast coordinate runs once per remaining cell."""
+    assert _max_operand_size(width=30, broadcast=broadcast, primitive="exp") == expected
+
+
+@pytest.mark.parametrize("width", [2, 6, 10, 30])
+def test_broadcast_axis_counts_toward_the_window(*, width: int) -> None:
+    """Work reading every coordinate stays within the width in product points."""
+    assert (
+        _max_operand_size(width=width, broadcast=("first",), primitive="sqrt") <= width
+    )
