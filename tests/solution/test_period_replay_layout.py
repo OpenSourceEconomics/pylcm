@@ -496,3 +496,109 @@ def test_capture_preserves_consumer_layout_under_device_substitution(
     print("CONTEXT-MATCH")
     """
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "CONTEXT-MATCH"
+
+
+_TWO_MESH_SOLVE = """
+import dataclasses
+
+import jax.numpy as jnp
+import lcm
+
+# Under a memory budget, `simulate` commits the parameters to the subject mesh
+# before it solves, while the regime keeps its own mesh named after its
+# distributed state (`kind`). The captured period's inputs therefore span two
+# meshes over the same devices under different axis names.
+two_mesh = root / "two_mesh"
+os.environ["LCM_CAPTURE_DIR"] = str(two_mesh)
+simulated = toy.build_model(
+    variant="brute",
+    n_periods=4,
+    n_liquid=24,
+    n_consumption=16,
+    n_savings=32,
+    distributed_kind=True,
+    execution_config=lcm.ExecutionConfig(devices=(0, 1), device_memory_bytes=2**31),
+).simulate(
+    params=toy.build_params(),
+    initial_conditions={
+        "liquid": jnp.array([5.0, 10.0]),
+        "kind": jnp.array([0, 1]),
+        "age": jnp.zeros(2),
+        "regime_id": jnp.array([0, 0]),
+    },
+    log_level="off",
+)
+two_mesh_directory = two_mesh / "alive@1"
+two_mesh_payload = two_mesh_directory / period_capture._PAYLOAD_NAME
+with two_mesh_payload.open("rb") as stream:
+    two_mesh_layouts = cloudpickle.load(stream)[period_capture.LAYOUTS_KEY]
+mesh_names = {
+    leaf.sharding.mesh_axis_names
+    for leaf in two_mesh_layouts.leaves
+    if leaf.sharding.mesh_axis_names is not None
+}
+assert len(mesh_names) == 2 and ("kind",) in mesh_names, mesh_names
+two_mesh_devices = jax.devices()[: len(two_mesh_layouts.device_ids)]
+"""
+
+
+def test_a_capture_spanning_two_named_meshes_replays_under_the_strict_check(tmp_path):
+    """Inputs on two same-device meshes with different axis names replay exactly.
+
+    The replay passes the strict layout comparison and returns the value array
+    the solve published, bit for bit.
+    """
+    body = _TWO_MESH_SOLVE + textwrap.dedent(
+        """
+    replay = period_replay.replay_period_on_recorded_layout(
+        directory=two_mesh_directory, devices=two_mesh_devices
+    )
+    np.testing.assert_array_equal(
+        np.asarray(replay.output.value),
+        np.asarray(simulated.period_to_regime_to_V_arr[1]["alive"]),
+    )
+    print("STRICT-REPLAY", replay.scope)
+    """
+    )
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-2:] == [
+        "STRICT-REPLAY",
+        "layout",
+    ]
+
+
+def test_a_two_mesh_capture_with_a_different_recorded_input_spec_is_refused(tmp_path):
+    """A recorded input partition spec the replay does not reproduce is refused."""
+    body = _TWO_MESH_SOLVE + textwrap.dedent(
+        """
+    with two_mesh_payload.open("rb") as stream:
+        payload = cloudpickle.load(stream)
+    core = payload[period_capture.LAYOUTS_KEY].cores["main"]
+    sharded = [
+        index
+        for index, (_, descriptor) in enumerate(core.compiled_input_shardings)
+        if descriptor.partition_spec == ("kind",)
+    ]
+    assert sharded, core.compiled_input_shardings
+    inputs = list(core.compiled_input_shardings)
+    name, descriptor = inputs[sharded[0]]
+    inputs[sharded[0]] = (name, dataclasses.replace(descriptor, partition_spec=()))
+    payload[period_capture.LAYOUTS_KEY] = dataclasses.replace(
+        payload[period_capture.LAYOUTS_KEY],
+        cores={
+            "main": dataclasses.replace(core, compiled_input_shardings=tuple(inputs))
+        },
+    )
+    with two_mesh_payload.open("wb") as stream:
+        cloudpickle.dump(payload, stream)
+    try:
+        period_replay.replay_period_on_recorded_layout(
+            directory=two_mesh_directory, devices=two_mesh_devices
+        )
+    except ValueError as error:
+        message = str(error)
+    else:
+        message = "NO-REFUSAL"
+    print("REFUSED", name in message and "partition_spec=()" in message)
+    """
+    )
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "True"
