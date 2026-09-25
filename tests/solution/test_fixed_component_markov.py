@@ -22,6 +22,7 @@ from lcm import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import (
+    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
@@ -82,6 +83,20 @@ def _kind_health(*, kind: DiscreteState, health: DiscreteState) -> DiscreteState
     return 2 * kind + health
 
 
+def _feasible(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+    return consumption <= wealth
+
+
+def _next_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption + 2
+
+
+def _next_regime(age: float) -> ScalarInt:
+    return jnp.where(age < 2, _RegimeId.alive, _RegimeId.dead)
+
+
 def _model(*, factored: bool, fixed_component: tuple[int, ...] = (0, 0, 1, 1)) -> Model:
     if factored:
         states = {"kind_health": DiscreteGrid(_KindHealth)}
@@ -102,20 +117,16 @@ def _model(*, factored: bool, fixed_component: tuple[int, ...] = (0, 0, 1, 1)) -
         regimes={
             "alive": Regime(
                 active=lambda age: age < 3,
-                transition=lambda age: jnp.where(
-                    age < 2, _RegimeId.alive, _RegimeId.dead
-                ),
+                transition=_next_regime,
                 states={
                     "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
                     **states,
                 },
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 functions={"utility": _utility, **functions},
-                constraints={
-                    "feasible": lambda consumption, wealth: consumption <= wealth
-                },
+                constraints={"feasible": _feasible},
                 state_transitions={
-                    "wealth": lambda wealth, consumption: wealth - consumption + 2,
+                    "wealth": _next_wealth,
                     **laws,
                 },
             ),
