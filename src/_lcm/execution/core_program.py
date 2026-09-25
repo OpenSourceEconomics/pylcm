@@ -143,6 +143,10 @@ class TiledOutputAxis:
     alignment: int = 1
     """Multiple a proposed tile width below the extent is rounded down to."""
 
+    halve_on_materialised_gather: bool = False
+    """Whether the planner halves this axis while a compiled reduce fusion reads a
+    gather table another fusion wrote to memory."""
+
     def __post_init__(self) -> None:
         """Require a non-empty name and a positive extent."""
         _fail_if_axis_name_invalid(name=self.name)

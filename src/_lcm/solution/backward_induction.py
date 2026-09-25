@@ -47,7 +47,9 @@ from _lcm.execution.core_program import (
     CoreProgram,
     MaterializedCoreProgram,
     ProgramScope,
+    ReducedAxis,
     ResolvedCoreProgram,
+    TiledOutputAxis,
     ValueRead,
     _value_read_argument_leaf,
     core_program_graph,
@@ -75,6 +77,11 @@ from _lcm.execution.footprint import (
     layout_footprint,
     per_device_footprint,
     plan_resident_inventory,
+)
+from _lcm.execution.hlo_fusions import (
+    ReduceFusionVerdict,
+    UnrecognisedHloError,
+    classify_reduce_fusions,
 )
 from _lcm.execution.internal_outputs import (
     ResolvedProducer,
@@ -117,6 +124,7 @@ from _lcm.execution.workspace_planning import (
     BoundedWidthSelector,
     CompilerMemoryReservation,
     WorkspacePlan,
+    _admissible_width,
     compiler_memory_reservation,
     plan_workspace,
     workspace_width_candidates,
@@ -210,9 +218,24 @@ from lcm.typing import (
     ScalarInt,
 )
 
+
 # Stands in for a period's flag mapping when the model retains no dissolution
 # flags, so every period key is present with nothing behind it. One shared
 # instance: it is immutable and carries no arrays.
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _GatherCheck:
+    """One executable's fusion verdict, small enough to keep as long as its model."""
+
+    materialised: str | None
+    """A reduce fusion reading a gather table another fusion wrote, if any."""
+    unknown: bool
+    """Whether the classifier could not read the program completely."""
+
+
+# Fusion verdicts by runtime-executable identity, each held with its executable.
+GatherChecks = dict[int, tuple[object, _GatherCheck]]
+
+
 _NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
 
 
@@ -234,6 +257,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retained_input_arrays: object = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
+    gather_checks: GatherChecks | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -286,6 +310,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             physical storage; they are not solve operands or cache entries.
         call_id: Identifier of the public call this solve serves, stamped on
             the host-phase records. `None` emits no phase records.
+        gather_checks: Fusion verdicts that outlive this solve, keyed by the
+            identity of the runtime executable they were read from. `None`
+            keeps them for this solve only.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -363,6 +390,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         ),
         process_grid_resolver=process_grid_resolver,
         call_id=call_id,
+        gather_checks={} if gather_checks is None else gather_checks,
     )
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
@@ -3295,6 +3323,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     call_id: CallId | None = None,
     fixed_input_arrays: object = (),
     process_grid_resolver: ProcessGridResolver | None = None,
+    gather_checks: GatherChecks | None = None,
 ) -> _CompiledPrograms:
     """Resolve every solve program and optionally compile unique lowerings.
 
@@ -3338,6 +3367,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
         fixed_input_arrays: Already-built runtime space arrays retained by solve.
+        gather_checks: Fusion verdicts shared with other solves of the same
+            model; `None` keeps them for this solve only.
 
     Returns:
         Executable mappings by regime-period, the resolved metadata used by
@@ -3821,6 +3852,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         selected_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
         selected_cores: dict[_CoreTriple, PlannedCore] = {}
         selected_fallbacks: dict[_CoreTriple, PlannedCore] = {}
+        if gather_checks is None:
+            gather_checks = {}
         for triple, candidates in candidates_by_triple.items():
             programs_by_width = {
                 candidate[1]: resolved_programs[candidate] for candidate in candidates
@@ -3887,6 +3920,38 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                         triple, 0
                     ),
                 ) from error
+            if execution.halve_on_materialised_gather:
+                plan = _halve_while_gather_materialises(
+                    triple=triple,
+                    plan=plan,
+                    axes=representative.requirements.axes,
+                    fixed_widths=execution.widths_for(regime_name=triple[0]),
+                    width_ceilings=execution.axis_width_ceilings,
+                    frontier=frontier,
+                    gather_checks=gather_checks,
+                    compile_candidate=functools.partial(
+                        _lower_and_compile_candidate,
+                        fallback_keys=fallback_keys,
+                        fallback_donations=fallback_donations,
+                        lowering_keys=lowering_keys,
+                        resolved_programs=resolved_programs,
+                        all_layouts=all_layouts,
+                        internal_templates=internal_templates,
+                        donations=donations,
+                        ages=ages,
+                        budget_bytes=budget_bytes,
+                        n_workers=n_workers,
+                        logger=logger,
+                        compiled=compiled,
+                        labels=labels,
+                        memory_by_lowering_key=memory_by_lowering_key,
+                        resident_inventory=resident_inventory,
+                    ),
+                    logger=logger,
+                )
+                programs_by_width[_width_key(widths=plan.widths)] = resolved_programs[
+                    (triple, _width_key(widths=plan.widths))
+                ]
             selected_candidate = (triple, _width_key(widths=plan.widths))
             selected = programs_by_width[selected_candidate[1]]
             selected_programs[triple] = selected
@@ -3924,6 +3989,304 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         ),
         donation_fallbacks=MappingProxyType(selected_fallbacks),
     )
+
+
+def _halve_while_gather_materialises(
+    *,
+    triple: _CoreTriple,
+    plan: WorkspacePlan[jax.stages.Compiled],
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int],
+    width_ceilings: Mapping[str, int],
+    frontier: _LazyCandidateFrontier,
+    gather_checks: GatherChecks,
+    compile_candidate: Callable[..., tuple[jax.stages.Compiled, bool]],
+    logger: logging.Logger,
+) -> WorkspacePlan[jax.stages.Compiled]:
+    """Halve the cell width while the compiled program materialises a gather table.
+
+    Whether XLA recomputes a gathered table inside the reduction or writes it to
+    device memory and reads it back depends on the device, the whole program and
+    the cell count, so it is read off the compiled program rather than predicted.
+    Halving is a bounded heuristic over that compiled executable, not a guarantee
+    that a fused program is faster. Each halving is rounded onto the widths the
+    axis admits and never exceeds its ceiling. The walk ends at:
+
+    - the first width whose program is proved fused, which is kept;
+    - a width whose program the classifier does not read completely;
+    - the narrowest width the axis admits.
+
+    A narrower width is kept only when its program is proved fused. In the other
+    two cases the walk returns the memory-admitted plan it started from, with that
+    plan's executable, so a narrowing that bought no fusion never costs smaller
+    tiles.
+
+    Args:
+        triple: The core being planned.
+        plan: The width the admission search selected, with its executable.
+        axes: The core's reduced and tiled axes.
+        fixed_widths: Widths the user pinned; a pinned cell axis is never halved.
+        width_ceilings: Upper bounds on each axis's width.
+        frontier: Binds a width mapping to a compilable candidate.
+        gather_checks: Verdicts already read, by runtime-executable identity, so
+            an executable shared by several cores or solves is read once.
+        compile_candidate: Compiles a candidate and reports whether that reached
+            the compiler (`True`) or reused a program compiled earlier (`False`).
+        logger: Receives each trial, its compile-or-reuse outcome, and the width
+            the walk ends at.
+
+    """
+    axis = _halvable_axis(axes=axes, fixed_widths=fixed_widths)
+    if axis is None:
+        return plan
+    check = _checked_gather_fusion(
+        compiled=plan.compiled,
+        widths=plan.widths,
+        gather_checks=gather_checks,
+        triple=triple,
+        logger=logger,
+    )
+    if check.materialised is None:
+        return plan
+    widths = plan.widths
+    executable = plan.compiled
+    trials = 0
+    misses = 0
+    while check.materialised is not None:
+        fusion = check.materialised
+        width = widths[axis.name]
+        narrower = _admissible_width(
+            axis=axis, width=width // 2, ceiling=width_ceilings.get(axis.name)
+        )
+        if narrower >= width:
+            break
+        widths = MappingProxyType({**widths, axis.name: narrower})
+        executable, missed = compile_candidate(
+            candidate=frontier.bind_widths(triple=triple, widths=widths)
+        )
+        trials += 1
+        misses += missed
+        logger.info(
+            "  %r at %r period %d: reduce fusion %r materialises a gather table at "
+            "%r width %d; %s %d",
+            triple[2],
+            triple[0],
+            triple[1],
+            fusion,
+            axis.name,
+            width,
+            "recompiling at" if missed else "reusing the program compiled at",
+            narrower,
+        )
+        check = _checked_gather_fusion(
+            compiled=executable,
+            widths=widths,
+            gather_checks=gather_checks,
+            triple=triple,
+            logger=logger,
+        )
+    if check.materialised is None and not check.unknown:
+        logger.info(
+            "  %r at %r period %d: fusion check selected %r width %d after %d "
+            "halving trials (%d compiled, %d reused)",
+            triple[2],
+            triple[0],
+            triple[1],
+            axis.name,
+            widths[axis.name],
+            trials,
+            misses,
+            trials - misses,
+        )
+        return WorkspacePlan(widths=widths, peak_bytes=None, compiled=executable)
+    logger.info(
+        "  %r at %r period %d: no halving proved fused (the program at %r width %d "
+        "%s); reverting to the admitted width %d after %d halving trials "
+        "(%d compiled, %d reused), with its gather table materialised",
+        triple[2],
+        triple[0],
+        triple[1],
+        axis.name,
+        widths[axis.name],
+        "could not be read" if check.unknown else "still materialises",
+        plan.widths[axis.name],
+        trials,
+        misses,
+        trials - misses,
+    )
+    return plan
+
+
+def _checked_gather_fusion(
+    *,
+    compiled: jax.stages.Compiled,
+    widths: Mapping[str, int],
+    gather_checks: GatherChecks,
+    triple: _CoreTriple,
+    logger: logging.Logger,
+) -> _GatherCheck:
+    """Read whether a program materialises a gather table, each executable once.
+
+    An executable the classifier cannot read completely is diagnosed once, when
+    it is first read, and is reported unknown, never fused.
+    """
+    executable = compiled.runtime_executable() or compiled
+    cached = gather_checks.get(id(executable))
+    check = None if cached is None else cached[1]
+    if check is None:
+        try:
+            check = _GatherCheck(
+                materialised=_materialised_gather_fusion(
+                    compiled=compiled, widths=widths
+                ),
+                unknown=False,
+            )
+        except UnrecognisedHloError as error:
+            logger.warning(
+                "  %r at %r period %d: the fusion check could not read the compiled "
+                "program at width %r (%s); not assumed fused",
+                triple[2],
+                triple[0],
+                triple[1],
+                dict(widths),
+                error,
+            )
+            check = _GatherCheck(materialised=None, unknown=True)
+        # The entry holds the executable, so its id is not reused while cached.
+        gather_checks[id(executable)] = (executable, check)
+    return check
+
+
+def _halvable_axis(
+    *,
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    fixed_widths: Mapping[str, int],
+) -> TiledOutputAxis | None:
+    """Return the axis halved while a gather materialises, unless its width is fixed."""
+    for axis in axes:
+        if (
+            isinstance(axis, TiledOutputAxis)
+            and axis.halve_on_materialised_gather
+            and axis.name not in fixed_widths
+        ):
+            return axis
+    return None
+
+
+def _materialised_gather_fusion(
+    *, compiled: jax.stages.Compiled, widths: Mapping[str, int]
+) -> str | None:
+    """Name one reduce fusion reading a gather table another fusion wrote, if any.
+
+    Raises:
+        UnrecognisedHloError: No fusion materialises, and the program has no
+            HLO text or a reduce fusion the classifier could not read completely.
+
+    """
+    del widths
+    text = compiled.as_text()
+    if text is None:
+        msg = "The compiled program has no HLO text to classify."
+        raise UnrecognisedHloError(msg)
+    verdicts = classify_reduce_fusions(text)
+    unknown = [
+        name
+        for name, verdict in verdicts.items()
+        if verdict is ReduceFusionVerdict.UNKNOWN
+    ]
+    materialised = next(
+        (
+            name
+            for name, verdict in verdicts.items()
+            if verdict is ReduceFusionVerdict.MATERIALISED_GATHER
+        ),
+        None,
+    )
+    if materialised is None and unknown:
+        msg = f"reduce fusions {unknown!r} were not read completely"
+        raise UnrecognisedHloError(msg)
+    return materialised
+
+
+def _lower_and_compile_candidate(
+    *,
+    candidate: _CoreCandidate,
+    fallback_keys: Mapping[_CoreCandidate, Hashable],
+    fallback_donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    lowering_keys: Mapping[_CoreCandidate, Hashable],
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
+    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    ages: AgeGrid,
+    budget_bytes: int | None,
+    n_workers: int,
+    logger: logging.Logger,
+    compiled: dict[Hashable, jax.stages.Compiled],
+    labels: dict[Hashable, str],
+    memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation],
+    resident_inventory: Mapping[_CoreTriple, ResidentInventory],
+) -> tuple[jax.stages.Compiled, bool]:
+    """Compile one bound candidate and its donation-free variant outside the waves.
+
+    Under a budget every variant is admitted as a wave admits it, on its compiler
+    reservation plus the bytes it leaves resident at the core's position, even
+    when an earlier core already compiled it.
+
+    Returns:
+        The candidate's executable, and whether its primary variant reached the
+        compiler rather than reusing a program compiled earlier in the solve.
+
+    Raises:
+        ExecutionPlanningError: A variant of the candidate exceeds the budget.
+
+    """
+    missed = lowering_keys[candidate] not in compiled
+    variants = (
+        (lowering_keys, donations),
+        *(((fallback_keys, fallback_donations),) if candidate in fallback_keys else ()),
+    )
+    for keys, variant_donations in variants:
+        new = _uncompiled(keys={candidate: keys[candidate]}, compiled=compiled)
+        _lower_and_compile_wave(
+            new_lowerings=new,
+            resolved_programs=resolved_programs,
+            all_layouts=all_layouts,
+            internal_templates=internal_templates,
+            donations=variant_donations,
+            ages=ages,
+            n_triples_per_lowering=dict.fromkeys(new, 1),
+            log_kernel_memory=budget_bytes is None,
+            n_workers=n_workers,
+            logger=logger,
+            compiled=compiled,
+            labels=labels,
+        )
+        if budget_bytes is None:
+            continue
+        triple = candidate[0]
+        resident = _measure_variant(
+            variant_key=keys[candidate],
+            candidate=candidate,
+            triple=triple,
+            compiled=compiled,
+            labels=labels,
+            memory_by_lowering_key=memory_by_lowering_key,
+            resolved_programs=resolved_programs,
+            internal_templates=internal_templates,
+            resident_inventory=resident_inventory,
+            logger=logger,
+        )
+        reservation = memory_by_lowering_key[keys[candidate]].reservation_bytes
+        if reservation + resident > budget_bytes:
+            msg = (
+                f"The narrower width {dict(resolved_programs[candidate].tile_widths)!r}"
+                f" of {_describe_candidate(candidate=candidate)} needs {reservation} "
+                f"reservation bytes beside {resident} resident bytes, exceeding the "
+                f"{budget_bytes}-byte budget."
+            )
+            raise ExecutionPlanningError(msg)
+    return compiled[lowering_keys[candidate]], missed
 
 
 # The planner's lookups are instances of module-level classes rather than functions
@@ -4230,8 +4593,9 @@ class _BoundedCandidateSource:
         variants = self._variants.get(triple, {})
         requests = sum(variants.values())
         logger.info(
-            "bounded width search %s: %d evaluations, %d unique variants compiled, "
-            "%d compiler requests, %d cache hits; selected %r",
+            "bounded width search %s: %d admission evaluations, %d unique variants "
+            "compiled, %d compiler requests, %d cache hits; selected %r before the "
+            "fusion check",
             _describe_candidate(candidate=(triple, ())),
             len(selector.decisions),
             len(variants),
@@ -4403,7 +4767,13 @@ def _compile_and_log(
     start = time.monotonic()
     result = low.compile()
     elapsed = time.monotonic() - start
-    logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
+    # The record carries the compiled program, so a handler can read its HLO.
+    logger.info(
+        "  compiled  %s  %s",
+        label,
+        format_duration(seconds=elapsed),
+        extra={"lcm_compiled": result},
+    )
     if log_kernel_memory:
         _log_kernel_memory(compiled=result, label=label, logger=logger)
     return lowering_key, result
@@ -4975,7 +5345,16 @@ def _resolve_output_layouts_and_lowering_keys(
             input_transfer_plan=transfer_plan,
             abstract_inputs=True,
         )
-        if len(width_candidates) > 1:
+        # A core whose cell axis may be halved after compilation keeps its
+        # frontier even at one ranked width, so the narrower width can be bound.
+        if len(width_candidates) > 1 or (
+            execution_widths.halve_on_materialised_gather
+            and _halvable_axis(
+                axes=materialized.requirements.axes,
+                fixed_widths=execution_widths.widths_for(regime_name=regime_name),
+            )
+            is not None
+        ):
             frontiers[triple] = _CoreFrontier(
                 program=materialized,
                 transfer_plan=transfer_plan,
