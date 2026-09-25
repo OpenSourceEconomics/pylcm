@@ -502,24 +502,47 @@ _TWO_MESH_SOLVE = """
 import dataclasses
 
 import jax.numpy as jnp
-import lcm
+from lcm import DiscreteGrid, ExecutionConfig, IrregSpacedGrid, Model
+from tests.test_models.nbegm_common import RegimeId
 
 # Under a memory budget, `simulate` commits the parameters to the subject mesh
 # before it solves, while the regime keeps its own mesh named after its
 # distributed state (`kind`). The captured period's inputs therefore span two
-# meshes over the same devices under different axis names.
+# meshes over the same devices under different axis names. The consumption grid
+# takes its points at runtime, so the state-action space carries a parameter
+# array on the subject mesh.
 two_mesh = root / "two_mesh"
 os.environ["LCM_CAPTURE_DIR"] = str(two_mesh)
-simulated = toy.build_model(
+template = toy.build_model(
     variant="brute",
     n_periods=4,
     n_liquid=24,
     n_consumption=16,
     n_savings=32,
     distributed_kind=True,
-    execution_config=lcm.ExecutionConfig(devices=(0, 1), device_memory_bytes=2**31),
+)
+two_mesh_params = toy.build_params()
+two_mesh_params["alive"]["consumption"] = {"points": jnp.linspace(0.1, 30.0, 16)}
+simulated = Model(
+    regimes={
+        name: dataclasses.replace(
+            regime,
+            states={key: grid for key, grid in regime.states.items() if key != "kind"},
+            actions={
+                key: IrregSpacedGrid(n_points=16) if key == "consumption" else grid
+                for key, grid in regime.actions.items()
+            },
+        )
+        for name, regime in template.user_regimes.items()
+    },
+    states={"kind": DiscreteGrid(category_class=toy.ConsumerKind)},
+    ages=template.ages,
+    regime_id_class=RegimeId,
+    execution_config=ExecutionConfig(
+        sharded_states=("kind",), devices=(0, 1), device_memory_bytes=2**31
+    ),
 ).simulate(
-    params=toy.build_params(),
+    params=two_mesh_params,
     initial_conditions={
         "liquid": jnp.array([5.0, 10.0]),
         "kind": jnp.array([0, 1]),
