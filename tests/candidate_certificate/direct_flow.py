@@ -368,7 +368,7 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "a0832b09f6eee730722564fc2ad5c337f7a2bc09510a5e03b4945653067bd0e6",
-    NBEGM_SOURCE: "f40e3d98e9ff7b5a4f8301662d6f4a1a61c883bfbe1c3d0af40bfbc2cb9cc789",
+    NBEGM_SOURCE: "b596a44384f2417173a017c52650ac31878bfed61e3597485ade1edfb2b4180e",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
@@ -397,9 +397,9 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "7635700aa70fc8658529995c239c0641d6177e379e8067c3894555add5dad1d3",
+    MAX_Q_SOURCE: "a69ea643eba0d6b98ea9b4e0fc5f036a721e79f5703ea9fbc7a21a6a02841b9a",
     PROCESSING_SOURCE: "6f328dba0894c60c0a7283513eb384a681e2a6b62395a9c8fc03406be47e8cbf",
-    GRID_SEARCH_SOURCE: "7e5bc279645bc2945b822e672e88f1101a14ff56d8359ba54b654df35b88d30a",
+    GRID_SEARCH_SOURCE: "a56619a7d0e5a60fc2b4bd4e1bc75131dc0525ea4b22b9acad41082497bee8ed",
     CORE_PROGRAM_SOURCE: "6b96b777960bfdbf6aad394a5c635bebea976a4f6461c24ebe36f80699736924",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
     VALUE_TRANSFER_SOURCE: "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6",
@@ -408,7 +408,7 @@ _SOURCE_SEALS = {
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
-    DISPATCHERS_SOURCE: "c2fb9380250e48c44de560456f0a343ca5623a928b1800cb28f47ca8f2833d8b",
+    DISPATCHERS_SOURCE: "74659d1e9cae3ffb9a7aeae9cd3dc2d300cdb5ff15ab8e8bd99918cfe7d958de",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "cc6fb60ba679598349fb49d1ea4a14068889d81f57c9293728b88dd9c7173b50",
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
@@ -422,7 +422,7 @@ _SOURCE_SEALS = {
     MODEL_SOURCE: "09a3d655ca6e22c13215a362c101659de9590426b4e1f873b823599eaf6e1fd3",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "0b74d02806e8f79954acc9b9a499d2818f9fecc459c7fcea1256c36b8f656244",
-    PERIOD_REPLAY_SOURCE: "ae1879ebc56c90ce5a14dcdfe70f0520b61df96c786932fac7f4a9dfc22ee1be",
+    PERIOD_REPLAY_SOURCE: "54a1ae3a0a0ae104512aec40ba140350295255ad6f1ec894c00e0fc44ed554c5",
     INITIAL_CONDITIONS_SOURCE: "a3e4c4ecbb5ed4a1160b584d446e61f54c0123ebd8fb4799eadcd04a2c7e5210",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -1610,6 +1610,7 @@ mapped = (
         variables=inner_state_names,
         width_keyword=cell_width_keyword,
         untiled_variables=untiled_state_names,
+        broadcast_variables=broadcast_state_names,
     )
     if cell_width_keyword is not None
     else productmap(
@@ -1692,6 +1693,7 @@ Q_and_F = productmap(
                 "fold_conditioning",
                 "cell_width_keyword",
                 "untiled_state_names",
+                "broadcast_state_names",
             ),
             (
                 None,
@@ -1708,6 +1710,7 @@ Q_and_F = productmap(
                 "MappingProxyType({})",
                 "MappingProxyType({})",
                 "None",
+                "()",
                 "()",
             ),
         ),
@@ -1868,7 +1871,7 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="streamed max-Q builder",
         contracts={
-            "get_streaming_max_Q_over_a": "cfdef947f803d14dd8299471295492ba69f2f91f96a79bd56df24e47d4646ce6",
+            "get_streaming_max_Q_over_a": "533d0a4b8777f5a464d715a2e20953801c5a28e64a16076172e401b671cfb284",
             "_fail_if_action_width_keyword_collides": (
                 "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4"
             ),
@@ -2506,7 +2509,7 @@ def category(self) -> str:
                 "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
                 "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
                 "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
-                "GridSearch.build_period_kernels": "cd0b057d13c9802f66bc558f4a9087f4df89150beaf63ec2d2f7fc43f9256934",
+                "GridSearch.build_period_kernels": "5131464cc2de7f20a87c887a794bdc73cb317108a568f5aa206b7e41f73e445b",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
@@ -4404,7 +4407,7 @@ def _nbegm_donation_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "aff759f48014f8e2fbd0e948b69b6f6c24c32f3edf9bf5242fb0ea2afcee4ebb"
+        != "7f989d5232660b19c428cc2cd1ed7c0d5528c7d39228ee8f6a5527cc7a82f96a"
     ):
         errors.append("NB-EGM donation declaration: module bindings changed")
     return errors
@@ -4584,7 +4587,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         label="period replay native-program transport",
         contracts={
             "replay_period": "de011de034661023087bd7a3f4d6fcbf826b14fa49da09de722779bb1aa4b778",
-            "_compile_cores_for_one_period": "2f76565982141d1ebe793bdf7d482a475fac75a97209cf55a5fbd58279c99dc1",
+            "_compile_cores_for_one_period": "49ecf7f2531384af89df43dc7b690340b9679970692204b0d5687df92e040454",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
     )
@@ -6489,9 +6492,9 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
 
 _GROUPED_MAPPER_CONTRACTS = {
     "src/_lcm/utils/dispatchers.py": (
-        "7ec4aa018117d967cc973d7ae5df013b5af13997faf51177c9af1a70f3fbbcc3",
+        "38f6edd08d11b739150f2bea6af2a9fcd14ab1e1ba68e9d061a955102daef513",
         {
-            "tiled_productmap": "5c90e484842166ba0eeee513fb39051c154d2f4c835f2b49bf53fa1bc6845222",
+            "tiled_productmap": "8123bbf3c807d977a1708811477803fa140f6e06d74bc2cc74d93841135ffbce",
             "_TiledProductMap.__call__": "b398eff34df6867799a9dd877766bd16a6e784263e8de139ba6c136e20bb75de",
             "_map_grouped_product": "5aa01e79393201769fc79d10a00ee264b9083ad40a0a23462e4170327e25bc20",
             "_MapOverFinalCoordinate.__call__": "d4934af255cab7f3583631ee376e18eabc6bb6f7742ff945f1e95a260fdf3ece",

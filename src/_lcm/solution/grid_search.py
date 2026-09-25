@@ -72,6 +72,7 @@ from _lcm.solution.dcegm import CELL_AXIS
 from _lcm.typing import (
     FlatParams,
     MaxQOverAFunction,
+    QAndFFunction,
     RegimeName,
     StateName,
 )
@@ -242,6 +243,7 @@ class GridSearch(Solver):
         )
 
         program_functions: dict[int, MaxQOverAFunction] = {}
+        broadcast_extents: dict[int, int] = {}
         result: dict[int, PeriodKernel] = {}
         # Fold weights are the folded process's own marginal distribution, a
         # plain constant computed once here at kernel-build time and never
@@ -291,6 +293,17 @@ class GridSearch(Solver):
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
             if q_id not in program_functions:
+                broadcast_state_names = (
+                    _continuation_unread_state_names(
+                        Q_and_F=Q_and_F, inner_state_names=inner_state_names
+                    )
+                    if cell_width_keyword is not None
+                    else ()
+                )
+                broadcast_extents[q_id] = math.prod(
+                    context.state_action_space.states[name].shape[0]
+                    for name in broadcast_state_names
+                )
                 common_kwargs = {
                     "Q_and_F": Q_and_F,
                     "batch_sizes": dict.fromkeys(
@@ -300,6 +313,7 @@ class GridSearch(Solver):
                     "state_names": context.state_action_space.state_names,
                     "cell_width_keyword": cell_width_keyword,
                     "untiled_state_names": untiled_state_names,
+                    "broadcast_state_names": broadcast_state_names,
                     "n_discrete_action_axes": len(
                         context.state_action_space.discrete_actions
                     ),
@@ -360,6 +374,11 @@ class GridSearch(Solver):
                             state_names=inner_state_names,
                             extent=cell_extent,
                             width_keyword=cell_width_keyword,
+                            # A broadcast state stays in the utility and argmax
+                            # work of every cell, so a width counts whole
+                            # product points: a multiple of the broadcast extent.
+                            minimum_width=broadcast_extents[q_id],
+                            alignment=broadcast_extents[q_id],
                             halve_on_materialised_gather=True,
                         ),
                     )
@@ -399,6 +418,28 @@ class GridSearch(Solver):
                 _core_programs=MappingProxyType({"main": program})
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
+
+
+def _continuation_unread_state_names(
+    *, Q_and_F: QAndFFunction, inner_state_names: tuple[StateName, ...]
+) -> tuple[StateName, ...]:
+    """Cell states the continuation of `Q_and_F` never reads, in cell order.
+
+    Such a state enters `Q` through utility, feasibility and the aggregator
+    only, so the continuation is constant along its axis. Mapping it outside the
+    flat cell lets the continuation be computed once per remaining cell and
+    broadcast along it. The result is empty when:
+
+    - the kernel does not state what its continuation reads (terminal and
+      collective kernels, or a dependency with variadic arguments);
+    - the continuation reads every cell state, or none of them, so no state
+      would remain to tile.
+    """
+    reads = getattr(Q_and_F, "continuation_reads", None)
+    if reads is None:
+        return ()
+    unread = tuple(name for name in inner_state_names if name not in reads)
+    return unread if 0 < len(unread) < len(inner_state_names) else ()
 
 
 def _classify_action_streaming(
