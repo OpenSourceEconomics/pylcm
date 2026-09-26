@@ -249,7 +249,9 @@ def test_draw_shock_rounds_sigma_times_the_standard_normal_as_written(
     mean = np.float32(params["mu"]) + np.float32(params["rho"]) * np.asarray(x)
     if type(process) is NormalIIDProcess:
         mean = np.full(n, np.float32(params["mu"]), dtype=np.float32)
-    expected = mean + np.float32(params["sigma"]) * z
+    # The standard normal comes out in the working float format, and `sigma`, a
+    # weakly typed Python float, multiplies it in that format.
+    expected = mean + z.dtype.type(params["sigma"]) * z
     np.testing.assert_array_equal(np.asarray(drawn), expected)
 
 
