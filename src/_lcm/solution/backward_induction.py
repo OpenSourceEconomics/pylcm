@@ -3614,7 +3614,14 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         )
     else:
         source = _RankedCandidateSource(
-            frontier=frontier, positions=dict.fromkeys(eligible, 0)
+            frontier=frontier,
+            positions=dict.fromkeys(eligible, 0),
+            carry_groups=(
+                _carry_groups(frontier=frontier, triples=eligible)
+                if execution.width_search.carry_across_periods
+                and budget_bytes is not None
+                else {}
+            ),
         )
     with solve_phase(name="compilation_waves", logger=logger, call_id=call_id):
         wave = 0
@@ -3864,9 +3871,22 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 if candidate in admission_keys
             }
             representative = resolved_programs[candidates[0]]
+            carried_position = (
+                source.carried_positions.get(triple)
+                if isinstance(source, _RankedCandidateSource)
+                else None
+            )
             try:
                 plan = (
-                    _bounded_plan(
+                    _carried_plan(
+                        candidate=frontier.candidate(
+                            triple=triple, position=carried_position
+                        ),
+                        compiled_by_width=compiled_by_width,
+                        memory_by_compiled_id=memory_by_compiled_id,
+                    )
+                    if carried_position is not None
+                    else _bounded_plan(
                         triple=triple,
                         source=source,
                         compiled_by_width=compiled_by_width,
@@ -4430,15 +4450,45 @@ class _RankedCandidateSource:
     position by one, so the next wave asks the frontier for the next candidate
     and binds it on the way; a core whose frontier is spent is simply left out
     of the next wave and reported by name when selection reaches it.
+
+    Cores in one carry group (same regime, core and ranked frontier, different
+    periods) walk the frontier once. The group's first core walks it; every
+    other core waits, then starts at the rank that core was admitted at:
+
+    - admitted there at rank 0, it keeps that rank, which the walk would also
+      have kept;
+    - admitted there at a narrower rank, it compiles the one next-wider rank as
+      a local check. If that rank is refused it keeps the carried rank, taking
+      every still-wider rank as refused without compiling it. If it is admitted
+      the carry does not hold for this core, which walks from rank 0;
+    - refused there, it walks from rank 0.
     """
 
     frontier: _LazyCandidateFrontier
     positions: dict[_CoreTriple, int]
     """The rank each still-pending core is being offered."""
+    carry_groups: Mapping[_CoreTriple, Hashable] = dataclasses.field(
+        default_factory=dict
+    )
+    """The carry group of each core that takes part in carrying, by triple."""
 
     def __post_init__(self) -> None:
-        """Start with no core queued for the wave after this one."""
+        """Hold every carry group's followers back until its leader is admitted."""
         self._queued: dict[_CoreTriple, int] = {}
+        self.carried_positions: dict[_CoreTriple, int] = {}
+        """The rank each carried core keeps, read by width selection."""
+        self._leaders: dict[Hashable, _CoreTriple] = {}
+        self._waiting: dict[Hashable, list[_CoreTriple]] = {}
+        self._carry_state: dict[_CoreTriple, tuple[str, int]] = {}
+        for triple in tuple(self.positions):
+            group = self.carry_groups.get(triple)
+            if group is None:
+                continue
+            if group not in self._leaders:
+                self._leaders[group] = triple
+                continue
+            self._waiting.setdefault(group, []).append(triple)
+            del self.positions[triple]
 
     def pending(self) -> tuple[_CoreTriple, ...]:
         """Name the cores this wave evaluates, in their established order."""
@@ -4459,13 +4509,60 @@ class _RankedCandidateSource:
     ) -> None:
         """Advance a refused core to its next rank and leave an admitted one."""
         del reservation_bytes, resident_bytes, peak_bytes
+        position = self.positions[triple]
+        state = self._carry_state.pop(triple, None)
+        if state is not None:
+            self._record_carried(
+                triple=triple, state=state, position=position, admitted=admitted
+            )
+            return
         if not admitted:
             _queue_next_candidate(
                 triple=triple,
-                position=self.positions[triple],
+                position=position,
                 frontier_lengths=self.frontier.frontier_lengths,
                 next_pending=self._queued,
             )
+            if (
+                triple not in self._queued
+                and self._leaders.get(self.carry_groups.get(triple)) == triple
+            ):
+                self._release(group=self.carry_groups[triple], position=None)
+            return
+        if self._leaders.get(self.carry_groups.get(triple)) == triple:
+            self._release(group=self.carry_groups[triple], position=position)
+
+    def _release(self, *, group: Hashable, position: int | None) -> None:
+        """Queue a group's followers at the leader's rank, or at rank 0 without one."""
+        for follower in self._waiting.pop(group, []):
+            if position is None:
+                self._queued[follower] = 0
+                continue
+            self._queued[follower] = position
+            self._carry_state[follower] = ("carried", position)
+
+    def _record_carried(
+        self,
+        *,
+        triple: _CoreTriple,
+        state: tuple[str, int],
+        position: int,
+        admitted: bool,
+    ) -> None:
+        """Decide a follower from its carried rank and the one local check."""
+        phase, carried = state
+        if phase == "carried":
+            if not admitted:
+                self._queued[triple] = 0
+            elif carried > 0:
+                self._queued[triple] = carried - 1
+                self._carry_state[triple] = ("check", carried)
+            return
+        if admitted:
+            self._queued[triple] = 0
+            return
+        self.carried_positions[triple] = carried
+        del position
 
     def note_variants(
         self,
@@ -4482,6 +4579,44 @@ class _RankedCandidateSource:
         self.positions = self._queued
         self._queued = {}
         return tuple(self.positions)
+
+
+def _carry_groups(
+    *, frontier: _LazyCandidateFrontier, triples: Iterable[_CoreTriple]
+) -> dict[_CoreTriple, Hashable]:
+    """Group cores whose regime, core name and ranked width frontier coincide.
+
+    A core with a single admissible width has no frontier entry and no search to
+    carry, so it is left out.
+    """
+    groups: dict[_CoreTriple, Hashable] = {}
+    for triple in triples:
+        core_frontier = frontier.frontiers.get(triple)
+        if core_frontier is None:
+            continue
+        ranked = tuple(
+            None if widths is None else tuple(sorted(dict(widths).items()))
+            for widths in core_frontier.widths
+        )
+        groups[triple] = (triple[0], triple[2], ranked)
+    return groups
+
+
+def _carried_plan(
+    *,
+    candidate: _CoreCandidate,
+    compiled_by_width: Mapping[_WidthKey, jax.stages.Compiled],
+    memory_by_compiled_id: Mapping[int, CompilerMemoryReservation],
+) -> WorkspacePlan[jax.stages.Compiled]:
+    """Return the plan a carried core keeps: its carried, admitted candidate."""
+    executable = compiled_by_width[candidate[1]]
+    memory = memory_by_compiled_id[id(executable)]
+    return WorkspacePlan(
+        widths=dict(candidate[1]),
+        peak_bytes=memory.peak_bytes,
+        reservation_bytes=memory.reservation_bytes,
+        compiled=executable,
+    )
 
 
 @dataclasses.dataclass(kw_only=True)

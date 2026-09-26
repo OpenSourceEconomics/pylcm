@@ -404,6 +404,7 @@
   "tests/solution/test_pipelined_lowering.py",
   "tests/solution/test_pipelined_lowering_contract.py",
   "tests/solution/test_solve_phase_records.py",
+  "tests/solution/test_width_search_carry.py",
   "tests/test_Q_and_F.py",
   "tests/test_Q_and_F_per_entry_scales.py",
   "tests/test_action_grid_admission_certificate.py",
@@ -962,6 +963,7 @@
     "tests/solution/test_pipelined_lowering.py",
     "tests/solution/test_pipelined_lowering_contract.py",
     "tests/solution/test_solve_phase_records.py",
+    "tests/solution/test_width_search_carry.py",
     "tests/test_analytical_solution.py",
     "tests/test_benchmark_models_construct.py",
     "tests/test_broadcast_pruning_joint_phase_closure.py",
@@ -1692,6 +1694,7 @@
     "tests/solution/test_pipelined_lowering.py",
     "tests/solution/test_pipelined_lowering_contract.py",
     "tests/solution/test_solve_phase_records.py",
+    "tests/solution/test_width_search_carry.py",
     "tests/test_Q_and_F.py",
     "tests/test_Q_and_F_per_entry_scales.py",
     "tests/test_action_grid_admission_certificate.py",
@@ -2079,6 +2082,7 @@
     "tests/solution/test_pipelined_lowering.py",
     "tests/solution/test_pipelined_lowering_contract.py",
     "tests/solution/test_solve_phase_records.py",
+    "tests/solution/test_width_search_carry.py",
     "tests/test_broadcast_pruning_joint_phase_closure.py",
     "tests/test_broadcast_pruning_keeps_entry_laws.py",
     "tests/test_canonical_params.py",
@@ -2962,6 +2966,7 @@
     "tests/solution/test_pipelined_lowering.py",
     "tests/solution/test_pipelined_lowering_contract.py",
     "tests/solution/test_solve_phase_records.py",
+    "tests/solution/test_width_search_carry.py",
     "tests/test_Q_and_F.py",
     "tests/test_argmax.py",
     "tests/test_benchmark_models_construct.py",
@@ -4529,6 +4534,7 @@
     "tests/solution/test_solve_releases_executables.py",
     "tests/solution/test_solver_period_groups.py",
     "tests/solution/test_solver_subclass_binding.py",
+    "tests/solution/test_width_search_carry.py",
     "tests/solution/test_workspace_budget_solve.py"
    ],
    "predicted_payload_minutes": 20.73
@@ -5119,6 +5125,7 @@
     "tests/solution/test_target_only_iid_nonuniform_public.py",
     "tests/solution/test_transition_reading_an_entered_draw.py",
     "tests/solution/test_wide_live_nonfinite_entry.py",
+    "tests/solution/test_width_search_carry.py",
     "tests/solution/test_zero_mass_node.py"
    ],
    "predicted_payload_minutes": 13.06
@@ -14176,6 +14183,7 @@
   "tests/solution/test_pipelined_lowering.py",
   "tests/solution/test_pipelined_lowering_contract.py",
   "tests/solution/test_solve_phase_records.py",
+  "tests/solution/test_width_search_carry.py",
   "tests/test_broadcast_pruning_joint_phase_closure.py",
   "tests/test_broadcast_pruning_keeps_entry_laws.py",
   "tests/test_cross_mesh_value_read_admission.py",
