@@ -135,6 +135,55 @@ Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 [Upper envelopes](../reference/envelopes.md), and
 [Outer search](../reference/outer_search.md).
 
+## Factor a fixed component out of a Markov state
+
+A product-coded Markov state often combines a component that never changes, such as a
+fixed effect or a permanent type, with components that do. With a plain
+`MarkovTransition`, the law keeps the fixed part by giving zero probability to every
+code outside the current group, and the continuation still sums over all of those zero
+rows in every period. The wasted work grows with the size of the fixed component.
+
+Declare the group of each code with `fixed_component`:
+
+```python
+from lcm import MarkovTransition
+
+# Codes 0-3 = 2 * kind + health; `kind` never changes.
+state_transitions = {
+    "kind_health": MarkovTransition(next_kind_health, fixed_component=(0, 0, 1, 1)),
+}
+```
+
+`fixed_component[code]` is the group of that code. The law must give probability zero to
+every target outside the current code's group, and every group must have the same number
+of codes. At model construction the state is rewritten into:
+
+- `kind_health_rest`, the changing part, carrying the restricted Markov law;
+- `kind_health_fixed`, the group, a model-level state with an identity law;
+- a DAG function `kind_health` that recombines the original code, so utility,
+  constraints and other functions keep reading `kind_health` unchanged.
+
+The continuation then looks up the group by index instead of summing over it. The rows
+it skips have probability zero, so this is the same function with a shorter sum.
+
+Use it when a Markov state's transition matrix is block-diagonal across a component,
+that is, when most entries of each row are structurally zero. A state without such a
+component gains nothing, and a model that does not use the annotation is unaffected.
+
+Because `<s>_fixed` is a model-level state, it can be named in
+`ExecutionConfig(sharded_states=("kind_health_fixed",))`, which spreads the groups
+across devices.
+
+`Model.simulate` takes initial conditions in the declared state's codes: pass a
+`kind_health` column in a DataFrame or a `"kind_health"` entry in a mapping, and it is
+split into the two parts.
+
+Measured on the Hosseini health model (lcm-zoo), full grid, fp32, one A40: annotating
+the wage and frailty fixed effects cut one period at age 93 from 52.0 s to 3.6 s, with
+values bitwise equal to a hand-split model in fp32 and fp64. For the full model with
+only the wage fixed effect split out by hand, the warm solve dropped from 3,510 s to 770
+s on one A40 and to 229 s with the fixed component sharded over three A40s.
+
 ## Distribute state work
 
 Declare a discrete state at model level, then name it in
@@ -248,6 +297,44 @@ message appends the effective bytes, the requested bytes, and the headroom fract
 separates them, so a refusal is never ambiguous about which ceiling it was measured
 against. Field-by-field contracts are in
 [Runtime, results, and persistence](../reference/runtime_and_results.md).
+
+### Reuse a width across periods
+
+Under a budget, the default exhaustive width search walks each core's ranked width
+frontier widest-first and compiles every candidate until one is admitted. In a long
+lifecycle model that walk repeats for every period, although adjacent periods of one
+regime usually select the same width. `carry_across_periods` walks the frontier once per
+group of periods that share it:
+
+```python
+from lcm import ExecutionConfig
+from lcm.execution import WidthSearchPolicy
+
+execution_config = ExecutionConfig(
+    device_memory_bytes=per_device_budget_bytes,
+    width_search=WidthSearchPolicy(carry_across_periods=True),
+)
+```
+
+The first period of a group walks the frontier. Each later period starts at the rank the
+first period was admitted at and compiles at most the next-wider rank as a check. It
+falls back to the full walk when the carried rank is refused or the wider check is
+admitted. The selected widths are the ones the full walk would select; only the number
+of candidate compiles drops.
+
+Turn it on when a budgeted cold solve spends much of its time compiling refused width
+candidates. It does not help:
+
+- without `device_memory_bytes` or under the bounded search, where it has no effect;
+- on warm calls, which reuse compiled programs;
+- when the search already runs its compile waves in parallel across groups, so the
+  refused compiles are not on the critical path;
+- where adjacent periods select different widths: each boundary costs one extra compile
+  for the wider check.
+
+Measured on the Borella marriage-and-taxes model (lcm-zoo), one A40, fp32, with a
+device-memory budget: the cold solve went from 3,167 s and 1,332 compiles to 1,159 s and
+562 compiles, with the same widths in every regime and period and bitwise-equal values.
 
 ## Batch forward simulation
 
