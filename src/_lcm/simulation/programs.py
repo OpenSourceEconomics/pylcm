@@ -661,11 +661,27 @@ class _SubjectTiled:
             )
         tiles = {name: kwargs.pop(name) for name in self.subject_arg_names}
         shared = {name: value for name, value in kwargs.items() if name in accepted}
-        return jax.lax.map(
+        # A remainder shorter than the width would be traced and compiled as a
+        # second program, whose rounding need not match the full tiles'. Pad it
+        # with copies of the last subject so every subject runs in one program,
+        # then drop the copies.
+        n_subjects = jax.tree.leaves(tiles)[0].shape[0]
+        n_pad = -n_subjects % width
+        if n_pad:
+            tiles = jax.tree.map(
+                lambda leaf: jnp.concatenate(
+                    [leaf, jnp.repeat(leaf[-1:], n_pad, axis=0)]
+                ),
+                tiles,
+            )
+        result = jax.lax.map(
             partial(_evaluate_subject_tile, func=self.func, shared=shared),
             tiles,
             batch_size=width,
         )
+        if not n_pad:
+            return result
+        return jax.tree.map(lambda leaf: leaf[:n_subjects], result)
 
 
 # keyword-only-exempt: library-callback=jax.lax.map

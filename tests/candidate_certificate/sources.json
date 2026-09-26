@@ -274,7 +274,7 @@
           },
           {
             "path": "src/_lcm/simulation/programs.py",
-            "sha256": "66fb5cd52ab3cf2e55d7b9baceba318c702ac646a98d367d557d0254eb98e489"
+            "sha256": "41ac20d5b59bb2d74e60b5a0483f7a0e645eb77f4cab99221e94a39a245a25c0"
           },
           {
             "path": "src/_lcm/simulation/random.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "f67d27f734640767012f9f6bdbc6785d3f9f4d07707c781b4df34e3330962f7a"
+        "source_inventory_sha256": "db645d6542d84547792b296b680ad57cd5976194e00673d5febb2c846f4ba2fb"
       },
       "fast": {
         "candidate_sources": [
@@ -744,7 +744,7 @@
           },
           {
             "path": "src/_lcm/simulation/programs.py",
-            "sha256": "66fb5cd52ab3cf2e55d7b9baceba318c702ac646a98d367d557d0254eb98e489"
+            "sha256": "41ac20d5b59bb2d74e60b5a0483f7a0e645eb77f4cab99221e94a39a245a25c0"
           },
           {
             "path": "src/_lcm/simulation/random.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "f67d27f734640767012f9f6bdbc6785d3f9f4d07707c781b4df34e3330962f7a"
+        "source_inventory_sha256": "db645d6542d84547792b296b680ad57cd5976194e00673d5febb2c846f4ba2fb"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "f67d27f734640767012f9f6bdbc6785d3f9f4d07707c781b4df34e3330962f7a",
+  "source_inventory_sha256": "db645d6542d84547792b296b680ad57cd5976194e00673d5febb2c846f4ba2fb",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1218,7 +1218,7 @@
     },
     {
       "path": "src/_lcm/simulation/programs.py",
-      "sha256": "66fb5cd52ab3cf2e55d7b9baceba318c702ac646a98d367d557d0254eb98e489"
+      "sha256": "41ac20d5b59bb2d74e60b5a0483f7a0e645eb77f4cab99221e94a39a245a25c0"
     },
     {
       "path": "src/_lcm/simulation/random.py",
