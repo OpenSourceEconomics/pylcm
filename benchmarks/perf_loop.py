@@ -65,7 +65,7 @@ from benchmarks.warm_solve_phases import (
     parse_phase_records,
 )
 
-MODEL_NAMES = ("precautionary_savings", "iskhakov")
+MODEL_NAMES = ("precautionary_savings", "iskhakov", "aca_benchmark")
 
 _PYLCM_ROOT = Path(lcm.__file__).resolve().parents[2]
 
@@ -164,7 +164,39 @@ def environment_record() -> dict[str, Any]:
 
 
 def _builder(model_name: str) -> Callable[[float], tuple[Any, dict[str, Any]]]:
-    """Return `discount -> (model, params)` for the named benchmark model."""
+    """Return `discount -> (model, params)` for the named benchmark model.
+
+    `aca_benchmark` returns params with the benchmark initial conditions attached
+    under `_ACA_INITIAL_CONDITIONS`; `_call` pops them and runs a public simulate,
+    so its calls cover solve compiles, backward induction, simulate chunk planning
+    and simulation. `discount` scales every preference type's discount factor by
+    `discount / 0.95`.
+    """
+    if model_name == "aca_benchmark":
+        from aca_model.agent.preferences import BenchmarkPrefType
+        from aca_model.benchmark import (
+            create_benchmark_model,
+            get_benchmark_initial_conditions,
+            get_benchmark_params,
+        )
+
+        def make_aca(discount: float) -> tuple[Any, dict[str, Any]]:
+            model = create_benchmark_model(
+                pref_type_grid=lcm.DiscreteGrid(category_class=BenchmarkPrefType),
+            )
+            params = get_benchmark_params(model=model)[2]
+            initial_conditions = get_benchmark_initial_conditions(
+                model=model, n_subjects=1000, seed=0
+            )
+            return model, {
+                **params,
+                "discount_factor_by_type": params["discount_factor_by_type"]
+                * (discount / 0.95),
+                _ACA_INITIAL_CONDITIONS: initial_conditions,
+            }
+
+        return make_aca
+
     if model_name == "precautionary_savings":
         from benchmarks.asv.bench_precautionary_savings import (
             _make_model,
@@ -192,7 +224,36 @@ def _builder(model_name: str) -> Callable[[float], tuple[Any, dict[str, Any]]]:
     return make
 
 
+_ACA_INITIAL_CONDITIONS = "__perf_loop_initial_conditions__"
+
+
+def _call(*, model: Any, params: dict[str, Any], log_level: str) -> Any:
+    """Run the arm's public call: simulate when initial conditions ride along."""
+    if _ACA_INITIAL_CONDITIONS not in params:
+        return model.solve(params=params, log_level=log_level)
+    rest = {k: v for k, v in params.items() if k != _ACA_INITIAL_CONDITIONS}
+    return model.simulate(
+        params=rest,
+        initial_conditions=params[_ACA_INITIAL_CONDITIONS],
+        log_level=log_level,
+        seed=0,
+    )
+
+
 def _values(result: Any) -> dict[str, np.ndarray]:
+    if isinstance(result, lcm.SimulationResult):
+        frame = result.to_dataframe()
+        # Every column as round-trip `str`, so categoricals hash like numbers.
+        arrays = {
+            f"sim/{column}": frame[column].astype(str).to_numpy(dtype=str)
+            for column in frame.columns
+        }
+        values = result.period_to_regime_to_V_arr
+        return arrays | {
+            f"{period}/{regime}": np.asarray(values[period][regime])
+            for period in sorted(values)
+            for regime in sorted(values[period])
+        }
     values = getattr(result, "values", result)
     return {
         f"{period}/{regime}": np.asarray(values[period][regime])
@@ -210,6 +271,9 @@ def _fingerprint(arrays: Mapping[str, np.ndarray]) -> str:
 
 
 def _block(result: Any) -> None:
+    if isinstance(result, lcm.SimulationResult):
+        jax.block_until_ready(result.period_to_regime_to_V_arr)
+        return
     jax.block_until_ready(getattr(result, "values", result))
 
 
@@ -328,7 +392,7 @@ def _counted_solve(
         count_compile_requests() as requests,
     ):
         start = time.perf_counter()
-        result = model.solve(params=params, log_level=log_level)
+        result = _call(model=model, params=params, log_level=log_level)
         _block(result)
         seconds = time.perf_counter() - start
     return result, {
@@ -348,7 +412,7 @@ def _timed_warm_calls(
     for _ in range(reps):
         perturb()
         start = time.perf_counter()
-        result = model.solve(params=params, log_level="off")
+        result = _call(model=model, params=params, log_level="off")
         _block(result)
         times.append(time.perf_counter() - start)
     return times, _fingerprint(_values(result))
@@ -413,7 +477,7 @@ def main(*, argv: list[str] | None = None) -> None:
         del result
 
         perturb()
-        _block(model.solve(params=params, log_level="off"))
+        _block(_call(model=model, params=params, log_level="off"))
 
         counters.dispatch.clear()
         record["count_calls"] = []
@@ -440,7 +504,7 @@ def main(*, argv: list[str] | None = None) -> None:
         changed_fp = _fingerprint(_values(result))
         del result
         fresh, _ = make(0.94)
-        fresh_result = fresh.solve(params=changed, log_level="off")
+        fresh_result = _call(model=fresh, params=changed, log_level="off")
         _block(fresh_result)
         fresh_fp = _fingerprint(_values(fresh_result))
     record["changed"].update(
