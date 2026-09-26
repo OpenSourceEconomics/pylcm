@@ -9,7 +9,7 @@ all import it without an import cycle.
 """
 
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
@@ -73,6 +73,17 @@ class MarkovTransition:
 
     func: Callable[..., FloatND]
     """The transition function returning a probability distribution."""
+
+    fixed_component: tuple[int, ...] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """For a state transition: the value of a component the law never changes, per code.
+
+    `fixed_component[code]` names the group a state code belongs to; the law must give
+    probability zero to every target outside the current code's group. `Model` then
+    carries the group as its own identity-law state and sums the continuation over one
+    group only. Every group must have the same number of codes.
+    """
 
     def __post_init__(self) -> None:
         # Copy __wrapped__ and __annotations__ from the wrapped function so

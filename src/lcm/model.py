@@ -69,6 +69,10 @@ from _lcm.regime_building.finalize import (
     FinalizedUserRegime,
     finalize_regimes,
 )
+from _lcm.regime_building.fixed_components import (
+    factor_fixed_components,
+    split_initial_conditions,
+)
 from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
 from _lcm.regime_building.processing import (
     Regime,
@@ -559,6 +563,21 @@ class Model:
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
+        self.fixed_params = ensure_containers_are_immutable(fixed_params)
+        # A Markov state that declares a fixed component is carried as two states
+        # (group and position within it) before anything else reads the regimes.
+        (
+            regimes,
+            fixed_params,
+            states,
+            state_transitions,
+            self._fixed_component_splits,
+        ) = factor_fixed_components(
+            regimes=regimes,
+            fixed_params=self.fixed_params,
+            states=states,
+            state_transitions=state_transitions,
+        )
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self._simulate_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
@@ -2516,6 +2535,10 @@ class Model:
                             period_to_regime_to_replay_reader,
                         ),
                     )
+                initial_conditions = split_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    splits=self._fixed_component_splits,
+                )
                 if isinstance(initial_conditions, pd.DataFrame):
                     initial_conditions = initial_conditions_from_dataframe(
                         df=initial_conditions,

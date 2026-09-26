@@ -1,0 +1,249 @@
+"""A Markov state declaring a fixed component solves as the hand-split model does.
+
+The toy state `kind_health` codes (kind, health) as `2 * kind + health`; the law keeps
+`kind` and moves `health`. Declaring `fixed_component` must give the value function
+of the model in which `kind` is its own identity-law state, and carry the state as a
+group axis and a within-group axis instead of one axis over every code.
+"""
+
+import re
+
+import jax.numpy as jnp
+import numpy as np
+import pandas as pd
+import pytest
+
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    categorical,
+    fixed_transition,
+)
+from lcm.exceptions import RegimeInitializationError
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
+from tests.test_distributed import _compiled_solve_kernel_hlo
+
+
+@categorical(ordered=False)
+class _RegimeId:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=False)
+class _KindHealth:
+    k0_h0: ScalarInt
+    k0_h1: ScalarInt
+    k1_h0: ScalarInt
+    k1_h1: ScalarInt
+
+
+@categorical(ordered=False)
+class _Kind:
+    k0: ScalarInt
+    k1: ScalarInt
+
+
+@categorical(ordered=False)
+class _Health:
+    h0: ScalarInt
+    h1: ScalarInt
+
+
+_HEALTH_LAW = jnp.array([[[0.9, 0.1], [0.3, 0.7]], [[0.6, 0.4], [0.2, 0.8]]])
+
+
+def _utility(
+    *,
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+    kind_health: DiscreteState,
+) -> FloatND:
+    return jnp.log(consumption) + 0.1 * kind_health + 0.01 * wealth
+
+
+def _next_kind_health(kind_health: DiscreteState) -> FloatND:
+    kind, health = kind_health // 2, kind_health % 2
+    within = _HEALTH_LAW[kind, health]
+    return jnp.where(jnp.arange(4) // 2 == kind, within[jnp.arange(4) % 2], 0.0)
+
+
+def _next_health(*, kind: DiscreteState, health: DiscreteState) -> FloatND:
+    return _HEALTH_LAW[kind, health]
+
+
+def _kind_health(*, kind: DiscreteState, health: DiscreteState) -> DiscreteState:
+    return 2 * kind + health
+
+
+def _feasible(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+    return consumption <= wealth
+
+
+def _next_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption + 2
+
+
+def _next_regime(age: float) -> ScalarInt:
+    return jnp.where(age < 2, _RegimeId.alive, _RegimeId.dead)
+
+
+def _model(
+    *,
+    factored: bool,
+    fixed_component: tuple[int, ...] = (0, 0, 1, 1),
+    sharded: bool = False,
+) -> Model:
+    model_states: dict[str, DiscreteGrid] = {}
+    model_laws = {}
+    if factored:
+        states = {"kind_health": DiscreteGrid(_KindHealth)}
+        laws = {
+            "kind_health": MarkovTransition(
+                _next_kind_health, fixed_component=fixed_component
+            )
+        }
+        functions = {}
+    else:
+        states = {"health": DiscreteGrid(_Health)}
+        laws = {"health": MarkovTransition(_next_health)}
+        model_states = {"kind": DiscreteGrid(_Kind)}
+        model_laws = {"kind": fixed_transition("kind")}
+        functions = {"kind_health": _kind_health}
+    return Model(
+        regimes={
+            "alive": Regime(
+                active=lambda age: age < 3,
+                transition=_next_regime,
+                states={
+                    "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
+                    **states,
+                },
+                actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
+                functions={"utility": _utility, **functions},
+                constraints={"feasible": _feasible},
+                state_transitions={
+                    "wealth": _next_wealth,
+                    **laws,
+                },
+            ),
+            "dead": Regime(transition=None, functions={"utility": lambda: 0.0}),
+        },
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=_RegimeId,
+        states=model_states,
+        state_transitions=model_laws,
+        execution_config=ExecutionConfig(
+            sharded_states=(("kind_health_fixed" if factored else "kind"),)
+            if sharded
+            else ()
+        ),
+    )
+
+
+def _values(model: Model) -> dict:
+    solution = model.solve(params={"discount_factor": 0.95}, log_level="off")
+    return {
+        (period, regime): np.asarray(v)
+        for period, by_regime in solution.values.items()
+        for regime, v in by_regime.items()
+    }
+
+
+def test_fixed_component_carries_group_and_position_as_separate_axes():
+    """The alive value function has a position axis and a group axis, not 4 codes."""
+    values = _values(_model(factored=True))
+    assert values[(0, "alive")].shape == (2, 2, 5)
+
+
+def test_fixed_component_solve_equals_the_hand_split_model():
+    """Declaring the fixed component reproduces the hand-split value functions."""
+    factored, split = _values(_model(factored=True)), _values(_model(factored=False))
+    assert all(np.array_equal(factored[key], split[key]) for key in split)
+
+
+def test_fixed_component_rejects_unequal_groups():
+    """Groups of different sizes cannot share one within-group axis."""
+    with pytest.raises(RegimeInitializationError, match="equal size"):
+        _model(factored=True, fixed_component=(0, 0, 0, 1))
+
+
+def _gather_shapes(model: Model) -> set[str]:
+    hlo = _compiled_solve_kernel_hlo(model=model, regime_name="alive", period=0)
+    return set(re.findall(r"= (\w+\[[\d,]*\])[^\n]*? gather\(", hlo))
+
+
+def test_fixed_component_lowers_the_hand_split_gathers():
+    """The optimized kernel reads next-period values one group at a time.
+
+    Every gather of the hand-split kernel, including the continuation read whose
+    group axis is a size-1 slice, appears in the kernel of the annotated model.
+    """
+    split = _gather_shapes(_model(factored=False))
+    assert split <= _gather_shapes(_model(factored=True))
+
+
+def test_fixed_component_is_shardable_like_the_hand_split_model():
+    """Naming the fixed component in `sharded_states` solves as the sharded split."""
+    factored = _values(_model(factored=True, sharded=True))
+    split = _values(_model(factored=False, sharded=True))
+    assert all(np.array_equal(factored[key], split[key]) for key in split)
+
+
+def _initial(*, factored: bool, as_frame: bool) -> dict | pd.DataFrame:
+    code = np.arange(8) % 4
+    common = {"wealth": np.linspace(1.0, 10.0, 8), "age": np.zeros(8)}
+    if as_frame:
+        kind_health = np.array(["k0_h0", "k0_h1", "k1_h0", "k1_h1"])[code]
+        parts = (
+            {"kind_health": kind_health}
+            if factored
+            else {
+                "kind": np.array(["k0", "k1"])[code // 2],
+                "health": np.array(["h0", "h1"])[code % 2],
+            }
+        )
+        return pd.DataFrame(common | parts | {"regime_name": ["alive"] * 8})
+    parts = (
+        {"kind_health": code} if factored else {"kind": code // 2, "health": code % 2}
+    )
+    return {
+        name: jnp.asarray(value)
+        for name, value in (common | parts | {"regime_id": np.zeros(8, int)}).items()
+    }
+
+
+def _simulated_value(*, factored: bool, as_frame: bool) -> np.ndarray:
+    model = _model(factored=factored)
+    params = {"discount_factor": 0.95}
+    result = model.simulate(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        initial_conditions=_initial(factored=factored, as_frame=as_frame),
+        seed=1,
+        log_level="off",
+    )
+    return np.asarray(result.to_dataframe()["value"])
+
+
+@pytest.mark.parametrize("as_frame", [False, True])
+def test_fixed_component_simulates_from_the_declared_code(*, as_frame):
+    """Initial conditions name the declared state and simulate as the hand split."""
+    np.testing.assert_array_equal(
+        _simulated_value(factored=True, as_frame=as_frame),
+        _simulated_value(factored=False, as_frame=as_frame),
+    )
