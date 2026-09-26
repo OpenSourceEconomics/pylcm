@@ -119,8 +119,10 @@ def parse_phase_records(*, lines: Sequence[str]) -> tuple[CallPhases, ...]:
 
     A phase whose `begin` has no matching `end` is reported as `incomplete`
     with no duration, so a run that died inside a phase still names where it
-    was. Each phase carries its nesting depth within the call. Calls come back
-    in the order their first record appeared.
+    was. Each phase carries its nesting depth within the call. Same-named phases
+    open at the same time — compiles running on a worker pool — are siblings at
+    one depth, and each `end` closes the earliest of them still open. Calls come
+    back in the order their first record appeared.
 
     Args:
         lines: Log lines, in emission order.
@@ -129,7 +131,7 @@ def parse_phase_records(*, lines: Sequence[str]) -> tuple[CallPhases, ...]:
         One entry per call id seen, each carrying that call's phases.
 
     """
-    open_phases: dict[tuple[str, str], int] = {}
+    open_phases: dict[tuple[str, str], list[int]] = {}
     by_call: dict[str, list[PhaseOutcome]] = {}
     for line in lines:
         match = _RECORD.match(line.strip())
@@ -138,19 +140,22 @@ def parse_phase_records(*, lines: Sequence[str]) -> tuple[CallPhases, ...]:
         call_id = match["call"]
         name = match["name"]
         phases = by_call.setdefault(call_id, [])
+        depth = sum(
+            open_call == call_id and open_name != name
+            for open_call, open_name in open_phases
+        )
         if match["edge"] == "begin":
-            depth = sum(open_call == call_id for open_call, _ in open_phases)
-            open_phases[(call_id, name)] = len(phases)
+            open_phases.setdefault((call_id, name), []).append(len(phases))
             phases.append(
                 PhaseOutcome(name=name, status="incomplete", seconds=None, depth=depth)
             )
             continue
-        position = open_phases.pop((call_id, name), None)
-        depth = (
-            sum(open_call == call_id for open_call, _ in open_phases)
-            if position is None
-            else phases[position].depth
-        )
+        siblings = open_phases.get((call_id, name), [])
+        position = siblings.pop(0) if siblings else None
+        if not siblings:
+            open_phases.pop((call_id, name), None)
+        if position is not None:
+            depth = phases[position].depth
         outcome = PhaseOutcome(
             name=name,
             status=match["status"],
