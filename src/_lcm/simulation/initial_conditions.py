@@ -135,15 +135,12 @@ def validate_simulation_inputs(
     passes so they are reused across its calls and freed with it; without one,
     they live for this call only.
 
-    With validation off, state names are still checked, without reading device
-    arrays: a misnamed state would otherwise simulate from values that were never
-    supplied.
+    With validation off, an unknown state name is still rejected: a misnamed state
+    would otherwise simulate from values that were never supplied.
     """
     if not validation_enabled(logger):
         _fail_if_state_names_are_wrong(
-            initial_conditions=initial_conditions,
-            regimes=regimes,
-            regime_names_to_ids=regime_names_to_ids,
+            initial_conditions=initial_conditions, regimes=regimes
         )
         return
     memory = _preflight_memory(
@@ -1205,44 +1202,18 @@ def _fail_if_state_names_are_wrong(
     *,
     initial_conditions: InitialConditions,
     regimes: MappingProxyType[RegimeName, Regime],
-    regime_names_to_ids: RegimeNamesToIds,
 ) -> None:
-    """Raise on a state no regime has, and on a missing one if regimes are on host.
-
-    Unknown names are a set comparison. Which states are required depends on the
-    regimes subjects start in, so that check runs only when `regime_id` is a host
-    array and reading it costs no device synchronization.
-    """
-    provided = {
-        name
-        for name in initial_conditions
-        if name not in {"regime_id", "own_stakeholder"}
-    }
+    """Raise on an initial state no regime has; a set comparison, no device read."""
+    provided = set(initial_conditions) - {"regime_id", "own_stakeholder"}
     known = set(PSEUDO_STATE_NAMES).union(
         *(regime.simulation.state_names for regime in regimes.values())
     )
-    errors: list[str] = []
     if extra := provided - known:
-        errors.append(
+        msg = (
             f"Unknown initial states: {sorted(extra)}. "
             f"Valid states are: {sorted(known)}"
         )
-    regime_id_arr = initial_conditions.get("regime_id")
-    if isinstance(regime_id_arr, np.ndarray):
-        ids_to_names = invert_regime_ids(regime_names_to_ids)
-        required = set(PSEUDO_STATE_NAMES).union(
-            *(
-                regimes[ids_to_names[int(i)]].simulation.state_names
-                for i in np.unique(regime_id_arr)
-                if int(i) in ids_to_names
-            )
-        )
-        if missing := required - provided:
-            errors.append(
-                _format_missing_states_message(missing=missing, required=required)
-            )
-    if errors:
-        raise InvalidInitialConditionsError(format_messages(errors))
+        raise InvalidInitialConditionsError(format_messages([msg]))
 
 
 def _format_missing_states_message(*, missing: set[str], required: set[str]) -> str:

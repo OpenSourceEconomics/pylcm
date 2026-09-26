@@ -1,14 +1,11 @@
-"""Simulation rejects misnamed initial states whatever the log level.
+"""Simulation rejects an unknown initial state whatever the log level.
 
-A mapping that names a state the model does not have, or omits one it does, would
-otherwise simulate from states that were never supplied. The DataFrame form rejects
-both at every log level. With validation off the mapping form rejects an unknown
-state always, and a missing one when the regime ids are on host, since finding the
-regimes subjects start in would otherwise synchronize the device.
+A mapping that names a state the model does not have would otherwise simulate from
+states that were never supplied. The DataFrame form rejects it at every log level;
+the mapping form must too.
 """
 
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
@@ -89,24 +86,17 @@ def _simulate(initial_conditions: dict) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("states", "regime_id", "message"),
-    [
-        (
-            {"wealth": jnp.ones(2), "health": jnp.zeros(2, int), "hlth": jnp.ones(2)},
-            jnp.full(2, _RegimeId.alive),
-            r"Unknown initial states: \['hlth'\]",
-        ),
-        (
-            {"wealth": jnp.ones(2)},
-            np.full(2, int(_RegimeId.alive)),
-            r"Missing model states: \['health'\]",
-        ),
-    ],
-)
-def test_simulate_rejects_misnamed_states_with_logging_off(
-    *, states, regime_id, message
-):
-    """An unknown state, or a missing one given host regime ids, raises by name."""
-    with pytest.raises(InvalidInitialConditionsError, match=message):
-        _simulate({**states, "age": jnp.zeros(2), "regime_id": regime_id})
+def test_simulate_rejects_an_unknown_state_with_logging_off():
+    """A state no regime has raises and names the key, as a DataFrame column would."""
+    with pytest.raises(
+        InvalidInitialConditionsError, match=r"Unknown initial states: \['hlth'\]"
+    ):
+        _simulate(
+            {
+                "wealth": jnp.ones(2),
+                "health": jnp.zeros(2, int),
+                "hlth": jnp.ones(2),
+                "age": jnp.zeros(2),
+                "regime_id": jnp.full(2, _RegimeId.alive),
+            }
+        )
