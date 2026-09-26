@@ -134,7 +134,15 @@ def validate_simulation_inputs(
     A budgeted call keeps its user-law executables in `producers`, which a Model
     passes so they are reused across its calls and freed with it; without one,
     they live for this call only.
+
+    State names are checked at every log level: a misnamed or missing state would
+    otherwise simulate from values that were never supplied.
     """
+    _fail_if_state_names_are_wrong(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+    )
     if not validation_enabled(logger):
         return
     memory = _preflight_memory(
@@ -1190,6 +1198,31 @@ def _merged_regime_params(
         **regime.resolved_fixed_params,
         **dict(flat_params.get(regime_name, MappingProxyType({}))),
     }
+
+
+def _fail_if_state_names_are_wrong(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+) -> None:
+    """Raise if a state is unknown to every regime or missing for a starting one."""
+    regime_id_arr = initial_conditions.get("regime_id")
+    if regime_id_arr is None:
+        return
+    errors = _collect_state_name_errors(
+        initial_states={
+            name: value
+            for name, value in initial_conditions.items()
+            if name not in {"regime_id", "own_stakeholder"}
+        },
+        regime_id_arr=regime_id_arr,
+        regime_ids_to_names=invert_regime_ids(regime_names_to_ids),
+        regimes=regimes,
+        valid_regime_names=set(regimes),
+    )
+    if errors:
+        raise InvalidInitialConditionsError(format_messages(errors))
 
 
 def _format_missing_states_message(*, missing: set[str], required: set[str]) -> str:
