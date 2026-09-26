@@ -663,25 +663,38 @@ class _SubjectTiled:
         shared = {name: value for name, value in kwargs.items() if name in accepted}
         # A remainder shorter than the width would be traced and compiled as a
         # second program, whose rounding need not match the full tiles'. Pad it
-        # with copies of the last subject so every subject runs in one program,
-        # then drop the copies.
+        # with copies of the last subject so every tile has the width's shape,
+        # then drop the copies. Only the remainder is padded: padding the whole
+        # subject axis would give it an extent the subject mesh cannot divide,
+        # and the partitioner would then replicate the result. Full tiles and
+        # the padded remainder call one jitted tile, so the body is traced once.
+        tile = jax.jit(
+            jax.vmap(partial(_evaluate_subject_tile, func=self.func, shared=shared))
+        )
         n_subjects = jax.tree.leaves(tiles)[0].shape[0]
-        n_pad = -n_subjects % width
-        if n_pad:
-            tiles = jax.tree.map(
+        n_rest = n_subjects % width
+        n_full = n_subjects - n_rest
+        parts = []
+        if n_full:
+            head = jax.tree.map(
+                lambda leaf: leaf[:n_full].reshape(-1, width, *leaf.shape[1:]),
+                tiles,
+            )
+            full = jax.lax.map(tile, head)
+            parts.append(
+                jax.tree.map(lambda leaf: leaf.reshape(-1, *leaf.shape[2:]), full)
+            )
+        if n_rest:
+            rest = jax.tree.map(
                 lambda leaf: jnp.concatenate(
-                    [leaf, jnp.repeat(leaf[-1:], n_pad, axis=0)]
+                    [leaf[n_full:], jnp.repeat(leaf[-1:], width - n_rest, axis=0)]
                 ),
                 tiles,
             )
-        result = jax.lax.map(
-            partial(_evaluate_subject_tile, func=self.func, shared=shared),
-            tiles,
-            batch_size=width,
-        )
-        if not n_pad:
-            return result
-        return jax.tree.map(lambda leaf: leaf[:n_subjects], result)
+            parts.append(jax.tree.map(lambda leaf: leaf[:n_rest], tile(rest)))
+        if len(parts) == 1:
+            return parts[0]
+        return jax.tree.map(lambda *leaves: jnp.concatenate(leaves), *parts)
 
 
 # keyword-only-exempt: library-callback=jax.lax.map
