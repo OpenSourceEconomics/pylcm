@@ -10,6 +10,9 @@ before model slots are merged, into three pieces of the ordinary vocabulary:
 - a function `<state>` that recombines the two into the original code, so every other
   function, constraint and law keeps reading the code it was written against.
 
+Initial conditions keep naming `<state>`; `split_initial_conditions` turns that column
+into the two factored ones.
+
 The continuation then gathers next-period values over one group instead of every code:
 the identity law turns the group into an index, which is exactly what a hand-split
 model gets.
@@ -18,18 +21,87 @@ model gets.
 import dataclasses
 import inspect
 from collections.abc import Callable, Mapping
-from dataclasses import make_dataclass
+from dataclasses import dataclass, make_dataclass
 from types import MappingProxyType
 from typing import cast, no_type_check
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 
 from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
-from lcm.typing import DiscreteState, FloatND, ScalarInt, UserParams
+from lcm.typing import (
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+    UserInitialConditions,
+    UserParams,
+)
+
+
+@dataclass(frozen=True)
+class FixedComponentSplit:
+    """How one factored state's code maps to its two factored states."""
+
+    grid: DiscreteGrid
+    """The state's grid as declared, whose labels initial conditions use."""
+
+    rest_grid: DiscreteGrid
+    """Grid of `<state>_rest`, the position within a group."""
+
+    fixed_grid: DiscreteGrid
+    """Grid of `<state>_fixed`, the group."""
+
+    rest_of_code: tuple[int, ...]
+    """Position within its group of each original code."""
+
+    fixed_of_code: tuple[int, ...]
+    """Group of each original code."""
+
+
+def split_initial_conditions(
+    *,
+    initial_conditions: UserInitialConditions | pd.DataFrame,
+    splits: Mapping[str, FixedComponentSplit],
+) -> UserInitialConditions | pd.DataFrame:
+    """Replace each factored state's column by its `_rest` and `_fixed` columns.
+
+    A DataFrame column holds the declared labels, and a mapping entry holds codes;
+    the factored columns keep the same representation.
+    """
+    present = [name for name in splits if name in initial_conditions]
+    if not present:
+        return initial_conditions
+    if isinstance(initial_conditions, pd.DataFrame):
+        df = initial_conditions.copy()
+        for name in present:
+            split = splits[name]
+            code = df[name].map(
+                dict(zip(split.grid.categories, split.grid.codes, strict=True))
+            )
+            if code.isna().any():
+                bad = sorted(set(df.loc[code.isna(), name].astype(str)))
+                msg = f"Invalid labels for {name!r}: {bad}."
+                raise ValueError(msg)
+            code = code.astype(int).to_numpy()
+            df[f"{name}_rest"] = np.asarray(split.rest_grid.categories)[
+                np.asarray(split.rest_of_code)[code]
+            ]
+            df[f"{name}_fixed"] = np.asarray(split.fixed_grid.categories)[
+                np.asarray(split.fixed_of_code)[code]
+            ]
+            df = df.drop(columns=name)
+        return df
+    out = dict(initial_conditions)
+    for name in present:
+        split = splits[name]
+        code = jnp.asarray(out.pop(name))
+        out[f"{name}_rest"] = jnp.asarray(split.rest_of_code)[code]
+        out[f"{name}_fixed"] = jnp.asarray(split.fixed_of_code)[code]
+    return MappingProxyType(out)
 
 
 def factor_fixed_components(
@@ -39,13 +111,18 @@ def factor_fixed_components(
     states: Mapping[str, object],
     state_transitions: Mapping[str, object],
 ) -> tuple[
-    Mapping[str, Regime], UserParams, Mapping[str, object], Mapping[str, object]
+    Mapping[str, Regime],
+    UserParams,
+    Mapping[str, object],
+    Mapping[str, object],
+    Mapping[str, FixedComponentSplit],
 ]:
-    """Return regimes, fixed params and model-level states and laws, factored."""
+    """Return regimes, fixed params, model-level states and laws, and the splits."""
     from lcm.transition import MarkovTransition, fixed_transition  # noqa: PLC0415
 
     model_states = dict(states)
     model_laws = dict(state_transitions)
+    splits: dict[str, FixedComponentSplit] = {}
 
     new_regimes = dict(regimes)
     new_fixed: dict[str, object] = dict(fixed_params)
@@ -90,9 +167,8 @@ def factor_fixed_components(
             )
             n_rest, n_fixed = code_by_parts.shape
             del regime_states[name], laws[name]
-            regime_states[f"{name}_rest"] = DiscreteGrid(
-                _labels(prefix=f"{name}_rest", n=n_rest)
-            )
+            rest_grid = DiscreteGrid(_labels(prefix=f"{name}_rest", n=n_rest))
+            regime_states[f"{name}_rest"] = rest_grid
             _add_model_fixed_state(
                 model_states=model_states,
                 model_laws=model_laws,
@@ -100,6 +176,23 @@ def factor_fixed_components(
                 n_fixed=n_fixed,
                 law=fixed_transition(f"{name}_fixed"),
             )
+            split = FixedComponentSplit(
+                grid=grid,
+                rest_grid=rest_grid,
+                fixed_grid=cast("DiscreteGrid", model_states[f"{name}_fixed"]),
+                rest_of_code=tuple(
+                    int(np.flatnonzero(code_by_parts[:, group] == code)[0])
+                    for code, group in enumerate(fixed_of_code)
+                ),
+                fixed_of_code=tuple(int(g) for g in fixed_of_code),
+            )
+            previous = splits.setdefault(name, split)
+            if previous.fixed_of_code != split.fixed_of_code:
+                msg = (
+                    f"MarkovTransition.fixed_component for {name!r} differs between "
+                    "regimes; one state needs one grouping."
+                )
+                raise RegimeInitializationError(msg)
             laws[f"{name}_rest"] = MarkovTransition(
                 _restricted_law(
                     func=func,
@@ -124,6 +217,7 @@ def factor_fixed_components(
         cast("UserParams", MappingProxyType(new_fixed)),
         MappingProxyType(model_states),
         MappingProxyType(model_laws),
+        MappingProxyType(splits),
     )
 
 

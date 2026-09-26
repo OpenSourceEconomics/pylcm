@@ -10,6 +10,7 @@ import re
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import (
@@ -201,3 +202,48 @@ def test_fixed_component_is_shardable_like_the_hand_split_model():
     factored = _values(_model(factored=True, sharded=True))
     split = _values(_model(factored=False, sharded=True))
     assert all(np.array_equal(factored[key], split[key]) for key in split)
+
+
+def _initial(*, factored: bool, as_frame: bool) -> dict | pd.DataFrame:
+    code = np.arange(8) % 4
+    common = {"wealth": np.linspace(1.0, 10.0, 8), "age": np.zeros(8)}
+    if as_frame:
+        kind_health = np.array(["k0_h0", "k0_h1", "k1_h0", "k1_h1"])[code]
+        parts = (
+            {"kind_health": kind_health}
+            if factored
+            else {
+                "kind": np.array(["k0", "k1"])[code // 2],
+                "health": np.array(["h0", "h1"])[code % 2],
+            }
+        )
+        return pd.DataFrame(common | parts | {"regime_name": ["alive"] * 8})
+    parts = (
+        {"kind_health": code} if factored else {"kind": code // 2, "health": code % 2}
+    )
+    return {
+        name: jnp.asarray(value)
+        for name, value in (common | parts | {"regime_id": np.zeros(8, int)}).items()
+    }
+
+
+def _consumption(*, factored: bool, as_frame: bool) -> np.ndarray:
+    model = _model(factored=factored)
+    params = {"discount_factor": 0.95}
+    result = model.simulate(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        initial_conditions=_initial(factored=factored, as_frame=as_frame),
+        seed=1,
+        log_level="off",
+    )
+    return np.asarray(result.to_dataframe()["consumption"])
+
+
+@pytest.mark.parametrize("as_frame", [False, True])
+def test_fixed_component_simulates_from_the_declared_code(*, as_frame):
+    """Initial conditions name the declared state and simulate as the hand split."""
+    np.testing.assert_array_equal(
+        _consumption(factored=True, as_frame=as_frame),
+        _consumption(factored=False, as_frame=as_frame),
+    )
