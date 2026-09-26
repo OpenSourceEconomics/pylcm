@@ -362,7 +362,7 @@
           },
           {
             "path": "src/_lcm/solution/fingerprint.py",
-            "sha256": "c5a1b0018765547f1ebdffb89d07a8073f0e598d93da3791a364f492b97bb06b"
+            "sha256": "636d6408331ad95abe794a642bdfd7f8671a311041070b9dc23f83c038dc07a2"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "91532321b15a790822c5dae60214ef8d0422c58a157c66e7c6222add7a671f6b"
+        "source_inventory_sha256": "d64cf2662e035884b559f9a460b53395fd0aa1cb1e16ff3052ceb09dcb592ad0"
       },
       "fast": {
         "candidate_sources": [
@@ -832,7 +832,7 @@
           },
           {
             "path": "src/_lcm/solution/fingerprint.py",
-            "sha256": "c5a1b0018765547f1ebdffb89d07a8073f0e598d93da3791a364f492b97bb06b"
+            "sha256": "636d6408331ad95abe794a642bdfd7f8671a311041070b9dc23f83c038dc07a2"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "91532321b15a790822c5dae60214ef8d0422c58a157c66e7c6222add7a671f6b"
+        "source_inventory_sha256": "d64cf2662e035884b559f9a460b53395fd0aa1cb1e16ff3052ceb09dcb592ad0"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "91532321b15a790822c5dae60214ef8d0422c58a157c66e7c6222add7a671f6b",
+  "source_inventory_sha256": "d64cf2662e035884b559f9a460b53395fd0aa1cb1e16ff3052ceb09dcb592ad0",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1306,7 +1306,7 @@
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
-      "sha256": "c5a1b0018765547f1ebdffb89d07a8073f0e598d93da3791a364f492b97bb06b"
+      "sha256": "636d6408331ad95abe794a642bdfd7f8671a311041070b9dc23f83c038dc07a2"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",

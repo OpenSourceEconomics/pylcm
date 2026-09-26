@@ -337,14 +337,14 @@ def _simulation_mismatch(
     """Return the frame mismatch between a model and its reference, empty if none."""
     result = model.simulate(
         params=_PARAMS,
-        initial_conditions=_INITIAL_CONDITIONS,
+        initial_conditions=_initial_conditions_read_by(model),
         solution=solution,
         log_level="off",
         seed=42,
     )
     expected = reference.simulate(
         params=_PARAMS,
-        initial_conditions=_INITIAL_CONDITIONS,
+        initial_conditions=_initial_conditions_read_by(reference),
         solution=reference_solution,
         log_level="off",
         seed=42,
@@ -1100,3 +1100,11 @@ def test_the_budgeted_refusal_counts_the_replica_it_would_have_to_hold(
 ) -> None:
     """The bytes a refused cell reports include the replica the read delivers."""
     assert admission["budgeted_resident_bytes"] >= admission["per_device_bytes"]
+
+
+def _initial_conditions_read_by(model: Model) -> dict[str, Any]:
+    """Return the initial conditions restricted to the states `model` simulates."""
+    read = {"age", "regime_id"}.union(
+        *(regime.simulation.state_names for regime in model._regimes.values())
+    )
+    return {name: value for name, value in _INITIAL_CONDITIONS.items() if name in read}
