@@ -227,7 +227,7 @@ def _initial(*, factored: bool, as_frame: bool) -> dict | pd.DataFrame:
     }
 
 
-def _consumption(*, factored: bool, as_frame: bool) -> np.ndarray:
+def _simulated_value(*, factored: bool, as_frame: bool) -> np.ndarray:
     model = _model(factored=factored)
     params = {"discount_factor": 0.95}
     result = model.simulate(
@@ -237,13 +237,13 @@ def _consumption(*, factored: bool, as_frame: bool) -> np.ndarray:
         seed=1,
         log_level="off",
     )
-    return np.asarray(result.to_dataframe()["consumption"])
+    return np.asarray(result.to_dataframe()["value"])
 
 
 @pytest.mark.parametrize("as_frame", [False, True])
 def test_fixed_component_simulates_from_the_declared_code(*, as_frame):
     """Initial conditions name the declared state and simulate as the hand split."""
     np.testing.assert_array_equal(
-        _consumption(factored=True, as_frame=as_frame),
-        _consumption(factored=False, as_frame=as_frame),
+        _simulated_value(factored=True, as_frame=as_frame),
+        _simulated_value(factored=False, as_frame=as_frame),
     )
