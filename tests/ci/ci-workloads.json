@@ -4534,6 +4534,7 @@
     "tests/solution/test_solve_releases_executables.py",
     "tests/solution/test_solver_period_groups.py",
     "tests/solution/test_solver_subclass_binding.py",
+    "tests/solution/test_width_search_carry.py",
     "tests/solution/test_workspace_budget_solve.py"
    ],
    "predicted_payload_minutes": 20.73
@@ -5124,6 +5125,7 @@
     "tests/solution/test_target_only_iid_nonuniform_public.py",
     "tests/solution/test_transition_reading_an_entered_draw.py",
     "tests/solution/test_wide_live_nonfinite_entry.py",
+    "tests/solution/test_width_search_carry.py",
     "tests/solution/test_zero_mass_node.py"
    ],
    "predicted_payload_minutes": 13.06
