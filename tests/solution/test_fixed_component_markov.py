@@ -10,11 +10,13 @@ import re
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -100,7 +102,14 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 2, _RegimeId.alive, _RegimeId.dead)
 
 
-def _model(*, factored: bool, fixed_component: tuple[int, ...] = (0, 0, 1, 1)) -> Model:
+def _model(
+    *,
+    factored: bool,
+    fixed_component: tuple[int, ...] = (0, 0, 1, 1),
+    sharded: bool = False,
+) -> Model:
+    model_states: dict[str, DiscreteGrid] = {}
+    model_laws = {}
     if factored:
         states = {"kind_health": DiscreteGrid(_KindHealth)}
         laws = {
@@ -110,11 +119,10 @@ def _model(*, factored: bool, fixed_component: tuple[int, ...] = (0, 0, 1, 1)) -
         }
         functions = {}
     else:
-        states = {"health": DiscreteGrid(_Health), "kind": DiscreteGrid(_Kind)}
-        laws = {
-            "health": MarkovTransition(_next_health),
-            "kind": fixed_transition("kind"),
-        }
+        states = {"health": DiscreteGrid(_Health)}
+        laws = {"health": MarkovTransition(_next_health)}
+        model_states = {"kind": DiscreteGrid(_Kind)}
+        model_laws = {"kind": fixed_transition("kind")}
         functions = {"kind_health": _kind_health}
     return Model(
         regimes={
@@ -137,6 +145,13 @@ def _model(*, factored: bool, fixed_component: tuple[int, ...] = (0, 0, 1, 1)) -
         },
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
+        states=model_states,
+        state_transitions=model_laws,
+        execution_config=ExecutionConfig(
+            sharded_states=(("kind_health_fixed" if factored else "kind"),)
+            if sharded
+            else ()
+        ),
     )
 
 
@@ -180,3 +195,55 @@ def test_fixed_component_lowers_the_hand_split_gathers():
     """
     split = _gather_shapes(_model(factored=False))
     assert split <= _gather_shapes(_model(factored=True))
+
+
+def test_fixed_component_is_shardable_like_the_hand_split_model():
+    """Naming the fixed component in `sharded_states` solves as the sharded split."""
+    factored = _values(_model(factored=True, sharded=True))
+    split = _values(_model(factored=False, sharded=True))
+    assert all(np.array_equal(factored[key], split[key]) for key in split)
+
+
+def _initial(*, factored: bool, as_frame: bool) -> dict | pd.DataFrame:
+    code = np.arange(8) % 4
+    common = {"wealth": np.linspace(1.0, 10.0, 8), "age": np.zeros(8)}
+    if as_frame:
+        kind_health = np.array(["k0_h0", "k0_h1", "k1_h0", "k1_h1"])[code]
+        parts = (
+            {"kind_health": kind_health}
+            if factored
+            else {
+                "kind": np.array(["k0", "k1"])[code // 2],
+                "health": np.array(["h0", "h1"])[code % 2],
+            }
+        )
+        return pd.DataFrame(common | parts | {"regime_name": ["alive"] * 8})
+    parts = (
+        {"kind_health": code} if factored else {"kind": code // 2, "health": code % 2}
+    )
+    return {
+        name: jnp.asarray(value)
+        for name, value in (common | parts | {"regime_id": np.zeros(8, int)}).items()
+    }
+
+
+def _simulated_value(*, factored: bool, as_frame: bool) -> np.ndarray:
+    model = _model(factored=factored)
+    params = {"discount_factor": 0.95}
+    result = model.simulate(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        initial_conditions=_initial(factored=factored, as_frame=as_frame),
+        seed=1,
+        log_level="off",
+    )
+    return np.asarray(result.to_dataframe()["value"])
+
+
+@pytest.mark.parametrize("as_frame", [False, True])
+def test_fixed_component_simulates_from_the_declared_code(*, as_frame):
+    """Initial conditions name the declared state and simulate as the hand split."""
+    np.testing.assert_array_equal(
+        _simulated_value(factored=True, as_frame=as_frame),
+        _simulated_value(factored=False, as_frame=as_frame),
+    )
