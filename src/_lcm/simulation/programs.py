@@ -661,11 +661,40 @@ class _SubjectTiled:
             )
         tiles = {name: kwargs.pop(name) for name in self.subject_arg_names}
         shared = {name: value for name, value in kwargs.items() if name in accepted}
-        return jax.lax.map(
-            partial(_evaluate_subject_tile, func=self.func, shared=shared),
-            tiles,
-            batch_size=width,
+        # A remainder shorter than the width would be traced and compiled as a
+        # second program, whose rounding need not match the full tiles'. Pad it
+        # with copies of the last subject so every tile has the width's shape,
+        # then drop the copies. Only the remainder is padded: padding the whole
+        # subject axis would give it an extent the subject mesh cannot divide,
+        # and the partitioner would then replicate the result. Full tiles and
+        # the padded remainder call one jitted tile, so the body is traced once.
+        tile = jax.jit(
+            jax.vmap(partial(_evaluate_subject_tile, func=self.func, shared=shared))
         )
+        n_subjects = jax.tree.leaves(tiles)[0].shape[0]
+        n_rest = n_subjects % width
+        n_full = n_subjects - n_rest
+        parts = []
+        if n_full:
+            head = jax.tree.map(
+                lambda leaf: leaf[:n_full].reshape(-1, width, *leaf.shape[1:]),
+                tiles,
+            )
+            full = jax.lax.map(tile, head)
+            parts.append(
+                jax.tree.map(lambda leaf: leaf.reshape(-1, *leaf.shape[2:]), full)
+            )
+        if n_rest:
+            rest = jax.tree.map(
+                lambda leaf: jnp.concatenate(
+                    [leaf[n_full:], jnp.repeat(leaf[-1:], width - n_rest, axis=0)]
+                ),
+                tiles,
+            )
+            parts.append(jax.tree.map(lambda leaf: leaf[:n_rest], tile(rest)))
+        if len(parts) == 1:
+            return parts[0]
+        return jax.tree.map(lambda *leaves: jnp.concatenate(leaves), *parts)
 
 
 # keyword-only-exempt: library-callback=jax.lax.map

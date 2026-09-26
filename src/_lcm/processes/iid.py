@@ -22,6 +22,8 @@ from _lcm.processes.base import (
     _gauss_hermite_normal,
     _mixture_cdf,
     _validate_gauss_hermite_grid,
+    sealed,
+    standard_normal,
 )
 from _lcm.typing import PRNGKeyND
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
@@ -179,7 +181,7 @@ class NormalIIDProcess(_IIDProcess):
     def draw_shock(
         self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
     ) -> ScalarFloat:
-        return params["mu"] + params["sigma"] * jax.random.normal(key=key)
+        return params["mu"] + sealed(params["sigma"] * standard_normal(key))
 
 
 @beartype(conf=GRID_CONF)
@@ -248,7 +250,7 @@ class LogNormalIIDProcess(_IIDProcess):
     def draw_shock(
         self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
     ) -> ScalarFloat:
-        return jnp.exp(params["mu"] + params["sigma"] * jax.random.normal(key=key))
+        return jnp.exp(params["mu"] + sealed(params["sigma"] * standard_normal(key)))
 
 
 @beartype(conf=GRID_CONF)
@@ -333,9 +335,9 @@ class NormalMixtureIIDProcess(_IIDProcess):
     ) -> ScalarFloat:
         key1, key2 = jax.random.split(key=key)
         component = jax.random.bernoulli(key1, params["p1"])
-        normal = jax.random.normal(key2)
+        normal = standard_normal(key2)
         return jnp.where(
             component,
-            params["mu1"] + params["sigma1"] * normal,
-            params["mu2"] + params["sigma2"] * normal,
+            params["mu1"] + sealed(params["sigma1"] * normal),
+            params["mu2"] + sealed(params["sigma2"] * normal),
         )

@@ -44,6 +44,8 @@ curvature, boundaries, or regions visited frequently in simulation.
 locations. They do not declare a budget kink or cliff to NBEGM; use the structured
 [budget declarations](../methods/nonconvex_budgets.md) for that.
 
+(fix-a-planner-axis-width)=
+
 ## Fix a planner axis width
 
 A solver declares its execution axes by name. `ExecutionConfig(axis_widths=...)` fixes
@@ -441,6 +443,80 @@ processes that only import the model.
 
 Runtime environment controls are listed in
 [Runtime, results, and persistence](../reference/runtime_and_results.md).
+
+## Choose knobs from measurements
+
+The knobs above change how the same program is executed. The measured examples below
+show why each one needs a measurement on your own model before it is set.
+
+### Wider is not always faster
+
+Under a budget, the width search admits the widest candidate that fits. That is a memory
+criterion, not a speed criterion, and a narrower width can run faster because smaller
+tiles materialise smaller intermediates:
+
+- Borella marriage-and-taxes model, simulation, one A40, fp32: `action_product` 16
+  instead of 64 was 12% faster cold and 18% faster warm, with a byte-identical panel.
+- The same model's solve: a `cell` width of 2048 instead of 8192 on the `couple_work`
+  regime was about 20% faster on a single-period replay but flat on the full solve,
+  inside the run-to-run spread.
+- ACA retirement model, 8×A40, fp32: halving or quartering the `cell` width of the
+  costliest regime left its single-period replay time unchanged and only cut compiler
+  temporary memory.
+
+So measure a width on a single-period replay, confirm it with one production pair, and
+then pin it with `ExecutionConfig(axis_widths=...)`, per regime where the regimes differ
+(see [Fix a planner axis width](#fix-a-planner-axis-width)).
+
+(which-states-can-be-sharded)=
+
+### Which states can be sharded
+
+- A discrete state qualifies when it is declared at model level.
+- A continuous state qualifies only on the continuous route: it is the only sharded
+  state, declared at model level, its grid is exactly a `LinSpacedGrid`, every regime
+  retains it and solves with ordinary hard-max `GridSearch`, and no regime is
+  collective, gated, or uses taste shocks.
+- A sharded state runs on the largest divisor of its extent that does not exceed the
+  device count; nothing is padded. A 24-point grid uses all 8 devices, a 10-point grid
+  only 5.
+- Several sharded states place one point per device, so the product of their extents
+  must fit the device count.
+
+Sharded states come first in the value array's axis order. Compare sharded and unsharded
+values by state name or through the simulated panel, never by axis position.
+
+At fp32, a sharded solve is a different compiled program and can round differently.
+Choices whose values are nearly tied can then flip, and a flip propagates through the
+rest of that subject's history. Measured on the Borella model, fp32, 5×A40 sharded
+against 1×A40: 17,084 of 20,000 simulated subjects' actions diverged at some point, with
+a median relative value gap of 1.7e-6 at the first divergence. Judge such a difference
+against an fp64 control before treating it as a defect or as noise.
+
+### Subject sharding for simulate-heavy models
+
+When simulation, not the solve, dominates a call, spread the simulated subjects over all
+devices with `ExecutionConfig(simulation_sharding="subjects")`; see
+[subject-parallel simulation](subject_parallel_simulation.md). Measured on the ACA
+retirement model, 8×A40, fp32, one pair: the warm call went from 1,686 s to 1,064 s and
+warm simulation from 801 s to 191 s, with the solve time and device peak unchanged and
+bitwise-equal panels.
+
+### How to measure
+
+Time three calls in one process and report them separately:
+
+- `cold`: the first call, including compilation;
+- `warm_same`: a repeat with the same parameters;
+- `warm_changed`: a repeat with changed parameters, which is what an estimation loop
+  pays.
+
+To iterate on one slow regime-period without a full backward induction, set
+`LCM_CAPTURE_PERIOD="<regime>@<period>"` and `LCM_CAPTURE_DIR` for one solve. That
+writes the period's kernel inputs, and `_lcm.solution.period_replay` then runs just that
+period under a candidate setting. Check that the replayed values match the in-context
+values bitwise before you trust its timings. `benchmarks/perf_loop.py` in the pylcm
+repository runs a cold, warm and changed-parameter protocol on a named example model.
 
 ## Benchmark the decision you face
 
