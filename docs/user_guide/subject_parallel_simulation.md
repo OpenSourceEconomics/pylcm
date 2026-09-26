@@ -8,12 +8,34 @@ transition laws, action ordering, seeds, or solution retention.
 The default `"legacy"` preserves solve-derived subject placement and the existing
 compiler-selected partitioning of the global subject tile loop.
 
+Use it when simulation, not the solve, dominates a call. Measured on the ACA retirement
+model, 8×A40, fp32, 226,848 subjects, one pair against `"legacy"`: warm simulation went
+from 801 s to 191 s and the warm call from 1,686 s to 1,064 s; the solve time and device
+peak were unchanged.
+
+## Same panel as the unsharded run
+
+With a fixed seed, parameters and initial conditions, `"subjects"` produces a panel that
+is bitwise equal to the `"legacy"` run's. Two mechanisms make that hold:
+
+- **Sealed shock draws.** Each shock draw rounds `sigma * standard_normal` exactly as
+  written, behind an optimization barrier, so the compiler cannot fold constants into
+  the draw differently in the sharded and unsharded programs.
+- **Padded last tile.** When the subjects do not fill the last tile of width `k`, the
+  tile is padded with copies of the last subject and the copies are sliced off
+  afterwards. Every subject therefore runs in the same compiled program, instead of the
+  remainder running in a second program that can round differently.
+
+The guarantee covers the simulation only. The solve is unchanged by this mode; a solve
+that shards states has its own fp32 caveats (see
+[Performance and memory tuning](tuning.md#which-states-can-be-sharded)).
+
 ## Whole cohorts and local tiles are different
 
 For 226,848 subjects and eight selected GPUs, a full-cohort simulation has exactly
 28,356 rows on each GPU. With an inner subject width of 2,048, each device evaluates 13
-complete local tiles and a final tile of 1,732 rows. Each device executes its own loop
-concurrently; Python does not run eight separate simulations.
+complete local tiles and a final tile of 1,732 rows, padded to 2,048. Each device
+executes its own loop concurrently; Python does not run eight separate simulations.
 
 This does not imply that all arrays shrink by eight. A device still needs its shared
 parameters and required continuation/policy reads. Published solution owners,
@@ -64,10 +86,10 @@ offload/assembly behavior. Requesting a DataFrame or writing outputs can still r
 host transfers.
 
 Padding and random-number construction stay outside this wrapper. A GPU is not assigned
-a new seed, and keys are not restarted using local row numbers. Padding continues to
-duplicate the existing last subject and is trimmed at the original public result
-boundary. An unaligned trimmed result is not guaranteed to retain equal physical output
-shards; divisible populations avoid that final resharding.
+a new seed, and keys are not restarted using local row numbers. Padding duplicates the
+existing last subject and is trimmed at the original public result boundary. An
+unaligned trimmed result is not guaranteed to retain equal physical output shards;
+divisible populations avoid that final resharding.
 
 ## Bounded support and validation
 
