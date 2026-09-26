@@ -563,8 +563,11 @@ class Model:
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
-        regimes, fixed_params = factor_fixed_components(
-            regimes=regimes, fixed_params=self.fixed_params
+        regimes, fixed_params, states, state_transitions = factor_fixed_components(
+            regimes=regimes,
+            fixed_params=self.fixed_params,
+            states=states,
+            state_transitions=state_transitions,
         )
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self._simulate_runtime_regimes = {}

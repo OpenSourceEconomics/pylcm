@@ -3,7 +3,8 @@
 A discrete state whose `MarkovTransition` declares `fixed_component` is rewritten,
 before model slots are merged, into three pieces of the ordinary vocabulary:
 
-- `<state>_fixed`, a `DiscreteGrid` over the groups, with `fixed_transition`;
+- `<state>_fixed`, a model-level `DiscreteGrid` over the groups with `fixed_transition`,
+  so it can be named in `ExecutionConfig.sharded_states`;
 - `<state>_rest`, a `DiscreteGrid` over the position within a group, whose Markov law
   is the user's law restricted to the current group;
 - a function `<state>` that recombines the two into the original code, so every other
@@ -26,7 +27,6 @@ import numpy as np
 
 from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
-from _lcm.identity_transition import _IdentityTransition
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import DiscreteState, FloatND, ScalarInt, UserParams
@@ -36,9 +36,16 @@ def factor_fixed_components(
     *,
     regimes: Mapping[str, Regime],
     fixed_params: UserParams,
-) -> tuple[Mapping[str, Regime], UserParams]:
-    """Return regimes and fixed params with every annotated fixed component factored."""
-    from lcm.transition import MarkovTransition  # noqa: PLC0415
+    states: Mapping[str, object],
+    state_transitions: Mapping[str, object],
+) -> tuple[
+    Mapping[str, Regime], UserParams, Mapping[str, object], Mapping[str, object]
+]:
+    """Return regimes, fixed params and model-level states and laws, factored."""
+    from lcm.transition import MarkovTransition, fixed_transition  # noqa: PLC0415
+
+    model_states = dict(states)
+    model_laws = dict(state_transitions)
 
     new_regimes = dict(regimes)
     new_fixed: dict[str, object] = dict(fixed_params)
@@ -51,14 +58,14 @@ def factor_fixed_components(
         }
         if not annotated:
             continue
-        states = dict(regime.states)
+        regime_states = dict(regime.states)
         laws = dict(transitions)
         functions = dict(regime.functions)
         regime_fixed = dict(
             cast("Mapping[str, object]", new_fixed.get(regime_name, {}))
         )
         for name, (func, fixed_component) in annotated.items():
-            grid = states.get(name)
+            grid = regime_states.get(name)
             if not isinstance(grid, DiscreteGrid):
                 msg = (
                     f"MarkovTransition.fixed_component on {name!r} in regime "
@@ -66,7 +73,9 @@ def factor_fixed_components(
                 )
                 raise RegimeInitializationError(msg)
             taken = sorted(
-                {f"{name}_rest", f"{name}_fixed"} & (states.keys() | functions.keys())
+                {f"{name}_rest", f"{name}_fixed"}
+                & (regime_states.keys() | functions.keys())
+                | {f"{name}_rest"} & model_states.keys()
             )
             if taken:
                 msg = (
@@ -80,14 +89,17 @@ def factor_fixed_components(
                 n_codes=len(grid.to_jax()),
             )
             n_rest, n_fixed = code_by_parts.shape
-            del states[name], laws[name]
-            states[f"{name}_rest"] = DiscreteGrid(
+            del regime_states[name], laws[name]
+            regime_states[f"{name}_rest"] = DiscreteGrid(
                 _labels(prefix=f"{name}_rest", n=n_rest)
             )
-            states[f"{name}_fixed"] = DiscreteGrid(
-                _labels(prefix=f"{name}_fixed", n=n_fixed)
+            _add_model_fixed_state(
+                model_states=model_states,
+                model_laws=model_laws,
+                name=f"{name}_fixed",
+                n_fixed=n_fixed,
+                law=fixed_transition(f"{name}_fixed"),
             )
-            laws[f"{name}_fixed"] = _IdentityTransition(state_name=f"{name}_fixed")
             laws[f"{name}_rest"] = MarkovTransition(
                 _restricted_law(
                     func=func,
@@ -101,15 +113,40 @@ def factor_fixed_components(
                 regime_fixed[f"next_{name}_rest"] = regime_fixed.pop(f"next_{name}")
         new_regimes[regime_name] = dataclasses.replace(
             regime,
-            states=MappingProxyType(states),
+            states=MappingProxyType(regime_states),
             state_transitions=MappingProxyType(laws),
             functions=MappingProxyType(functions),
         )
         if regime_name in new_fixed:
             new_fixed[regime_name] = MappingProxyType(regime_fixed)
-    return MappingProxyType(new_regimes), cast(
-        "UserParams", MappingProxyType(new_fixed)
+    return (
+        MappingProxyType(new_regimes),
+        cast("UserParams", MappingProxyType(new_fixed)),
+        MappingProxyType(model_states),
+        MappingProxyType(model_laws),
     )
+
+
+def _add_model_fixed_state(
+    *,
+    model_states: dict[str, object],
+    model_laws: dict[str, object],
+    name: str,
+    n_fixed: int,
+    law: object,
+) -> None:
+    """Declare the group state once at model level; regimes must agree on its size."""
+    existing = model_states.get(name)
+    if existing is None:
+        model_states[name] = DiscreteGrid(_labels(prefix=name, n=n_fixed))
+        model_laws[name] = law
+        return
+    if not isinstance(existing, DiscreteGrid) or len(existing.to_jax()) != n_fixed:
+        msg = (
+            f"Factoring a fixed component needs the model-level state {name!r} with "
+            f"{n_fixed} groups; the model already declares {name!r} differently."
+        )
+        raise RegimeInitializationError(msg)
 
 
 def _group_codes(

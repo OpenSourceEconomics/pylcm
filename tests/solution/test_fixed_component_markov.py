@@ -15,6 +15,7 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -100,7 +101,14 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 2, _RegimeId.alive, _RegimeId.dead)
 
 
-def _model(*, factored: bool, fixed_component: tuple[int, ...] = (0, 0, 1, 1)) -> Model:
+def _model(
+    *,
+    factored: bool,
+    fixed_component: tuple[int, ...] = (0, 0, 1, 1),
+    sharded: bool = False,
+) -> Model:
+    model_states: dict[str, DiscreteGrid] = {}
+    model_laws = {}
     if factored:
         states = {"kind_health": DiscreteGrid(_KindHealth)}
         laws = {
@@ -110,11 +118,10 @@ def _model(*, factored: bool, fixed_component: tuple[int, ...] = (0, 0, 1, 1)) -
         }
         functions = {}
     else:
-        states = {"health": DiscreteGrid(_Health), "kind": DiscreteGrid(_Kind)}
-        laws = {
-            "health": MarkovTransition(_next_health),
-            "kind": fixed_transition("kind"),
-        }
+        states = {"health": DiscreteGrid(_Health)}
+        laws = {"health": MarkovTransition(_next_health)}
+        model_states = {"kind": DiscreteGrid(_Kind)}
+        model_laws = {"kind": fixed_transition("kind")}
         functions = {"kind_health": _kind_health}
     return Model(
         regimes={
@@ -137,6 +144,13 @@ def _model(*, factored: bool, fixed_component: tuple[int, ...] = (0, 0, 1, 1)) -
         },
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
+        states=model_states,
+        state_transitions=model_laws,
+        execution_config=ExecutionConfig(
+            sharded_states=(("kind_health_fixed" if factored else "kind"),)
+            if sharded
+            else ()
+        ),
     )
 
 
@@ -180,3 +194,10 @@ def test_fixed_component_lowers_the_hand_split_gathers():
     """
     split = _gather_shapes(_model(factored=False))
     assert split <= _gather_shapes(_model(factored=True))
+
+
+def test_fixed_component_is_shardable_like_the_hand_split_model():
+    """Naming the fixed component in `sharded_states` solves as the sharded split."""
+    factored = _values(_model(factored=True, sharded=True))
+    split = _values(_model(factored=False, sharded=True))
+    assert all(np.array_equal(factored[key], split[key]) for key in split)
