@@ -176,13 +176,15 @@ across devices.
 
 `Model.simulate` takes initial conditions in the declared state's codes: pass a
 `kind_health` column in a DataFrame or a `"kind_health"` entry in a mapping, and it is
-split into the two parts.
+split into the two parts. The public validation and feasibility methods accept the same
+original observations. Labels are interpreted only on rows whose initial regime carries
+the state; irrelevant cells may remain blank.
 
-Measured on the Hosseini health model (lcm-zoo), full grid, fp32, one A40: annotating
-the wage and frailty fixed effects cut one period at age 93 from 52.0 s to 3.6 s, with
-values bitwise equal to a hand-split model in fp32 and fp64. For the full model with
-only the wage fixed effect split out by hand, the warm solve dropped from 3,510 s to 770
-s on one A40 and to 229 s with the fixed component sharded over three A40s.
+The annotation works in model-level, regime-level, per-target and `Phased` laws. Every
+carrier, including a terminal regime, uses the same code grouping. Each outgoing law
+must declare that grouping or use `fixed_transition`; inconsistent groupings and
+reset/entry laws without an established group are rejected. Generated `_rest` and
+`_fixed` names must be unused by user declarations.
 
 ## Distribute state work
 
