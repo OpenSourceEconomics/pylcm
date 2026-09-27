@@ -7,13 +7,15 @@ group axis and a within-group axis instead of one axis over every code.
 """
 
 import re
-from typing import cast
+from typing import Literal, cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.regime_building.fixed_components import _restricted_law
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -85,6 +87,26 @@ def _next_kind_health(kind_health: DiscreteState) -> FloatND:
     return jnp.where(jnp.arange(4) // 2 == kind, within[jnp.arange(4) % 2], 0.0)
 
 
+def _code_view(kind_health: DiscreteState) -> DiscreteState:
+    return kind_health
+
+
+def _nested_code_view(code_view: DiscreteState) -> DiscreteState:
+    return code_view
+
+
+def _next_kind_health_via_helper(code_view: DiscreteState) -> FloatND:
+    return _next_kind_health(code_view)
+
+
+def _next_kind_health_via_chain(nested_code_view: DiscreteState) -> FloatND:
+    return _next_kind_health(nested_code_view)
+
+
+def _constant_code_probabilities() -> FloatND:
+    return jnp.full(4, 0.25)
+
+
 def _next_health(*, kind: DiscreteState, health: DiscreteState) -> FloatND:
     return _HEALTH_LAW[kind, health]
 
@@ -112,6 +134,8 @@ def _model(
     factored: bool,
     fixed_component: tuple[int, ...] = (0, 0, 1, 1),
     sharded: bool = False,
+    law_dependency: Literal["direct", "helper", "chain"] = "direct",
+    enable_jit: bool = True,
 ) -> Model:
     model_states: dict[str, DiscreteGrid] = {}
     model_laws = {}
@@ -119,10 +143,19 @@ def _model(
         states = {"kind_health": DiscreteGrid(_KindHealth)}
         laws = {
             "kind_health": MarkovTransition(
-                _next_kind_health, fixed_component=fixed_component
+                {
+                    "direct": _next_kind_health,
+                    "helper": _next_kind_health_via_helper,
+                    "chain": _next_kind_health_via_chain,
+                }[law_dependency],
+                fixed_component=fixed_component,
             )
         }
         functions = {}
+        if law_dependency != "direct":
+            functions["code_view"] = _code_view
+        if law_dependency == "chain":
+            functions["nested_code_view"] = _nested_code_view
     else:
         states = {"health": DiscreteGrid(_Health)}
         laws = {"health": MarkovTransition(_next_health)}
@@ -150,6 +183,7 @@ def _model(
         },
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
+        enable_jit=enable_jit,
         states=model_states,
         state_transitions=model_laws,
         execution_config=ExecutionConfig(
@@ -232,8 +266,16 @@ def _initial(*, factored: bool, as_frame: bool) -> dict | pd.DataFrame:
     }
 
 
-def _simulated_value(*, factored: bool, as_frame: bool) -> np.ndarray:
-    model = _model(factored=factored)
+def _simulated_value(
+    *,
+    factored: bool,
+    as_frame: bool,
+    law_dependency: Literal["direct", "helper", "chain"] = "direct",
+    enable_jit: bool = True,
+) -> np.ndarray:
+    model = _model(
+        factored=factored, law_dependency=law_dependency, enable_jit=enable_jit
+    )
     params = {"discount_factor": 0.95}
     result = model.simulate(
         params=params,
@@ -757,3 +799,38 @@ def test_fixed_component_eager_sharding_with_a_state_absent_terminal() -> None:
     )
     initial = panel.loc[panel["period"] == 0].sort_values("subject_id")
     np.testing.assert_array_equal(initial["value"], [0.0, 1.0, 2.0, 3.0])
+
+
+@pytest.mark.parametrize("law_dependency", ["helper", "chain"])
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_fixed_component_law_preserves_indirect_state_dependencies(
+    *, law_dependency: Literal["helper", "chain"], enable_jit: bool
+) -> None:
+    """A law reading the state through helpers matches the hand-split values."""
+    observed = _simulated_value(
+        factored=True,
+        as_frame=False,
+        law_dependency=law_dependency,
+        enable_jit=enable_jit,
+    )
+    expected = _simulated_value(factored=False, as_frame=False, enable_jit=enable_jit)
+    np.testing.assert_array_equal(observed, expected)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_fixed_component_constant_law_preserves_single_group_probabilities(
+    *, enable_jit: bool
+) -> None:
+    """A constant law accepts the adapter's state without forwarding it."""
+    law = _restricted_law(
+        func=_constant_code_probabilities,
+        state_name="kind_health",
+        fixed_of_code=np.zeros(4, dtype=np.int32),
+        code_by_parts=np.arange(4, dtype=np.int32).reshape(4, 1),
+    )
+    if enable_jit:
+        law = jax.jit(law)
+    for code in range(4):
+        np.testing.assert_array_equal(
+            law(kind_health=jnp.asarray(code)), np.full(4, 0.25)
+        )
