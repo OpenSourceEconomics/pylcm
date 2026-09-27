@@ -465,6 +465,27 @@ def _restricted_law(
     parts_table = jnp.asarray(code_by_parts)
 
     signature = inspect.signature(func)
+    reads_state_directly = state_name in signature.parameters
+    if not reads_state_directly:
+        # The original law may reach the state through named DAG helpers, or not
+        # need it at all (one group). The restriction itself still needs the
+        # current group. Declare that dependency on this adapter, not on func.
+        parameters = list(signature.parameters.values())
+        position = next(
+            (
+                i
+                for i, parameter in enumerate(parameters)
+                if parameter.kind is inspect.Parameter.VAR_KEYWORD
+            ),
+            len(parameters),
+        )
+        parameters.insert(
+            position,
+            inspect.Parameter(
+                state_name, inspect.Parameter.KEYWORD_ONLY, annotation=DiscreteState
+            ),
+        )
+        signature = signature.replace(parameters=parameters)
     names = tuple(signature.parameters)
 
     # Generated per model, so the claw must not wrap it: model fingerprinting reads
@@ -472,17 +493,18 @@ def _restricted_law(
     @no_type_check
     def restricted(*args: object, **kwargs: object) -> FloatND:
         arguments = dict(zip(names, args, strict=False)) | kwargs
-        full = func(**arguments)
+        call_arguments = (
+            arguments
+            if reads_state_directly
+            else {key: value for key, value in arguments.items() if key != state_name}
+        )
+        full = func(**call_arguments)
         return full[..., parts_table[:, fixed_table[arguments[state_name]]]]
 
-    if state_name not in signature.parameters:
-        msg = (
-            f"MarkovTransition.fixed_component needs the law for {state_name!r} to "
-            f"read {state_name!r}, to know the current group."
-        )
-        raise RegimeInitializationError(msg)
     restricted.__signature__ = signature  # ty: ignore[unresolved-attribute]
     restricted.__annotations__ = dict(getattr(func, "__annotations__", {}))
+    if not reads_state_directly:
+        restricted.__annotations__[state_name] = DiscreteState
     restricted.__name__ = f"next_{state_name}_rest"
     return restricted
 
