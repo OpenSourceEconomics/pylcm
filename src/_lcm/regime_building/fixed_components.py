@@ -1,21 +1,8 @@
-"""Factor an annotated fixed component out of a product-coded Markov state.
+"""Lower fixed-component Markov states consistently across all model carriers.
 
-A discrete state whose `MarkovTransition` declares `fixed_component` is rewritten,
-before model slots are merged, into three pieces of the ordinary vocabulary:
-
-- `<state>_fixed`, a model-level `DiscreteGrid` over the groups with `fixed_transition`,
-  so it can be named in `ExecutionConfig.sharded_states`;
-- `<state>_rest`, a `DiscreteGrid` over the position within a group, whose Markov law
-  is the user's law restricted to the current group;
-- a function `<state>` that recombines the two into the original code, so every other
-  function, constraint and law keeps reading the code it was written against.
-
-Initial conditions keep naming `<state>`; `split_initial_conditions` turns that column
-into the two factored ones.
-
-The continuation then gathers next-period values over one group instead of every code:
-the identity law turns the group into an index, which is exactly what a hand-split
-model gets.
+Every original code is represented by its group and position within that group.
+The original state name remains a DAG function, while initial observations retain
+original codes or labels until the simulation input boundary.
 """
 
 import dataclasses
@@ -25,17 +12,25 @@ from dataclasses import dataclass, make_dataclass
 from types import MappingProxyType
 from typing import cast, no_type_check
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
 from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
+from _lcm.identity_transition import _IdentityTransition
+from _lcm.regime_building.broadcast import merge_model_slots
+from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
+from _lcm.typing import RegimeNamesToIds
 from lcm.exceptions import RegimeInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime
+from lcm.transition import MarkovTransition, fixed_transition
 from lcm.typing import (
     DiscreteState,
     FloatND,
+    IntND,
     ScalarInt,
     UserInitialConditions,
     UserParams,
@@ -44,19 +39,19 @@ from lcm.typing import (
 
 @dataclass(frozen=True)
 class FixedComponentSplit:
-    """How one factored state's code maps to its two factored states."""
+    """A code bijection and the original observation domains of its carriers."""
 
-    grid: DiscreteGrid
-    """The state's grid as declared, whose labels initial conditions use."""
+    grids: Mapping[str, DiscreteGrid]
+    """Original simulation grids by regime, before broadcast pruning."""
 
     rest_grid: DiscreteGrid
-    """Grid of `<state>_rest`, the position within a group."""
+    """Grid of positions within each group."""
 
     fixed_grid: DiscreteGrid
-    """Grid of `<state>_fixed`, the group."""
+    """Grid of groups."""
 
     rest_of_code: tuple[int, ...]
-    """Position within its group of each original code."""
+    """Position of each original code within its group."""
 
     fixed_of_code: tuple[int, ...]
     """Group of each original code."""
@@ -66,50 +61,77 @@ def split_initial_conditions(
     *,
     initial_conditions: UserInitialConditions | pd.DataFrame,
     splits: Mapping[str, FixedComponentSplit],
+    user_regimes: Mapping[str, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> UserInitialConditions | pd.DataFrame:
-    """Replace each factored state's column by its `_rest` and `_fixed` columns.
-
-    A DataFrame column holds the declared labels, and a mapping entry holds codes;
-    the factored columns keep the same representation.
-    """
+    """Split active observations on the host before canonical numeric uploads."""
     present = [name for name in splits if name in initial_conditions]
     if not present:
         return initial_conditions
+    is_frame = isinstance(initial_conditions, pd.DataFrame)
     if isinstance(initial_conditions, pd.DataFrame):
-        df = initial_conditions.copy()
-        for name in present:
-            split = splits[name]
-            code = df[name].map(
-                dict(zip(split.grid.categories, split.grid.codes, strict=True))
+        if "regime_name" not in initial_conditions:
+            raise ValueError("DataFrame must contain a 'regime_name' column.")
+        regime_column = initial_conditions["regime_name"].to_numpy()
+        invalid = set(regime_column) - regime_names_to_ids.keys()
+        if invalid:
+            raise ValueError(
+                f"Invalid regime names in 'regime_name' column: {sorted(invalid)}."
             )
-            if code.isna().any():
-                bad = sorted(set(df.loc[code.isna(), name].astype(str)))
-                msg = f"Invalid labels for {name!r}: {bad}."
-                raise ValueError(msg)
-            code = code.astype(int).to_numpy()
-            df[f"{name}_rest"] = np.asarray(split.rest_grid.categories)[
-                np.asarray(split.rest_of_code)[code]
-            ]
-            df[f"{name}_fixed"] = np.asarray(split.fixed_grid.categories)[
-                np.asarray(split.fixed_of_code)[code]
-            ]
-            df = df.drop(columns=name)
-        return df
-    out = dict(initial_conditions)
+        out = initial_conditions.copy()
+    else:
+        regime_column = np.asarray(initial_conditions["regime_id"])
+        out = dict(initial_conditions)
     for name in present:
         split = splits[name]
-        code = jnp.asarray(out.pop(name))
-        out[f"{name}_rest"] = jnp.asarray(split.rest_of_code)[code]
-        out[f"{name}_fixed"] = jnp.asarray(split.fixed_of_code)[code]
-    return MappingProxyType(out)
+        active = np.zeros(len(regime_column), dtype=bool)
+        code = np.full(len(regime_column), MISSING_CAT_CODE, dtype=np.int32)
+        for regime_name, grid in split.grids.items():
+            if f"{name}_rest" not in user_regimes[regime_name].states:
+                continue
+            rows = regime_column == (
+                regime_name if is_frame else int(regime_names_to_ids[regime_name])
+            )
+            active |= rows
+            code[rows] = _read_initial_codes(
+                initial_conditions=initial_conditions,
+                rows=rows,
+                name=name,
+                grid=grid,
+                regime_name=regime_name,
+            )
+        out.pop(name)
+        # A wholly state-absent cohort needs no factor columns; state assembly
+        # supplies missing-state sentinels for later entry into a carrier.
+        if not active.any():
+            continue
+        for suffix, table, grid in (
+            ("rest", split.rest_of_code, split.rest_grid),
+            ("fixed", split.fixed_of_code, split.fixed_grid),
+        ):
+            factor = (
+                np.full(len(code), None, dtype=object)
+                if is_frame
+                else np.full(len(code), MISSING_CAT_CODE, dtype=np.int32)
+            )
+            positions = np.asarray(table)[code[active]]
+            factor[active] = (
+                np.asarray(grid.categories)[positions] if is_frame else positions
+            )
+            out[f"{name}_{suffix}"] = factor
+    return out if isinstance(out, pd.DataFrame) else MappingProxyType(out)
 
 
-def factor_fixed_components(
+def factor_fixed_components(  # noqa: C901
     *,
     regimes: Mapping[str, Regime],
     fixed_params: UserParams,
     states: Mapping[str, object],
     state_transitions: Mapping[str, object],
+    functions: Mapping[str, object],
+    constraints: Mapping[str, object],
+    actions: Mapping[str, object],
+    derived_categoricals: Mapping[str, object],
 ) -> tuple[
     Mapping[str, Regime],
     UserParams,
@@ -117,130 +139,292 @@ def factor_fixed_components(
     Mapping[str, object],
     Mapping[str, FixedComponentSplit],
 ]:
-    """Return regimes, fixed params, model-level states and laws, and the splits."""
-    from lcm.transition import MarkovTransition, fixed_transition  # noqa: PLC0415
-
+    """Inventory declarations, then lower each grid and law in its original slot."""
+    groups = _collect_groups(regimes=regimes, state_transitions=state_transitions)
+    if not groups:
+        return regimes, fixed_params, states, state_transitions, MappingProxyType({})
+    # Resolve masks and the exactly-one-level rule without changing ownership.
+    merged, _ = merge_model_slots(
+        user_regimes=regimes,
+        model_slots={
+            "states": states,
+            "state_transitions": state_transitions,
+            "functions": functions,
+            "constraints": constraints,
+            "actions": actions,
+        },
+    )
+    occupied = (
+        set(states)
+        | set(state_transitions)
+        | set(functions)
+        | set(actions)
+        | set(constraints)
+        | set(derived_categoricals)
+    )
+    for regime in regimes.values():
+        occupied.update(
+            set(regime.states)
+            | set(regime.functions)
+            | set(regime.actions)
+            | set(regime.constraints)
+            | set(regime.derived_categoricals)
+            | set(regime.state_transitions)
+        )
+    splits, parts = _create_splits(regimes=merged, groups=groups, occupied=occupied)
     model_states = dict(states)
     model_laws = dict(state_transitions)
-    splits: dict[str, FixedComponentSplit] = {}
-
-    new_regimes = dict(regimes)
-    new_fixed: dict[str, object] = dict(fixed_params)
-    for regime_name, regime in regimes.items():
-        transitions = regime.state_transitions
-        annotated = {
-            name: (law.func, law.fixed_component)
-            for name, law in transitions.items()
-            if isinstance(law, MarkovTransition) and law.fixed_component is not None
-        }
-        if not annotated:
-            continue
-        regime_states = dict(regime.states)
-        laws = dict(transitions)
-        functions = dict(regime.functions)
-        regime_fixed = dict(
-            cast("Mapping[str, object]", new_fixed.get(regime_name, {}))
-        )
-        for name, (func, fixed_component) in annotated.items():
-            grid = regime_states.get(name)
-            if not isinstance(grid, DiscreteGrid):
-                msg = (
-                    f"MarkovTransition.fixed_component on {name!r} in regime "
-                    f"{regime_name!r} needs a DiscreteGrid state declared there."
-                )
-                raise RegimeInitializationError(msg)
-            taken = sorted(
-                {f"{name}_rest", f"{name}_fixed"}
-                & (regime_states.keys() | functions.keys())
-                | {f"{name}_rest"} & model_states.keys()
-            )
-            if taken:
-                msg = (
-                    f"Factoring the fixed component of {name!r} needs the names "
-                    f"{taken}, which regime {regime_name!r} already uses."
-                )
-                raise RegimeInitializationError(msg)
-            fixed_of_code, code_by_parts = _group_codes(
+    for name, split in splits.items():
+        if name in model_states:
+            del model_states[name]
+            model_states[f"{name}_rest"] = split.rest_grid
+        model_states[f"{name}_fixed"] = split.fixed_grid
+        if name in model_laws:
+            model_laws[f"{name}_rest"] = _lower_law(
+                law=model_laws.pop(name),
                 name=name,
-                fixed_component=fixed_component,
-                n_codes=len(grid.to_jax()),
+                split=split,
+                code_by_parts=parts[name],
             )
-            n_rest, n_fixed = code_by_parts.shape
-            del regime_states[name], laws[name]
-            rest_grid = DiscreteGrid(_labels(prefix=f"{name}_rest", n=n_rest))
-            regime_states[f"{name}_rest"] = rest_grid
-            _add_model_fixed_state(
-                model_states=model_states,
-                model_laws=model_laws,
-                name=f"{name}_fixed",
-                n_fixed=n_fixed,
-                law=fixed_transition(f"{name}_fixed"),
-            )
-            split = FixedComponentSplit(
-                grid=grid,
-                rest_grid=rest_grid,
-                fixed_grid=cast("DiscreteGrid", model_states[f"{name}_fixed"]),
-                rest_of_code=tuple(
-                    int(np.flatnonzero(code_by_parts[:, group] == code)[0])
-                    for code, group in enumerate(fixed_of_code)
-                ),
-                fixed_of_code=tuple(int(g) for g in fixed_of_code),
-            )
-            previous = splits.setdefault(name, split)
-            if previous.fixed_of_code != split.fixed_of_code:
-                msg = (
-                    f"MarkovTransition.fixed_component for {name!r} differs between "
-                    "regimes; one state needs one grouping."
+        model_laws[f"{name}_fixed"] = fixed_transition(f"{name}_fixed")
+    new_regimes: dict[str, Regime] = {}
+    for regime_name, regime in regimes.items():
+        regime_states = dict(regime.states)
+        laws: dict[str, object] = dict(regime.state_transitions)
+        regime_functions = dict(regime.functions)
+        for name, split in splits.items():
+            if name in regime_states:
+                grid = regime_states.pop(name)
+                regime_states[f"{name}_rest"] = (
+                    None if grid is None else split.rest_grid
                 )
-                raise RegimeInitializationError(msg)
-            laws[f"{name}_rest"] = MarkovTransition(
-                _restricted_law(
-                    func=func,
-                    state_name=name,
-                    fixed_of_code=fixed_of_code,
-                    code_by_parts=code_by_parts,
+            if name in laws:
+                laws[f"{name}_rest"] = _lower_law(
+                    law=laws.pop(name),
+                    name=name,
+                    split=split,
+                    code_by_parts=parts[name],
                 )
-            )
-            functions[name] = _recombine(name=name, code_by_parts=code_by_parts)
-            if f"next_{name}" in regime_fixed:
-                regime_fixed[f"next_{name}_rest"] = regime_fixed.pop(f"next_{name}")
+            if regime_name in split.grids:
+                regime_functions[name] = _recombine(
+                    name=name, code_by_parts=parts[name]
+                )
         new_regimes[regime_name] = dataclasses.replace(
             regime,
-            states=MappingProxyType(regime_states),
-            state_transitions=MappingProxyType(laws),
-            functions=MappingProxyType(functions),
+            states=regime_states,
+            state_transitions=laws,
+            functions=regime_functions,
         )
-        if regime_name in new_fixed:
-            new_fixed[regime_name] = MappingProxyType(regime_fixed)
     return (
         MappingProxyType(new_regimes),
-        cast("UserParams", MappingProxyType(new_fixed)),
+        rename_split_params(params=fixed_params, splits=splits),
         MappingProxyType(model_states),
         MappingProxyType(model_laws),
         MappingProxyType(splits),
     )
 
 
-def _add_model_fixed_state(
+def rename_split_params(
+    *, params: UserParams, splits: Mapping[str, FixedComponentSplit]
+) -> UserParams:
+    """Retain original transition parameter names at the public boundary."""
+    if not splits:
+        return params
+    regime_names = {regime for split in splits.values() for regime in split.grids}
+    renamed: dict[str, object] = dict(params)
+    for regime_name in regime_names & params.keys():
+        block = params[regime_name]
+        if not isinstance(block, Mapping):
+            continue
+        regime_params = _rename_law_params(params=block, splits=splits)
+        for target in regime_names & block.keys():
+            target_params = block[target]
+            if isinstance(target_params, Mapping):
+                regime_params[target] = _rename_law_params(
+                    params=target_params, splits=splits
+                )
+        renamed[regime_name] = MappingProxyType(regime_params)
+    return cast("UserParams", MappingProxyType(renamed))
+
+
+def _rename_law_params(
+    *, params: Mapping[str, object], splits: Mapping[str, FixedComponentSplit]
+) -> dict[str, object]:
+    """Rename function slots without inspecting their parameter payloads."""
+    renamed = dict(params)
+    for name in splits:
+        key, replacement = f"next_{name}", f"next_{name}_rest"
+        if key not in params or not isinstance(params[key], Mapping):
+            continue
+        if replacement in params:
+            raise ValueError(f"Parameters declare both {key!r} and {replacement!r}.")
+        renamed[replacement] = renamed.pop(key)
+    return renamed
+
+
+def _collect_groups(
+    *, regimes: Mapping[str, Regime], state_transitions: Mapping[str, object]
+) -> dict[str, tuple[int, ...]]:
+    """Require one declared grouping across all law leaves."""
+    groups: dict[str, tuple[int, ...]] = {}
+    for laws in (
+        state_transitions,
+        *(regime.state_transitions for regime in regimes.values()),
+    ):
+        for name, law in laws.items():
+            for leaf in _law_leaves(law):
+                if (
+                    isinstance(leaf, MarkovTransition)
+                    and leaf.fixed_component is not None
+                ):
+                    previous = groups.setdefault(name, leaf.fixed_component)
+                    if previous != leaf.fixed_component:
+                        raise RegimeInitializationError(
+                            f"MarkovTransition.fixed_component for {name!r} differs "
+                            "between declarations; one state needs one grouping."
+                        )
+    return groups
+
+
+def _create_splits(
     *,
-    model_states: dict[str, object],
-    model_laws: dict[str, object],
-    name: str,
-    n_fixed: int,
-    law: object,
-) -> None:
-    """Declare the group state once at model level; regimes must agree on its size."""
-    existing = model_states.get(name)
-    if existing is None:
-        model_states[name] = DiscreteGrid(_labels(prefix=name, n=n_fixed))
-        model_laws[name] = law
-        return
-    if not isinstance(existing, DiscreteGrid) or len(existing.to_jax()) != n_fixed:
-        msg = (
-            f"Factoring a fixed component needs the model-level state {name!r} with "
-            f"{n_fixed} groups; the model already declares {name!r} differently."
+    regimes: Mapping[str, Regime],
+    groups: Mapping[str, tuple[int, ...]],
+    occupied: set[str],
+) -> tuple[dict[str, FixedComponentSplit], dict[str, np.ndarray]]:
+    """Resolve every original carrier before replacing any grid or law."""
+    splits: dict[str, FixedComponentSplit] = {}
+    parts: dict[str, np.ndarray] = {}
+    for name, grouping in groups.items():
+        taken = sorted({f"{name}_rest", f"{name}_fixed"} & occupied)
+        if taken:
+            raise RegimeInitializationError(
+                f"Factoring the fixed component of {name!r} needs the names "
+                f"{taken}, which the model or a regime already uses."
+            )
+        grids: dict[str, DiscreteGrid] = {}
+        for regime_name, regime in regimes.items():
+            if name not in regime.states:
+                if name in regime.state_transitions:
+                    raise RegimeInitializationError(
+                        f"Fixed component of {name!r} cannot preserve an ingress/reset "
+                        f"from regime {regime_name!r} without that state."
+                    )
+                continue
+            grid = regime.states[name]
+            if not isinstance(grid, DiscreteGrid):
+                raise RegimeInitializationError(
+                    f"MarkovTransition.fixed_component on {name!r} in regime "
+                    f"{regime_name!r} needs a DiscreteGrid state."
+                )
+            _, table = _group_codes(
+                name=name, fixed_component=grouping, n_codes=len(grid.codes)
+            )
+            grids[regime_name] = grid
+            parts[name] = table
+        if not grids:
+            raise RegimeInitializationError(
+                f"Fixed component of {name!r} has no state carrier."
+            )
+        table = parts[name]
+        rest_of_code = np.empty(len(grouping), dtype=np.int32)
+        for rest, codes in enumerate(table):
+            rest_of_code[codes] = rest
+        splits[name] = FixedComponentSplit(
+            grids=MappingProxyType(grids),
+            rest_grid=DiscreteGrid(_labels(prefix=f"{name}_rest", n=table.shape[0])),
+            fixed_grid=DiscreteGrid(_labels(prefix=f"{name}_fixed", n=table.shape[1])),
+            rest_of_code=tuple(int(code) for code in rest_of_code),
+            fixed_of_code=grouping,
         )
-        raise RegimeInitializationError(msg)
+    return splits, parts
+
+
+def _read_initial_codes(
+    *,
+    initial_conditions: UserInitialConditions | pd.DataFrame,
+    rows: np.ndarray,
+    name: str,
+    grid: DiscreteGrid,
+    regime_name: str,
+) -> np.ndarray:
+    """Read only meaningful observations using their original regime's domain."""
+    if not rows.any():
+        return np.empty(0, dtype=np.int32)
+    if isinstance(initial_conditions, pd.DataFrame):
+        values = initial_conditions.loc[rows, name]
+        mapped = values.map(dict(zip(grid.categories, grid.codes, strict=True)))
+        if mapped.isna().any():
+            bad = sorted(set(values.loc[mapped.isna()].astype(str)))
+            raise ValueError(
+                f"Invalid labels for {name!r} in regime {regime_name!r}: {bad}."
+            )
+        return mapped.to_numpy(dtype=np.int32)
+    values = np.asarray(initial_conditions[name])[rows]
+    if not np.all(
+        np.isfinite(values)
+        & (values >= 0)
+        & (values < len(grid.codes))
+        & (values == np.floor(values))
+    ):
+        raise ValueError(
+            f"Invalid categorical codes for {name!r} in regime {regime_name!r}."
+        )
+    return values.astype(np.int32)
+
+
+def _law_leaves(law: object) -> tuple[object, ...]:
+    """Flatten declaration containers without changing phase or target ownership."""
+    if isinstance(law, Phased):
+        return _law_leaves(law.solve) + _law_leaves(law.simulate)
+    if isinstance(law, Mapping):
+        return tuple(leaf for value in law.values() for leaf in _law_leaves(value))
+    return (law,)
+
+
+def _lower_law(
+    *, law: object, name: str, split: FixedComponentSplit, code_by_parts: np.ndarray
+) -> object:
+    """Restrict every supported leaf, preserving its phase and target containers."""
+    if isinstance(law, Phased):
+        return Phased(
+            solve=_lower_law(
+                law=law.solve, name=name, split=split, code_by_parts=code_by_parts
+            ),
+            simulate=_lower_law(
+                law=law.simulate, name=name, split=split, code_by_parts=code_by_parts
+            ),
+        )
+    if isinstance(law, Mapping):
+        return MappingProxyType(
+            {
+                target: _lower_law(
+                    law=leaf, name=name, split=split, code_by_parts=code_by_parts
+                )
+                for target, leaf in law.items()
+            }
+        )
+    if law is None:
+        return None
+    if isinstance(law, _IdentityTransition):
+        return fixed_transition(f"{name}_rest")
+    if (
+        not isinstance(law, MarkovTransition)
+        or law.fixed_component != split.fixed_of_code
+    ):
+        raise RegimeInitializationError(
+            f"Every law of {name!r} must declare the same fixed_component "
+            "or use fixed_transition; an unannotated/reset law cannot "
+            "establish group preservation."
+        )
+    return MarkovTransition(
+        _restricted_law(
+            func=law.func,
+            state_name=name,
+            fixed_of_code=np.asarray(split.fixed_of_code),
+            code_by_parts=code_by_parts,
+        )
+    )
 
 
 def _group_codes(
@@ -305,12 +489,14 @@ def _restricted_law(
 
 def _recombine(*, name: str, code_by_parts: np.ndarray) -> Callable[..., DiscreteState]:
     """A DAG function named after the state, returning the original code."""
-    table = jnp.asarray(code_by_parts)
+    table = jnp.asarray(code_by_parts).reshape(-1)
+    n_fixed = code_by_parts.shape[1]
     rest, fixed = f"{name}_rest", f"{name}_fixed"
 
     @no_type_check
     def recombine(**kwargs: DiscreteState) -> DiscreteState:
-        return table[kwargs[rest], kwargs[fixed]]
+        index = kwargs[rest] * n_fixed + kwargs[fixed]
+        return _gather_codes(table=table, index=index)
 
     recombine.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
         [
@@ -330,6 +516,14 @@ def _recombine(*, name: str, code_by_parts: np.ndarray) -> Callable[..., Discret
     }
     recombine.__name__ = name
     return recombine
+
+
+def _gather_codes(*, table: IntND, index: IntND) -> IntND:
+    """Read code-table entries with the index's explicit device layout."""
+    # A vector index preserves the explicit gather layout through mapped kernels.
+    indices = jnp.expand_dims(index, axis=-1)
+    gathered = table.at[indices].get(out_sharding=jax.typeof(indices).sharding)  # noqa: PD008
+    return jnp.squeeze(gathered, axis=-1)
 
 
 def _labels(*, prefix: str, n: int) -> type:
