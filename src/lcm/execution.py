@@ -53,16 +53,11 @@ class WidthSearchPolicy:
     hints: Mapping[RegimeName, Mapping[str, int]] = MappingProxyType({})
     """Regime name to a width mapping tried first; an incompatible hint is skipped."""
     carry_across_periods: bool = False
-    """Under `EXHAUSTIVE`, walk the ranked frontier once per group of cores.
+    """Reserved compatibility flag; it has no effect on width selection.
 
-    A group is the cores of one regime and core name whose ranked frontiers
-    coincide, one per period. One core of the group walks the frontier; every other
-    core starts at the rank it was admitted at and compiles at most the next-wider
-    rank as a local check, walking the whole frontier only when the carried rank is
-    refused or the check is admitted. Every still-wider rank is then taken as
-    refused without being compiled, so the selected width equals the walk's
-    whenever memory refuses every rank above a refused neighbour. `BOUNDED` ignores
-    it.
+    Exhaustive search checks each core's ranked candidates independently and
+    selects its first admitted rank. Another period's refusal does not exclude
+    a candidate for this period. Compilation still reuses identical lowering keys.
     """
 
     def __post_init__(self) -> None:

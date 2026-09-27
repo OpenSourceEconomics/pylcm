@@ -178,13 +178,15 @@ across devices.
 
 `Model.simulate` takes initial conditions in the declared state's codes: pass a
 `kind_health` column in a DataFrame or a `"kind_health"` entry in a mapping, and it is
-split into the two parts.
+split into the two parts. The public validation and feasibility methods accept the same
+original observations. Labels are interpreted only on rows whose initial regime carries
+the state; irrelevant cells may remain blank.
 
-Measured on the Hosseini health model (lcm-zoo), full grid, fp32, one A40: annotating
-the wage and frailty fixed effects cut one period at age 93 from 52.0 s to 3.6 s, with
-values bitwise equal to a hand-split model in fp32 and fp64. For the full model with
-only the wage fixed effect split out by hand, the warm solve dropped from 3,510 s to 770
-s on one A40 and to 229 s with the fixed component sharded over three A40s.
+The annotation works in model-level, regime-level, per-target and `Phased` laws. Every
+carrier, including a terminal regime, uses the same code grouping. Each outgoing law
+must declare that grouping or use `fixed_transition`; inconsistent groupings and
+reset/entry laws without an established group are rejected. Generated `_rest` and
+`_fixed` names must be unused by user declarations.
 
 ## Distribute state work
 
@@ -300,43 +302,18 @@ separates them, so a refusal is never ambiguous about which ceiling it was measu
 against. Field-by-field contracts are in
 [Runtime, results, and persistence](../reference/runtime_and_results.md).
 
-### Reuse a width across periods
+### Exhaustive width selection across periods
 
-Under a budget, the default exhaustive width search walks each core's ranked width
-frontier widest-first and compiles every candidate until one is admitted. In a long
-lifecycle model that walk repeats for every period, although adjacent periods of one
-regime usually select the same width. `carry_across_periods` walks the frontier once per
-group of periods that share it:
+Under a budget, exhaustive search checks each core's ranked width frontier from the
+widest candidate and selects the first admitted rank. Admission uses the current
+period's residency and each required executable variant's compiler reservation. Memory
+need not be monotone in frontier rank: a refused neighbour does not prove that all
+earlier candidates also refuse.
 
-```python
-from lcm import ExecutionConfig
-from lcm.execution import WidthSearchPolicy
-
-execution_config = ExecutionConfig(
-    device_memory_bytes=per_device_budget_bytes,
-    width_search=WidthSearchPolicy(carry_across_periods=True),
-)
-```
-
-The first period of a group walks the frontier. Each later period starts at the rank the
-first period was admitted at and compiles at most the next-wider rank as a check. It
-falls back to the full walk when the carried rank is refused or the wider check is
-admitted. The selected widths are the ones the full walk would select; only the number
-of candidate compiles drops.
-
-Turn it on when a budgeted cold solve spends much of its time compiling refused width
-candidates. It does not help:
-
-- without `device_memory_bytes` or under the bounded search, where it has no effect;
-- on warm calls, which reuse compiled programs;
-- when the search already runs its compile waves in parallel across groups, so the
-  refused compiles are not on the critical path;
-- where adjacent periods select different widths: each boundary costs one extra compile
-  for the wider check.
-
-Measured on the Borella marriage-and-taxes model (lcm-zoo), one A40, fp32, with a
-device-memory budget: the cold solve went from 3,167 s and 1,332 compiles to 1,159 s and
-562 compiles, with the same widths in every regime and period and bitwise-equal values.
+`WidthSearchPolicy(carry_across_periods=True)` is accepted for compatibility and has no
+effect. Every period follows the full ranked walk; independent cores share compilation
+waves, and identical lowering keys still reuse compiled programs. There is no
+cross-period candidate-skipping or compilation-saving guarantee.
 
 ## Batch forward simulation
 
