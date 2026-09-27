@@ -8,10 +8,17 @@ transition laws, action ordering, seeds, or solution retention.
 The default `"legacy"` preserves solve-derived subject placement and the existing
 compiler-selected partitioning of the global subject tile loop.
 
-Use it when simulation, not the solve, dominates a call. Measured on the ACA retirement
-model, 8×A40, fp32, 226,848 subjects, one pair against `"legacy"`: warm simulation went
-from 801 s to 191 s and the warm call from 1,686 s to 1,064 s; the solve time and device
-peak were unchanged.
+On the ACA retirement model at runtime `e51649c6`, two pairs on eight A40s (fp32,
+226,848 subjects) measured warm simulation at 825–836 s in `"legacy"` and 187 s in
+`"subjects"`. Warm public calls measured 1,591–1,608 s and 953–955 s, respectively.
+These compare modes at one runtime revision; they do not establish resource equivalence
+between revisions. Surrounding output/harness time is excluded.
+
+All six saved cold, warm-same and warm-changed panel pairs (9,017,448 rows and 21
+columns each) matched exactly in schema, values and floating storage bytes. The
+comparator rejected one-ULP and signed-zero corruption in both precisions. Saved array
+metadata records eight subject shards of 28,356 rows. These receipts are scoped to that
+workload and stack; target-hardware acceptance remains required.
 
 ## Same panel as the unsharded run
 
