@@ -34,11 +34,13 @@ def _legacy_finite_replay(**arguments):
 def test_finite_replay_dispatches_reconstruction_and_ranking_programs(monkeypatch):
     """Observe actual public forward dispatch, not just a solver's metadata."""
     observed = []
+    dispatched = []
     original = SimulationRuntime.dispatch
 
     # keyword-only-exempt: library-callback=SimulationRuntime.dispatch
     def record(self, *, program, arguments, period, n_subjects):
         observed.append((program.name, period))
+        dispatched.append(program)
         return original(
             self,
             program=program,
@@ -69,7 +71,18 @@ def test_finite_replay_dispatches_reconstruction_and_ranking_programs(monkeypatc
     assert np.isfinite(rows["value"]).all()
     assert ("simulate_policy_prepare", 0) in observed
     assert ("simulate_policy_rank", 0) in observed
-    assert ("simulate_decision", 0) not in observed
+    # The subjects start in `alive`, whose finite replay runs no Cartesian
+    # decision; the terminal `dead` regime is also solved at period 0 and runs
+    # its own.
+    dead_decisions = {
+        id(program)
+        for program in model._regimes["dead"].simulation.programs.decision.values()
+    }
+    assert all(
+        id(program) in dead_decisions
+        for program in dispatched
+        if program.name == "simulate_decision"
+    )
 
 
 @pytest.mark.parametrize("discrete", [False, True])
