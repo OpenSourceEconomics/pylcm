@@ -50,7 +50,7 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=Choose(_finish_regime, targets=("done",)),
+                regime_transitions=Choose(func=_finish_regime, targets=("done",)),
                 functions={"utility": _flag_utility},
             ),
             "done": Regime(

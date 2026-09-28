@@ -63,8 +63,8 @@ def _retirement_death_prob(*, age: float, final_age_alive: float) -> FloatND:
 # indicator probabilities) narrows reachability so the bare wealth law never
 # has to cover the skill-carrying working regime.
 RETIREMENT_TRANSITION = {
-    "retirement": MarkovTransition(_retirement_stay_prob),
-    "dead": MarkovTransition(_retirement_death_prob),
+    "retirement": MarkovTransition(func=_retirement_stay_prob),
+    "dead": MarkovTransition(func=_retirement_death_prob),
 }
 
 
@@ -300,8 +300,8 @@ def test_nan_regime_transition_prob_surfaces_as_error():
                 regime_transitions=until_exit(
                     last_age,
                     law={
-                        "retirement": MarkovTransition(_stay_prob_from_param),
-                        "dead": MarkovTransition(_death_prob_from_param),
+                        "retirement": MarkovTransition(func=_stay_prob_from_param),
+                        "dead": MarkovTransition(func=_death_prob_from_param),
                     },
                     exits=("dead",),
                 ),

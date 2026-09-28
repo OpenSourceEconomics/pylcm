@@ -402,7 +402,7 @@ def test_regime_with_fixed_states_only():
         constraints={"borrowing": fixed_borrowing},
         regime_transitions=until_exit(
             final_age + 1,
-            law=Choose(fixed_next_regime, targets=("working_life", "dead")),
+            law=Choose(func=fixed_next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         functions={"utility": fixed_utility},

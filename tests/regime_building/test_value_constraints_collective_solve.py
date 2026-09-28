@@ -149,7 +149,11 @@ def _make_ir_regimes(
 ) -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"single_f_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {
+                    "single_f_terminal": MarkovTransition(func=_prob_one)
+                }
+            }
         ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -162,13 +166,15 @@ def _make_ir_regimes(
         functions={"utility": _utility_zero},
     )
     single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
         functions={"utility": _utility_single_m},
     )
     single_m_terminal = single_f_terminal.replace()
     married = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"married_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -446,7 +452,11 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
 
     single_f = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"single_f_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {
+                    "single_f_terminal": MarkovTransition(func=_prob_one)
+                }
+            }
         ),
         states={"wage": single_grid},
         state_transitions={"wage": fixed_transition("wage")},
@@ -460,7 +470,9 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     )
     married = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"married_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         states={"wage": married_grid},
         state_transitions={"wage": fixed_transition("wage")},
@@ -602,7 +614,9 @@ def test_on_path_minus_inf_value_is_not_dissolution():
 
     couple = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"couple_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"couple_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -684,7 +698,9 @@ def test_on_path_minus_inf_value_is_not_dissolution():
 def _minimal_collective_kwargs() -> dict:
     return {
         "regime_transitions": ByAge(
-            {AgeRange(stop=1): {"married_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         "states": {"wage": _WAGE_GRID},
         "state_transitions": {"wage": fixed_transition("wage")},
@@ -813,7 +829,9 @@ def test_same_period_ref_cycle_is_rejected_at_build():
     ) -> Regime:
         return Regime(
             regime_transitions=ByAge(
-                {AgeRange(stop=1): {terminal_name: MarkovTransition(_prob_one)}}
+                cases={
+                    AgeRange(stop=1): {terminal_name: MarkovTransition(func=_prob_one)}
+                }
             ),
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": fixed_transition("wage")},
@@ -887,7 +905,11 @@ def test_same_period_ref_to_collective_regime_requires_stakeholder():
     # collective regime without a stakeholder.
     couple_b = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"married_terminal_b": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {
+                    "married_terminal_b": MarkovTransition(func=_prob_one)
+                }
+            }
         ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -952,7 +974,9 @@ def test_same_period_ref_requires_reference_covered_in_same_periods():
     # Married is solved in periods 0 AND 1, while single_f stays period-0 only.
     regimes["married"] = regimes["married"].replace(
         regime_transitions=ByAge(
-            {AgeRange(stop=2): {"married_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=2): {"married_terminal": MarkovTransition(func=_prob_one)}
+            }
         )
     )
     ages = AgeGrid(start=0, stop=3, step="Y")

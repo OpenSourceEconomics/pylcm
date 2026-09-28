@@ -150,7 +150,9 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     retirement = regime_type(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(next_regime_from_retirement, targets=("dead", "retirement")),
+            law=Choose(
+                func=next_regime_from_retirement, targets=("dead", "retirement")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},

@@ -124,7 +124,11 @@ def _project_shock(wage: FloatND) -> FloatND:
 def _make_shock_ref_regimes() -> dict[str, Regime]:
     shock_ref = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"shock_ref_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {
+                    "shock_ref_terminal": MarkovTransition(func=_prob_one)
+                }
+            }
         ),
         states={"shock": _SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -247,7 +251,9 @@ def _make_regimes() -> dict[str, Regime]:
     regimes = _make_shock_ref_regimes()
     married = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"married_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},

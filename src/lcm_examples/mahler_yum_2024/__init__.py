@@ -565,31 +565,31 @@ def savings_constraint(
     return net_income + wealth * gross_interest_rate >= saving
 
 
-_WORKING_TO_DEAD = MarkovTransition(working_to_dead_probability)
-_RETIREMENT_TO_DEAD = MarkovTransition(retirement_to_dead_probability)
+_WORKING_TO_DEAD = MarkovTransition(func=working_to_dead_probability)
+_RETIREMENT_TO_DEAD = MarkovTransition(func=retirement_to_dead_probability)
 
 # Work until the age before retirement, then retire or die.
 WORKING_TRANSITIONS = ByAge.until(
-    retirement_age,
+    stop_age_exclusive=retirement_age,
     law={
-        "working": MarkovTransition(working_to_working_probability),
+        "working": MarkovTransition(func=working_to_working_probability),
         "dead": _WORKING_TO_DEAD,
     },
     then={
-        "retirement": MarkovTransition(working_to_retirement_probability),
+        "retirement": MarkovTransition(func=working_to_retirement_probability),
         "dead": _WORKING_TO_DEAD,
     },
 )
 
 # Retire from `retirement_age`; certain death before the last age.
 RETIREMENT_TRANSITIONS = ByAge.until(
-    ages.exact_values[-1],
+    stop_age_exclusive=ages.exact_values[-1],
     law={
-        "retirement": MarkovTransition(retirement_to_retirement_probability),
+        "retirement": MarkovTransition(func=retirement_to_retirement_probability),
         "dead": _RETIREMENT_TO_DEAD,
     },
     then={"dead": _RETIREMENT_TO_DEAD},
-    start=retirement_age,
+    start_age_inclusive=retirement_age,
 )
 
 
@@ -608,7 +608,7 @@ WORKING_REGIME = Regime(
     },
     state_transitions={
         "wealth": next_wealth,
-        "health": MarkovTransition(next_health),
+        "health": MarkovTransition(func=next_health),
         "lagged_effort": next_lagged_effort,
         "education": fixed_transition("education"),
         "productivity": fixed_transition("productivity"),
@@ -660,7 +660,7 @@ RETIREMENT_REGIME = Regime(
     },
     state_transitions={
         "wealth": next_wealth,
-        "health": MarkovTransition(next_health),
+        "health": MarkovTransition(func=next_health),
         "lagged_effort": next_lagged_effort,
         "education": fixed_transition("education"),
         "health_type": fixed_transition("health_type"),
@@ -728,6 +728,7 @@ def create_model(
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "working"},
         fixed_params={
             "effort_grid": effort_grid,
             "productivity_type_multiplier": productivity_type_multiplier,

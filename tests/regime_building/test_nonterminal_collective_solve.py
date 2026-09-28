@@ -109,7 +109,11 @@ _EXPECTED_V_PERIOD_0 = np.array([[46.0, 92.0], [78.0, 156.0]])
 def _make_couple_regimes() -> dict[str, Regime]:
     couple = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_next_regime, targets=("couple_terminal",))}
+            cases={
+                AgeRange(stop=1): Choose(
+                    func=_next_regime, targets=("couple_terminal",)
+                )
+            }
         ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -254,11 +258,15 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     """
     couple = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_next_regime, targets=("couple_terminal",))}
+            cases={
+                AgeRange(stop=1): Choose(
+                    func=_next_regime, targets=("couple_terminal",)
+                )
+            }
         ),
         states={"mood": DiscreteGrid(category_class=Mood), "wage": _WAGE_GRID},
         state_transitions={
-            "mood": MarkovTransition(_next_mood),
+            "mood": MarkovTransition(func=_next_mood),
             "wage": _next_wage,
         },
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -388,7 +396,11 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
 
     couple = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_next_regime, targets=("couple_terminal",))}
+            cases={
+                AgeRange(stop=1): Choose(
+                    func=_next_regime, targets=("couple_terminal",)
+                )
+            }
         ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},

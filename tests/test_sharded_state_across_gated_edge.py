@@ -198,7 +198,7 @@ def build_model(
     )
     leaving = (
         ValueDependentTransition(
-            probability=MarkovTransition(_half_before_age_two),
+            probability=MarkovTransition(func=_half_before_age_two),
             gate=_gate_open_above_the_middle,
             routes={
                 "only": StakeholderRoute(
@@ -210,14 +210,14 @@ def build_model(
             },
         )
         if gated
-        else MarkovTransition(_half_before_age_two)
+        else MarkovTransition(func=_half_before_age_two)
     )
     solo = Regime(
         regime_transitions=until_exit(
             3,
             law={
-                "solo": MarkovTransition(_all_before_age_two),
-                "dead": MarkovTransition(_none_before_age_two),
+                "solo": MarkovTransition(func=_all_before_age_two),
+                "dead": MarkovTransition(func=_none_before_age_two),
             },
             exits=("dead",),
         ),
@@ -233,9 +233,9 @@ def build_model(
         regime_transitions=until_exit(
             2,
             law={
-                "pair": MarkovTransition(_half_before_age_two),
+                "pair": MarkovTransition(func=_half_before_age_two),
                 "mate": leaving,
-                "dead": MarkovTransition(_none_before_age_two),
+                "dead": MarkovTransition(func=_none_before_age_two),
             },
             exits=("mate", "dead"),
         ),
@@ -254,8 +254,8 @@ def build_model(
         regime_transitions=until_exit(
             3,
             law={
-                "mate": MarkovTransition(_all_before_age_two),
-                "dead": MarkovTransition(_none_before_age_two),
+                "mate": MarkovTransition(func=_all_before_age_two),
+                "dead": MarkovTransition(func=_none_before_age_two),
             },
             exits=("dead",),
         ),

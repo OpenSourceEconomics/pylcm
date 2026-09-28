@@ -55,7 +55,9 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    21, law={"target": MarkovTransition(_certain)}, exits=("target",)
+                    21,
+                    law={"target": MarkovTransition(func=_certain)},
+                    exits=("target",),
                 ),
                 actions={"choice": DiscreteGrid(category_class=Choice)},
                 functions={"utility": lambda: jnp.asarray(0.0)},

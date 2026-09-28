@@ -52,7 +52,7 @@ def _make_model(*, wealth_grid=None):
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
     )
     dead = UserRegime(
@@ -163,7 +163,7 @@ def _make_action_grid_model(*, consumption_grid: IrregSpacedGrid) -> Model:
         actions={"consumption": consumption_grid},
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
     )
     dead = UserRegime(
@@ -273,7 +273,7 @@ def _make_action_grid_model_with_stateful_dead(
         actions={"consumption": consumption_grid},
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
     )
     dead = UserRegime(

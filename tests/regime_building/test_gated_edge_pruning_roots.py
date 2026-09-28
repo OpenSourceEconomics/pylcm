@@ -110,10 +110,10 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
     """
     worker = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "retired": ValueDependentTransition(
-                        probability=MarkovTransition(_probability_one),
+                        probability=MarkovTransition(func=_probability_one),
                         gate=_gate_reading_bonus,
                         routes={
                             "self": StakeholderRoute(
@@ -161,10 +161,10 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
     """
     worker = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "retired": ValueDependentTransition(
-                        probability=MarkovTransition(_probability_one),
+                        probability=MarkovTransition(func=_probability_one),
                         gate=_gate_comparing_values,
                         routes={
                             "self": StakeholderRoute(

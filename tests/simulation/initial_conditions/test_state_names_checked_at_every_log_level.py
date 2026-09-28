@@ -59,7 +59,9 @@ _MODEL = Model(
     regimes={
         "alive": Regime(
             regime_transitions=until_exit(
-                2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+                2,
+                law=Choose(func=_next_regime, targets=("alive", "dead")),
+                exits=("dead",),
             ),
             states={
                 "wealth": LinSpacedGrid(start=1, stop=10, n_points=4),

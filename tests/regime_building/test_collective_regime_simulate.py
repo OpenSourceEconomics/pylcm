@@ -170,9 +170,9 @@ _WAGE_GRID_2 = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 def _make_couple_regimes() -> dict[str, Regime]:
     couple = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): Choose(
-                    _next_couple_regime, targets=("couple_terminal",)
+                    func=_next_couple_regime, targets=("couple_terminal",)
                 )
             }
         ),
@@ -369,10 +369,10 @@ def _consent_gate(
 def _make_consent_regimes() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -590,10 +590,10 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
 def _make_dissolution_regimes() -> dict[str, Regime]:
     married = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_ir": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -626,9 +626,9 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     )
     married_ir = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "married_terminal": MarkovTransition(_prob_one)
+                    "married_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),
@@ -671,9 +671,9 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     )
     single_f = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "single_f_terminal": MarkovTransition(_prob_one)
+                    "single_f_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),
@@ -688,7 +688,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         functions={"utility": _u_zero},
     )
     single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     single_m_terminal = single_f_terminal.replace()
@@ -967,10 +967,10 @@ def _u_married_m_educ(
 def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -1443,7 +1443,11 @@ def _make_solo_regimes() -> dict[str, Regime]:
     collective one for the byte-identical regression check below."""
     solo = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_next_solo_regime, targets=("solo_terminal",))}
+            cases={
+                AgeRange(stop=1): Choose(
+                    func=_next_solo_regime, targets=("solo_terminal",)
+                )
+            }
         ),
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
@@ -1576,7 +1580,7 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
             2,
             law={
                 "src": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_stay),
+                    probability=MarkovTransition(func=_prob_stay),
                     gate=_repeat_gate,
                     routes={
                         "only": StakeholderRoute(
@@ -1587,7 +1591,7 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
                         )
                     },
                 ),
-                "src_exit": MarkovTransition(_prob_exit_boundary),
+                "src_exit": MarkovTransition(func=_prob_exit_boundary),
             },
             exits=("src_exit",),
         ),

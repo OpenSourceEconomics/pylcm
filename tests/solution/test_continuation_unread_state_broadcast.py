@@ -181,14 +181,14 @@ def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
             "wealth": LinSpacedGrid(start=1, stop=60, n_points=_N_WEALTH),
         },
         state_transitions={
-            "health": MarkovTransition(_next_health),
+            "health": MarkovTransition(func=_next_health),
             "habit": _next_habit,
             "wealth": _next_wealth,
         },
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + 1,
-            law=Choose(_next_regime, targets=("alive", "dead")),
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         functions={"utility": _utility},

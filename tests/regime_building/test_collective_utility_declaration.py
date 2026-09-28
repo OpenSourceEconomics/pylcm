@@ -86,7 +86,8 @@ def _couple(
         regime_transitions=until_exit(
             1,
             law=Choose(
-                lambda: RegimeId.couple_terminal, targets=("couple", "couple_terminal")
+                func=lambda: RegimeId.couple_terminal,
+                targets=("couple", "couple_terminal"),
             ),
             exits=("couple_terminal",),
         ),

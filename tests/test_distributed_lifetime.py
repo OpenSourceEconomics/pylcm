@@ -599,7 +599,7 @@ def _model(
             "alive": Regime(
                 regime_transitions=until_exit(
                     _N_PERIODS - 1,
-                    law={"dead": MarkovTransition(_certain)},
+                    law={"dead": MarkovTransition(func=_certain)},
                     exits=("dead",),
                 ),
                 states={"wealth": _WEALTH},

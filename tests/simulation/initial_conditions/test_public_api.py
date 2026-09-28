@@ -412,7 +412,9 @@ def _sealed_model() -> Model:
 
     working = UserRegime(
         regime_transitions=until_exit(
-            19, law=Choose(next_regime, targets=("working", "dead")), exits=("dead",)
+            19,
+            law=Choose(func=next_regime, targets=("working", "dead")),
+            exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": next_wealth},
@@ -488,7 +490,7 @@ def _age_specialized_model() -> Model:
     working_life = UserRegime(
         regime_transitions=until_exit(
             75,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},

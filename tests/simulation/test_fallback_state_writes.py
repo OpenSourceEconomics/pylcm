@@ -314,9 +314,9 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         wife_projection = {"wage": _identity_wage, "career": _project_career}
         single_f = Regime(
             regime_transitions=ByAge(
-                {
+                cases={
                     AgeRange(start=1, stop=2): {
-                        "single_f_terminal": MarkovTransition(_prob_one)
+                        "single_f_terminal": MarkovTransition(func=_prob_one)
                     }
                 }
             ),
@@ -335,9 +335,9 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         wife_projection = {"wage": _identity_wage}
         single_f = Regime(
             regime_transitions=ByAge(
-                {
+                cases={
                     AgeRange(start=1, stop=2): {
-                        "single_f_terminal": MarkovTransition(_prob_one)
+                        "single_f_terminal": MarkovTransition(func=_prob_one)
                     }
                 }
             ),
@@ -349,10 +349,10 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
 
     married = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -394,9 +394,9 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
     )
     single_m = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "single_m_terminal": MarkovTransition(_prob_one)
+                    "single_m_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),

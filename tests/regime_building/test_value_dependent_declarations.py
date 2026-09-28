@@ -200,10 +200,10 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
     """The dissolution miniature, declared in the value-dependent vocabulary."""
     married = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_ir": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -236,9 +236,9 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
     )
     married_ir = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "married_terminal": MarkovTransition(_prob_one)
+                    "married_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),
@@ -281,9 +281,9 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
     )
     single_f = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "single_f_terminal": MarkovTransition(_prob_one)
+                    "single_f_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),
@@ -298,7 +298,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         functions={"utility": _u_zero},
     )
     single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     return {
@@ -315,7 +315,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
 def _a_value_dependent_transition() -> ValueDependentTransition:
     """A well-formed edge declaration, for tests about where it may be written."""
     return ValueDependentTransition(
-        probability=MarkovTransition(_prob_one),
+        probability=MarkovTransition(func=_prob_one),
         gate=_no_dissolution_gate,
         routes={
             "f": StakeholderRoute(
@@ -338,7 +338,7 @@ def test_a_gate_must_be_keyed_by_the_target_it_opens():
     with pytest.raises(RegimeInitializationError, match="per-target"):
         Regime(
             regime_transitions=ByAge(
-                {AgeRange(stop=1): _a_value_dependent_transition()}
+                cases={AgeRange(stop=1): _a_value_dependent_transition()}
             ),
             states={"wage": _WAGE_3},
             state_transitions={"wage": fixed_transition("wage")},
@@ -376,20 +376,20 @@ def _phased_edge_regime(
     )
     simulate_cell = (
         ValueDependentTransition(
-            probability=MarkovTransition(_prob_half),
+            probability=MarkovTransition(func=_prob_half),
             gate=simulate_gate,
             routes={"f": route_f, "m": route_m},
         )
         if simulate_is_gated
-        else MarkovTransition(_prob_half)
+        else MarkovTransition(func=_prob_half)
     )
     return Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): Phased(
                     solve={
                         "married_ir": ValueDependentTransition(
-                            probability=MarkovTransition(_prob_one),
+                            probability=MarkovTransition(func=_prob_one),
                             gate=solve_gate,
                             routes={"f": route_f, "m": route_m},
                         )
@@ -467,7 +467,7 @@ def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
 
     regime = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_ir": ValueDependentTransition(
                         probability=_prob_one,
@@ -648,7 +648,9 @@ def test_a_derived_slot_cannot_be_replaced(slot):
 def test_decomposed_transition_of_an_age_schedule_satisfies_its_annotation():
     """A dated schedule passes through decomposition as a declared return type."""
     schedule = ByAge.until(
-        2, law=Choose(lambda: 0, targets=("a",)), then=Choose(lambda: 1, targets=("b",))
+        stop_age_exclusive=2,
+        law=Choose(func=lambda: 0, targets=("a",)),
+        then=Choose(func=lambda: 1, targets=("b",)),
     )
     hint = inspect.get_annotations(_decomposed_transition_side)["return"]
 

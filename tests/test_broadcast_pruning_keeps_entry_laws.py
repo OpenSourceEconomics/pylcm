@@ -82,12 +82,12 @@ def _entry_health(wealth: float) -> FloatND:
 def _working_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge(
-            {AgeRange(stop=1): {"retired": MarkovTransition(_always_retire)}}
+            cases={AgeRange(stop=1): {"retired": MarkovTransition(func=_always_retire)}}
         ),
         "states": {"wealth": _WEALTH_GRID},
         "state_transitions": {
             "wealth": _next_wealth,
-            "health": {"retired": MarkovTransition(_entry_health)},
+            "health": {"retired": MarkovTransition(func=_entry_health)},
         },
         "actions": {"consumption": _CONSUMPTION_GRID},
         "functions": {"utility": _utility_without_health},
@@ -220,7 +220,7 @@ def test_an_unkeyed_entry_law_survives_toward_a_retaining_target() -> None:
             "working": _working_regime(
                 state_transitions={
                     "wealth": _next_wealth,
-                    "health": MarkovTransition(_entry_health),
+                    "health": MarkovTransition(func=_entry_health),
                 }
             ),
             "retired": _retired_regime(),
@@ -283,7 +283,7 @@ def test_a_kept_entry_law_leaves_no_dangling_reference() -> None:
                 state_transitions={
                     "wealth": _next_wealth,
                     "health": {
-                        "retired": MarkovTransition(_entry_health_from_endowment)
+                        "retired": MarkovTransition(func=_entry_health_from_endowment)
                     },
                     "endowment": fixed_transition("endowment"),
                 }
@@ -317,7 +317,7 @@ def test_an_entry_law_reading_the_state_itself_keeps_the_state() -> None:
             "working": _working_regime(
                 state_transitions={
                     "wealth": _next_wealth,
-                    "health": {"retired": MarkovTransition(_persistent_health)},
+                    "health": {"retired": MarkovTransition(func=_persistent_health)},
                 }
             ),
             "retired": _retired_regime(),

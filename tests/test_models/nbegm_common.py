@@ -224,9 +224,9 @@ def make_alive_dead_model(
         until_exit(final_age, law=dict(survival_transition), exits=("dead",))
         if survival_transition is not None
         else ByAge.until(
-            final_age,
-            law={"alive": MarkovTransition(prob_stay_alive)},
-            then={"dead": MarkovTransition(prob_die)},
+            stop_age_exclusive=final_age,
+            law={"alive": MarkovTransition(func=prob_stay_alive)},
+            then={"dead": MarkovTransition(func=prob_die)},
         )
     )
     # Built per branch rather than from one shared mapping: the two regime

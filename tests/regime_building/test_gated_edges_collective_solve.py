@@ -117,7 +117,7 @@ def _consent_source_declaring(
     """The consent source, declaring `transition_into_married` into the couple."""
     return Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"married_terminal": transition_into_married}}
+            cases={AgeRange(stop=1): {"married_terminal": transition_into_married}}
         ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
@@ -129,7 +129,7 @@ def _consent_source_declaring(
 def _make_consent_regimes() -> dict[str, Regime]:
     single_f = _consent_source_declaring(
         ValueDependentTransition(
-            probability=MarkovTransition(_prob_one),
+            probability=MarkovTransition(func=_prob_one),
             gate=_consent_gate,
             routes={
                 "f": StakeholderRoute(
@@ -308,10 +308,10 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
 def _make_dissolution_regimes() -> dict[str, Regime]:
     married = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_ir": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -344,9 +344,9 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     )
     married_ir = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "married_terminal": MarkovTransition(_prob_one)
+                    "married_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),
@@ -389,9 +389,9 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     )
     single_f = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "single_f_terminal": MarkovTransition(_prob_one)
+                    "single_f_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),
@@ -406,7 +406,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         functions={"utility": _u_zero},
     )
     single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     single_m_terminal = single_f_terminal.replace()
@@ -529,7 +529,7 @@ def test_raw_ungated_mixed_transition_still_rejected():
     """A singleton regime reaching a collective target WITHOUT an edge is rejected."""
     regimes = _make_consent_regimes()
     # Drop the gated edge but keep the singleton -> collective transition.
-    regimes["single_f"] = _consent_source_declaring(MarkovTransition(_prob_one))
+    regimes["single_f"] = _consent_source_declaring(MarkovTransition(func=_prob_one))
     ages = AgeGrid(start=0, stop=2, step="Y")
     with pytest.raises(NotImplementedError, match="stakeholders"):
         process_regimes(
@@ -564,11 +564,11 @@ def test_probabilistic_gate_is_rejected():
     with pytest.raises(RegimeInitializationError, match="boolean"):
         Regime(
             regime_transitions=ByAge(
-                {
+                cases={
                     AgeRange(stop=1): {
                         "married_terminal": ValueDependentTransition(
-                            probability=MarkovTransition(_prob_one),
-                            gate=MarkovTransition(_prob_one),
+                            probability=MarkovTransition(func=_prob_one),
+                            gate=MarkovTransition(func=_prob_one),
                             routes={
                                 "f": StakeholderRoute(
                                     target_stakeholder="f",
@@ -593,7 +593,7 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
     """A gated edge whose fallback names a missing regime is rejected at build."""
     regimes = _make_consent_regimes()
     bad_edge = ValueDependentTransition(
-        probability=MarkovTransition(_prob_one),
+        probability=MarkovTransition(func=_prob_one),
         gate=_consent_gate,
         routes={
             "f": StakeholderRoute(
@@ -646,7 +646,7 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
     """An edge leg naming a target stakeholder the target lacks is rejected."""
     regimes = _make_consent_regimes()
     bad_edge = ValueDependentTransition(
-        probability=MarkovTransition(_prob_one),
+        probability=MarkovTransition(func=_prob_one),
         gate=_consent_gate,
         routes={
             "f": StakeholderRoute(
@@ -735,10 +735,10 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
     def _consent_source(*, fallback_regime: str, stakeholder: str) -> Regime:
         return Regime(
             regime_transitions=ByAge(
-                {
+                cases={
                     AgeRange(stop=1): {
                         "married": ValueDependentTransition(
-                            probability=MarkovTransition(_prob_one),
+                            probability=MarkovTransition(func=_prob_one),
                             gate=_consent_gate,
                             routes=_consent_leg(
                                 fallback_regime=fallback_regime, stakeholder=stakeholder
@@ -758,9 +758,9 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
     single_m = _consent_source(fallback_regime="single_m_p1", stakeholder="m")
     single_f_p1 = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "single_f_terminal": MarkovTransition(_prob_one)
+                    "single_f_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),
@@ -770,15 +770,15 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         functions={"utility": _u_single_f_ir},
     )
     single_m_p1 = single_f_p1.replace(
-        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     married = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -900,10 +900,10 @@ def test_singleton_source_with_two_legs_is_rejected():
     with pytest.raises(RegimeInitializationError, match="exactly one leg"):
         Regime(
             regime_transitions=ByAge(
-                {
+                cases={
                     AgeRange(stop=1): {
                         "married_terminal": ValueDependentTransition(
-                            probability=MarkovTransition(_prob_one),
+                            probability=MarkovTransition(func=_prob_one),
                             gate=_consent_gate,
                             routes={
                                 "f": StakeholderRoute(

@@ -135,7 +135,7 @@ def _build_model() -> Model:
     """Build a worker whose `bonus` helper is bound per age."""
     worker = Regime(
         regime_transitions=until_exit(
-            3, law={"dead": MarkovTransition(_prob_one)}, exits=("dead",)
+            3, law={"dead": MarkovTransition(func=_prob_one)}, exits=("dead",)
         ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": {"dead": _keep_wealth}},

@@ -329,7 +329,7 @@ CASES = {
             },
             state_transitions={
                 **dict(VALID.state_transitions),
-                "aime": MarkovTransition(_stochastic_next_aime),
+                "aime": MarkovTransition(func=_stochastic_next_aime),
             },
         ),
         "'aime'.*is stochastic",
@@ -350,19 +350,21 @@ CASES = {
     "regime_transition_cliff_in_wealth": (
         lambda: VALID.replace(
             regime_transitions=ByAge.until(
-                LAST_AGE,
+                stop_age_exclusive=LAST_AGE,
                 law=Choose(
-                    _regime_transition_with_wealth_cliff,
+                    func=_regime_transition_with_wealth_cliff,
                     targets=("retirement", "dead"),
                 ),
-                then=Choose(_regime_transition_with_wealth_cliff, targets=("dead",)),
+                then=Choose(
+                    func=_regime_transition_with_wealth_cliff, targets=("dead",)
+                ),
             )
         ),
         "regime transition function.*discontinuous",
     ),
     "stochastic_euler_state_transition": (
         lambda: VALID.replace(
-            state_transitions={"wealth": MarkovTransition(_stochastic_next_wealth)}
+            state_transitions={"wealth": MarkovTransition(func=_stochastic_next_wealth)}
         ),
         "stochastic",
     ),
@@ -635,8 +637,8 @@ def test_granular_transition_excluding_brute_regime_passes():
     """
     model = _three_regime_model_with_brute_worker(
         {
-            "retirement": MarkovTransition(_retirement_stay_prob),
-            "dead": MarkovTransition(_retirement_death_prob),
+            "retirement": MarkovTransition(func=_retirement_stay_prob),
+            "dead": MarkovTransition(func=_retirement_death_prob),
         }
     )
     assert model.n_periods == N_PERIODS
@@ -651,7 +653,7 @@ def test_coarse_transition_reaching_brute_regime_raises():
     with pytest.raises(ModelInitializationError, match="GridSearch"):
         _three_regime_model_with_brute_worker(
             Choose(
-                base.next_regime_from_retirement,
+                func=base.next_regime_from_retirement,
                 targets=("working_life", "retirement", "dead"),
             )
         )

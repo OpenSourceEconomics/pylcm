@@ -134,8 +134,8 @@ def _model(
         regime_transitions=until_exit(
             last_age,
             law={
-                "saving": MarkovTransition(prob_continue),
-                "done": MarkovTransition(prob_stop),
+                "saving": MarkovTransition(func=prob_continue),
+                "done": MarkovTransition(func=prob_stop),
             },
             exits=("done",),
         ),

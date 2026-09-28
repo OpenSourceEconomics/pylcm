@@ -125,7 +125,7 @@ def _inputs(
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_certain_target)},
+                regime_transitions={"target": MarkovTransition(func=_certain_target)},
                 functions={"utility": _utility},
                 joint_transitions={
                     "target": {

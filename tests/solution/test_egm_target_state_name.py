@@ -134,8 +134,8 @@ def _model(*, solver, n_consumption=14):
         regime_transitions=until_exit(
             _LAST_AGE,
             law={
-                "alive": MarkovTransition(prob_survive),
-                "gone": MarkovTransition(prob_gone),
+                "alive": MarkovTransition(func=prob_survive),
+                "gone": MarkovTransition(func=prob_gone),
             },
             exits=("gone",),
         ),

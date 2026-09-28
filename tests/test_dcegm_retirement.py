@@ -117,8 +117,8 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
                 regime_transitions=until_exit(
                     last_age,
                     law={
-                        "retirement": MarkovTransition(_retirement_stay_prob),
-                        "dead": MarkovTransition(_retirement_death_prob),
+                        "retirement": MarkovTransition(func=_retirement_stay_prob),
+                        "dead": MarkovTransition(func=_retirement_death_prob),
                     },
                     exits=("dead",),
                 ),

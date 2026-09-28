@@ -17,7 +17,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import SolutionResult
 from lcm.typing import (
@@ -132,14 +132,14 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     working_stochastic = working_life.replace(
         state_transitions={
             **working_life.state_transitions,
-            "health": MarkovTransition(next_health_stochastic),
+            "health": MarkovTransition(func=next_health_stochastic),
         },
         regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement_stochastic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
-            "health": MarkovTransition(next_health_stochastic),
+            "health": MarkovTransition(func=next_health_stochastic),
         },
         regime_transitions=retirement_transitions(last_age=last_age),
     )
@@ -269,13 +269,13 @@ def _make_minimal_stochastic_model(
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         state_transitions={
-            "draw": MarkovTransition(next_draw),
+            "draw": MarkovTransition(func=next_draw),
             "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
             final_age + 1,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         functions={"utility": utility},
@@ -398,17 +398,19 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
     )
 
 
-def test_schedule_covering_the_last_age_of_a_nonterminal_regime_is_rejected():
-    """A nonterminal regime cannot be solved at the last age.
+def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
+    """A nonterminal regime cannot be required at the last age.
 
     It has to place probability one on some target regime, but at the last age
     there is no age left to transition into.
     """
-    with pytest.raises(RegimeInitializationError, match="covers the last age 70"):
+    with pytest.raises(ModelInitializationError, match="nonterminal at the last age"):
         Model(
             regimes={
                 "working_life": working_life.replace(
-                    regime_transitions=ByAge({AgeRange(start=40, stop=80): "dead"})
+                    regime_transitions=ByAge(
+                        cases={AgeRange(start=40, stop=80): "dead"}
+                    )
                 ),
                 "retirement": retirement.replace(
                     regime_transitions=retirement_transitions(last_age=70)
@@ -417,4 +419,5 @@ def test_schedule_covering_the_last_age_of_a_nonterminal_regime_is_rejected():
             },
             ages=AgeGrid(start=40, stop=70, step="10Y"),
             regime_id_class=RegimeId,
+            initial_regimes={70: "working_life"},
         )

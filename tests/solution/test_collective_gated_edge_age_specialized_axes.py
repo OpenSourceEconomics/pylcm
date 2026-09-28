@@ -244,9 +244,9 @@ def _build_gate_ref_model() -> Model:
         regime_transitions=until_exit(
             2,
             law={
-                "couple": MarkovTransition(_probability_of_staying_put),
+                "couple": MarkovTransition(func=_probability_of_staying_put),
                 "account": ValueDependentTransition(
-                    probability=MarkovTransition(_probability_of_leaving),
+                    probability=MarkovTransition(func=_probability_of_leaving),
                     gate=_index_clears_the_hurdle,
                     routes={
                         "f": StakeholderRoute(
@@ -355,9 +355,9 @@ def _build_dissolution_model() -> Model:
         regime_transitions=until_exit(
             2,
             law={
-                "couple": MarkovTransition(_probability_of_staying_put),
+                "couple": MarkovTransition(func=_probability_of_staying_put),
                 "pair": ValueDependentTransition(
-                    probability=MarkovTransition(_probability_of_leaving),
+                    probability=MarkovTransition(func=_probability_of_leaving),
                     gate=_household_consents,
                     routes={
                         "f": StakeholderRoute(
@@ -389,7 +389,11 @@ def _build_dissolution_model() -> Model:
     )
     pair = Regime(
         regime_transitions=ByAge(
-            {AgeRange(start=1, stop=3): {"pair_terminal": MarkovTransition(_certainty)}}
+            cases={
+                AgeRange(start=1, stop=3): {
+                    "pair_terminal": MarkovTransition(func=_certainty)
+                }
+            }
         ),
         states={"w": AgeSpecializedGrid(build=_moving_grid, signature=_moving_ceiling)},
         state_transitions={"w": fixed_transition("w")},

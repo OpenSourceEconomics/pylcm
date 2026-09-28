@@ -281,8 +281,8 @@ def _asset_row_model(*, arithmetic: ComparisonArithmetic | None) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(stay_prob),
-                "dead": MarkovTransition(death_prob),
+                "working_life": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
             },
             exits=("dead",),
         ),

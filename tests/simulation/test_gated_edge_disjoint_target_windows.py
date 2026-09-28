@@ -80,7 +80,7 @@ def near_next(age: int) -> ScalarInt:
 
 def _edge(*, probability, fallback_regime: str) -> ValueDependentTransition:
     return ValueDependentTransition(
-        probability=MarkovTransition(probability),
+        probability=MarkovTransition(func=probability),
         gate=always_open,
         routes={
             "only": StakeholderRoute(
@@ -112,7 +112,7 @@ def _build_model(*, enable_jit: bool) -> Model:
     wealth_grid = WEALTH_GRID
     source = _decision_regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "near": _edge(probability=p_near, fallback_regime="source"),
                     "far": _edge(probability=p_far, fallback_regime="far_fallback"),
@@ -125,7 +125,7 @@ def _build_model(*, enable_jit: bool) -> Model:
     )
     near = _decision_regime(
         regime_transitions=ByAge(
-            {AgeRange(start=1, stop=2): Choose(near_next, targets=("far",))}
+            cases={AgeRange(start=1, stop=2): Choose(func=near_next, targets=("far",))}
         )
     )
     far = Regime(

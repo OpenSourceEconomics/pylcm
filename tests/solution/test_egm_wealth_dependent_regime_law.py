@@ -52,13 +52,13 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
     wealth_grid = LinSpacedGrid(start=2.0, stop=60.0, n_points=8)
     keep, stop = (
         (
-            Choose(_next_regime_by_wealth, targets=("saving",)),
-            Choose(_next_regime_by_wealth, targets=("done",)),
+            Choose(func=_next_regime_by_wealth, targets=("saving",)),
+            Choose(func=_next_regime_by_wealth, targets=("done",)),
         )
         if law == _DETERMINISTIC_LAW
         else (
-            {"saving": MarkovTransition(_prob_keep_saving)},
-            {"done": MarkovTransition(_prob_stop_saving)},
+            {"saving": MarkovTransition(func=_prob_keep_saving)},
+            {"done": MarkovTransition(func=_prob_stop_saving)},
         )
     )
     saving = ConsumptionSavingsRegime(
@@ -69,7 +69,7 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
             "wealth": {"saving": egm_toy.next_wealth, "done": egm_toy.next_wealth}
         },
         constraints={},
-        regime_transitions=ByAge.until(3.0, law=keep, then=stop),
+        regime_transitions=ByAge.until(stop_age_exclusive=3.0, law=keep, then=stop),
         solver=EGM(savings_grid=LinSpacedGrid(start=0.0, stop=60.0, n_points=40)),
         liquid=LiquidMargin(
             state="wealth",

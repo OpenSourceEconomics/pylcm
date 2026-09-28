@@ -7,7 +7,8 @@ module is the single place that reads it for that purpose:
 - a plain nonterminal law — a regime name, a `Choose`, a vector
   `MarkovTransition` with `targets`, or a per-target mapping — covers every
   non-final age;
-- a `ByAge` schedule covers exactly the ages its cases select.
+- a `ByAge` schedule covers the non-final ages its cases select. A law it
+  selects at the last age is available but unused: no continuation exists there.
 
 Coverage and support come only from these declarations. A bare callable or a
 vector `MarkovTransition` without `targets` names no support and is rejected.
@@ -116,7 +117,11 @@ def resolve_regime_schedules(
             transitions[name] = None
             continue
         law_by_period = (
-            dict(transition.resolve(ages).law_by_period)
+            {
+                period: law
+                for period, law in transition.resolve(ages).law_by_period.items()
+                if period < ages.n_periods - 1
+            }
             if isinstance(transition, ByAge)
             else dict.fromkeys(all_periods[:-1], transition)
         )
@@ -182,34 +187,29 @@ def coverage_nodes(
 def resolve_initial_nodes(
     *,
     initial_regimes: object,
-    coverage_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    regime_names: Sequence[RegimeName],
     ages: AgeGrid,
 ) -> frozenset[tuple[object, RegimeName]]:
-    """Normalize `Model(initial_regimes=...)` to exact permitted entry pairs.
+    """Normalize `Model(initial_regimes=...)` to the exact admissible start pairs.
 
-    - `None` ⇒ every covered pair;
-    - a regime name or sequence of names ⇒ every covered age of those regimes;
-    - a mapping from age selector to names ⇒ the Cartesian pairs of each rule,
-      united across rules; every pair must be covered.
+    `initial_regimes` maps age selectors (as in `ByAge`) to a regime name or a
+    nonempty sequence of names. Each rule contributes the Cartesian product of
+    its selected grid ages and names; rules are unioned. The result depends only
+    on the declaration and the clock, never on solve coverage.
     """
-    covered = coverage_nodes(coverage_by_regime=coverage_by_regime, ages=ages)
-    if initial_regimes is None:
-        return covered
-    if not isinstance(initial_regimes, Mapping):
-        names = _entry_names(initial_regimes)
-        _fail_if_unknown_entry_regimes(
-            names=names, coverage_by_regime=coverage_by_regime
+    if not isinstance(initial_regimes, Mapping) or not initial_regimes:
+        raise ModelInitializationError(
+            "`initial_regimes` must be a nonempty mapping from age selectors to "
+            f"regime names, e.g. `{{25: ('single', 'couple')}}`; got "
+            f"{initial_regimes!r}."
         )
-        return frozenset(pair for pair in covered if pair[1] in names)
     period_by_age: dict[object, int] = {
         age: period for period, age in enumerate(ages.exact_values)
     }
     permitted: set[tuple[object, RegimeName]] = set()
     for selector, value in initial_regimes.items():
         names = _entry_names(value)
-        _fail_if_unknown_entry_regimes(
-            names=names, coverage_by_regime=coverage_by_regime
-        )
+        _fail_if_unknown_entry_regimes(names=names, regime_names=regime_names)
         try:
             periods = _select_periods(
                 selector=_freeze_selector(selector),
@@ -223,38 +223,56 @@ def resolve_initial_nodes(
                 f"The `initial_regimes` selector {selector!r} selects no age of "
                 "the model."
             )
-        pairs = {
+        permitted |= {
             (ages.exact_values[period], name) for period in periods for name in names
         }
-        uncovered = sorted(pairs - covered, key=repr)
-        if uncovered:
-            raise ModelInitializationError(
-                f"`initial_regimes` permits entry at {uncovered}, where no problem "
-                "is declared. Entry is only possible where a regime is solved."
-            )
-        permitted |= pairs
     return frozenset(permitted)
+
+
+def fail_if_initial_nodes_are_not_problems(
+    *,
+    initial_nodes: frozenset[tuple[object, RegimeName]],
+    coverage_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    ages: AgeGrid,
+) -> None:
+    """Reject a start where no local problem is available.
+
+    A start needs a local problem at its own age: a terminal regime anywhere, a
+    nonterminal regime only where a law is available and a next age exists.
+    """
+    covered = coverage_nodes(coverage_by_regime=coverage_by_regime, ages=ages)
+    missing = sorted(initial_nodes - covered, key=repr)
+    if missing:
+        raise ModelInitializationError(
+            f"`initial_regimes` admits a start at {missing}, where no problem is "
+            "available: the regime supplies no law there, or it is nonterminal at "
+            "the last age."
+        )
 
 
 def _entry_names(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         return (value,)
-    if isinstance(value, Sequence) and all(isinstance(name, str) for name in value):
+    if (
+        isinstance(value, Sequence)
+        and value
+        and all(isinstance(name, str) for name in value)
+    ):
         return tuple(value)
     raise ModelInitializationError(
-        "`initial_regimes` names regimes by a name or a sequence of names; got "
-        f"{value!r}."
+        "`initial_regimes` names regimes by a name or a nonempty sequence of "
+        f"names; got {value!r}."
     )
 
 
 def _fail_if_unknown_entry_regimes(
-    *, names: tuple[str, ...], coverage_by_regime: Mapping[RegimeName, object]
+    *, names: tuple[str, ...], regime_names: Sequence[RegimeName]
 ) -> None:
-    unknown = sorted(set(names) - set(coverage_by_regime))
+    unknown = sorted(set(names) - set(regime_names))
     if unknown:
         raise ModelInitializationError(
             f"`initial_regimes` names unknown regime(s) {unknown}; regimes are "
-            f"{sorted(coverage_by_regime)}."
+            f"{sorted(regime_names)}."
         )
 
 
@@ -514,7 +532,7 @@ def _vector_union(
         for law in laws
     )
     return MarkovTransition(
-        _dispatch(cases=cases, laws=laws, law_by_period=law_by_period),
+        func=_dispatch(cases=cases, laws=laws, law_by_period=law_by_period),
         targets=targets,
     )
 
@@ -572,7 +590,7 @@ def _mapping_union(
                 for cell in distinct_cells
             }
             merged[target] = MarkovTransition(
-                _period_sum(
+                func=_period_sum(
                     tuple(
                         _masked(cell=cell, periods=periods_by_cell[id(cell)])
                         for cell in distinct_cells
@@ -626,9 +644,9 @@ def _masked_cell(*, cell: object, periods: tuple[int, ...]) -> object:
             else probability
         )
         return dataclasses.replace(
-            cell, probability=MarkovTransition(_masked(cell=func, periods=periods))
+            cell, probability=MarkovTransition(func=_masked(cell=func, periods=periods))
         )
-    return MarkovTransition(_masked(cell=cell, periods=periods))
+    return MarkovTransition(func=_masked(cell=cell, periods=periods))
 
 
 def _law_cells(
@@ -637,12 +655,12 @@ def _law_cells(
     if isinstance(law, Mapping):
         return law
     if isinstance(law, str):
-        return {law: MarkovTransition(_constant(1.0))}
+        return {law: MarkovTransition(func=_constant(1.0))}
     if isinstance(law, Choose):
         names = _argument_names(law.func)
         return {
             target: MarkovTransition(
-                _indicator(
+                func=_indicator(
                     selector=law.func,
                     code=_code(name=target, code_by_name=code_by_name),
                     names=names,
@@ -652,7 +670,8 @@ def _law_cells(
         }
     raise ModelInitializationError(
         f"A schedule case {law!r} is not a nonterminal regime law. Use a regime "
-        "name, `Choose(func, targets=...)`, `MarkovTransition(func, targets=...)` "
+        "name, `Choose(func=func, targets=...)`, "
+        "`MarkovTransition(func=func, targets=...)` "
         "or a per-target mapping."
     )
 
@@ -701,7 +720,7 @@ def _fail_if_support_is_undeclared(*, user_regimes: Mapping[RegimeName, Any]) ->
                     errors.append(
                         f"Regime '{name}' declares a vector `MarkovTransition` "
                         "without `targets`. Name its support: "
-                        "`MarkovTransition(func, targets=('a', 'b'))`."
+                        "`MarkovTransition(func=func, targets=('a', 'b'))`."
                     )
                 elif callable(side) and not isinstance(
                     side, Choose | MarkovTransition | Mapping
@@ -709,7 +728,7 @@ def _fail_if_support_is_undeclared(*, user_regimes: Mapping[RegimeName, Any]) ->
                     errors.append(
                         f"Regime '{name}' declares a bare deterministic "
                         "transition. Name its support: "
-                        "`Choose(func, targets=('a', 'b'))`."
+                        "`Choose(func=func, targets=('a', 'b'))`."
                     )
     if errors:
         raise ModelInitializationError("\n".join(errors))

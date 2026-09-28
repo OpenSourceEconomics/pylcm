@@ -86,7 +86,7 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 def _simulated(new_stock=_new_stock):
     live = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("live", "last")), exits=("last",)
+            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
         ),
         state_transitions={"stock": _carry_new_stock},
         states={"stock": DiscreteGrid(category_class=Stock)},

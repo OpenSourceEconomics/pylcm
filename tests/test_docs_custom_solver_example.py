@@ -101,7 +101,7 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
             "alive": Regime(
                 regime_transitions=until_exit(
                     _N_PERIODS - 1,
-                    law=Choose(_next_regime, targets=("alive", "dead")),
+                    law=Choose(func=_next_regime, targets=("alive", "dead")),
                     exits=("dead",),
                 ),
                 states={"wealth": _WEALTH},

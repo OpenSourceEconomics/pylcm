@@ -170,9 +170,9 @@ def _build_model(*, reference_regime: str) -> Model:
         regime_transitions=until_exit(
             2,
             law={
-                "saver": MarkovTransition(_probability_of_staying_put),
+                "saver": MarkovTransition(func=_probability_of_staying_put),
                 "account": ValueDependentTransition(
-                    probability=MarkovTransition(_probability_of_opening),
+                    probability=MarkovTransition(func=_probability_of_opening),
                     gate=_clears_the_hurdle,
                     routes={
                         "only": StakeholderRoute(

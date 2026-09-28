@@ -38,7 +38,7 @@ def _next_regime_probs(
 alive = UserRegime(
     regime_transitions=until_exit(
         62,
-        law=MarkovTransition(_next_regime_probs, targets=("alive", "dead")),
+        law=MarkovTransition(func=_next_regime_probs, targets=("alive", "dead")),
         exits=("dead",),
     ),
     states={

@@ -87,7 +87,7 @@ def _build_model(*, entry_value: float, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
@@ -197,7 +197,7 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 # The top of this grid lies outside the target's `(0, 1, 2)`.
                 states={"wealth": LinSpacedGrid(start=1.0, stop=9.0, n_points=3)},
                 state_transitions={
@@ -253,7 +253,7 @@ def test_a_linear_payoff_entry_interpolates_to_its_own_value(
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at_half}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
@@ -298,7 +298,7 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=QuasiArithmeticMean(
@@ -353,7 +353,7 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={
                     "shock": {"target": _enter_first},
                     "other": {"target": _enter_second},
@@ -417,7 +417,7 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
@@ -482,7 +482,7 @@ def test_the_entry_representation_decides_the_action() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=Choose(_choose, targets=("stay", "enter")),
+                regime_transitions=Choose(func=_choose, targets=("stay", "enter")),
                 actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 state_transitions={
                     "wealth": {"stay": lambda: jnp.asarray(1.0)},

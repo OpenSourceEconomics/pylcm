@@ -206,7 +206,7 @@ def build_model(
     """
     working = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"retired": MarkovTransition(_retire)}}
+            cases={AgeRange(stop=1): {"retired": MarkovTransition(func=_retire)}}
         ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
@@ -237,7 +237,7 @@ def build_model(
         states=states,
         state_transitions={
             "a": {"retired": fixed_transition("a")},
-            "b": {"retired": MarkovTransition(_enter_b)},
+            "b": {"retired": MarkovTransition(func=_enter_b)},
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,

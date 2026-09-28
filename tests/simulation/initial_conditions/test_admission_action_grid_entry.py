@@ -77,7 +77,7 @@ def _inputs(
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     regimes = {
         "alive": Regime(
-            regime_transitions=Choose(_next_regime, targets=("done",)),
+            regime_transitions=Choose(func=_next_regime, targets=("done",)),
             states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
             state_transitions={"wealth": fixed_transition("wealth")},
             actions={

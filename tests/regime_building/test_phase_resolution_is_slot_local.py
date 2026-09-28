@@ -114,7 +114,7 @@ _STATES = {
 def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
     live = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("live", "last")), exits=("last",)
+            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
         ),
         state_transitions={"stock": carry_new_stock, "tag": tag_law},
         states=_STATES,

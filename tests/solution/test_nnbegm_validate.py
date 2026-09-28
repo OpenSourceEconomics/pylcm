@@ -112,7 +112,7 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
         post_decision_state="liquid_savings",
     )
     transitions = until_exit(
-        25, law=Choose(next_regime, targets=("alive", "dead")), exits=("dead",)
+        25, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
     )
     states = {"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID}
     state_transitions = {"wealth": next_wealth, "illiquid": durable_transition}

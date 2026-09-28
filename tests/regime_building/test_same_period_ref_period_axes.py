@@ -174,8 +174,8 @@ def _make_model(*, later_ceiling: float) -> Model:
         regime_transitions=until_exit(
             2,
             law={
-                "single_f": MarkovTransition(_stays_single),
-                "single_f_terminal": MarkovTransition(_leaves_single),
+                "single_f": MarkovTransition(func=_stays_single),
+                "single_f_terminal": MarkovTransition(func=_leaves_single),
             },
             exits=("single_f_terminal",),
         ),
@@ -194,7 +194,9 @@ def _make_model(*, later_ceiling: float) -> Model:
     )
     couple = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"couple_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"couple_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         states={"wealth": COUPLE_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},

@@ -76,12 +76,14 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    21, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    21,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 states={},
                 state_transitions={
                     "income": {"target": _entry_income},
-                    "health": {"target": MarkovTransition(_health_probabilities)},
+                    "health": {"target": MarkovTransition(func=_health_probabilities)},
                 },
                 functions={"utility": _zero_utility},
                 certainty_equivalent=certainty_equivalent,

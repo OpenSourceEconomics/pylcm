@@ -227,8 +227,8 @@ def test_phased_markov_regime_transition_sets_stochastic_flags() -> None:
     """Markov variants on both sides mark both phases stochastic."""
     regime = _build_regime(
         regime_transitions=Phased(
-            solve=MarkovTransition(_next_regime_probs),
-            simulate=MarkovTransition(_next_regime_probs),
+            solve=MarkovTransition(func=_next_regime_probs),
+            simulate=MarkovTransition(func=_next_regime_probs),
         )
     )
     spec = normalize_regime_phases(regime)
@@ -316,7 +316,7 @@ def test_carried_state_with_markov_law_is_rejected() -> None:
             states=_carried_states(),
             state_transitions={
                 **_carried_state_transitions(),
-                "pension_wealth": MarkovTransition(_evolve_pension_wealth_probs),
+                "pension_wealth": MarkovTransition(func=_evolve_pension_wealth_probs),
             },
         )
 
@@ -411,7 +411,7 @@ def test_phased_regime_transition_with_mixed_stochasticity_is_rejected() -> None
     with pytest.raises(RegimeInitializationError, match="stochastic"):
         _build_regime(
             regime_transitions=Phased(
-                solve=MarkovTransition(_next_regime_probs), simulate=_next_regime
+                solve=MarkovTransition(func=_next_regime_probs), simulate=_next_regime
             )
         )
 
@@ -454,7 +454,7 @@ def _build_phased_law_model(*, phased_law: bool) -> Model:
     working = UserRegime(
         regime_transitions=until_exit(
             64,
-            law=Choose(_next_regime_working, targets=("working", "dead")),
+            law=Choose(func=_next_regime_working, targets=("working", "dead")),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
@@ -550,7 +550,7 @@ def test_phased_law_params_template_unions_both_variants() -> None:
     working = UserRegime(
         regime_transitions=until_exit(
             64,
-            law=Choose(_next_regime_working, targets=("working", "dead")),
+            law=Choose(func=_next_regime_working, targets=("working", "dead")),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
@@ -580,7 +580,7 @@ def _build_wrong_beliefs_model() -> Model:
     working = UserRegime(
         regime_transitions=until_exit(
             64,
-            law=Choose(_next_regime_working, targets=("working", "dead")),
+            law=Choose(func=_next_regime_working, targets=("working", "dead")),
             exits=("dead",),
         ),
         states={"income": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
@@ -740,8 +740,8 @@ def test_markov_variant_in_phased_law_is_accepted() -> None:
     _build_regime(
         state_transitions={
             "wealth": Phased(
-                solve=MarkovTransition(_markov_law),
-                simulate=MarkovTransition(_markov_law),
+                solve=MarkovTransition(func=_markov_law),
+                simulate=MarkovTransition(func=_markov_law),
             )
         }
     )
@@ -758,12 +758,16 @@ def test_mixed_stochastic_and_deterministic_phased_law_is_accepted() -> None:
     """
     _build_regime(
         state_transitions={
-            "wealth": Phased(solve=MarkovTransition(_markov_law), simulate=_next_wealth)
+            "wealth": Phased(
+                solve=MarkovTransition(func=_markov_law), simulate=_next_wealth
+            )
         }
     )
     _build_regime(
         state_transitions={
-            "wealth": Phased(solve=_next_wealth, simulate=MarkovTransition(_markov_law))
+            "wealth": Phased(
+                solve=_next_wealth, simulate=MarkovTransition(func=_markov_law)
+            )
         }
     )
 
@@ -773,7 +777,7 @@ def test_mixed_per_target_dict_phased_law_is_accepted() -> None:
     _build_regime(
         state_transitions={
             "wealth": Phased(
-                solve={"working": MarkovTransition(_markov_law)},
+                solve={"working": MarkovTransition(func=_markov_law)},
                 simulate={"working": _next_wealth},
             )
         }
@@ -791,7 +795,7 @@ def test_per_target_dict_with_bare_other_phase_is_accepted() -> None:
     _build_regime(
         state_transitions={
             "wealth": Phased(
-                solve={"working": MarkovTransition(_markov_law)},
+                solve={"working": MarkovTransition(func=_markov_law)},
                 simulate=_next_wealth,
             )
         }
@@ -927,7 +931,7 @@ def test_regime_draw_reads_carried_value() -> None:
     working = UserRegime(
         regime_transitions=until_exit(
             64,
-            law=Choose(_retire_when_pension_rich, targets=("working", "dead")),
+            law=Choose(func=_retire_when_pension_rich, targets=("working", "dead")),
             exits=("dead",),
         ),
         states={
@@ -1002,7 +1006,7 @@ def test_model_builds_when_a_transition_reads_a_phased_function():
             "working": UserRegime(
                 regime_transitions=until_exit(
                     22,
-                    law={"dead": MarkovTransition(lambda: jnp.float32(1))},
+                    law={"dead": MarkovTransition(func=lambda: jnp.float32(1))},
                     exits=("dead",),
                 ),
                 states={"wealth": wealth_grid},

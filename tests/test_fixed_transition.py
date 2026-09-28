@@ -57,7 +57,7 @@ def _build_regime(**overrides: Any) -> UserRegime:
     """A small valid regime with a fixed health state; tests override slots."""
     spec: dict[str, Any] = {
         "regime_transitions": until_exit(
-            2, law=Choose(_next_regime, targets=("dead", "work")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("dead", "work")), exits=("dead",)
         ),
         "states": {
             "health": DiscreteGrid(category_class=_Health),

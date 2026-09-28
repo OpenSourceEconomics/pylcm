@@ -144,7 +144,7 @@ from lcm.transition import MarkovTransition
 single_f = Regime(
     regime_transitions={
         "couple": ValueDependentTransition(
-            probability=MarkovTransition(meets_a_partner),
+            probability=MarkovTransition(func=meets_a_partner),
             gate=mutual_consent,
             routes={
                 "her": StakeholderRoute(
@@ -160,7 +160,7 @@ single_f = Regime(
                 "V_alone_m": ProjectedRegimeValue(regime="single_m", projection=...),
             },
         ),
-        "single_f": MarkovTransition(meets_nobody),
+        "single_f": MarkovTransition(func=meets_nobody),
     },
     states={"wealth": single_wealth},
     state_transitions={"wealth": next_single_wealth},
@@ -207,7 +207,7 @@ together continues in the couple regime, so **that** is the key, under
 couple = Regime(
     regime_transitions={
         "couple": ValueDependentTransition(
-            probability=MarkovTransition(stays_married),
+            probability=MarkovTransition(func=stays_married),
             gate=no_dissolution,  # ~D_target
             routes={
                 "f": StakeholderRoute(

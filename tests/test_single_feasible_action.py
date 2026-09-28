@@ -106,7 +106,7 @@ def _build_model(
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
             last_alive_age + 1,
-            law=Choose(_next_regime, targets=("alive", "dead")),
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
     )
@@ -366,7 +366,7 @@ def _build_alive_dead_model(
         constraints={"borrowing_constraint": _alive_borrow},
         regime_transitions=until_exit(
             last_alive_age + 1,
-            law=Choose(_alive_to_dead, targets=("alive", "dead")),
+            law=Choose(func=_alive_to_dead, targets=("alive", "dead")),
             exits=("dead",),
         ),
     )
@@ -518,7 +518,7 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         constraints={"borrow": borrow},
         regime_transitions=until_exit(
             last_alive_age + 1,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
     )

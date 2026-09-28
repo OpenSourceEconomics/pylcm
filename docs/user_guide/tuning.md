@@ -152,7 +152,9 @@ from lcm import MarkovTransition
 
 # Codes 0-3 = 2 * kind + health; `kind` never changes.
 state_transitions = {
-    "kind_health": MarkovTransition(next_kind_health, fixed_component=(0, 0, 1, 1)),
+    "kind_health": MarkovTransition(
+        func=next_kind_health, fixed_component=(0, 0, 1, 1)
+    ),
 }
 ```
 

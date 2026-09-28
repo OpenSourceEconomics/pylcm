@@ -38,8 +38,8 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
         regimes={
             "source": Regime(
                 regime_transitions={
-                    "low": MarkovTransition(_probability_low),
-                    "high": MarkovTransition(_probability_high),
+                    "low": MarkovTransition(func=_probability_low),
+                    "high": MarkovTransition(func=_probability_high),
                 },
                 functions={"utility": _zero_utility},
             ),

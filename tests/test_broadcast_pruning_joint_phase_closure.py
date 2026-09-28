@@ -196,22 +196,22 @@ def _entry_targets(*, regime: Regime, state_name: str, phase: str) -> set[str]:
 
 _PHASED_HEALTH_LAW_FORMS = {
     "phased-keyed": Phased(
-        solve={"retired": MarkovTransition(_entry_from_endowment)},
-        simulate={"retired": MarkovTransition(_entry_from_wealth)},
+        solve={"retired": MarkovTransition(func=_entry_from_endowment)},
+        simulate={"retired": MarkovTransition(func=_entry_from_wealth)},
     ),
     "phased-raw": Phased(
-        solve=MarkovTransition(_entry_from_endowment),
-        simulate=MarkovTransition(_entry_from_wealth),
+        solve=MarkovTransition(func=_entry_from_endowment),
+        simulate=MarkovTransition(func=_entry_from_wealth),
     ),
-    "keyed": {"retired": MarkovTransition(_entry_from_endowment)},
-    "raw": MarkovTransition(_entry_from_endowment),
+    "keyed": {"retired": MarkovTransition(func=_entry_from_endowment)},
+    "raw": MarkovTransition(func=_entry_from_endowment),
 }
 
 
 def _working_regime(*, health_law: object, **overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge(
-            {AgeRange(stop=1): {"retired": MarkovTransition(_certain)}}
+            cases={AgeRange(stop=1): {"retired": MarkovTransition(func=_certain)}}
         ),
         "states": {"wealth": _WEALTH_GRID},
         "actions": {"consumption": _CONSUMPTION_GRID},
@@ -332,8 +332,8 @@ def _couple_model() -> Model:
                 regime_transitions=until_exit(
                     1,
                     law={
-                        "widow": MarkovTransition(_even_split),
-                        "widower": MarkovTransition(_even_split),
+                        "widow": MarkovTransition(func=_even_split),
+                        "widower": MarkovTransition(func=_even_split),
                     },
                     exits=("widow", "widower"),
                 ),
@@ -344,12 +344,12 @@ def _couple_model() -> Model:
                     "wealth": _next_wealth,
                     "endowment": fixed_transition("endowment"),
                     "health": Phased(
-                        solve={"widow": MarkovTransition(_entry_from_endowment)},
-                        simulate={"widow": MarkovTransition(_entry_from_wealth)},
+                        solve={"widow": MarkovTransition(func=_entry_from_endowment)},
+                        simulate={"widow": MarkovTransition(func=_entry_from_wealth)},
                     ),
                     "pension": Phased(
-                        solve={"widower": MarkovTransition(_entry_from_endowment)},
-                        simulate={"widower": MarkovTransition(_entry_from_wealth)},
+                        solve={"widower": MarkovTransition(func=_entry_from_endowment)},
+                        simulate={"widower": MarkovTransition(func=_entry_from_wealth)},
                     ),
                 },
             ),
@@ -430,7 +430,7 @@ def _chain_regimes() -> dict[str, Regime]:
     return {
         "early": Regime(
             regime_transitions=ByAge(
-                {AgeRange(stop=1): {"middle": MarkovTransition(_certain)}}
+                cases={AgeRange(stop=1): {"middle": MarkovTransition(func=_certain)}}
             ),
             states={"wealth": _WEALTH_GRID},
             actions={"consumption": _CONSUMPTION_GRID},
@@ -439,14 +439,16 @@ def _chain_regimes() -> dict[str, Regime]:
                 "wealth": _next_wealth,
                 "endowment": fixed_transition("endowment"),
                 "flag": Phased(
-                    solve={"middle": MarkovTransition(_entry_uniform)},
-                    simulate={"middle": MarkovTransition(_entry_from_endowment)},
+                    solve={"middle": MarkovTransition(func=_entry_uniform)},
+                    simulate={"middle": MarkovTransition(func=_entry_from_endowment)},
                 ),
             },
         ),
         "middle": Regime(
             regime_transitions=ByAge(
-                {AgeRange(start=1, stop=2): {"late": MarkovTransition(_certain)}}
+                cases={
+                    AgeRange(start=1, stop=2): {"late": MarkovTransition(func=_certain)}
+                }
             ),
             states={"wealth": _WEALTH_GRID},
             actions={"consumption": _CONSUMPTION_GRID},
@@ -455,8 +457,8 @@ def _chain_regimes() -> dict[str, Regime]:
                 "wealth": _next_wealth,
                 "flag": fixed_transition("flag"),
                 "late_flag": Phased(
-                    solve={"late": MarkovTransition(_entry_flag_from_flag)},
-                    simulate={"late": MarkovTransition(_entry_uniform)},
+                    solve={"late": MarkovTransition(func=_entry_flag_from_flag)},
+                    simulate={"late": MarkovTransition(func=_entry_uniform)},
                 ),
             },
         ),

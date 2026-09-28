@@ -159,7 +159,7 @@ def _get_model(solver: str) -> Model:
         alive = ConsumptionSavingsRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(next_regime, targets=("alive", "dead")),
+                law=Choose(func=next_regime, targets=("alive", "dead")),
                 exits=("dead",),
             ),
             actions={"consumption": CONSUMPTION_GRID},
@@ -184,7 +184,7 @@ def _get_model(solver: str) -> Model:
         alive = UserRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(next_regime, targets=("alive", "dead")),
+                law=Choose(func=next_regime, targets=("alive", "dead")),
                 exits=("dead",),
             ),
             actions={"consumption": CONSUMPTION_GRID},

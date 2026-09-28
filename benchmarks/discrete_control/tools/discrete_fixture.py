@@ -71,7 +71,7 @@ def _make_three_type_model(
         regime_transitions=until_exit(
             4,
             law=Choose(
-                lambda age: jnp.where(
+                func=lambda age: jnp.where(
                     age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
                 ),
                 targets=("working", "retired"),

@@ -108,7 +108,7 @@ def _build_model(
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states=states or {},
@@ -429,7 +429,9 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
     household = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_three_regime, targets=("household", "household_terminal")),
+            law=Choose(
+                func=_next_three_regime, targets=("household", "household_terminal")
+            ),
             exits=("household_terminal",),
         ),
         actions={"choice": DiscreteGrid(category_class=Choice)},
@@ -512,7 +514,7 @@ def _build_carried_power_model() -> Model:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states={
@@ -576,7 +578,7 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states={

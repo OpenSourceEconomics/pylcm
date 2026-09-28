@@ -138,10 +138,10 @@ def _make_gated_regimes() -> dict[str, Regime]:
     """Build the gated-edge branch: `mover`, `moved_terminal`, `stay_terminal`."""
     mover = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "moved_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_move_gate,
                         routes={
                             "own": StakeholderRoute(
@@ -189,7 +189,9 @@ def _make_mixed_regimes() -> dict[str, Regime]:
     """Add an unconnected endogenous-grid branch to the gated-edge branch."""
     saver = ConsumptionSavingsRegime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"saver_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"saver_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         states={"assets": ASSET_GRID},
         state_transitions={"assets": _next_assets},

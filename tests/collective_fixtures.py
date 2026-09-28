@@ -129,7 +129,7 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states={"wage": WAGE_GRID},
@@ -182,7 +182,7 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states={"wage": WAGE_GRID},
@@ -230,7 +230,9 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
     shocked = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_shock_regime, targets=("shocked", "shocked_terminal")),
+            law=Choose(
+                func=_next_shock_regime, targets=("shocked", "shocked_terminal")
+            ),
             exits=("shocked_terminal",),
         ),
         states={"wage_shock": FOLDED_SHOCK},
@@ -271,9 +273,9 @@ def make_folding_collective_regime_kwargs() -> dict[str, Any]:
     """
     return {
         "regime_transitions": ByAge(
-            {
+            cases={
                 AgeRange(stop=1): Choose(
-                    _next_couple_regime, targets=("couple_terminal",)
+                    func=_next_couple_regime, targets=("couple_terminal",)
                 )
             }
         ),

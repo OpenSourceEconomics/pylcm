@@ -167,7 +167,7 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         return 0.0
 
     a = UserRegime(
-        regime_transitions=Choose(_next_regime, targets=("dead",)),
+        regime_transitions=Choose(func=_next_regime, targets=("dead",)),
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
@@ -1085,8 +1085,8 @@ def test_convert_series_per_target_transition() -> None:
         },
         state_transitions={
             "health": {
-                "working": MarkovTransition(_health_probs),
-                "retired": MarkovTransition(_health_probs),
+                "working": MarkovTransition(func=_health_probs),
+                "retired": MarkovTransition(func=_health_probs),
             },
             "wealth": _next_wealth,
         },
@@ -1094,7 +1094,7 @@ def test_convert_series_per_target_transition() -> None:
         regime_transitions=until_exit(
             2,
             law=Choose(
-                lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
+                func=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
                 targets=("working", "retired"),
             ),
             exits=("retired",),
@@ -1203,7 +1203,7 @@ def test_convert_series_structured_derived_categoricals() -> None:
         regime_transitions=until_exit(
             1,
             law=Choose(
-                lambda age: jnp.where(age >= 1, _RId.regime_b, _RId.regime_a),
+                func=lambda age: jnp.where(age >= 1, _RId.regime_b, _RId.regime_a),
                 targets=("regime_a", "regime_b"),
             ),
             exits=("regime_b",),
@@ -1260,7 +1260,7 @@ def test_convert_series_runtime_grid_param() -> None:
         regime_transitions=until_exit(
             1,
             law=Choose(
-                lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
+                func=lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
                 targets=("alive", "dead"),
             ),
             exits=("dead",),
@@ -1382,8 +1382,8 @@ def test_convert_series_cross_grid_transition() -> None:
         },
         state_transitions={
             "health": {
-                "pre65": MarkovTransition(_health_probs_same),
-                "post65": MarkovTransition(_health_probs_cross),
+                "pre65": MarkovTransition(func=_health_probs_same),
+                "post65": MarkovTransition(func=_health_probs_cross),
             },
             "wealth": lambda wealth: wealth,
         },
@@ -1391,7 +1391,7 @@ def test_convert_series_cross_grid_transition() -> None:
         regime_transitions=until_exit(
             1,
             law=Choose(
-                lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
+                func=lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
                 targets=("pre65", "post65"),
             ),
             exits=("post65",),
@@ -1566,7 +1566,7 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
     """Nested joint qnames resolve to the callable that declares each Series param."""
     source = UserRegime(
         regime_transitions={
-            "target": MarkovTransition(_series_joint_target_probability)
+            "target": MarkovTransition(func=_series_joint_target_probability)
         },
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={
@@ -1638,7 +1638,7 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
     """A target-only categorical output resolves its Series axis on that target."""
     source = UserRegime(
         regime_transitions={
-            "target": MarkovTransition(_series_joint_target_probability)
+            "target": MarkovTransition(func=_series_joint_target_probability)
         },
         states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": lambda health: jnp.asarray(health, dtype=float)},

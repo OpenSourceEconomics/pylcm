@@ -98,9 +98,9 @@ class Regime:
     it may go:
 
     - regime name ⇒ deterministic move to that regime
-    - `Choose(func, targets=...)` ⇒ deterministic, `func` returns the global
+    - `Choose(func=func, targets=...)` ⇒ deterministic, `func` returns the global
       regime code of one of `targets`
-    - `MarkovTransition(func, targets=...)` ⇒ stochastic, `func` returns a
+    - `MarkovTransition(func=func, targets=...)` ⇒ stochastic, `func` returns a
       probability vector over all regimes, nonzero only on `targets`
     - per-target dict ⇒ stochastic, maps target regime names to either
       `MarkovTransition`-wrapped functions returning that target's probability,
@@ -108,7 +108,7 @@ class Regime:
       route the selected target. The key set is the regime's support. A bare
       probability callable is accepted only inside `ValueDependentTransition`
       and wrapped in the derived `decomposed_transition` view.
-    - `ByAge({...})` ⇒ one of the above per selected age
+    - `ByAge(cases={...})` ⇒ one of the above per selected age
 
     A plain nonterminal law covers every non-final age; a `ByAge` covers
     exactly the ages its cases select. Every declared target must be solved at
@@ -1150,7 +1150,7 @@ def _as_markov_transition(
     """Wrap a bare probability callable in the cell grammar's `MarkovTransition`."""
     if isinstance(probability, MarkovTransition):
         return probability
-    return MarkovTransition(probability)
+    return MarkovTransition(func=probability)
 
 
 def _resolve_phase_variant(

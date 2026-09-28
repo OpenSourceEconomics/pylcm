@@ -72,8 +72,8 @@ def _build_model(*, fold: bool) -> Model:
         regime_transitions=until_exit(
             3,
             law={
-                "alive": MarkovTransition(_probability_alive),
-                "dead": MarkovTransition(_probability_dead),
+                "alive": MarkovTransition(func=_probability_alive),
+                "dead": MarkovTransition(func=_probability_dead),
             },
             exits=("dead",),
         ),

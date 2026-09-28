@@ -64,7 +64,9 @@ def _build(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 states={"wealth": _WEALTH} if states is None else states,
                 state_transitions=(
@@ -153,7 +155,7 @@ def test_a_constraint_may_not_read_a_targets_draw() -> None:
                 "source": Regime(
                     regime_transitions=until_exit(
                         22,
-                        law={"target": MarkovTransition(_to_target)},
+                        law={"target": MarkovTransition(func=_to_target)},
                         exits=("target",),
                     ),
                     states={"wealth": _WEALTH},
@@ -222,7 +224,9 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 states={"wealth": _WEALTH, "aime": aime},
                 state_transitions={
@@ -339,7 +343,9 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
                     regime_transitions=until_exit(
                         22,
                         law={
-                            "target": MarkovTransition(_probability_reading_a_next_name)
+                            "target": MarkovTransition(
+                                func=_probability_reading_a_next_name
+                            )
                         },
                         exits=("target",),
                     ),
@@ -377,7 +383,7 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
                 "source": Regime(
                     regime_transitions=until_exit(
                         22,
-                        law={"target": MarkovTransition(_to_target)},
+                        law={"target": MarkovTransition(func=_to_target)},
                         exits=("target",),
                     ),
                     states={"wealth": _WEALTH},

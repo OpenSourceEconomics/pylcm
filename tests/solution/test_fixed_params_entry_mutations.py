@@ -100,9 +100,9 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
     weighted expectation rather than an unweighted node average.
     """
     transition = (
-        Choose(target_id, targets=("target",))
+        Choose(func=target_id, targets=("target",))
         if coarse
-        else {"target": MarkovTransition(one_probability)}
+        else {"target": MarkovTransition(func=one_probability)}
     )
     model = Model(
         regimes={

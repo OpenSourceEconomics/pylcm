@@ -74,7 +74,9 @@ def _build(*, functions, next_wealth) -> Model:
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 state_transitions={"wealth": {"target": next_wealth}},
                 functions=functions,
@@ -135,7 +137,9 @@ def _build_reading_a_runtime_draw() -> Model:
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 states={"shock": _RUNTIME_SHOCK},
                 state_transitions={"wealth": {"target": _next_wealth_from_draw}},

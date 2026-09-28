@@ -70,7 +70,7 @@ def test_age_specialized_grid_as_a_phased_states_simulate_variant_is_rejected():
 def _build_regime(*, state_spec: Phased) -> Regime:
     """Build a one-state regime whose `tenure` is declared as given."""
     return Regime(
-        regime_transitions={"exit": MarkovTransition(_prob_one)},
+        regime_transitions={"exit": MarkovTransition(func=_prob_one)},
         states={"tenure": state_spec},
         state_transitions={"tenure": _next_tenure},
         functions={"utility": _utility},

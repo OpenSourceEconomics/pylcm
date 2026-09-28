@@ -70,7 +70,7 @@ def model() -> Model:
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(lambda: jnp.float32(1))},
+                    law={"target": MarkovTransition(func=lambda: jnp.float32(1))},
                     exits=("target",),
                 ),
                 states={
@@ -78,7 +78,7 @@ def model() -> Model:
                     "health": DiscreteGrid(category_class=Health),
                 },
                 state_transitions={
-                    "health": MarkovTransition(_health_probs),
+                    "health": MarkovTransition(func=_health_probs),
                     "wealth": Phased(
                         solve=_keep_wealth, simulate=_wealth_from_realized_health
                     ),

@@ -69,7 +69,7 @@ def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
     """Work until the age before `last_age`, then die."""
     return until_exit(
         last_age,
-        law=Choose(next_regime, targets=("working_life", "dead")),
+        law=Choose(func=next_regime, targets=("working_life", "dead")),
         exits=("dead",),
     )
 

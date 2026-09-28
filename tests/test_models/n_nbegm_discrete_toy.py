@@ -115,7 +115,7 @@ def build_model(
     }
     transitions = until_exit(
         final_age_alive + 5,
-        law=Choose(smooth.next_regime, targets=("alive", "dead")),
+        law=Choose(func=smooth.next_regime, targets=("alive", "dead")),
         exits=("dead",),
     )
     if variant == "brute":

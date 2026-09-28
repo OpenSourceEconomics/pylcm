@@ -202,8 +202,8 @@ def _build_model(
         regime_transitions=until_exit(
             1.0,
             law={
-                "alive": MarkovTransition(toy.prob_stay_alive),
-                "dead": MarkovTransition(toy.prob_die),
+                "alive": MarkovTransition(func=toy.prob_stay_alive),
+                "dead": MarkovTransition(func=toy.prob_die),
             },
             exits=("dead",),
         ),

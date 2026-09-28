@@ -418,7 +418,7 @@ def _lower_law(
             "establish group preservation."
         )
     return MarkovTransition(
-        _restricted_law(
+        func=_restricted_law(
             func=law.func,
             state_name=name,
             fixed_of_code=np.asarray(split.fixed_of_code),

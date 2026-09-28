@@ -72,7 +72,7 @@ def _build_model() -> Model:
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(_one_probability)},
+                    law={"target": MarkovTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 state_transitions={"shock": {"target": _enter_between_nodes}},

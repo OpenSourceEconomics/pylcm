@@ -48,7 +48,7 @@ def _next_regime(age: float) -> ScalarInt:
 def _build_work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
         "regime_transitions": until_exit(
-            2, law=Choose(_next_regime, targets=("dead", "work")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("dead", "work")), exits=("dead",)
         ),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},

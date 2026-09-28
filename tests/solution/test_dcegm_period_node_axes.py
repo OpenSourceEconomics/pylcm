@@ -86,8 +86,8 @@ def _model(
 ) -> Model:
     grid = LinSpacedGrid(start=1.0, stop=20.0, n_points=4)
     old_domain = ShortHealth if short_old_health else Health
-    young = {"young": MarkovTransition(young_probability)}
-    old = {"old": MarkovTransition(old_probability)}
+    young = {"young": MarkovTransition(func=young_probability)}
+    old = {"old": MarkovTransition(func=old_probability)}
     parent_cases: dict[AgeSelector, object] = {
         AgeRange(start=40, stop=50): young | old if overlapping_children else young,
         AgeRange(start=50, stop=60): old,
@@ -100,15 +100,15 @@ def _model(
             and selector.start == 40 + 10 * parent_period
         }
     parent = ConsumptionSavingsRegime(
-        regime_transitions=ByAge(parent_cases),
+        regime_transitions=ByAge(cases=parent_cases),
         states={"wealth": grid, "health": DiscreteGrid(Health)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=5)},
         state_transitions={
             "wealth": next_wealth,
             "health": {
-                "young": MarkovTransition(three_health),
+                "young": MarkovTransition(func=three_health),
                 "old": MarkovTransition(
-                    two_health if short_old_health else three_health
+                    func=two_health if short_old_health else three_health
                 ),
             },
         },
@@ -133,9 +133,9 @@ def _model(
             "parent": parent,
             "young": parent.replace(
                 regime_transitions=ByAge(
-                    {
+                    cases={
                         AgeRange(start=50, stop=51): {
-                            "dead": MarkovTransition(death_probability)
+                            "dead": MarkovTransition(func=death_probability)
                         }
                     }
                 ),
@@ -143,9 +143,9 @@ def _model(
             ),
             "old": parent.replace(
                 regime_transitions=ByAge(
-                    {
+                    cases={
                         AgeRange(start=50 if overlapping_children else 60, stop=70): {
-                            "dead": MarkovTransition(death_probability)
+                            "dead": MarkovTransition(func=death_probability)
                         }
                     }
                 ),

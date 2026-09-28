@@ -208,14 +208,14 @@ def _same_grid_markov_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -335,8 +335,8 @@ def _cross_grid_markov_model(solver: str) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "late": MarkovTransition(to_live_prob),
-                "dead": MarkovTransition(to_dead_prob),
+                "late": MarkovTransition(func=to_live_prob),
+                "dead": MarkovTransition(func=to_dead_prob),
             },
             exits=("dead",),
         ),
@@ -344,7 +344,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health3)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
-            "health": {"late": MarkovTransition(remap_health_to_two)},
+            "health": {"late": MarkovTransition(func=remap_health_to_two)},
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -376,8 +376,8 @@ def _cross_grid_markov_model(solver: str) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "late": MarkovTransition(to_live_prob),
-                "dead": MarkovTransition(to_dead_prob),
+                "late": MarkovTransition(func=to_live_prob),
+                "dead": MarkovTransition(func=to_dead_prob),
             },
             exits=("dead",),
         ),
@@ -385,7 +385,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
-            "health": {"late": MarkovTransition(late_health_transition)},
+            "health": {"late": MarkovTransition(func=late_health_transition)},
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -493,7 +493,7 @@ def _joint_process_markov_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
@@ -504,7 +504,7 @@ def _joint_process_markov_model(solver: str) -> Model:
         },
         state_transitions={
             "wealth": next_wealth_joint_dcegm if is_dcegm else next_wealth_joint_brute,
-            "health": MarkovTransition(joint_health_transition),
+            "health": MarkovTransition(func=joint_health_transition),
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -628,14 +628,14 @@ def _point_mass_floor_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_floor_dcegm if is_dcegm else next_wealth_floor_brute,
-            "health": MarkovTransition(point_mass_health_transition),
+            "health": MarkovTransition(func=point_mass_health_transition),
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={

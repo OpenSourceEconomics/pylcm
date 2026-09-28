@@ -167,17 +167,17 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
         "source": Regime(
             regime_transitions=(
                 {
-                    "lottery": MarkovTransition(_to_lottery),
-                    "safe": MarkovTransition(_to_safe),
+                    "lottery": MarkovTransition(func=_to_lottery),
+                    "safe": MarkovTransition(func=_to_safe),
                 }
                 if with_a_safe_alternative
-                else {"lottery": MarkovTransition(_certain)}
+                else {"lottery": MarkovTransition(func=_certain)}
             ),
             actions={"plan": DiscreteGrid(category_class=Plan)}
             if with_a_safe_alternative
             else {},
             state_transitions={
-                name: {"lottery": MarkovTransition(_draw_probabilities)}
+                name: {"lottery": MarkovTransition(func=_draw_probabilities)}
                 for name in axis_names
             },
             functions={"utility": _zero_utility},

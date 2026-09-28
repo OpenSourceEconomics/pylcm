@@ -66,7 +66,7 @@ def model() -> Model:
     alive = UserRegime(
         regime_transitions=until_exit(
             _N_PERIODS - 1,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},
@@ -134,7 +134,7 @@ def model_with_a_renamed_constraint() -> Model:
     alive = UserRegime(
         regime_transitions=until_exit(
             _N_PERIODS - 1,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},

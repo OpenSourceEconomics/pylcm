@@ -72,7 +72,7 @@ def _solve_with_bequest(bequest: float):
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(_next_regime, targets=("alive", "gone")),
+            law=Choose(func=_next_regime, targets=("alive", "gone")),
             exits=("gone",),
         ),
         states={"wealth": _WEALTH_GRID},
@@ -157,10 +157,10 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
             _LAST_AGE,
             law={
                 "alive": MarkovTransition(
-                    lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
+                    func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
                 ),
                 "gone": MarkovTransition(
-                    lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
+                    func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
                 ),
             },
             exits=("gone",),
@@ -218,7 +218,7 @@ def _solve_with_process_only_target(level: float):
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(_next_regime, targets=("alive", "gone")),
+            law=Choose(func=_next_regime, targets=("alive", "gone")),
             exits=("gone",),
         ),
         states={"wealth": _WEALTH_GRID},

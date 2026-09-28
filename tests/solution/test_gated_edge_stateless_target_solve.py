@@ -68,7 +68,7 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
             1,
             law={
                 "stateless_target": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_one),
+                    probability=MarkovTransition(func=_prob_one),
                     gate=gate,
                     routes={
                         "only": StakeholderRoute(

@@ -171,8 +171,8 @@ def _build_model(*, variant: str) -> Model:
     transition = until_exit(
         _FIRST_AGE + (_N_PERIODS - 1) * 5,
         law={
-            "alive": MarkovTransition(_prob_alive),
-            "dead": MarkovTransition(_prob_dead),
+            "alive": MarkovTransition(func=_prob_alive),
+            "dead": MarkovTransition(func=_prob_dead),
         },
         exits=("dead",),
     )

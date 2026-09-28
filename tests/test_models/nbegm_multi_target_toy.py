@@ -138,9 +138,9 @@ def _build_living_regime(
     regime_transition = until_exit(
         final_age,
         law={
-            "alive_a": MarkovTransition(prob_to_alive_a),
-            "alive_b": MarkovTransition(prob_to_alive_b),
-            "dead": MarkovTransition(prob_to_dead),
+            "alive_a": MarkovTransition(func=prob_to_alive_a),
+            "alive_b": MarkovTransition(func=prob_to_alive_b),
+            "dead": MarkovTransition(func=prob_to_dead),
         },
         exits=("dead",),
     )

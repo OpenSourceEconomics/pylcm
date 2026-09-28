@@ -103,7 +103,9 @@ def _build_model(
     """Build one acting regime over three periods into a terminal regime."""
     acting = Regime(
         regime_transitions=until_exit(
-            3, law=Choose(_next_regime, targets=("acting", "done")), exits=("done",)
+            3,
+            law=Choose(func=_next_regime, targets=("acting", "done")),
+            exits=("done",),
         ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH),

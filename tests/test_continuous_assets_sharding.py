@@ -85,9 +85,9 @@ def _regime(*, source: int, identity: bool) -> Regime:
 
     return Regime(
         regime_transitions=ByAge.until(
-            2,
-            law=MarkovTransition(probabilities, targets=("r0", "r1")),
-            then=MarkovTransition(probabilities, targets=("terminal",)),
+            stop_age_exclusive=2,
+            law=MarkovTransition(func=probabilities, targets=("r0", "r1")),
+            then=MarkovTransition(func=probabilities, targets=("terminal",)),
         ),
         actions={"decision": DiscreteGrid(_Three)},
         functions={"utility": utility, "landing": _landing},

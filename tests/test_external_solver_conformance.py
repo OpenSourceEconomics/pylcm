@@ -391,8 +391,8 @@ def _model(
                 regime_transitions=until_exit(
                     _N_PERIODS,
                     law={
-                        "active": MarkovTransition(_stay_active),
-                        "retired": MarkovTransition(_enter_retirement),
+                        "active": MarkovTransition(func=_stay_active),
+                        "retired": MarkovTransition(func=_enter_retirement),
                     },
                     exits=("retired",),
                 ),

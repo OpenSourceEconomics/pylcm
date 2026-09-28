@@ -155,7 +155,9 @@ def _build_single_target_model(
 
     """
     return _build_model(
-        regime_transitions={"couple_terminal": MarkovTransition(_target_probability)},
+        regime_transitions={
+            "couple_terminal": MarkovTransition(func=_target_probability)
+        },
         household=household,
         stakeholder=stakeholder,
         source_ends_at_age=1,
@@ -183,8 +185,8 @@ def _build_two_target_model(
     """
     return _build_model(
         regime_transitions={
-            "couple": MarkovTransition(_stay_probability),
-            "couple_terminal": MarkovTransition(_leave_probability),
+            "couple": MarkovTransition(func=_stay_probability),
+            "couple_terminal": MarkovTransition(func=_leave_probability),
         },
         household=household,
         stakeholder=stakeholder,

@@ -101,7 +101,7 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
             "labor_supply": DiscreteGrid(category_class=Work),
         },
         regime_transitions=until_exit(
-            25, law=Choose(next_regime, targets=("alive", "dead")), exits=("dead",)
+            25, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
         taste_shocks=ExtremeValueTasteShocks(),
         functions={
@@ -149,7 +149,7 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
         },
         regime_transitions=until_exit(
             25,
-            law=Choose(n_nbegm_toy.next_regime, targets=("alive", "dead")),
+            law=Choose(func=n_nbegm_toy.next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         taste_shocks=ExtremeValueTasteShocks(),

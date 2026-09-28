@@ -113,7 +113,7 @@ def test_discrete_state_different_categories_across_regimes():
         regime_transitions=until_exit(
             3,
             law=Choose(
-                hm_next_regime_working,
+                func=hm_next_regime_working,
                 targets=("dead", "retirement", "working_life"),
             ),
             exits=("dead", "retirement"),
@@ -131,7 +131,7 @@ def test_discrete_state_different_categories_across_regimes():
         functions={"utility": hm_utility_retirement},
         regime_transitions=until_exit(
             4,
-            law=Choose(hm_next_regime_retired, targets=("dead", "retirement")),
+            law=Choose(func=hm_next_regime_retired, targets=("dead", "retirement")),
             exits=("dead",),
         ),
     )
@@ -181,7 +181,7 @@ def test_deterministic_target_only_state() -> None:
             },
         },
         regime_transitions=until_exit(
-            2, law=Choose(next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
     )
 
@@ -273,11 +273,11 @@ def test_stochastic_target_only_state() -> None:
         state_transitions={
             "wealth": next_wealth,
             "heir_present": {
-                "dead": MarkovTransition(heir_present_probs),
+                "dead": MarkovTransition(func=heir_present_probs),
             },
         },
         regime_transitions=until_exit(
-            2, law=Choose(next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
     )
 
@@ -349,7 +349,7 @@ def test_per_target_dict_transitions():
         regime_transitions=until_exit(
             3,
             law=Choose(
-                hm_next_regime_working,
+                func=hm_next_regime_working,
                 targets=("dead", "retirement", "working_life"),
             ),
             exits=("dead", "retirement"),
@@ -367,7 +367,7 @@ def test_per_target_dict_transitions():
         functions={"utility": hm_utility_retirement},
         regime_transitions=until_exit(
             4,
-            law=Choose(hm_next_regime_retired, targets=("dead", "retirement")),
+            law=Choose(func=hm_next_regime_retired, targets=("dead", "retirement")),
             exits=("dead",),
         ),
     )
@@ -441,7 +441,7 @@ def test_outer_phased_per_target_dict_spans_grids():
         regime_transitions=until_exit(
             3,
             law=Choose(
-                hm_next_regime_working,
+                func=hm_next_regime_working,
                 targets=("dead", "retirement", "working_life"),
             ),
             exits=("dead", "retirement"),
@@ -454,7 +454,7 @@ def test_outer_phased_per_target_dict_spans_grids():
         functions={"utility": hm_utility_retirement},
         regime_transitions=until_exit(
             4,
-            law=Choose(hm_next_regime_retired, targets=("dead", "retirement")),
+            law=Choose(func=hm_next_regime_retired, targets=("dead", "retirement")),
             exits=("dead",),
         ),
     )
@@ -502,7 +502,7 @@ def test_discrete_state_same_count_different_names():
             "utility": lambda consumption, status: jnp.log(consumption) + status
         },
         regime_transitions=ByAge(
-            {AgeRange(stop=2): Choose(next_regime, targets=("dead",))}
+            cases={AgeRange(stop=2): Choose(func=next_regime, targets=("dead",))}
         ),
     )
 
@@ -516,7 +516,7 @@ def test_discrete_state_same_count_different_names():
         regime_transitions=until_exit(
             3,
             law=Choose(
-                lambda age: jnp.where(age >= 2, _RegimeId.dead, _RegimeId.retire),
+                func=lambda age: jnp.where(age >= 2, _RegimeId.dead, _RegimeId.retire),
                 targets=("dead", "retire"),
             ),
             exits=("dead",),
@@ -734,8 +734,8 @@ def test_incomplete_per_target_reachable_target():
         },
         state_transitions={
             "health": {
-                "regime_a": MarkovTransition(_next_health_3to3),
-                "dead": MarkovTransition(_next_health_3to3),
+                "regime_a": MarkovTransition(func=_next_health_3to3),
+                "dead": MarkovTransition(func=_next_health_3to3),
             },
             "wealth": _next_wealth,
         },
@@ -746,7 +746,7 @@ def test_incomplete_per_target_reachable_target():
         },
         regime_transitions=until_exit(
             3,
-            law=Choose(next_regime_a, targets=("dead", "regime_b", "regime_a")),
+            law=Choose(func=next_regime_a, targets=("dead", "regime_b", "regime_a")),
             exits=("dead", "regime_b"),
         ),
     )
@@ -768,7 +768,9 @@ def test_incomplete_per_target_reachable_target():
         regime_transitions=until_exit(
             4,
             law=Choose(
-                lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_b),
+                func=lambda age: jnp.where(
+                    age >= 3, _RegimeId.dead, _RegimeId.regime_b
+                ),
                 targets=("dead", "regime_b"),
             ),
             exits=("dead",),
@@ -819,9 +821,9 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
         },
         state_transitions={
             "health": {
-                "regime_a": MarkovTransition(_next_health_3to3),
-                "regime_b": MarkovTransition(_next_health_3to2),
-                "dead": MarkovTransition(_next_health_3to3),
+                "regime_a": MarkovTransition(func=_next_health_3to3),
+                "regime_b": MarkovTransition(func=_next_health_3to2),
+                "dead": MarkovTransition(func=_next_health_3to3),
             },
             "wealth": _next_wealth,
         },
@@ -832,7 +834,7 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
         },
         regime_transitions=until_exit(
             3,
-            law=Choose(next_regime_a, targets=("dead", "regime_b", "regime_a")),
+            law=Choose(func=next_regime_a, targets=("dead", "regime_b", "regime_a")),
             exits=("dead", "regime_b"),
         ),
     )
@@ -854,7 +856,9 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
         regime_transitions=until_exit(
             4,
             law=Choose(
-                lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_b),
+                func=lambda age: jnp.where(
+                    age >= 3, _RegimeId.dead, _RegimeId.regime_b
+                ),
                 targets=("dead", "regime_b"),
             ),
             exits=("dead",),
@@ -895,9 +899,9 @@ def test_incomplete_per_target_unreachable_target() -> None:
         },
         state_transitions={
             "health": {
-                "regime_a": MarkovTransition(_next_health_3to3),
-                "regime_b": MarkovTransition(_next_health_3to2),
-                "dead": MarkovTransition(_next_health_3to3),
+                "regime_a": MarkovTransition(func=_next_health_3to3),
+                "regime_b": MarkovTransition(func=_next_health_3to2),
+                "dead": MarkovTransition(func=_next_health_3to3),
             },
             "wealth": _next_wealth,
         },
@@ -909,11 +913,15 @@ def test_incomplete_per_target_unreachable_target() -> None:
         regime_transitions=until_exit(
             3,
             law={
-                "regime_a": MarkovTransition(lambda age: jnp.where(age < 1, 1.0, 0.0)),
-                "regime_b": MarkovTransition(
-                    lambda age: jnp.where((age >= 1) & (age < 2), 1.0, 0.0)
+                "regime_a": MarkovTransition(
+                    func=lambda age: jnp.where(age < 1, 1.0, 0.0)
                 ),
-                "dead": MarkovTransition(lambda age: jnp.where(age >= 2, 1.0, 0.0)),
+                "regime_b": MarkovTransition(
+                    func=lambda age: jnp.where((age >= 1) & (age < 2), 1.0, 0.0)
+                ),
+                "dead": MarkovTransition(
+                    func=lambda age: jnp.where(age >= 2, 1.0, 0.0)
+                ),
             },
             exits=("regime_b", "dead"),
         ),
@@ -926,9 +934,9 @@ def test_incomplete_per_target_unreachable_target() -> None:
         },
         state_transitions={
             "health": {
-                "regime_b": MarkovTransition(_next_health_2to2),
-                "regime_c": MarkovTransition(_next_health_2to2),
-                "dead": MarkovTransition(_next_health_2to2),
+                "regime_b": MarkovTransition(func=_next_health_2to2),
+                "regime_c": MarkovTransition(func=_next_health_2to2),
+                "dead": MarkovTransition(func=_next_health_2to2),
             },
             "wealth": _next_wealth,
         },
@@ -940,11 +948,15 @@ def test_incomplete_per_target_unreachable_target() -> None:
         regime_transitions=until_exit(
             4,
             law={
-                "regime_b": MarkovTransition(lambda age: jnp.where(age < 2, 1.0, 0.0)),
-                "regime_c": MarkovTransition(
-                    lambda age: jnp.where((age >= 2) & (age < 3), 1.0, 0.0)
+                "regime_b": MarkovTransition(
+                    func=lambda age: jnp.where(age < 2, 1.0, 0.0)
                 ),
-                "dead": MarkovTransition(lambda age: jnp.where(age >= 3, 1.0, 0.0)),
+                "regime_c": MarkovTransition(
+                    func=lambda age: jnp.where((age >= 2) & (age < 3), 1.0, 0.0)
+                ),
+                "dead": MarkovTransition(
+                    func=lambda age: jnp.where(age >= 3, 1.0, 0.0)
+                ),
             },
             exits=("dead",),
         ),
@@ -967,7 +979,7 @@ def test_incomplete_per_target_unreachable_target() -> None:
         regime_transitions=until_exit(
             4,
             law=Choose(
-                lambda age: jnp.where(
+                func=lambda age: jnp.where(
                     age >= 3,
                     _RegimeId.dead,
                     _RegimeId.regime_c,

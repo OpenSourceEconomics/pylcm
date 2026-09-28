@@ -167,7 +167,9 @@ def _get_dcegm_model() -> Model:
     retirement = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+            law=Choose(
+                func=next_regime_from_retirement, targets=("retirement", "dead")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
@@ -207,7 +209,9 @@ def _get_brute_model() -> Model:
     retirement = UserRegime(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+            law=Choose(
+                func=next_regime_from_retirement, targets=("retirement", "dead")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
@@ -307,7 +311,9 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
     retirement = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+            law=Choose(
+                func=next_regime_from_retirement, targets=("retirement", "dead")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},

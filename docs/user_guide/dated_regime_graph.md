@@ -48,10 +48,10 @@ consisting only of terminal problems is a valid special case.
 from lcm import ByAge
 
 transition = ByAge.until(
-    62,
+    stop_age_exclusive=62,
     law=work_transition,
     then="early_retirement",
-    start=25,
+    start_age_inclusive=25,
 )
 ```
 
@@ -72,9 +72,9 @@ For a general partition:
 from lcm import AgeRange, ByAge
 
 transition = ByAge(
-    {
-        AgeRange(25, 60): before_60,
-        AgeRange(60, 65): from_60_to_65,
+    cases={
+        AgeRange(start=25, stop=60): before_60,
+        AgeRange(start=60, stop=65): from_60_to_65,
     }
 )
 ```
@@ -103,7 +103,7 @@ A fixed target is a string. A state/action-dependent deterministic selector is:
 ```python
 from lcm import Choose
 
-transition = Choose(choose_regime, targets=("working", "retired"))
+transition = Choose(func=choose_regime, targets=("working", "retired"))
 ```
 
 The function returns the existing global regime code, not an index into `targets`. It
@@ -115,7 +115,7 @@ A full probability vector retains its current output layout:
 from lcm import MarkovTransition
 
 transition = MarkovTransition(
-    regime_probabilities,
+    func=regime_probabilities,
     targets=("working", "retired", "dead"),
 )
 ```
@@ -128,9 +128,9 @@ Per-target functions keep their current wrappers:
 
 ```python
 transition = {
-    "working": MarkovTransition(p_work),
-    "retired": MarkovTransition(p_retire),
-    "dead": MarkovTransition(p_die),
+    "working": MarkovTransition(func=p_work),
+    "retired": MarkovTransition(func=p_retire),
+    "dead": MarkovTransition(func=p_die),
 }
 ```
 
@@ -200,10 +200,10 @@ Keep `Phased`'s existing economic meaning and put it inside age cases:
 from lcm import Phased
 
 transition = ByAge.until(
-    100,
+    stop_age_exclusive=100,
     law=Phased(solve=perceived_mortality, simulate=realized_mortality),
     then="dead",
-    start=66,
+    start_age_inclusive=66,
 )
 ```
 

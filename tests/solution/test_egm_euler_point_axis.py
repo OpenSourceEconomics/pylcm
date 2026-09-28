@@ -120,8 +120,8 @@ def _model(width: int | None = None) -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(stay_prob),
-                "dead": MarkovTransition(death_prob),
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
             },
             exits=("dead",),
         ),

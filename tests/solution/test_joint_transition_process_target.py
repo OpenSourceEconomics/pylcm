@@ -73,7 +73,9 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 def _model(*, support: tuple[float, float]) -> Model:
     working = Regime(
         regime_transitions=until_exit(
-            62, law=Choose(_next_regime, targets=("working", "dead")), exits=("dead",)
+            62,
+            law=Choose(func=_next_regime, targets=("working", "dead")),
+            exits=("dead",),
         ),
         states={
             "wealth": LinSpacedGrid(

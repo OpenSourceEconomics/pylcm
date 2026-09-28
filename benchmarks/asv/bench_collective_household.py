@@ -382,9 +382,9 @@ def _chain_link(*, terminal_name, reference_regime):
     kernels = _chain_kernels()
     return Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
-                    terminal_name: MarkovTransition(kernels["to_terminal"])
+                    terminal_name: MarkovTransition(func=kernels["to_terminal"])
                 }
             }
         ),

@@ -168,7 +168,7 @@ def test_model_requires_terminal_regime(binary_category_class):
         actions={},
         functions={"utility": lambda health: health},
         regime_transitions=MarkovTransition(
-            lambda: jnp.array([1.0]), targets=("test",)
+            func=lambda: jnp.array([1.0]), targets=("test",)
         ),
     )
     with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
@@ -226,7 +226,8 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         regime_transitions=until_exit(
             1,
             law=MarkovTransition(
-                lambda: jnp.array([0.8, 0.1, 0.1]), targets=("alive", "dead1", "dead2")
+                func=lambda: jnp.array([0.8, 0.1, 0.1]),
+                targets=("alive", "dead1", "dead2"),
             ),
             exits=("dead1", "dead2"),
         ),
@@ -271,7 +272,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
         regime_transitions=until_exit(
             1,
             law=MarkovTransition(
-                lambda: jnp.array([0.5, 0.5]), targets=("alive", "dead")
+                func=lambda: jnp.array([0.5, 0.5]), targets=("alive", "dead")
             ),
             exits=("dead",),
         ),
@@ -310,7 +311,7 @@ def test_model_regime_name_validation(binary_category_class):
         regime_transitions=until_exit(
             1,
             law=MarkovTransition(
-                lambda: jnp.array([0.5, 0.5]), targets=("alive__bad", "dead")
+                func=lambda: jnp.array([0.5, 0.5]), targets=("alive__bad", "dead")
             ),
             exits=("dead",),
         ),
@@ -368,7 +369,8 @@ def test_unused_state_raises_error():
         regime_transitions=until_exit(
             5,
             law=MarkovTransition(
-                lambda: jnp.array([0.9, 0.1]), targets=("working_life", "retirement")
+                func=lambda: jnp.array([0.9, 0.1]),
+                targets=("working_life", "retirement"),
             ),
             exits=("retirement",),
         ),
@@ -430,7 +432,8 @@ def test_unused_action_raises_error():
         regime_transitions=until_exit(
             5,
             law=MarkovTransition(
-                lambda: jnp.array([0.9, 0.1]), targets=("working_life", "retirement")
+                func=lambda: jnp.array([0.9, 0.1]),
+                targets=("working_life", "retirement"),
             ),
             exits=("retirement",),
         ),
@@ -509,7 +512,7 @@ def test_constraint_naming_a_transition_output_is_rejected():
     alive_regime = UserRegime(
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
-            61, law=Choose(next_regime, targets=("alive", "dead")), exits=("dead",)
+            61, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
@@ -590,7 +593,7 @@ def test_state_only_used_in_transitions():
 
     alive_regime = UserRegime(
         regime_transitions=until_exit(
-            61, law=Choose(next_regime, targets=("alive", "dead")), exits=("dead",)
+            61, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
@@ -670,7 +673,7 @@ def test_state_only_in_transitions_with_terminal_regime():
             "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
         },
         regime_transitions=until_exit(
-            3, law=Choose(next_regime, targets=("alive", "dead")), exits=("dead",)
+            3, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
     )
 

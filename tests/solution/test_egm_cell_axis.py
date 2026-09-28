@@ -157,8 +157,8 @@ def _model(width: int | None = None) -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(stay_prob),
-                "dead": MarkovTransition(death_prob),
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -169,7 +169,7 @@ def _model(width: int | None = None) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
         },
         functions={
             "utility": utility,
@@ -217,8 +217,8 @@ def _model_with_batched_health() -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(stay_prob),
-                "dead": MarkovTransition(death_prob),
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -229,7 +229,7 @@ def _model_with_batched_health() -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
         },
         functions={
             "utility": utility,
@@ -282,8 +282,8 @@ def _action_model(width: int | None = None) -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(stay_prob),
-                "dead": MarkovTransition(death_prob),
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -297,7 +297,7 @@ def _action_model(width: int | None = None) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
         },
         functions={
             "utility": utility_with_action,
@@ -464,8 +464,8 @@ def _two_combo_model(width: int | None = None) -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(stay_prob),
-                "dead": MarkovTransition(death_prob),
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -477,7 +477,7 @@ def _two_combo_model(width: int | None = None) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
             "married": fixed_transition("married"),
         },
         functions={

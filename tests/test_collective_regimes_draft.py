@@ -117,7 +117,7 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     married = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime_widowed, targets=("married", "widowed")),
+            law=Choose(func=_next_regime_widowed, targets=("married", "widowed")),
             exits=("widowed",),
         ),
         states={"wealth": _WEALTH},

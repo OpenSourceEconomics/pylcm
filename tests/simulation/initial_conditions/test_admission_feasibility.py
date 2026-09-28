@@ -103,7 +103,7 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=Choose(_next_regime, targets=("done",)),
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
                 state_transitions={"wealth": lcm.fixed_transition("wealth")},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=n_actions)},

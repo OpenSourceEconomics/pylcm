@@ -80,7 +80,7 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
         },
         regime_transitions=until_exit(
             n_periods - 1,
-            law=Choose(next_regime, targets=("non_terminal", "terminal")),
+            law=Choose(func=next_regime, targets=("non_terminal", "terminal")),
             exits=("terminal",),
         ),
     )

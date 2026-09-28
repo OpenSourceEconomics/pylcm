@@ -390,7 +390,7 @@ def build_model(
         alive = UserRegime(
             regime_transitions=until_exit(
                 final_age,
-                law=Choose(next_regime, targets=("alive", "dead")),
+                law=Choose(func=next_regime, targets=("alive", "dead")),
                 exits=("dead",),
             ),
             states={
@@ -401,7 +401,7 @@ def build_model(
             state_transitions={
                 "liquid": next_liquid_brute,
                 "housing": next_housing,
-                "income": MarkovTransition(income_transition),
+                "income": MarkovTransition(func=income_transition),
             },
             actions={
                 "consumption": consumption_grid,
@@ -437,7 +437,7 @@ def build_model(
     alive = NestedConsumptionSavingsRegime(
         regime_transitions=until_exit(
             final_age,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         states={
@@ -448,7 +448,7 @@ def build_model(
         state_transitions={
             "liquid": next_liquid,
             "housing": next_housing,
-            "income": MarkovTransition(income_transition),
+            "income": MarkovTransition(func=income_transition),
         },
         actions={
             "consumption": consumption_grid,

@@ -66,7 +66,9 @@ def _make_model(*, fixed_params=None):
         regime_transitions=until_exit(
             2,
             law=Choose(
-                lambda period: jnp.where(period >= 1, RegimeId.dead, RegimeId.alive),
+                func=lambda period: jnp.where(
+                    period >= 1, RegimeId.dead, RegimeId.alive
+                ),
                 targets=("alive", "dead"),
             ),
             exits=("dead",),

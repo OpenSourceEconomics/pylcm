@@ -43,7 +43,9 @@ def _next_regime(age: float) -> ScalarInt:
 def _build_model(*, enable_jit: bool) -> Model:
     working = Regime(
         regime_transitions=until_exit(
-            19, law=Choose(_next_regime, targets=("working", "dead")), exits=("dead",)
+            19,
+            law=Choose(func=_next_regime, targets=("working", "dead")),
+            exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": _next_wealth},

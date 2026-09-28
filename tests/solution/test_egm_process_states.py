@@ -226,7 +226,7 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
         alive = ConsumptionSavingsRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(next_regime, targets=("alive", "dead")),
+                law=Choose(func=next_regime, targets=("alive", "dead")),
                 exits=("dead",),
             ),
             actions=actions,
@@ -249,7 +249,7 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
         alive = UserRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(next_regime, targets=("alive", "dead")),
+                law=Choose(func=next_regime, targets=("alive", "dead")),
                 exits=("dead",),
             ),
             actions=actions,

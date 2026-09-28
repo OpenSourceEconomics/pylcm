@@ -257,7 +257,7 @@ def _branching_regime() -> UserRegime:
     return UserRegime(
         regime_transitions=until_exit(
             2,
-            law=Choose(_branch_next_regime, targets=("stay", "switch", "done")),
+            law=Choose(func=_branch_next_regime, targets=("stay", "switch", "done")),
             exits=("done",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},

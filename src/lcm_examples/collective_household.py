@@ -103,7 +103,7 @@ def get_model(
         regime_transitions=_until_last_age(
             {
                 "couple": ValueDependentTransition(
-                    probability=MarkovTransition(probability["stays_married"]),
+                    probability=MarkovTransition(func=probability["stays_married"]),
                     gate=_no_dissolution,
                     routes={
                         "f": StakeholderRoute(
@@ -122,7 +122,9 @@ def get_model(
                         ),
                     },
                 ),
-                "couple_terminal": MarkovTransition(probability["reaches_last_age"]),
+                "couple_terminal": MarkovTransition(
+                    func=probability["reaches_last_age"]
+                ),
             },
             terminal="couple_terminal",
             last_age=last_age,
@@ -175,7 +177,7 @@ def get_model(
         regime_transitions=_until_last_age(
             {
                 "couple": ValueDependentTransition(
-                    probability=MarkovTransition(probability["meets_a_partner"]),
+                    probability=MarkovTransition(func=probability["meets_a_partner"]),
                     gate=_mutual_consent,
                     routes={
                         "her": StakeholderRoute(
@@ -197,8 +199,10 @@ def get_model(
                         ),
                     },
                 ),
-                "single_f": MarkovTransition(probability["meets_nobody"]),
-                "single_f_terminal": MarkovTransition(probability["reaches_last_age"]),
+                "single_f": MarkovTransition(func=probability["meets_nobody"]),
+                "single_f_terminal": MarkovTransition(
+                    func=probability["reaches_last_age"]
+                ),
             },
             terminal="single_f_terminal",
             last_age=last_age,
@@ -230,7 +234,7 @@ def get_model(
         regime_transitions=_until_last_age(
             {
                 "couple": ValueDependentTransition(
-                    probability=MarkovTransition(probability["meets_a_partner"]),
+                    probability=MarkovTransition(func=probability["meets_a_partner"]),
                     gate=_mutual_consent,
                     routes={
                         "his": StakeholderRoute(
@@ -252,8 +256,10 @@ def get_model(
                         ),
                     },
                 ),
-                "single_m": MarkovTransition(probability["meets_nobody"]),
-                "single_m_terminal": MarkovTransition(probability["reaches_last_age"]),
+                "single_m": MarkovTransition(func=probability["meets_nobody"]),
+                "single_m_terminal": MarkovTransition(
+                    func=probability["reaches_last_age"]
+                ),
             },
             terminal="single_m_terminal",
             last_age=last_age,
@@ -283,6 +289,7 @@ def get_model(
         },
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: ("couple", "single_f", "single_m")},
     )
 
 
@@ -455,7 +462,9 @@ def _until_last_age(
     law: Mapping[str, object], *, terminal: str, last_age: int
 ) -> ByAge:
     """Apply `law` until the age before `last_age`, then only its `terminal` cell."""
-    return ByAge.until(last_age, law=law, then={terminal: law[terminal]})
+    return ByAge.until(
+        stop_age_exclusive=last_age, law=law, then={terminal: law[terminal]}
+    )
 
 
 def _single_terminal(*, wealth: LinSpacedGrid, consumption: LinSpacedGrid) -> Regime:

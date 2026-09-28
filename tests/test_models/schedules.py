@@ -25,7 +25,10 @@ def until_exit(
     - `Phased` ⇒ each phase's law restricted the same way
     """
     return ByAge.until(
-        boundary, law=law, then=_restricted(law, exits=exits), start=start
+        stop_age_exclusive=boundary,
+        law=law,
+        then=_restricted(law, exits=exits),
+        start_age_inclusive=start,
     )
 
 
@@ -39,9 +42,9 @@ def _restricted(law: object, *, exits: tuple[str, ...]) -> object:
     if isinstance(law, Mapping):
         return {target: law[target] for target in exits}
     if isinstance(law, Choose):
-        return Choose(law.func, targets=exits)
+        return Choose(func=law.func, targets=exits)
     if isinstance(law, MarkovTransition):
-        return MarkovTransition(law.func, targets=exits)
+        return MarkovTransition(func=law.func, targets=exits)
     msg = f"No exit restriction for {law!r}."
     raise TypeError(msg)
 
@@ -60,4 +63,4 @@ def choose_among(law: object, *, targets: tuple[str, ...]) -> object:
             solve=choose_among(law.solve, targets=targets),
             simulate=choose_among(law.simulate, targets=targets),
         )
-    return Choose(law, targets=targets)  # ty: ignore[invalid-argument-type]
+    return Choose(func=law, targets=targets)  # ty: ignore[invalid-argument-type]

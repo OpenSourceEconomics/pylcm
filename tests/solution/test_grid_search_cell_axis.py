@@ -89,7 +89,7 @@ def _model(*, kind: str, width: int) -> Model:
             "acting": Regime(
                 regime_transitions=until_exit(
                     1,
-                    law=Choose(_next_regime, targets=("acting", "done")),
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
                     exits=("done",),
                 ),
                 state_transitions={name: fixed_transition(name) for name in states},
@@ -200,7 +200,7 @@ def _collision_model() -> Model:
             "acting": Regime(
                 regime_transitions=until_exit(
                     1,
-                    law=Choose(_next_regime, targets=("acting", "done")),
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
                     exits=("done",),
                 ),
                 state_transitions={name: fixed_transition(name) for name in states},
@@ -258,7 +258,7 @@ def test_trivial_state_product_does_not_declare_a_cell_axis(
             "acting": Regime(
                 regime_transitions=until_exit(
                     1,
-                    law=Choose(_next_regime, targets=("acting", "done")),
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
                     exits=("done",),
                 ),
                 state_transitions={name: fixed_transition(name) for name in states},

@@ -217,8 +217,8 @@ def _resources_param_model(solver: str) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(stay_prob_wealth),
-                "dead": MarkovTransition(death_prob_wealth),
+                "working_life": MarkovTransition(func=stay_prob_wealth),
+                "dead": MarkovTransition(func=death_prob_wealth),
             },
             exits=("dead",),
         ),
@@ -353,8 +353,8 @@ def _smoothstep_intermediate_model(*, solver: str, rate_is_fixed: bool) -> Model
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(stay_prob_share),
-                "dead": MarkovTransition(death_prob_share),
+                "working_life": MarkovTransition(func=stay_prob_share),
+                "dead": MarkovTransition(func=death_prob_share),
             },
             exits=("dead",),
         ),
@@ -487,8 +487,8 @@ def _imputed_pension_model(solver: str) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(stay_prob_wealth),
-                "dead": MarkovTransition(death_prob_wealth),
+                "working_life": MarkovTransition(func=stay_prob_wealth),
+                "dead": MarkovTransition(func=death_prob_wealth),
             },
             exits=("dead",),
         ),
@@ -592,8 +592,8 @@ def _decreasing_resources_model() -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(stay_prob_wealth),
-                "dead": MarkovTransition(death_prob_wealth),
+                "working_life": MarkovTransition(func=stay_prob_wealth),
+                "dead": MarkovTransition(func=death_prob_wealth),
             },
             exits=("dead",),
         ),

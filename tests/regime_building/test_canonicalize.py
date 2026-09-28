@@ -122,8 +122,8 @@ def test_per_target_dict_is_restricted_to_named_targets() -> None:
     specs = _two_regime_model_specs(
         {
             "regime_transitions": {
-                "retire": MarkovTransition(lambda age: jnp.asarray(0.6)),  # noqa: ARG005
-                "dead": MarkovTransition(lambda age: jnp.asarray(0.4)),  # noqa: ARG005
+                "retire": MarkovTransition(func=lambda age: jnp.asarray(0.6)),  # noqa: ARG005
+                "dead": MarkovTransition(func=lambda age: jnp.asarray(0.4)),  # noqa: ARG005
             },
             "state_transitions": {"wealth": {"retire": _next_wealth}},
         }
@@ -167,7 +167,7 @@ def test_markov_law_broadcasts_as_markov() -> None:
         },
         "state_transitions": {
             "wealth": _next_wealth,
-            "health": MarkovTransition(_health_probs),
+            "health": MarkovTransition(func=_health_probs),
         },
         "functions": {
             "utility": lambda consumption, health: jnp.log(consumption)  # noqa: ARG005
@@ -218,7 +218,7 @@ def test_coarse_markov_regime_transition_canonicalizes_to_shared_cells() -> None
     transition object, so the engine evaluates it once and indexes per
     target.
     """
-    transition = MarkovTransition(lambda age: jnp.asarray([0.5, 0.3, 0.2]))  # noqa: ARG005
+    transition = MarkovTransition(func=lambda age: jnp.asarray([0.5, 0.3, 0.2]))  # noqa: ARG005
     specs = _two_regime_model_specs(
         {
             "regime_transitions": transition,
@@ -282,8 +282,8 @@ def test_temporal_graph_limits_canonical_transition_bundles() -> None:
 
 def test_per_target_regime_transition_passes_through() -> None:
     """A user per-target regime transition stays a mapping of exactly its cells."""
-    to_retire = MarkovTransition(lambda age: jnp.asarray(0.6))  # noqa: ARG005
-    to_dead = MarkovTransition(lambda age: jnp.asarray(0.4))  # noqa: ARG005
+    to_retire = MarkovTransition(func=lambda age: jnp.asarray(0.6))  # noqa: ARG005
+    to_dead = MarkovTransition(func=lambda age: jnp.asarray(0.4))  # noqa: ARG005
     specs = _two_regime_model_specs(
         {
             "regime_transitions": {"retire": to_retire, "dead": to_dead},

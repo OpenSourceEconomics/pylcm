@@ -129,7 +129,7 @@ def _make_regimes() -> dict[str, Regime]:
             2,
             law={
                 "src": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_stay),
+                    probability=MarkovTransition(func=_prob_stay),
                     gate=_repeat_gate,
                     routes={
                         "only": StakeholderRoute(
@@ -140,7 +140,7 @@ def _make_regimes() -> dict[str, Regime]:
                         )
                     },
                 ),
-                "src_exit": MarkovTransition(_prob_exit_boundary),
+                "src_exit": MarkovTransition(func=_prob_exit_boundary),
             },
             exits=("src_exit",),
         ),

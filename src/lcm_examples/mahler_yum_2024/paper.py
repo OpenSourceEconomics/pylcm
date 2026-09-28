@@ -299,7 +299,7 @@ def build_working_regime(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(next_health),
+            "health": MarkovTransition(func=next_health),
             "lagged_effort": next_lagged_effort,
             "education": fixed_transition("education"),
             "productivity": fixed_transition("productivity"),
@@ -362,7 +362,7 @@ def build_retirement_regime(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(next_health),
+            "health": MarkovTransition(func=next_health),
             "lagged_effort": next_lagged_effort,
             "education": fixed_transition("education"),
             "health_type": fixed_transition("health_type"),
@@ -471,6 +471,7 @@ def create_mahler_yum_model(
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "working"},
         enable_jit=enable_jit,
         fixed_params={
             "productivity_type_multiplier": productivity_type_multiplier,

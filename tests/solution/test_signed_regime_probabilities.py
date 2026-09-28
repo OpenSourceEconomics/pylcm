@@ -72,8 +72,8 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
                 regime_transitions=until_exit(
                     21,
                     law={
-                        "a": MarkovTransition(_to_a),
-                        "b": MarkovTransition(_to_b),
+                        "a": MarkovTransition(func=_to_a),
+                        "b": MarkovTransition(func=_to_b),
                     },
                     exits=("a", "b"),
                 ),
@@ -171,11 +171,11 @@ def test_signed_cells_that_cancel_across_targets_are_refused_by_validation() -> 
         regimes={
             "source": Regime(
                 regime_transitions=ByAge(
-                    {
+                    cases={
                         AgeRange(stop=21): {
-                            "live": MarkovTransition(_all_mass_to_live),
-                            "gone_a": MarkovTransition(_positive_on_a_dead_target),
-                            "gone_b": MarkovTransition(_negative_on_a_dead_target),
+                            "live": MarkovTransition(func=_all_mass_to_live),
+                            "gone_a": MarkovTransition(func=_positive_on_a_dead_target),
+                            "gone_b": MarkovTransition(func=_negative_on_a_dead_target),
                         }
                     }
                 ),

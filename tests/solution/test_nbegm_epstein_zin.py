@@ -86,7 +86,7 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         actions={"consumption": _CONSUMPTION_GRID},
         regime_transitions=until_exit(
             final_age_alive + 5,
-            law=Choose(_next_regime, targets=("alive", "dead")),
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         functions={

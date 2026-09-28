@@ -281,7 +281,7 @@ def _health_insurance_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         actions={
@@ -364,7 +364,7 @@ def _means_test_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
@@ -462,8 +462,8 @@ def _per_target_model(solver: str) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(_stay_prob),
-                "dead": MarkovTransition(_death_prob),
+                "working_life": MarkovTransition(func=_stay_prob),
+                "dead": MarkovTransition(func=_death_prob),
             },
             exits=("dead",),
         ),
@@ -555,7 +555,7 @@ def _phased_law_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
@@ -639,7 +639,7 @@ def _chained_law_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         actions={

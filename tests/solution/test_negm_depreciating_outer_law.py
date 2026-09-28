@@ -43,7 +43,7 @@ from tests.test_models.schedules import until_exit
 
 _ALIVE_TRANSITIONS = until_exit(
     20 + (toy.N_PERIODS - 1) * 5,
-    law=Choose(toy.next_regime, targets=("alive", "dead")),
+    law=Choose(func=toy.next_regime, targets=("alive", "dead")),
     exits=("dead",),
 )
 

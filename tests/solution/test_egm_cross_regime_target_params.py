@@ -217,10 +217,10 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         # target is the *old* regime (a different regime) and the terminal
         # `dead` regime.
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=50): {
-                    "old": MarkovTransition(young_stay_prob),
-                    "dead": MarkovTransition(young_death_prob),
+                    "old": MarkovTransition(func=young_stay_prob),
+                    "dead": MarkovTransition(func=young_death_prob),
                 }
             }
         ),
@@ -268,8 +268,8 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "old": MarkovTransition(next_old_stay_prob),
-                "dead": MarkovTransition(next_old_death_prob),
+                "old": MarkovTransition(func=next_old_stay_prob),
+                "dead": MarkovTransition(func=next_old_death_prob),
             },
             exits=("dead",),
             start=50,

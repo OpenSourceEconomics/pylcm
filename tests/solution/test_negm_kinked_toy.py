@@ -117,7 +117,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
         },
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + 5,
-            law=Choose(negm_kinked_toy.next_regime, targets=("alive", "dead")),
+            law=Choose(func=negm_kinked_toy.next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         functions={
@@ -221,7 +221,7 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
         },
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + 5,
-            law=Choose(negm_kinked_toy.next_regime, targets=("alive", "dead")),
+            law=Choose(func=negm_kinked_toy.next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         constraints={

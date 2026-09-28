@@ -1158,7 +1158,9 @@ def _build_model(
     """
     acting = Regime(
         regime_transitions=until_exit(
-            1, law=Choose(_next_regime, targets=("acting", "done")), exits=("done",)
+            1,
+            law=Choose(func=_next_regime, targets=("acting", "done")),
+            exits=("done",),
         ),
         states={
             "wealth": LinSpacedGrid(
@@ -1230,7 +1232,9 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
     def decision_regime(utility: Callable[..., FloatND]) -> Regime:
         return Regime(
             regime_transitions=ByAge(
-                {AgeRange(stop=1): Choose(_next_dedup_done, targets=("done",))}
+                cases={
+                    AgeRange(stop=1): Choose(func=_next_dedup_done, targets=("done",))
+                }
             ),
             states={"wealth": wealth_grid},
             state_transitions={"wealth": fixed_transition("wealth")},
@@ -1700,7 +1704,7 @@ def _build_runtime_action_model(
             "acting": Regime(
                 regime_transitions=until_exit(
                     1,
-                    law=Choose(_next_regime, targets=("acting", "done")),
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
                     exits=("done",),
                 ),
                 states={
@@ -2036,8 +2040,8 @@ def _build_zero_weight_fold_model() -> Model:
         regime_transitions=until_exit(
             1,
             law={
-                "folded": MarkovTransition(_route_to_folded),
-                "dead": MarkovTransition(_route_to_dead),
+                "folded": MarkovTransition(func=_route_to_folded),
+                "dead": MarkovTransition(func=_route_to_dead),
             },
             exits=("folded", "dead"),
         ),

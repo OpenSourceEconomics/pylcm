@@ -26,10 +26,10 @@ live self-edge at the horizon. Declare the complete exit law:
 
 ```python
 transition = ByAge.until(
-    H,
-    law=MarkovTransition(mortality, targets=("alive", "dead")),
+    stop_age_exclusive=H,
+    law=MarkovTransition(func=mortality, targets=("alive", "dead")),
     then="dead",
-    start=START,
+    start_age_inclusive=START,
 )
 ```
 
@@ -48,14 +48,14 @@ lotteries rather than renormalizing the erroneous union:
 
 ```python
 transition = ByAge(
-    {
+    cases={
         early_sources: {
-            "old_stage": MarkovTransition(remain),
-            "exit": MarkovTransition(leave),
+            "old_stage": MarkovTransition(func=remain),
+            "exit": MarkovTransition(func=leave),
         },
         boundary_source: {
-            "new_stage": MarkovTransition(remain),
-            "exit": MarkovTransition(leave),
+            "new_stage": MarkovTransition(func=remain),
+            "exit": MarkovTransition(func=leave),
         },
     }
 )
@@ -98,8 +98,8 @@ terminal problem already covered every age, so coverage stays 182.
 ## 4. Keep ordinary numerical interfaces
 
 ```python
-transition = MarkovTransition(old_vector_law, targets=("alive", "dead"))
-transition = Choose(old_selector, targets=("working", "retired"))
+transition = MarkovTransition(func=old_vector_law, targets=("alive", "dead"))
+transition = Choose(func=old_selector, targets=("working", "retired"))
 ```
 
 Preserve global regime IDs and vector packing. A deterministic selector still returns a
@@ -121,7 +121,9 @@ new all-purpose Edge object.
 A work regime ending before 62 can use:
 
 ```python
-transition = ByAge.until(62, law=work_law, then="early", start=25)
+transition = ByAge.until(
+    stop_age_exclusive=62, law=work_law, then="early", start_age_inclusive=25
+)
 ```
 
 For fractional/irregular grids use exact ages or `AgeRange`. Python `range` still

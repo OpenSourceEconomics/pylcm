@@ -125,7 +125,9 @@ def _folding_collective_regimes_with_participation() -> dict[str, Regime]:
     space is the only one with no sustainable action.
     """
     couple = Regime(
-        regime_transitions=Choose(_next_couple_regime, targets=("couple_terminal",)),
+        regime_transitions=Choose(
+            func=_next_couple_regime, targets=("couple_terminal",)
+        ),
         states={"wage": WAGE_GRID, "wage_shock": FOLDED_SHOCK},
         state_transitions={"wage": _fixed_wage},
         actions={"work": DiscreteGrid(category_class=Work)},

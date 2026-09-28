@@ -538,7 +538,7 @@ def build_model(
         working = UserRegime(
             regime_transitions=until_exit(
                 final_age_alive,
-                law=Choose(next_regime, targets=("working", "dead")),
+                law=Choose(func=next_regime, targets=("working", "dead")),
                 exits=("dead",),
             ),
             states={
@@ -572,7 +572,7 @@ def build_model(
     working = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             final_age_alive,
-            law=Choose(next_regime, targets=("working", "dead")),
+            law=Choose(func=next_regime, targets=("working", "dead")),
             exits=("dead",),
         ),
         states={

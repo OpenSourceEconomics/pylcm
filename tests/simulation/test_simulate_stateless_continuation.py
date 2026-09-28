@@ -55,7 +55,7 @@ def _simulate_with_bequest(bequest: float):
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(_next_regime, targets=("alive", "gone")),
+            law=Choose(func=_next_regime, targets=("alive", "gone")),
             exits=("gone",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},

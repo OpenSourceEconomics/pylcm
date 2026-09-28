@@ -192,12 +192,14 @@ def _build_model(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    21, law={"target": MarkovTransition(_certain)}, exits=("target",)
+                    21,
+                    law={"target": MarkovTransition(func=_certain)},
+                    exits=("target",),
                 ),
                 state_transitions={
                     "income": {"target": _make_entry(rare_entry)},
                     **{
-                        name: {"target": MarkovTransition(_draw_probabilities)}
+                        name: {"target": MarkovTransition(func=_draw_probabilities)}
                         for name in axis_names
                     },
                 },

@@ -71,7 +71,7 @@ def _make_model() -> Model:
             1,
             law={
                 "household_next": ValueDependentTransition(
-                    probability=MarkovTransition(_certain),
+                    probability=MarkovTransition(func=_certain),
                     gate=_prosperous_enough,
                     routes={
                         "f": StakeholderRoute(

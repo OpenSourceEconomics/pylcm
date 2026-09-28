@@ -176,10 +176,10 @@ def _make_f2_regimes() -> dict[str, Regime]:
     runtime-points `IrregSpacedGrid`, with DIFFERENT points."""
     src = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_threshold_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -502,10 +502,10 @@ def _make_f3_regimes() -> dict[str, Regime]:
     """A 3-regime model whose gated target is STATELESS (terminal scrap value)."""
     src = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "stateless_target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_stateless_gate,
                         routes={
                             "only": StakeholderRoute(

@@ -136,8 +136,8 @@ def _model(
                 regime_transitions=until_exit(
                     21,
                     law={
-                        "common": MarkovTransition(_certain),
-                        "rare": MarkovTransition(rare_probability),
+                        "common": MarkovTransition(func=_certain),
+                        "rare": MarkovTransition(func=rare_probability),
                     },
                     exits=("common", "rare"),
                 ),

@@ -54,7 +54,7 @@ def _model(*, devices: tuple[int, ...]) -> Model:
                 regime_transitions=until_exit(
                     2,
                     law=Choose(
-                        lambda age: jax.numpy.where(
+                        func=lambda age: jax.numpy.where(
                             age < 1, _RegimeId.working, _RegimeId.retired
                         ),
                         targets=("working", "retired"),

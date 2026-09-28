@@ -111,14 +111,14 @@ def get_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(next_health),
+            "health": MarkovTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
         regime_transitions=until_exit(
             final_age_alive + 1,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         constraints={"wealth_constraint": wealth_constraint},
@@ -180,14 +180,14 @@ def get_multi_regime_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(next_health),
+            "health": MarkovTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
         regime_transitions=until_exit(
             work_final_age + 1,
-            law=Choose(_next_regime_multi, targets=("work",)),
+            law=Choose(func=_next_regime_multi, targets=("work",)),
             exits=("retire",),
         ),
         constraints={"wealth_constraint": wealth_constraint},
@@ -201,14 +201,14 @@ def get_multi_regime_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(next_health),
+            "health": MarkovTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
         regime_transitions=until_exit(
             retire_final_age + 1,
-            law=Choose(_next_regime_multi, targets=("retire",)),
+            law=Choose(func=_next_regime_multi, targets=("retire",)),
             exits=("dead",),
             start=work_final_age + 1,
         ),

@@ -47,7 +47,7 @@ def _specs(
     state_transitions: dict[str, object] | None = None,
 ) -> MappingProxyType[str, PhasedRegimeSpec]:
     source = Regime(
-        regime_transitions={"target": MarkovTransition(_probability)},
+        regime_transitions={"target": MarkovTransition(func=_probability)},
         functions={"utility": lambda: jnp.asarray(0.0)},
         state_transitions=state_transitions or {},  # ty: ignore[invalid-argument-type]
         joint_transitions=joint_transitions,

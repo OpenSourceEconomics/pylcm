@@ -67,8 +67,8 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         regime_transitions=until_exit(
             _LAST_AGE,
             law={
-                "saving": MarkovTransition(prob_continue),
-                "done": MarkovTransition(prob_stop),
+                "saving": MarkovTransition(func=prob_continue),
+                "done": MarkovTransition(func=prob_stop),
             },
             exits=("done",),
         ),

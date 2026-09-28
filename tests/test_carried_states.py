@@ -44,7 +44,7 @@ def _next_regime(age: float) -> ScalarInt:
 
 
 WORKING_TRANSITIONS = until_exit(
-    64, law=Choose(_next_regime, targets=("working", "dead")), exits=("dead",)
+    64, law=Choose(func=_next_regime, targets=("working", "dead")), exits=("dead",)
 )
 
 
@@ -279,9 +279,9 @@ def _build_handover_model() -> Model:
     """
     working = UserRegime(
         regime_transitions=ByAge.until(
-            64,
-            law=Choose(_next_regime_from_working, targets=("working",)),
-            then=Choose(_next_regime_from_working, targets=("retired",)),
+            stop_age_exclusive=64,
+            law=Choose(func=_next_regime_from_working, targets=("working",)),
+            then=Choose(func=_next_regime_from_working, targets=("retired",)),
         ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -302,9 +302,9 @@ def _build_handover_model() -> Model:
     )
     retired = UserRegime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=64, stop=66): Choose(
-                    _next_regime_from_retired, targets=("dead",)
+                    func=_next_regime_from_retired, targets=("dead",)
                 )
             }
         ),
@@ -467,7 +467,9 @@ def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
 
     working = UserRegime(
         regime_transitions=until_exit(
-            64, law=Choose(_next_regime, targets=("working", "dead")), exits=("dead",)
+            64,
+            law=Choose(func=_next_regime, targets=("working", "dead")),
+            exits=("dead",),
         ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),

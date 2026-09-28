@@ -228,7 +228,7 @@ def _axis_width_case(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=Choose(_next_regime, targets=("done",)),
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={"income": NormalIIDProcess(n_points=5, gauss_hermite=False)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _utility},

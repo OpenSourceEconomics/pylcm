@@ -82,7 +82,7 @@ def _make_model(*, gate) -> Model:
                     45,
                     law={
                         "target": ValueDependentTransition(
-                            probability=MarkovTransition(_prob_one),
+                            probability=MarkovTransition(func=_prob_one),
                             gate=gate,
                             routes={
                                 "only": StakeholderRoute(

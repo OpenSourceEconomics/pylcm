@@ -109,7 +109,7 @@ def _make_model(
                     1,
                     law={
                         "target": ValueDependentTransition(
-                            probability=MarkovTransition(_certain_target),
+                            probability=MarkovTransition(func=_certain_target),
                             gate=_gate,
                             routes={
                                 "only": StakeholderRoute(
@@ -280,7 +280,7 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
                     1,
                     law={
                         "target": ValueDependentTransition(
-                            probability=MarkovTransition(_certain_target),
+                            probability=MarkovTransition(func=_certain_target),
                             gate=_healthy_gate,
                             routes={
                                 "only": StakeholderRoute(
@@ -383,7 +383,7 @@ def _witness_model() -> Model:
                     1,
                     law={
                         "target": ValueDependentTransition(
-                            probability=MarkovTransition(_certain_target),
+                            probability=MarkovTransition(func=_certain_target),
                             gate=_witness_gate,
                             routes={
                                 "only": StakeholderRoute(

@@ -125,10 +125,10 @@ def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (SINGLETON, folds `wage_shock`)."""
     source = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_true_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -191,7 +191,9 @@ def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     )
     reader = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"reader_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"reader_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -252,10 +254,10 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
     """
     source = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -326,7 +328,7 @@ def test_fold_with_nonlinear_certainty_equivalent_is_rejected():
     with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
         Regime(
             regime_transitions=ByAge(
-                {AgeRange(stop=1): {"terminal": MarkovTransition(_prob_one)}}
+                cases={AgeRange(stop=1): {"terminal": MarkovTransition(func=_prob_one)}}
             ),
             states={"wage_shock": _shock(fold=True)},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -339,7 +341,7 @@ def test_fold_without_certainty_equivalent_still_constructs():
     """Pin: the SAME topology with no `certainty_equivalent` still constructs."""
     Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"terminal": MarkovTransition(_prob_one)}}
+            cases={AgeRange(stop=1): {"terminal": MarkovTransition(func=_prob_one)}}
         ),
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -365,7 +367,7 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
             1,
             law={
                 "target": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_one),
+                    probability=MarkovTransition(func=_prob_one),
                     gate=lambda wage_shock: wage_shock > 0.0,
                     routes={
                         "only": StakeholderRoute(

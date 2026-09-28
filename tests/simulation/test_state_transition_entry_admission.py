@@ -105,9 +105,9 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=Choose(_next_regime, targets=("done",)),
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={"health": grid},
-                state_transitions={"health": MarkovTransition(law)},
+                state_transitions={"health": MarkovTransition(func=law)},
                 functions={"utility": _utility},
             ),
             "done": Regime(

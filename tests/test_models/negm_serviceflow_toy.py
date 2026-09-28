@@ -261,7 +261,7 @@ def build_negm_model() -> Model:
         },
         regime_transitions=until_exit(
             FINAL_AGE_ALIVE + 5,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         functions={
@@ -313,7 +313,7 @@ def build_brute_model() -> Model:
         },
         regime_transitions=until_exit(
             FINAL_AGE_ALIVE + 5,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         functions={

@@ -109,7 +109,9 @@ def _get_means_tested_model(variant: str) -> Model:
         regime = UserRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+                law=Choose(
+                    func=next_regime_from_retirement, targets=("retirement", "dead")
+                ),
                 exits=("dead",),
             ),
             actions={"consumption": CONSUMPTION_GRID},
@@ -122,7 +124,9 @@ def _get_means_tested_model(variant: str) -> Model:
         regime = ConsumptionSavingsRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+                law=Choose(
+                    func=next_regime_from_retirement, targets=("retirement", "dead")
+                ),
                 exits=("dead",),
             ),
             actions={"consumption": CONSUMPTION_GRID},
@@ -166,7 +170,9 @@ def _get_corner_model() -> Model:
     regime = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+            law=Choose(
+                func=next_regime_from_retirement, targets=("retirement", "dead")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": CORNER_CONSUMPTION_GRID},

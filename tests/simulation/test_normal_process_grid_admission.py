@@ -64,7 +64,7 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=Choose(_next_regime, targets=("done",)),
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={
                     "income": NormalIIDProcess(
                         n_points=n_points,

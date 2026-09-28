@@ -61,7 +61,9 @@ def _build(*, source_states, source_state_transitions) -> Model:
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 states=source_states,
                 state_transitions=source_state_transitions,

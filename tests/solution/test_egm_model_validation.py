@@ -118,7 +118,9 @@ def _model(
         state_transitions=state_transitions,
         constraints={} if constraint is None else {"cap": constraint},
         regime_transitions=ByAge(
-            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+            cases={
+                AgeRange(start=0, stop=1): Choose(func=next_regime, targets=("done",))
+            }
         ),
         functions={
             "utility": utility,

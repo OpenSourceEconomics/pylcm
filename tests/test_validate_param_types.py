@@ -43,7 +43,7 @@ def _next_regime() -> ScalarInt:
 
 working = UserRegime(
     regime_transitions=until_exit(
-        30, law=Choose(_next_regime, targets=("working", "dead")), exits=("dead",)
+        30, law=Choose(func=_next_regime, targets=("working", "dead")), exits=("dead",)
     ),
     states={
         "health": DiscreteGrid(category_class=Health),

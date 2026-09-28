@@ -177,10 +177,10 @@ def _hand_computed_gate(shock: np.ndarray) -> np.ndarray:
 def _make_regimes() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(

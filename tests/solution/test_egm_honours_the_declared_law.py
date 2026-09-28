@@ -68,8 +68,8 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         regime_transitions=until_exit(
             last_age,
             law={
-                "saving": MarkovTransition(prob_continue),
-                "done": MarkovTransition(prob_stop),
+                "saving": MarkovTransition(func=prob_continue),
+                "done": MarkovTransition(func=prob_stop),
             },
             exits=("done",),
         ),

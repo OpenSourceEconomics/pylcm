@@ -79,7 +79,9 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 state_transitions={"shock": {"target": _enter_at_the_node}},
                 functions={"utility": _no_utility},
@@ -110,7 +112,9 @@ def _model_entering_at(enter_law) -> Model:
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 states={"wealth": _WEALTH},
                 state_transitions={

@@ -110,7 +110,7 @@ def _solve_coarse_into_process_only_target(
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(_next_regime, targets=("alive", "gone")),
+            law=Choose(func=_next_regime, targets=("alive", "gone")),
             exits=("gone",),
         ),
         states={"wealth": _WEALTH_GRID},
@@ -190,7 +190,7 @@ def _solve_with_entry_law(level: float):
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(_next_regime, targets=("alive", "gone")),
+            law=Choose(func=_next_regime, targets=("alive", "gone")),
             exits=("gone",),
         ),
         states={"wealth": _WEALTH_GRID},
@@ -301,7 +301,7 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
     alive = Regime(
         regime_transitions=until_exit(
             41,
-            law=Choose(_tiny_next_regime, targets=("alive", "dead")),
+            law=Choose(func=_tiny_next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         states={"wealth": _TINY_WEALTH},

@@ -61,7 +61,7 @@ def _valid_regime() -> NestedConsumptionSavingsRegime:
         },
         regime_transitions=until_exit(
             25,
-            law=Choose(n_nbegm_toy.next_regime, targets=("alive", "dead")),
+            law=Choose(func=n_nbegm_toy.next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         functions={

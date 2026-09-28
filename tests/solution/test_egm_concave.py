@@ -239,7 +239,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
     retirement = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(next_regime, targets=("retirement", "dead")),
+            law=Choose(func=next_regime, targets=("retirement", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=100)},

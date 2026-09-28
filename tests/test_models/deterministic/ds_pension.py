@@ -333,9 +333,9 @@ def get_model(
         },
         constraints={"feasible": feasible_working},
         regime_transitions=ByAge.until(
-            retirement_age,
-            law={"working": MarkovTransition(prob_stay_working)},
-            then={"retired": MarkovTransition(prob_retire)},
+            stop_age_exclusive=retirement_age,
+            law={"working": MarkovTransition(func=prob_stay_working)},
+            then={"retired": MarkovTransition(func=prob_retire)},
         ),
         functions={
             "utility": utility_working,
@@ -360,8 +360,8 @@ def get_model(
         regime_transitions=until_exit(
             final_age,
             law={
-                "retired": MarkovTransition(prob_stay_retired),
-                "dead": MarkovTransition(prob_die),
+                "retired": MarkovTransition(func=prob_stay_retired),
+                "dead": MarkovTransition(func=prob_die),
             },
             exits=("dead",),
             start=retirement_age,

@@ -85,7 +85,7 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states={},
@@ -137,7 +137,7 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states={},

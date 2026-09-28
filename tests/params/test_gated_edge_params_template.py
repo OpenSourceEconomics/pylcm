@@ -204,7 +204,7 @@ def _build_model(
             1,
             law={
                 "married_terminal": ValueDependentTransition(
-                    probability=MarkovTransition(_marry_for_sure),
+                    probability=MarkovTransition(func=_marry_for_sure),
                     gate=gate,
                     routes={
                         "f": StakeholderRoute(

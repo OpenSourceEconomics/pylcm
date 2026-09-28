@@ -80,7 +80,7 @@ def _build_model(*, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={
                     "shock": {"target": _enter_shock},
                     "other": {"target": _enter_other},

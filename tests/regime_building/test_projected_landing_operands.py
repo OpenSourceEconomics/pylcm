@@ -110,7 +110,7 @@ def _projection_model(projection) -> Model:
                     1,
                     law={
                         "target": ValueDependentTransition(
-                            probability=MarkovTransition(_certain_target),
+                            probability=MarkovTransition(func=_certain_target),
                             gate=_closed_above_one,
                             routes={
                                 "only": StakeholderRoute(
@@ -279,7 +279,7 @@ def _coupled_model(saving_points) -> Model:
                     1,
                     law={
                         "pair": ValueDependentTransition(
-                            probability=MarkovTransition(_to_pair),
+                            probability=MarkovTransition(func=_to_pair),
                             gate=_no_dissolution,
                             routes={
                                 "only": StakeholderRoute(

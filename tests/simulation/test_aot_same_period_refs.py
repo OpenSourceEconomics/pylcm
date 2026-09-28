@@ -205,7 +205,7 @@ def _make_participation_model() -> Model:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law={"couple_terminal": MarkovTransition(_certain_transition)},
+            law={"couple_terminal": MarkovTransition(func=_certain_transition)},
             exits=("couple_terminal",),
         ),
         states={"education": DiscreteGrid(category_class=Education)},
@@ -240,7 +240,7 @@ def _make_participation_model() -> Model:
     single_f = Regime(
         regime_transitions=until_exit(
             1,
-            law={"single_f_terminal": MarkovTransition(_certain_transition)},
+            law={"single_f_terminal": MarkovTransition(func=_certain_transition)},
             exits=("single_f_terminal",),
         ),
         states={"education": DiscreteGrid(category_class=Education)},

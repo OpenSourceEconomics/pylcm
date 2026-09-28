@@ -83,7 +83,7 @@ def _same_target_fallback_model() -> Model:
                     1,
                     law={
                         "target": ValueDependentTransition(
-                            probability=MarkovTransition(_always_true),
+                            probability=MarkovTransition(func=_always_true),
                             gate=_always_closed,
                             routes={
                                 "only": StakeholderRoute(

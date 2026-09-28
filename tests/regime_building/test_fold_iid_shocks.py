@@ -122,7 +122,7 @@ def _make_regimes(
     """
     period0 = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_next_regime, targets=("terminal",))}
+            cases={AgeRange(stop=1): Choose(func=_next_regime, targets=("terminal",))}
         ),
         states={"wage_shock": _shock(fold=fold, n_points=n_points, sigma=sigma)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -213,7 +213,7 @@ def _make_regimes_fold_omitted() -> dict[str, Regime]:
     """
     period0 = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_next_regime, targets=("terminal",))}
+            cases={AgeRange(stop=1): Choose(func=_next_regime, targets=("terminal",))}
         ),
         states={
             "wage_shock": NormalIIDProcess(
@@ -262,7 +262,7 @@ def _three_shock_regimes(*, fold: bool) -> dict[str, Regime]:
 
     period0 = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_next_regime, targets=("terminal",))}
+            cases={AgeRange(stop=1): Choose(func=_next_regime, targets=("terminal",))}
         ),
         states={
             "a": _shock(fold=fold, n_points=3, sigma=1.0),
@@ -371,7 +371,7 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     Regime(
         regime_transitions={
             "some_target": ValueDependentTransition(
-                probability=MarkovTransition(lambda: jnp.asarray(1.0)),
+                probability=MarkovTransition(func=lambda: jnp.asarray(1.0)),
                 gate=lambda wage_shock: wage_shock > 0.0,
                 routes={
                     "only": StakeholderRoute(
@@ -457,7 +457,7 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
     period0 = Regime(
         regime_transitions=until_exit(
             1,
-            law={"terminal": MarkovTransition(lambda: jnp.asarray(1.0))},
+            law={"terminal": MarkovTransition(func=lambda: jnp.asarray(1.0))},
             exits=("terminal",),
         ),
         states={"wage_shock": _shock(fold=False), "wealth": wealth_grid},
@@ -741,7 +741,7 @@ def test_a_folded_target_reached_only_by_the_regime_transition_is_enumerable():
     period0 = Regime(
         regime_transitions=until_exit(
             1,
-            law={"terminal": MarkovTransition(lambda: jnp.asarray(1.0))},
+            law={"terminal": MarkovTransition(func=lambda: jnp.asarray(1.0))},
             exits=("terminal",),
         ),
         states={"wage_shock": _shock(fold=False)},
@@ -805,7 +805,7 @@ def test_a_coarse_transition_into_a_folded_target_needs_no_per_target_cells():
     period0 = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("period0", "terminal")),
+            law=Choose(func=_next_regime, targets=("period0", "terminal")),
             exits=("terminal",),
         ),
         states={"wage_shock": _shock(fold=False)},
@@ -852,7 +852,7 @@ def _make_target_local_fold_regimes(*, shared: bool) -> dict[str, Regime]:
     fold_name = "source_shock" if shared else "target_shock"
     period0 = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_next_regime, targets=("terminal",))}
+            cases={AgeRange(stop=1): Choose(func=_next_regime, targets=("terminal",))}
         ),
         states={"source_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -965,7 +965,7 @@ def test_coarse_self_transition_retains_the_self_continuation():
 
     stay = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(_next_self, targets=("stay", "done")), exits=("done",)
+            2, law=Choose(func=_next_self, targets=("stay", "done")), exits=("done",)
         ),
         states={"wage_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -1031,7 +1031,7 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
 
     stay = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(_next_self, targets=("stay", "done")), exits=("done",)
+            2, law=Choose(func=_next_self, targets=("stay", "done")), exits=("done",)
         ),
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -1076,7 +1076,7 @@ def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
     src = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_always_stay, targets=("src", "stay", "alt")),
+            law=Choose(func=_always_stay, targets=("src", "stay", "alt")),
             exits=("stay", "alt"),
         ),
         states={"wage_shock": _shock(fold=False)},
@@ -1136,7 +1136,7 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
         transition: Choose | Mapping[str, MarkovTransition],
     ) -> Regime:
         return Regime(
-            regime_transitions=ByAge({AgeRange(stop=1): transition}),
+            regime_transitions=ByAge(cases={AgeRange(stop=1): transition}),
             states={"wage_shock": _shock(fold=False)},
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility},
@@ -1144,14 +1144,14 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
 
     coarse = _solve(
         {
-            "period0": _period0(Choose(_next_regime, targets=("terminal",))),
+            "period0": _period0(Choose(func=_next_regime, targets=("terminal",))),
             "terminal": _terminal(),
         }
     )
     per_target = _solve(
         {
             "period0": _period0(
-                {"terminal": MarkovTransition(lambda: jnp.asarray(1.0))}
+                {"terminal": MarkovTransition(func=lambda: jnp.asarray(1.0))}
             ),
             "terminal": _terminal(),
         }
@@ -1220,10 +1220,10 @@ def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
 
     src = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
-                    "folded_B": MarkovTransition(_route_to_B),
-                    "dead_C": MarkovTransition(_route_to_C),
+                    "folded_B": MarkovTransition(func=_route_to_B),
+                    "dead_C": MarkovTransition(func=_route_to_C),
                 }
             }
         ),
@@ -1396,10 +1396,10 @@ def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
 
     src = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
-                    "folded_B": MarkovTransition(_route_to_B),
-                    "dead_C": MarkovTransition(_route_to_C),
+                    "folded_B": MarkovTransition(func=_route_to_B),
+                    "dead_C": MarkovTransition(func=_route_to_C),
                 }
             }
         ),

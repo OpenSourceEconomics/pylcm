@@ -164,7 +164,7 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
             FINAL_AGE_ALIVE + 1,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         functions=functions,
@@ -650,7 +650,7 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         regime_transitions=until_exit(
             2,
             law=Choose(
-                lambda age: jnp.where(
+                func=lambda age: jnp.where(
                     age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
                 ),
                 targets=("alive", "dead"),
@@ -702,7 +702,7 @@ def _solve_with_aggregator_slot(
         regime_transitions=until_exit(
             2,
             law=Choose(
-                lambda age: jnp.where(
+                func=lambda age: jnp.where(
                     age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
                 ),
                 targets=("alive", "dead"),

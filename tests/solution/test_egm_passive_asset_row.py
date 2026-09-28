@@ -212,8 +212,8 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(stay_prob),
-                "dead": MarkovTransition(death_prob),
+                "working_life": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -416,8 +416,8 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(stay_prob_share),
-                "dead": MarkovTransition(death_prob_share),
+                "working_life": MarkovTransition(func=stay_prob_share),
+                "dead": MarkovTransition(func=death_prob_share),
             },
             exits=("dead",),
         ),

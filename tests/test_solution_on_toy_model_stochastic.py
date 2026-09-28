@@ -46,7 +46,7 @@ alive_stochastic = alive_deterministic.replace(
     states=dict(alive_deterministic.states)
     | {"health": DiscreteGrid(category_class=Health)},
     state_transitions=dict(alive_deterministic.state_transitions)
-    | {"health": MarkovTransition(next_health)},
+    | {"health": MarkovTransition(func=next_health)},
 )
 
 

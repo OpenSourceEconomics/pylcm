@@ -77,7 +77,7 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
     shocked = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("shocked", "shocked_terminal")),
+            law=Choose(func=_next_regime, targets=("shocked", "shocked_terminal")),
             exits=("shocked_terminal",),
         ),
         states={"wealth": WEALTH_GRID, "wage_shock": FOLDED_SHOCK},

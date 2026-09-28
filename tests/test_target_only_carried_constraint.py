@@ -103,9 +103,9 @@ def _carried_retired() -> UserRegime:
     """`retired` carries `pension_wealth`: imputed in solve, gridded in simulate."""
     return UserRegime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=62, stop=64): Choose(
-                    _from_retired, targets=("retired", "dead")
+                    func=_from_retired, targets=("retired", "dead")
                 )
             }
         ),
@@ -124,9 +124,9 @@ def _ordinary_retired() -> UserRegime:
     """`retired` grids `pension_wealth` ORDINARILY in both phases."""
     return UserRegime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=62, stop=64): Choose(
-                    _from_retired, targets=("retired", "dead")
+                    func=_from_retired, targets=("retired", "dead")
                 )
             }
         ),
@@ -162,7 +162,7 @@ def _working(*, regime_transitions: UserFunction | Phased) -> UserRegime:
 
     return UserRegime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=60, stop=62): choose_among(
                     regime_transitions, targets=("retired",)
                 )

@@ -217,7 +217,7 @@ def _working_life(
         regime_transitions=until_exit(
             LAST_ALIVE_AGE + 1,
             law=Choose(
-                next_regime_from_working,
+                func=next_regime_from_working,
                 targets=(
                     "working_life",
                     "retirement",
@@ -274,7 +274,7 @@ def _retirement(
         regime_transitions=until_exit(
             LAST_ALIVE_AGE + 1,
             law=Choose(
-                next_regime_from_retirement, targets=("retirement", "done_retired")
+                func=next_regime_from_retirement, targets=("retirement", "done_retired")
             ),
             exits=("done_retired",),
         ),

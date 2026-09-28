@@ -814,7 +814,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `None` now masks a model-level entry instead.
 
 - Regime transitions take a third form: a per-target dict
-  `{target_regime: MarkovTransition(prob_func)}` whose key set declares the regime's
+  `{target_regime: MarkovTransition(func=prob_func)}` whose key set declares the regime's
   reachable targets — omitted regimes are structurally unreachable. Per-target dicts in
   `state_transitions` hand state values across regime boundaries, including into states
   the source regime does not carry and across grids that differ between regimes.

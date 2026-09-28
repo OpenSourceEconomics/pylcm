@@ -171,10 +171,10 @@ def _value_gate(*, V_target: FloatND, V_ref: FloatND) -> BoolND:
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_value_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -385,10 +385,10 @@ def _threshold_gate(*, V_target: FloatND, gate_threshold: FloatND) -> BoolND:
 def _make_curved_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_threshold_gate,
                         routes={
                             "only": StakeholderRoute(

@@ -188,10 +188,10 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
     """
     source = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_enters_target),
+                        probability=MarkovTransition(func=_enters_target),
                         gate=_no_dissolution,
                         routes={
                             "only": StakeholderRoute(
@@ -202,7 +202,7 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
                             )
                         },
                     ),
-                    "fallback": MarkovTransition(_never_entered),
+                    "fallback": MarkovTransition(func=_never_entered),
                 }
             }
         ),

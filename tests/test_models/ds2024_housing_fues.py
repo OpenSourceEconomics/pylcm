@@ -272,7 +272,7 @@ def build_model(  # noqa: C901
         alive = UserRegime(
             regime_transitions=until_exit(
                 final_age,
-                law=Choose(next_regime, targets=("alive", "dead")),
+                law=Choose(func=next_regime, targets=("alive", "dead")),
                 exits=("dead",),
             ),
             states={
@@ -283,7 +283,7 @@ def build_model(  # noqa: C901
             state_transitions={
                 "liquid": next_liquid_brute,
                 "housing": next_housing,
-                "income": MarkovTransition(income_transition),
+                "income": MarkovTransition(func=income_transition),
             },
             actions={"consumption": consumption_grid, "housing_choice": housing_grid},
             constraints={"borrowing_constraint": borrowing_constraint},
@@ -304,7 +304,7 @@ def build_model(  # noqa: C901
     alive = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             final_age,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         states={
@@ -315,7 +315,7 @@ def build_model(  # noqa: C901
         state_transitions={
             "liquid": next_liquid,
             "housing": next_housing,
-            "income": MarkovTransition(income_transition),
+            "income": MarkovTransition(func=income_transition),
         },
         actions={"consumption": consumption_grid, "housing_choice": housing_grid},
         functions={

@@ -89,7 +89,7 @@ def test_validation_vmaps_over_action_combos():
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
             n_periods - 1,
-            law=Choose(_next_regime, targets=("alive", "dead")),
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
     )

@@ -475,7 +475,7 @@ def _make_three_type_model(
         regime_transitions=until_exit(
             4,
             law=Choose(
-                lambda age: jnp.where(
+                func=lambda age: jnp.where(
                     age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
                 ),
                 targets=("working", "retired"),
@@ -1167,10 +1167,10 @@ def _make_two_block_model(*, distributed: bool) -> Model:
 
     first = _worker(
         regime_transitions=ByAge(
-            {
-                AgeRange(stop=1): Choose(_next_from_first, targets=("first",)),
+            cases={
+                AgeRange(stop=1): Choose(func=_next_from_first, targets=("first",)),
                 AgeRange(start=1, stop=3): Choose(
-                    _next_from_first, targets=("second",)
+                    func=_next_from_first, targets=("second",)
                 ),
             }
         ),
@@ -1179,7 +1179,7 @@ def _make_two_block_model(*, distributed: bool) -> Model:
         regime_transitions=until_exit(
             4,
             law=Choose(
-                lambda age: jnp.where(
+                func=lambda age: jnp.where(
                     age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
                 ),
                 targets=("second", "dead"),
@@ -1806,7 +1806,7 @@ def _uniform_placement_model(
         regimes={
             "alive": UserRegime(
                 regime_transitions=Choose(
-                    _uniform_placement_transition, targets=("done",)
+                    func=_uniform_placement_transition, targets=("done",)
                 ),
                 states={"income": UniformIIDProcess(n_points=5)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},

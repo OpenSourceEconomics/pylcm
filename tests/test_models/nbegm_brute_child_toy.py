@@ -158,10 +158,10 @@ def build_model(
         "kind": {"old": lcm.fixed_transition("kind")},
     }
     young_transition = ByAge(
-        {
+        cases={
             0: {
-                "old": MarkovTransition(prob_to_old),
-                "dead": MarkovTransition(prob_young_dead),
+                "old": MarkovTransition(func=prob_to_old),
+                "dead": MarkovTransition(func=prob_young_dead),
             }
         }
     )
@@ -207,7 +207,7 @@ def build_model(
         },
         constraints={"feasible": feasible},
         regime_transitions=ByAge(
-            {1: {"dead": MarkovTransition(lambda: jnp.array(1.0))}}
+            cases={1: {"dead": MarkovTransition(func=lambda: jnp.array(1.0))}}
         ),
         functions=old_functions,
         solver=GridSearch(),

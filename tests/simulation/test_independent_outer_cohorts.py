@@ -54,7 +54,7 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
                 regime_transitions=until_exit(
                     2,
                     law=Choose(
-                        lambda age: jnp.where(
+                        func=lambda age: jnp.where(
                             age < 1, _RegimeId.working, _RegimeId.retired
                         ),
                         targets=("working", "retired"),

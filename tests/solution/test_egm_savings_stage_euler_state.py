@@ -256,8 +256,8 @@ def _survival_prob_model(solver: str) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(stay_prob),
-                "dead": MarkovTransition(death_prob),
+                "working_life": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -322,14 +322,14 @@ def _markov_health_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
-            "health": MarkovTransition(health_weights),
+            "health": MarkovTransition(func=health_weights),
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -399,7 +399,7 @@ def _passive_skill_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(next_regime, targets=("working_life", "dead")),
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
@@ -490,8 +490,8 @@ def _build_model_with_survival_cells(*, stay, die) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(stay),
-                "dead": MarkovTransition(die),
+                "working_life": MarkovTransition(func=stay),
+                "dead": MarkovTransition(func=die),
             },
             exits=("dead",),
         ),

@@ -100,7 +100,7 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints={"declared": constraint},
-        regime_transitions=Choose(next_regime, targets=("done",)),
+        regime_transitions=Choose(func=next_regime, targets=("done",)),
         functions={"utility": utility, "savings": savings},
         solver=solver,
         liquid=_LIQUID,

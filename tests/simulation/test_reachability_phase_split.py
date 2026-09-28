@@ -51,8 +51,8 @@ def _build_model() -> Model:
         regimes={
             "source": Regime(
                 regime_transitions={
-                    "low": MarkovTransition(_probability_low),
-                    "high": MarkovTransition(_probability_high),
+                    "low": MarkovTransition(func=_probability_low),
+                    "high": MarkovTransition(func=_probability_high),
                 },
                 functions={"utility": _zero_utility},
             ),

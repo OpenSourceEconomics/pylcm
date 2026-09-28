@@ -122,7 +122,7 @@ def _build_model(*, helper_name: str, override) -> Model:
         },
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + _AGE_STEP,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         functions=functions,

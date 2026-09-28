@@ -41,7 +41,7 @@ from lcm_examples.specialized_consumption_savings import (
 )
 
 working = ConsumptionSavingsRegime(
-    regime_transitions=Choose(next_regime, targets=("dead",)),
+    regime_transitions=Choose(func=next_regime, targets=("dead",)),
     states={"wealth": WEALTH_GRID},
     actions={"consumption": CONSUMPTION_GRID},
     state_transitions={"wealth": next_wealth},
@@ -169,7 +169,7 @@ margin = LiquidMargin(
 )
 
 working = ConsumptionSavingsRegime(
-    regime_transitions=Choose(next_regime, targets=("dead",)),
+    regime_transitions=Choose(func=next_regime, targets=("dead",)),
     states={"liquid": LIQUID_GRID},
     actions={"consumption": CONSUMPTION_GRID},
     state_transitions={"liquid": next_liquid},
@@ -269,7 +269,7 @@ from lcm_examples.specialized_consumption_savings import (
 )
 
 working = NestedConsumptionSavingsRegime(
-    regime_transitions=Choose(next_regime, targets=("dead",)),
+    regime_transitions=Choose(func=next_regime, targets=("dead",)),
     states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
     actions={
         "consumption": CONSUMPTION_GRID,

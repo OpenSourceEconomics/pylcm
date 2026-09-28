@@ -79,9 +79,9 @@ type TransitionFunctionName = str
 # `exact_values` entries — converted to canonical JAX scalars internally.
 type UserAge = int | Fraction
 
-# Entry permissions accepted by `Model(initial_regimes=...)`: a regime name, a
-# sequence of names, or a mapping from `ByAge`-style age selectors to names.
-type InitialRegimes = str | Sequence[str] | Mapping[object, str | Sequence[str]]
+# Admissible starts accepted by `Model(initial_regimes=...)`: a mapping from
+# `ByAge`-style age selectors to a regime name or a sequence of names.
+type InitialRegimes = Mapping[object, str | Sequence[str]]
 
 
 # Boundary form accepted by `AgeGrid.__init__` for `step`: a string matching

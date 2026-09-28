@@ -164,10 +164,10 @@ def _offer_probs(education: DiscreteState) -> FloatND:
 def _make_offer_regimes() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -199,7 +199,7 @@ def _make_offer_regimes() -> dict[str, Regime]:
             # own state space. It is BORN at the single_f -> married_terminal
             # transition, drawn from the offer distribution conditioned on
             # the single's own (carried) education.
-            "spouse_type": {"married_terminal": MarkovTransition(_offer_probs)},
+            "spouse_type": {"married_terminal": MarkovTransition(func=_offer_probs)},
         },
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f},
@@ -403,14 +403,14 @@ def _u_job(*, offer: DiscreteState, work: DiscreteAction) -> FloatND:  # noqa: A
 def _make_job_offer_regimes() -> dict[str, Regime]:
     job = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): Choose(
-                    lambda: JobRegimeId.job_terminal, targets=("job_terminal",)
+                    func=lambda: JobRegimeId.job_terminal, targets=("job_terminal",)
                 )
             }
         ),
         states={"offer": DiscreteGrid(category_class=Offer)},
-        state_transitions={"offer": MarkovTransition(_offer_arrival_probs)},
+        state_transitions={"offer": MarkovTransition(func=_offer_arrival_probs)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_job},
         constraints={"work_requires_offer": _work_requires_offer},
@@ -486,7 +486,7 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
         state_transitions={
             "education": fixed_transition("education"),
             "spouse_type": {
-                "married_terminal": MarkovTransition(_self_referential_offer_probs)
+                "married_terminal": MarkovTransition(func=_self_referential_offer_probs)
             },
         },
     )

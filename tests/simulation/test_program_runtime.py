@@ -75,9 +75,9 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
         regimes={
             "alive": UserRegime(
                 regime_transitions=ByAge(
-                    {
+                    cases={
                         AgeRange(start=0, stop=1): Choose(
-                            _width_collision_next_regime, targets=("done",)
+                            func=_width_collision_next_regime, targets=("done",)
                         )
                     }
                 ),

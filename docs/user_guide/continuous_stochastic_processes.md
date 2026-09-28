@@ -320,7 +320,7 @@ working = Regime(
     },
     state_transitions={
         "wealth": next_wealth,
-        "employment_status": MarkovTransition(next_employment_status),
+        "employment_status": MarkovTransition(func=next_employment_status),
     },
     actions={...},
     functions={...},

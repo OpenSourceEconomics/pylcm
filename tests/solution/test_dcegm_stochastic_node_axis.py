@@ -64,7 +64,7 @@ def _model(width: int | None = None) -> Model:
     working = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},

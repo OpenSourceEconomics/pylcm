@@ -53,8 +53,8 @@ def _solve_with_geometric_certainty_equivalent():
         regime_transitions=until_exit(
             _LAST_AGE,
             law={
-                "low": MarkovTransition(lambda: jnp.array(0.5)),
-                "high": MarkovTransition(lambda: jnp.array(0.5)),
+                "low": MarkovTransition(func=lambda: jnp.array(0.5)),
+                "high": MarkovTransition(func=lambda: jnp.array(0.5)),
             },
             exits=("low", "high"),
         ),

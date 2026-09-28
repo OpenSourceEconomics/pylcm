@@ -156,10 +156,10 @@ def _make_regimes() -> dict[str, Regime]:
     """Source with a dissolution edge, its target, and the leg's fallback."""
     source = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_gate_dissolves_everywhere,
                         routes={
                             "own": StakeholderRoute(

@@ -57,7 +57,9 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=MarkovTransition(probabilities, targets=("done",)),
+                regime_transitions=MarkovTransition(
+                    func=probabilities, targets=("done",)
+                ),
                 functions={"utility": _utility},
             ),
             "done": Regime(
@@ -145,7 +147,7 @@ def _numerical_inputs(
         regimes={
             "alive": Regime(
                 regime_transitions=MarkovTransition(
-                    _parameterized_regime_probabilities, targets=("done",)
+                    func=_parameterized_regime_probabilities, targets=("done",)
                 ),
                 functions={"utility": _alive_payoff},
             ),

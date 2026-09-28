@@ -251,7 +251,7 @@ def _keeper_transitions() -> ByAge:
     """Keep the house until the final living age, then die."""
     return until_exit(
         40 + (N_PERIODS - 1) * 10,
-        law=Choose(next_regime, targets=("keeper", "dead")),
+        law=Choose(func=next_regime, targets=("keeper", "dead")),
         exits=("dead",),
     )
 
@@ -279,7 +279,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
             state_transitions={
                 "liquid_assets": next_liquid_assets_brute,
                 "housing": fixed_transition("housing"),
-                "income": MarkovTransition(income_transition),
+                "income": MarkovTransition(func=income_transition),
             },
             constraints={"borrowing_constraint": borrowing_constraint},
             functions={
@@ -298,7 +298,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
         state_transitions={
             "liquid_assets": next_liquid_assets,
             "housing": fixed_transition("housing"),
-            "income": MarkovTransition(income_transition),
+            "income": MarkovTransition(func=income_transition),
         },
         functions={
             "utility": utility,

@@ -68,7 +68,7 @@ def _build_tiny_model(*, enable_jit: bool):
     working = UserRegime(
         regime_transitions=until_exit(
             2,
-            law=Choose(next_regime, targets=("working", "retired")),
+            law=Choose(func=next_regime, targets=("working", "retired")),
             exits=("retired",),
         ),
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},

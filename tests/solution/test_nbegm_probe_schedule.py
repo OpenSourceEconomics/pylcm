@@ -98,7 +98,9 @@ def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
     kind = DiscreteGrid(category_class=_Kind)
     alive = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
-            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            41,
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
         ),
         states={"wealth": wealth, "kind": kind},
         state_transitions={

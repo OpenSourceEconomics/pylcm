@@ -61,7 +61,7 @@ def _make_model(policy_bonus: UserFunction) -> Model:
     working_life = UserRegime(
         regime_transitions=until_exit(
             75,
-            law=Choose(_next_regime, targets=("working_life", "dead")),
+            law=Choose(func=_next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         states={
@@ -104,7 +104,7 @@ def _make_next_state_model(policy_bonus: UserFunction) -> Model:
     working_life = UserRegime(
         regime_transitions=until_exit(
             75,
-            law=Choose(_next_regime, targets=("working_life", "dead")),
+            law=Choose(func=_next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=0, stop=2000, n_points=11)},
@@ -251,7 +251,7 @@ def _f1_make_model(boost: UserFunction) -> Model:
     working = UserRegime(
         regime_transitions=until_exit(
             55,
-            law=Choose(_f1_next_regime, targets=("working_life", "dead")),
+            law=Choose(func=_f1_next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         states={"capital": DiscreteGrid(category_class=_Capital)},
@@ -332,7 +332,7 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
     working_life = UserRegime(
         regime_transitions=until_exit(
             75,
-            law=Choose(_next_regime, targets=("working_life", "dead")),
+            law=Choose(func=_next_regime, targets=("working_life", "dead")),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},

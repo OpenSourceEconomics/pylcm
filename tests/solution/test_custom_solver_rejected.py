@@ -133,7 +133,9 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         regime_transitions=ByAge(
-            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+            cases={
+                AgeRange(start=0, stop=1): Choose(func=next_regime, targets=("done",))
+            }
         ),
         functions={
             "utility": utility,

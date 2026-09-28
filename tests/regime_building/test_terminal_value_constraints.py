@@ -78,7 +78,7 @@ def _make_model(*, participation: bool) -> Model:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law={"couple_terminal": MarkovTransition(_certain)},
+            law={"couple_terminal": MarkovTransition(func=_certain)},
             exits=("couple_terminal",),
         ),
         states={"wage": _WAGE},

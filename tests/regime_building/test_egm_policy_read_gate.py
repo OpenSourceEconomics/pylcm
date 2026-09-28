@@ -159,7 +159,9 @@ def test_asset_row_regime_does_not_qualify_for_the_policy_read():
         alive=_PORTABLE_DCEGM_RETIREMENT.replace(
             regime_transitions=until_exit(
                 50,
-                law=Choose(_next_regime_reads_wealth, targets=("retirement", "dead")),
+                law=Choose(
+                    func=_next_regime_reads_wealth, targets=("retirement", "dead")
+                ),
                 exits=("dead",),
             ),
         )

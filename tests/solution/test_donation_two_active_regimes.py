@@ -258,9 +258,9 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
         regimes={
             name: Regime(
                 regime_transitions=ByAge.until(
-                    _N_PERIODS,
-                    law={name: MarkovTransition(_stay)},
-                    then={"dead": MarkovTransition(_stay)},
+                    stop_age_exclusive=_N_PERIODS,
+                    law={name: MarkovTransition(func=_stay)},
+                    then={"dead": MarkovTransition(func=_stay)},
                 ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},

@@ -43,8 +43,8 @@ Regime(
     states={"health": DiscreteGrid(Health)},
     state_transitions={
         "health": {
-            "working": MarkovTransition(health_probs_working),
-            "retired": MarkovTransition(health_probs_retired),
+            "working": MarkovTransition(func=health_probs_working),
+            "retired": MarkovTransition(func=health_probs_retired),
         },
     },
     # Additional configuration may follow.
@@ -59,7 +59,7 @@ Regime(
     reachable
   - `MarkovTransition` ⇒ stochastic, returns a probability vector over all regimes;
     every regime is reachable
-  - per-target dict `{target_regime: MarkovTransition(prob_func)}` ⇒ stochastic; each
+  - per-target dict `{target_regime: MarkovTransition(func=prob_func)}` ⇒ stochastic; each
     cell returns that target's probability and the key set declares the regime's
     reachable targets — omitted regimes are structurally unreachable. Cells must be
     `MarkovTransition`-wrapped; `regime_transitions={}` is rejected (terminality is `None`).
@@ -199,7 +199,7 @@ array. Everything is declared in a slot the regime already has:
 Regime(
     regime_transitions={
         "couple": ValueDependentTransition(  # goes in `regime_transitions`, keyed by TARGET
-            probability=MarkovTransition(stays_married),
+            probability=MarkovTransition(func=stays_married),
             gate=no_dissolution,  # Boolean predicate on the target's grid
             routes={"f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)},
             gate_references={

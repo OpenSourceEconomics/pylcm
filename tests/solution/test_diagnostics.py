@@ -58,7 +58,7 @@ def _make_model() -> Model:
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
     )
     dead = UserRegime(

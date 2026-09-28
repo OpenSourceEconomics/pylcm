@@ -184,7 +184,7 @@ def _make_reverse_alphabetical_collective_model() -> Model:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states={"wage": WAGE_GRID},
@@ -224,7 +224,7 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
     working = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_solo_regime, targets=("working", "retired")),
+            law=Choose(func=_next_solo_regime, targets=("working", "retired")),
             exits=("retired",),
         ),
         states={"wage": WAGE_GRID},
@@ -255,7 +255,7 @@ def _make_collective_model_with_colliding_state() -> Model:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states={"value_f": WAGE_GRID},
@@ -295,7 +295,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law={"couple_terminal": MarkovTransition(_probability_one)},
+            law={"couple_terminal": MarkovTransition(func=_probability_one)},
             exits=("couple_terminal",),
         ),
         states={"wage": WAGE_GRID},
@@ -320,7 +320,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
     solo = Regime(
         regime_transitions=until_exit(
             1,
-            law={"solo_terminal": MarkovTransition(_probability_one)},
+            law={"solo_terminal": MarkovTransition(func=_probability_one)},
             exits=("solo_terminal",),
         ),
         states={"value_f": WAGE_GRID},

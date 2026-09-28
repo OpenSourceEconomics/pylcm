@@ -430,7 +430,7 @@ def build_model(
     working = NestedConsumptionSavingsRegime(
         regime_transitions=until_exit(
             retirement_age,
-            law=Choose(next_regime, targets=("working",)),
+            law=Choose(func=next_regime, targets=("working",)),
             exits=("retired",),
         ),
         states={
@@ -460,7 +460,7 @@ def build_model(
     retired = NestedConsumptionSavingsRegime(
         regime_transitions=until_exit(
             final_age,
-            law=Choose(next_regime_from_retired, targets=("retired",)),
+            law=Choose(func=next_regime_from_retired, targets=("retired",)),
             exits=("dead",),
             start=retirement_age,
         ),

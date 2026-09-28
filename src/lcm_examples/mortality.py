@@ -126,22 +126,23 @@ _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
     """Work, retire or die until the age before `last_age`, then die."""
     return ByAge.until(
-        last_age,
+        stop_age_exclusive=last_age,
         law=MarkovTransition(
-            next_regime_from_working, targets=("working_life", "retirement", "dead")
+            func=next_regime_from_working,
+            targets=("working_life", "retirement", "dead"),
         ),
-        then=MarkovTransition(next_regime_from_working, targets=("dead",)),
+        then=MarkovTransition(func=next_regime_from_working, targets=("dead",)),
     )
 
 
 def retirement_transitions(*, last_age: UserAge | float) -> ByAge:
     """Stay retired or die until the age before `last_age`, then die."""
     return ByAge.until(
-        last_age,
+        stop_age_exclusive=last_age,
         law=MarkovTransition(
-            next_regime_from_retirement, targets=("retirement", "dead")
+            func=next_regime_from_retirement, targets=("retirement", "dead")
         ),
-        then=MarkovTransition(next_regime_from_retirement, targets=("dead",)),
+        then=MarkovTransition(func=next_regime_from_retirement, targets=("dead",)),
     )
 
 
@@ -200,6 +201,7 @@ def get_model(n_periods: int) -> Model:
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
 

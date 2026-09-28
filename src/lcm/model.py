@@ -81,6 +81,7 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.regime_building.schedules import (
     coverage_nodes,
+    fail_if_initial_nodes_are_not_problems,
     resolve_initial_nodes,
     resolve_regime_schedules,
 )
@@ -521,7 +522,7 @@ class Model:
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
-        initial_regimes: InitialRegimes | None = None,
+        initial_regimes: InitialRegimes,
     ) -> None:
         """Initialize the Model.
 
@@ -536,13 +537,12 @@ class Model:
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
-            initial_regimes: Where subjects may enter a simulation, as exact
-                `(age, regime)` pairs published in `self.initial_nodes`. `None`
-                permits every declared problem; a regime name or sequence of
-                names permits their covered ages; a mapping from age selector
-                (as in `ByAge`) to names permits those pairs, united across
-                rules. Every permitted pair must be a declared problem. Entry
-                permissions never change the solved problem.
+            initial_regimes: The admissible starting age-regime pairs, as a
+                nonempty mapping from age selector (as in `ByAge`) to a regime
+                name or a nonempty sequence of names. Each rule contributes its
+                selected grid ages times names; rules are unioned. Published as the
+                exact pairs in `self.initial_nodes`. Required: there is no
+                default starting universe.
             fixed_params: Parameters that can be fixed at model initialization.
             derived_categoricals: Categorical grids for DAG function outputs
                 not in states/actions. Broadcast to all regimes (merged with
@@ -619,6 +619,9 @@ class Model:
         # preparation below. It comes from each `regime_transitions`
         # declaration, whose laws are lowered to the engine's period-independent
         # vocabulary.
+        initial_nodes = resolve_initial_nodes(
+            initial_regimes=initial_regimes, regime_names=tuple(regimes), ages=ages
+        )
         schedules = resolve_regime_schedules(
             user_regimes=regimes,
             ages=ages,
@@ -736,11 +739,12 @@ class Model:
                 for name, regime in self._engine_user_regimes.items()
             }
         )
-        self.initial_nodes = resolve_initial_nodes(
-            initial_regimes=initial_regimes,
+        fail_if_initial_nodes_are_not_problems(
+            initial_nodes=initial_nodes,
             coverage_by_regime=active_periods_by_regime,
             ages=self.ages,
         )
+        self.initial_nodes = initial_nodes
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
             user_regimes=self._engine_user_regimes,

@@ -79,7 +79,7 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
             "acting": Regime(
                 regime_transitions=until_exit(
                     1,
-                    law=Choose(_next_regime, targets=("acting", "done")),
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
                     exits=("done",),
                 ),
                 actions={
@@ -165,7 +165,7 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
             "acting": Regime(
                 regime_transitions=until_exit(
                     1,
-                    law=Choose(_next_regime, targets=("acting", "done")),
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
                     exits=("done",),
                 ),
                 actions=actions,

@@ -398,7 +398,7 @@ def build_model(  # noqa: C901
         working = UserRegime(
             regime_transitions=until_exit(
                 retirement_age,
-                law=Choose(next_regime, targets=("working",)),
+                law=Choose(func=next_regime, targets=("working",)),
                 exits=("retired",),
             ),
             states={
@@ -422,7 +422,7 @@ def build_model(  # noqa: C901
         retired = UserRegime(
             regime_transitions=until_exit(
                 final_age,
-                law=Choose(next_regime_from_retired, targets=("retired",)),
+                law=Choose(func=next_regime_from_retired, targets=("retired",)),
                 exits=("dead",),
                 start=retirement_age,
             ),
@@ -451,7 +451,7 @@ def build_model(  # noqa: C901
     working = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             retirement_age,
-            law=Choose(next_regime, targets=("working",)),
+            law=Choose(func=next_regime, targets=("working",)),
             exits=("retired",),
         ),
         states={
@@ -483,7 +483,7 @@ def build_model(  # noqa: C901
     retired = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             final_age,
-            law=Choose(next_regime_from_retired, targets=("retired",)),
+            law=Choose(func=next_regime_from_retired, targets=("retired",)),
             exits=("dead",),
             start=retirement_age,
         ),

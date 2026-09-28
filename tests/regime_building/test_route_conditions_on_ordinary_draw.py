@@ -277,7 +277,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
     """
     edges = {
         "target_a": ValueDependentTransition(
-            probability=MarkovTransition(_prob_half),
+            probability=MarkovTransition(func=_prob_half),
             gate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
@@ -288,7 +288,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
             },
         ),
         "target_b": ValueDependentTransition(
-            probability=MarkovTransition(_prob_half),
+            probability=MarkovTransition(func=_prob_half),
             gate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
@@ -301,7 +301,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
     }
     src = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {name: edges[name] for name in edge_order}}
+            cases={AgeRange(stop=1): {name: edges[name] for name in edge_order}}
         ),
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},

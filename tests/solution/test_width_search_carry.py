@@ -60,7 +60,7 @@ def _model(*, carry: bool, budget_bytes: int) -> Model:
     acting = Regime(
         regime_transitions=until_exit(
             _N_PERIODS,
-            law=Choose(_next_regime, targets=("acting", "done")),
+            law=Choose(func=_next_regime, targets=("acting", "done")),
             exits=("done",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},

@@ -315,7 +315,11 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
     regimes = {
         name: UserRegime(
             regime_transitions=ByAge(
-                {AgeRange(start=0, stop=1): Choose(next_regime, targets=("dead",))}
+                cases={
+                    AgeRange(start=0, stop=1): Choose(
+                        func=next_regime, targets=("dead",)
+                    )
+                }
             ),
             states=states,
             actions=actions,

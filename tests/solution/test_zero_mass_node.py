@@ -72,11 +72,11 @@ def model() -> Model:
             "alive": Regime(
                 regime_transitions=until_exit(
                     26,
-                    law=Choose(_next_regime, targets=("alive", "last")),
+                    law=Choose(func=_next_regime, targets=("alive", "last")),
                     exits=("last",),
                 ),
                 states={"health": DiscreteGrid(category_class=_Health)},
-                state_transitions={"health": MarkovTransition(_health_probs)},
+                state_transitions={"health": MarkovTransition(func=_health_probs)},
                 functions={"utility": _alive_utility},
             ),
             "last": Regime(

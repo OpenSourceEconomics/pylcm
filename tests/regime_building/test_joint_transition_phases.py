@@ -134,7 +134,7 @@ def test_joint_transition_target_must_be_declared_reachable() -> None:
     """An edge-owned joint kernel cannot name a structurally unreachable target."""
     with pytest.raises(RegimeInitializationError, match=r"reachable.*couple"):
         _regime(
-            regime_transitions={"single": MarkovTransition(_probabilities)},
+            regime_transitions={"single": MarkovTransition(func=_probabilities)},
             joint_transitions={"couple": {"match": _kernel()}},
         )
 

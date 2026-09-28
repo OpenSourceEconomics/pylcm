@@ -167,7 +167,7 @@ def _make_correct_distributed_model(
         regime_transitions=until_exit(
             5,
             law=Choose(
-                lambda age: jnp.where(
+                func=lambda age: jnp.where(
                     age >= 4, RegimeId.retirement, RegimeId.working_life
                 ),
                 targets=("working_life", "retirement"),
@@ -365,7 +365,7 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
             "working": UserRegime(
                 regime_transitions=until_exit(
                     1,
-                    law=Choose(next_regime, targets=("working", "retired")),
+                    law=Choose(func=next_regime, targets=("working", "retired")),
                     exits=("retired",),
                 ),
                 states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
@@ -438,7 +438,7 @@ def _make_wrong_distributed_model() -> Model:
         regime_transitions=until_exit(
             5,
             law=Choose(
-                lambda age: jnp.where(
+                func=lambda age: jnp.where(
                     age >= 4, RegimeId.retirement, RegimeId.working_life
                 ),
                 targets=("working_life", "retirement"),
@@ -894,7 +894,7 @@ def _make_two_source_distributed_model() -> Model:
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         regime_transitions=until_exit(
             5,
-            law=Choose(to_retirement, targets=("retirement", "working_life")),
+            law=Choose(func=to_retirement, targets=("retirement", "working_life")),
             exits=("retirement",),
         ),
     )
@@ -1322,7 +1322,7 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
         regime_transitions=until_exit(
             5,
             law=Choose(
-                lambda age: jnp.where(
+                func=lambda age: jnp.where(
                     age >= 4, RegimeId.retirement, RegimeId.working_life
                 ),
                 targets=("working_life", "retirement"),
@@ -1546,7 +1546,7 @@ def _make_two_source_partially_distributed_model() -> Model:
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         regime_transitions=until_exit(
             5,
-            law=Choose(to_retirement, targets=("retirement", "working_life")),
+            law=Choose(func=to_retirement, targets=("retirement", "working_life")),
             exits=("retirement",),
         ),
     )

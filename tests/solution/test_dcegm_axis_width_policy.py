@@ -151,8 +151,8 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(stay_prob),
-                "dead": MarkovTransition(death_prob),
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -163,7 +163,7 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
         },
         functions={
             "utility": utility,

@@ -115,7 +115,7 @@ def _nan_producing_model() -> Model:
     work = UserRegime(
         regime_transitions=until_exit(
             60,
-            law=Choose(_off_node_next_regime, targets=("work", "dead")),
+            law=Choose(func=_off_node_next_regime, targets=("work", "dead")),
             exits=("dead",),
         ),
         actions={"consumption": grid},
@@ -192,14 +192,14 @@ def _two_offender_model() -> Model:
             "work": occupied_regime(
                 regime_transitions=until_exit(
                     60,
-                    law=Choose(_next_regime_from_work, targets=("work", "dead")),
+                    law=Choose(func=_next_regime_from_work, targets=("work", "dead")),
                     exits=("dead",),
                 )
             ),
             "study": occupied_regime(
                 regime_transitions=until_exit(
                     60,
-                    law=Choose(_next_regime_from_study, targets=("study", "dead")),
+                    law=Choose(func=_next_regime_from_study, targets=("study", "dead")),
                     exits=("dead",),
                 )
             ),

@@ -246,7 +246,7 @@ def _make_consent_model() -> Model:
             1,
             law={
                 "married_terminal": ValueDependentTransition(
-                    probability=MarkovTransition(_certain_transition),
+                    probability=MarkovTransition(func=_certain_transition),
                     gate=_consent_gate,
                     routes={
                         "f": StakeholderRoute(

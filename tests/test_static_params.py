@@ -60,7 +60,7 @@ def _make_model(*, n_periods=3, extra_fixed_params=None):
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
             n_periods - 1,
-            law=Choose(_next_regime, targets=("alive", "dead")),
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
     )
@@ -344,7 +344,7 @@ def test_series_fixed_param_with_derived_categoricals():
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
         derived_categoricals={
             "wealth_group": DiscreteGrid(category_class=_WealthGroup)
@@ -382,7 +382,7 @@ def test_model_broadcast_merges_into_regimes():
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
     )
     dead = UserRegime(
@@ -417,7 +417,7 @@ def test_model_broadcast_same_name_at_both_levels_raises():
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
         derived_categoricals={"wealth_group": wg_grid},
     )
@@ -450,7 +450,7 @@ def test_model_broadcast_conflicting_grids_raise():
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
         derived_categoricals={"wealth_group": DiscreteGrid(category_class=_OtherGroup)},
     )
@@ -490,7 +490,7 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
     alive = UserRegime(
         functions={"utility": lambda: 0.0},
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
         ),
         derived_categoricals={"group_a": DiscreteGrid(category_class=_GroupA)},
     )

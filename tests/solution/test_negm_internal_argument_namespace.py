@@ -42,7 +42,7 @@ def _alive_regime_with_outer_node_named(
         },
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + 5,
-            law=Choose(toy.next_regime, targets=("alive", "dead")),
+            law=Choose(func=toy.next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         functions={

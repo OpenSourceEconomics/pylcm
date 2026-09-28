@@ -151,9 +151,9 @@ def create_model(
             ),
         },
         regime_transitions=ByAge.until(
-            final_age_alive + 10,
-            law=Choose(next_regime, targets=("alive", "dead")),
-            then=Choose(next_regime, targets=("dead",)),
+            stop_age_exclusive=final_age_alive + 10,
+            law=Choose(func=next_regime, targets=("alive", "dead")),
+            then=Choose(func=next_regime, targets=("dead",)),
         ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
@@ -167,6 +167,7 @@ def create_model(
     return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
         ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
         execution_config=(

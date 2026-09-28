@@ -99,7 +99,9 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 def _build_model(*, simulate_probabilities) -> Model:
     working = Regime(
         regime_transitions=until_exit(
-            64, law=Choose(_next_regime, targets=("working", "dead")), exits=("dead",)
+            64,
+            law=Choose(func=_next_regime, targets=("working", "dead")),
+            exits=("dead",),
         ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),

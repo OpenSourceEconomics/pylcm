@@ -253,7 +253,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
             "working": Regime(
                 regime_transitions=until_exit(
                     5,
-                    law=Choose(next_regime, targets=("working", "retired")),
+                    law=Choose(func=next_regime, targets=("working", "retired")),
                     exits=("retired",),
                 ),
                 states={"wealth": wealth},
@@ -317,7 +317,7 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
             "working": Regime(
                 regime_transitions=until_exit(
                     4,
-                    law=Choose(next_regime, targets=("working", "retired")),
+                    law=Choose(func=next_regime, targets=("working", "retired")),
                     exits=("retired",),
                 ),
                 states={

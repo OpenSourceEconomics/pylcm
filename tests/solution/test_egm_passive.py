@@ -167,7 +167,7 @@ def _get_model(variant: str) -> Model:
         working = UserRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(next_regime, targets=("working_life", "dead")),
+                law=Choose(func=next_regime, targets=("working_life", "dead")),
                 exits=("dead",),
             ),
             actions={
@@ -187,7 +187,7 @@ def _get_model(variant: str) -> Model:
         working = ConsumptionSavingsRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(next_regime, targets=("working_life", "dead")),
+                law=Choose(func=next_regime, targets=("working_life", "dead")),
                 exits=("dead",),
             ),
             actions={
@@ -218,7 +218,7 @@ def _get_model(variant: str) -> Model:
         working = ConsumptionSavingsRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(next_regime, targets=("working_life", "dead")),
+                law=Choose(func=next_regime, targets=("working_life", "dead")),
                 exits=("dead",),
             ),
             actions={

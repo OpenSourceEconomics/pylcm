@@ -248,7 +248,7 @@ def _build_model(
             "working": Regime(
                 regime_transitions=until_exit(
                     3,
-                    law=Choose(_transition, targets=("working", "retired")),
+                    law=Choose(func=_transition, targets=("working", "retired")),
                     exits=("retired",),
                 ),
                 states={"wealth": wealth},

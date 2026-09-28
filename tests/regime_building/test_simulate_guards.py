@@ -220,10 +220,10 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
     """
     married = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_ir": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -426,9 +426,9 @@ _WAGE_GRID_2 = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 def _make_all_collective_regimes() -> dict[str, Regime]:
     couple = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): Choose(
-                    lambda: jnp.int32(1), targets=("couple_terminal",)
+                    func=lambda: jnp.int32(1), targets=("couple_terminal",)
                 )
             }
         ),

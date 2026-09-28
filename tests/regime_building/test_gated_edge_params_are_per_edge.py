@@ -90,7 +90,7 @@ def _build_model(*, with_bystander: bool) -> Model:
                 45,
                 law={
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_certain_target),
+                        probability=MarkovTransition(func=_certain_target),
                         gate=_gate,
                         routes={
                             "only": StakeholderRoute(

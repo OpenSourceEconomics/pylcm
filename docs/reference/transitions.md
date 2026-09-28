@@ -13,7 +13,7 @@ regime needs exactly one producer for that `(target, state)` cell: an ordinary
 `state_transitions` law or a `JointTransition` output. In `state_transitions`:
 
 - an ordinary callable is deterministic;
-- `MarkovTransition(func)` wraps a probability-vector function; `fixed_component=`
+- `MarkovTransition(func=func)` wraps a probability-vector function; `fixed_component=`
   declares a component the law never changes (see [tuning](../user_guide/tuning.md));
 - `fixed_transition("state_name")` declares the identity law;
 - a per-target mapping gives different laws for different reachable target regimes.
@@ -31,8 +31,8 @@ or missing targets are errors.
 
 - `None` for a terminal regime;
 - a deterministic callable returning a regime code;
-- `MarkovTransition(func)` returning probabilities over all regimes;
-- a mapping from target name to `MarkovTransition(probability_function)` or
+- `MarkovTransition(func=func)` returning probabilities over all regimes;
+- a mapping from target name to `MarkovTransition(func=probability_function)` or
   `ValueDependentTransition(...)`.
 
 The key set of the mapping declares structural reachability. An ordinary mapping cell
@@ -49,14 +49,15 @@ impossibility only as a zero probability in an all-regime vector.
 These forms also declare the ages at which a regime is solved:
 
 - a regime name, e.g. `"retirement"`: a deterministic move to that regime;
-- `Choose(func, targets=(...))`: deterministic, and `func` returns the global code of
-  one of `targets`;
-- `MarkovTransition(func, targets=(...))`: a probability vector over all regimes that is
-  nonzero only on `targets`;
-- `ByAge({selector: law, ...}, default=...)` and
-  `ByAge.until(boundary, law=..., then=..., start=...)`: one of the laws above, or a
-  per-target mapping, per exact grid age. Selectors are ages, tuples, integer `range`s,
-  or `AgeRange(start=..., stop=...)` half-open intervals.
+- `Choose(func=func, targets=(...))`: deterministic, and `func` returns the global code
+  of one of `targets`;
+- `MarkovTransition(func=func, targets=(...))`: a probability vector over all regimes
+  that is nonzero only on `targets`;
+- `ByAge(cases={selector: law, ...}, default=...)` and
+  `ByAge.until(stop_age_exclusive=boundary, law=..., then=..., start_age_inclusive=...)`:
+  one of the laws above, or a per-target mapping, per exact grid age. Selectors are
+  ages, tuples, integer `range`s, or `AgeRange(start=..., stop=...)` half-open
+  intervals.
 
 A plain law covers every non-final age; a `ByAge` covers exactly the ages it selects. A
 model that uses any of these forms rejects `active`, bare callables and vector laws
@@ -77,7 +78,7 @@ mapping from target regime, to local joint-node name, to the `JointTransition`:
 
 ```python
 source = Regime(
-    regime_transitions={"target_regime": MarkovTransition(target_probability)},
+    regime_transitions={"target_regime": MarkovTransition(func=target_probability)},
     joint_transitions={
         "target_regime": {
             "joint_draw": JointTransition(

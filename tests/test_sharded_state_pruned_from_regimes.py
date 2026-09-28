@@ -114,9 +114,9 @@ def _entry_kind(wealth: FloatND) -> FloatND:
 def _working(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge.until(
-            2,
-            law=Choose(_retire_at_one, targets=("working",)),
-            then=Choose(_retire_at_one, targets=("retired",)),
+            stop_age_exclusive=2,
+            law=Choose(func=_retire_at_one, targets=("working",)),
+            then=Choose(func=_retire_at_one, targets=("retired",)),
         ),
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
@@ -130,7 +130,9 @@ def _working(**overrides: Any) -> Regime:
 def _retired(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge(
-            {AgeRange(start=2, stop=3): Choose(_die_at_three, targets=("dead",))}
+            cases={
+                AgeRange(start=2, stop=3): Choose(func=_die_at_three, targets=("dead",))
+            }
         ),
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
@@ -190,7 +192,7 @@ def mirror_model(*, devices: tuple[int, ...], sharded: tuple[str, ...]) -> Model
             "dead": _dead(),
         },
         states={"kind": DiscreteGrid(category_class=_Kind)},
-        state_transitions={"kind": {"retired": MarkovTransition(_entry_kind)}},
+        state_transitions={"kind": {"retired": MarkovTransition(func=_entry_kind)}},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),

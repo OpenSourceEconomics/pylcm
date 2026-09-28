@@ -65,8 +65,8 @@ def model() -> Model:
                 regime_transitions=until_exit(
                     22,
                     law={
-                        "target": MarkovTransition(_p_target),
-                        "other": MarkovTransition(_p_other),
+                        "target": MarkovTransition(func=_p_target),
+                        "other": MarkovTransition(func=_p_other),
                     },
                     exits=("target", "other"),
                 ),

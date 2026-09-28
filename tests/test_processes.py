@@ -685,10 +685,11 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
                             'beta': UniformIIDProcess(n_points=3, start=0, stop=2),
                         },
                         functions={'utility': utility},
-                        regime_transitions=ByAge({
-                            AgeRange(stop=1): Choose(next_regime, targets=('alive',)),
+                        regime_transitions=ByAge(cases={
+                            AgeRange(stop=1): Choose(
+                                func=next_regime, targets=('alive',)),
                             AgeRange(start=1, stop=2): Choose(
-                                next_regime, targets=('dead',)),
+                                func=next_regime, targets=('dead',)),
                         }),
                     ),
                     'dead': Regime(functions={'utility': lambda: 0.0},

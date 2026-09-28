@@ -206,12 +206,12 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
     # more age for it to die into the terminal regime at the end.
     transition = (
         ByAge.until(
-            _N_PERIODS,
-            law={"alive": MarkovTransition(stay_alive)},
-            then={"dead": MarkovTransition(stay_alive)},
+            stop_age_exclusive=_N_PERIODS,
+            law={"alive": MarkovTransition(func=stay_alive)},
+            then={"dead": MarkovTransition(func=stay_alive)},
         )
         if self_looping
-        else Choose(next_regime_dead, targets=("dead",))
+        else Choose(func=next_regime_dead, targets=("dead",))
     )
     last_age = _N_PERIODS if self_looping else _N_PERIODS - 1
     return Model(
@@ -678,7 +678,7 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
             "alive": Regime(
                 regime_transitions=until_exit(
                     _N_PERIODS - 1,
-                    law=Choose(next_regime_dead, targets=("alive", "dead")),
+                    law=Choose(func=next_regime_dead, targets=("alive", "dead")),
                     exits=("dead",),
                 ),
                 states={"wealth": _WEALTH},
@@ -750,7 +750,7 @@ def _choice_model(*, solver: Solver) -> Model:
             "alive": Regime(
                 regime_transitions=until_exit(
                     _N_PERIODS - 1,
-                    law=Choose(_die_at_the_end, targets=("alive", "dead")),
+                    law=Choose(func=_die_at_the_end, targets=("alive", "dead")),
                     exits=("dead",),
                 ),
                 states={"wealth": _WEALTH},

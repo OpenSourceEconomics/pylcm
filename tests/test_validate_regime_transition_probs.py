@@ -252,7 +252,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         regime_transitions=until_exit(
             27,
             law=MarkovTransition(
-                _next_regime_only_fails_for_leave, targets=("active", "terminal")
+                func=_next_regime_only_fails_for_leave, targets=("active", "terminal")
             ),
             exits=("terminal",),
         ),
@@ -312,7 +312,7 @@ def test_regime_transition_validation_passes_period_as_int32():
         regime_transitions=until_exit(
             27,
             law=MarkovTransition(
-                _transition_recording_period, targets=("active", "terminal")
+                func=_transition_recording_period, targets=("active", "terminal")
             ),
             exits=("terminal",),
         ),
@@ -462,10 +462,14 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
         regimes={
             "solo": UserRegime(
                 regime_transitions=ByAge(
-                    {AgeRange(21, 22): {"term": MarkovTransition(_one_probability)}}
+                    cases={
+                        AgeRange(start=21, stop=22): {
+                            "term": MarkovTransition(func=_one_probability)
+                        }
+                    }
                 ),
                 states={"aux": DiscreteGrid(category_class=_AuxOutcome)},
-                state_transitions={"aux": MarkovTransition(_malformed_aux_probs)},
+                state_transitions={"aux": MarkovTransition(func=_malformed_aux_probs)},
                 constraints={"aux_is_valid": lambda aux: aux >= 0},
                 functions={"utility": _zero_utility},
             ),

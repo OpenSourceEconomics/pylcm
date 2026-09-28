@@ -130,7 +130,7 @@ def _build_nan_model() -> tuple[Model, dict]:
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
             1,
-            law=Choose(next_regime, targets=("non_terminal", "terminal")),
+            law=Choose(func=next_regime, targets=("non_terminal", "terminal")),
             exits=("terminal",),
         ),
     )
@@ -188,7 +188,7 @@ def _build_always_nan_model() -> tuple[Model, dict]:
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
             1,
-            law=Choose(next_regime, targets=("non_terminal", "terminal")),
+            law=Choose(func=next_regime, targets=("non_terminal", "terminal")),
             exits=("terminal",),
         ),
     )

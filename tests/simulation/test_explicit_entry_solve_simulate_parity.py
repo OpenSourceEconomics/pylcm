@@ -65,7 +65,7 @@ def _build_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={
                     "shock": {"target": _enter_shock},
                     "wealth": {"target": _double_the_entry},

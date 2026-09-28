@@ -59,15 +59,15 @@ def _next_wealth(*, wealth: float, consumption: float) -> float:
 
 def _work_transition() -> dict[str, MarkovTransition]:
     return {
-        "retired": MarkovTransition(lambda age: jnp.where(age >= 1, 0.0, 1.0)),
-        "dead": MarkovTransition(lambda age: jnp.where(age >= 1, 1.0, 0.0)),
+        "retired": MarkovTransition(func=lambda age: jnp.where(age >= 1, 0.0, 1.0)),
+        "dead": MarkovTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0)),
     }
 
 
 def _retired_transition() -> dict[str, MarkovTransition]:
     return {
-        "retired": MarkovTransition(lambda age: jnp.where(age >= 1, 0.0, 1.0)),
-        "dead": MarkovTransition(lambda age: jnp.where(age >= 1, 1.0, 0.0)),
+        "retired": MarkovTransition(func=lambda age: jnp.where(age >= 1, 0.0, 1.0)),
+        "dead": MarkovTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0)),
     }
 
 

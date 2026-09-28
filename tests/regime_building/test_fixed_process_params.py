@@ -69,7 +69,7 @@ def _entered_process_model(*, at_construction: bool) -> Model:
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(_one_probability)},
+                    law={"target": MarkovTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 functions={"utility": _zero_utility},
@@ -136,7 +136,7 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
                 "source": Regime(
                     regime_transitions=until_exit(
                         22,
-                        law={"target": MarkovTransition(_one_probability)},
+                        law={"target": MarkovTransition(func=_one_probability)},
                         exits=("target",),
                     ),
                     states={"shock": process},
@@ -179,7 +179,7 @@ def _model_with_law_value(value: Any) -> Model:
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(_one_probability)},
+                    law={"target": MarkovTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 functions={"utility": _zero_utility},

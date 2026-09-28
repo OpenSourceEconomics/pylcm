@@ -89,7 +89,7 @@ def _simulate(law: Any) -> pd.DataFrame:
     }
     live = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("live", "last")), exits=("last",)
+            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
         ),
         state_transitions={"good": law},
         **common,
@@ -118,7 +118,9 @@ def _simulate(law: Any) -> pd.DataFrame:
 def test_stochastic_solve_deterministic_simulate():
     """Perceived law is a kernel; the world realizes a point value."""
     df = _simulate(
-        Phased(solve=MarkovTransition(markov_belief), simulate=deterministic_actual)
+        Phased(
+            solve=MarkovTransition(func=markov_belief), simulate=deterministic_actual
+        )
     )
     assert (df[df["period"] == 0]["move"] == "stay").all(), "Q must price under BELIEF"
     assert (df[df["period"] == 1]["good"] == "bad").all(), "draw must follow TRUTH"
@@ -127,7 +129,9 @@ def test_stochastic_solve_deterministic_simulate():
 def test_deterministic_solve_stochastic_simulate():
     """Perceived law is a point value; the world realizes from a kernel."""
     df = _simulate(
-        Phased(solve=deterministic_belief, simulate=MarkovTransition(markov_actual))
+        Phased(
+            solve=deterministic_belief, simulate=MarkovTransition(func=markov_actual)
+        )
     )
     assert (df[df["period"] == 0]["move"] == "stay").all(), "Q must price under BELIEF"
     assert (df[df["period"] == 1]["good"] == "bad").all(), "draw must follow TRUTH"

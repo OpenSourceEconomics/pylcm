@@ -116,7 +116,7 @@ def _conditioned_model() -> Model:
     period0 = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("period0", "terminal")),
+            law=Choose(func=_next_regime, targets=("period0", "terminal")),
             exits=("terminal",),
         ),
         states={
@@ -149,7 +149,7 @@ def _unconditioned_model(*, sigma: float) -> Model:
     period0 = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("period0", "terminal")),
+            law=Choose(func=_next_regime, targets=("period0", "terminal")),
             exits=("terminal",),
         ),
         states={"wage_shock": _shock(sigma=sigma)},
@@ -269,7 +269,9 @@ def test_a_folded_shock_whose_conditioner_can_move_is_rejected() -> None:
     with pytest.raises(RegimeInitializationError, match="conditioning state"):
         Regime(
             regime_transitions=ByAge(
-                {AgeRange(stop=1): Choose(_next_regime, targets=("terminal",))}
+                cases={
+                    AgeRange(stop=1): Choose(func=_next_regime, targets=("terminal",))
+                }
             ),
             states={
                 "risk_type": DiscreteGrid(category_class=RiskType),
@@ -312,7 +314,7 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
     """
     entry = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_to_folding, targets=("folding",))}
+            cases={AgeRange(stop=1): Choose(func=_to_folding, targets=("folding",))}
         ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -327,7 +329,7 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
     )
     folding = Regime(
         regime_transitions=ByAge(
-            {AgeRange(start=1, stop=2): Choose(_to_done, targets=("done",))}
+            cases={AgeRange(start=1, stop=2): Choose(func=_to_done, targets=("done",))}
         ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -382,10 +384,10 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
     """
     entry = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
-                    "folding": MarkovTransition(_split_probability_of_folding),
-                    "sideways": MarkovTransition(_split_probability_of_sideways),
+                    "folding": MarkovTransition(func=_split_probability_of_folding),
+                    "sideways": MarkovTransition(func=_split_probability_of_sideways),
                 }
             }
         ),
@@ -407,7 +409,11 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
     )
     folding = Regime(
         regime_transitions=ByAge(
-            {AgeRange(start=1, stop=2): Choose(_to_done_from_split, targets=("done",))}
+            cases={
+                AgeRange(start=1, stop=2): Choose(
+                    func=_to_done_from_split, targets=("done",)
+                )
+            }
         ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -421,7 +427,11 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
     )
     sideways = Regime(
         regime_transitions=ByAge(
-            {AgeRange(start=1, stop=2): Choose(_to_done_from_split, targets=("done",))}
+            cases={
+                AgeRange(start=1, stop=2): Choose(
+                    func=_to_done_from_split, targets=("done",)
+                )
+            }
         ),
         states={"risk_type": DiscreteGrid(category_class=RiskType)},
         state_transitions={"risk_type": fixed_transition("risk_type")},
@@ -472,7 +482,9 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
     """
     safe_entry = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"folding": MarkovTransition(_probability_one)}}
+            cases={
+                AgeRange(stop=1): {"folding": MarkovTransition(func=_probability_one)}
+            }
         ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -487,10 +499,10 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
     )
     moving_entry = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): Phased(
-                    solve={"sideways": MarkovTransition(_probability_one)},
-                    simulate={"sideways": MarkovTransition(_probability_one)},
+                    solve={"sideways": MarkovTransition(func=_probability_one)},
+                    simulate={"sideways": MarkovTransition(func=_probability_one)},
                 )
             }
         ),
@@ -507,9 +519,9 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
     )
     folding = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): Choose(
-                    lambda: PhasedSplitRegimeId.done, targets=("done",)
+                    func=lambda: PhasedSplitRegimeId.done, targets=("done",)
                 )
             }
         ),
@@ -525,9 +537,9 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
     )
     sideways = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): Choose(
-                    lambda: PhasedSplitRegimeId.done, targets=("done",)
+                    func=lambda: PhasedSplitRegimeId.done, targets=("done",)
                 )
             }
         ),

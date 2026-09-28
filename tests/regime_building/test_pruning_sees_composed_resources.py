@@ -78,9 +78,9 @@ def next_regime(age: int) -> DiscreteState:
 def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
     working = ConsumptionSavingsRegime(
         regime_transitions=ByAge.until(
-            3,
-            law=Choose(next_regime, targets=("working",)),
-            then=Choose(next_regime, targets=("dead",)),
+            stop_age_exclusive=3,
+            law=Choose(func=next_regime, targets=("working",)),
+            then=Choose(func=next_regime, targets=("dead",)),
         ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},

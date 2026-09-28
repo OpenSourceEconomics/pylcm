@@ -229,7 +229,7 @@ def get_model(
         constraints={"feasible": feasible},
         regime_transitions=until_exit(
             final_age,
-            law=Choose(next_regime_from_working, targets=("working", "dead")),
+            law=Choose(func=next_regime_from_working, targets=("working", "dead")),
             exits=("dead",),
         ),
         functions={"utility": utility},

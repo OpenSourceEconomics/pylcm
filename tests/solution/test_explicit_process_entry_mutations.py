@@ -64,7 +64,7 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(one_probability)},
+                regime_transitions={"target": MarkovTransition(func=one_probability)},
                 state_transitions={"shock": {"target": enter_at_mean}},
                 functions={"utility": zero},
             ),

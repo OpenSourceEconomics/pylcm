@@ -261,7 +261,9 @@ def _make_unreachable_role_routing_regimes():
     """
     alone = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"alone_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"alone_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
@@ -351,7 +353,9 @@ def _shift_dissolution_one_age() -> dict:
     }
     return {
         name: regime.replace(
-            regime_transitions=ByAge({windows[name]: _law(regime.regime_transitions)})
+            regime_transitions=ByAge(
+                cases={windows[name]: _law(regime.regime_transitions)}
+            )
         )
         if name in windows
         else regime
@@ -375,7 +379,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
     """
     prelude = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"married": MarkovTransition(_prob_one)}}
+            cases={AgeRange(stop=1): {"married": MarkovTransition(func=_prob_one)}}
         ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},

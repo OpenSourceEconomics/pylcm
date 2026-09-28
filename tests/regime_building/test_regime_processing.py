@@ -227,7 +227,7 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
 
     early = UserRegime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(regime_transition, targets=("late",))}
+            cases={AgeRange(stop=1): Choose(func=regime_transition, targets=("late",))}
         ),
         states={"x": LinSpacedGrid(start=0, stop=10, n_points=4)},
         state_transitions={"x": next_x},
@@ -235,7 +235,11 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
     )
     late = UserRegime(
         regime_transitions=ByAge(
-            {AgeRange(start=1, stop=2): Choose(regime_transition, targets=("done",))}
+            cases={
+                AgeRange(start=1, stop=2): Choose(
+                    func=regime_transition, targets=("done",)
+                )
+            }
         ),
         states={"x": LinSpacedGrid(start=0, stop=10, n_points=6)},
         state_transitions={"x": next_x},

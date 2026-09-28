@@ -112,7 +112,9 @@ def _model(
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
         regime_transitions=ByAge(
-            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+            cases={
+                AgeRange(start=0, stop=1): Choose(func=next_regime, targets=("done",))
+            }
         ),
         functions={
             "utility": utility,
@@ -300,7 +302,9 @@ def _grid_search_model(
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
         regime_transitions=ByAge(
-            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+            cases={
+                AgeRange(start=0, stop=1): Choose(func=next_regime, targets=("done",))
+            }
         ),
         functions={
             "utility": utility,
@@ -361,7 +365,9 @@ def _replace_constraints(*, constraints: dict) -> Model:
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
         regime_transitions=ByAge(
-            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+            cases={
+                AgeRange(start=0, stop=1): Choose(func=next_regime, targets=("done",))
+            }
         ),
         functions={
             "utility": utility,

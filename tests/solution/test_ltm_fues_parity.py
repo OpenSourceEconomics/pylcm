@@ -137,10 +137,14 @@ def test_ltm_publishes_neg_inf_for_all_infeasible_combo_like_fues():
     n_periods = 4
     retirement_transition = {
         "retirement": MarkovTransition(
-            lambda age, final_age_alive: jnp.where(age >= final_age_alive, 0.0, 1.0)
+            func=lambda age, final_age_alive: jnp.where(
+                age >= final_age_alive, 0.0, 1.0
+            )
         ),
         "dead": MarkovTransition(
-            lambda age, final_age_alive: jnp.where(age >= final_age_alive, 1.0, 0.0)
+            func=lambda age, final_age_alive: jnp.where(
+                age >= final_age_alive, 1.0, 0.0
+            )
         ),
     }
 

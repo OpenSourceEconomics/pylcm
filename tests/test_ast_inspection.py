@@ -241,5 +241,6 @@ def test_get_func_indexing_params_reads_through_a_dated_markov_law() -> None:
         names=("period", "work", "partner", "probs_array"),
     )
     assert _get_func_indexing_params(
-        func=MarkovTransition(masked, targets=("a",)), array_param_name="probs_array"
+        func=MarkovTransition(func=masked, targets=("a",)),
+        array_param_name="probs_array",
     ) == ["period", "work", "partner"]

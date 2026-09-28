@@ -90,7 +90,7 @@ def _make_model() -> Model:
             1,
             law={
                 "retired": ValueDependentTransition(
-                    probability=MarkovTransition(_certain),
+                    probability=MarkovTransition(func=_certain),
                     gate=_well_off,
                     routes={
                         "only": StakeholderRoute(

@@ -147,12 +147,12 @@ def _make_model_and_params(
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=ByAge.until(
-            last_age,
+            stop_age_exclusive=last_age,
             law=Choose(
-                next_regime_from_working,
+                func=next_regime_from_working,
                 targets=("working_life", "retirement", "dead"),
             ),
-            then=Choose(next_regime_from_working, targets=("dead",)),
+            then=Choose(func=next_regime_from_working, targets=("dead",)),
         ),
         functions={
             "utility": utility_working,
@@ -164,9 +164,11 @@ def _make_model_and_params(
 
     retirement = Regime(
         regime_transitions=ByAge.until(
-            last_age,
-            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
-            then=Choose(next_regime_from_retirement, targets=("dead",)),
+            stop_age_exclusive=last_age,
+            law=Choose(
+                func=next_regime_from_retirement, targets=("retirement", "dead")
+            ),
+            then=Choose(func=next_regime_from_retirement, targets=("dead",)),
         ),
         actions={"consumption": consumption_grid},
         states={"wealth": wealth_grid},

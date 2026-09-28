@@ -64,7 +64,7 @@ def _budgeted_model(*, device_memory_bytes: int = 2**32) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=Choose(_next_regime, targets=("done",)),
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 functions={"utility": _utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),

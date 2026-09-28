@@ -90,7 +90,7 @@ def next_regime(age: int) -> ScalarInt:  # noqa: ARG001
 
 alive = UserRegime(
     regime_transitions=until_exit(
-        41, law=Choose(next_regime, targets=("alive", "done")), exits=("done",)
+        41, law=Choose(func=next_regime, targets=("alive", "done")), exits=("done",)
     ),
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},

@@ -355,7 +355,7 @@ def _build_partial_coverage_model(
         state_transitions={
             "wealth": _next_wealth,
             "health": {
-                "work": MarkovTransition(_health_probs),
+                "work": MarkovTransition(func=_health_probs),
             },
         },
         actions={
@@ -375,14 +375,14 @@ def _build_partial_coverage_model(
         },
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(_health_probs),
+            "health": MarkovTransition(func=_health_probs),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
         regime_transitions=until_exit(
             3,
-            law=Choose(next_regime_func, targets=("work", "retire", "dead")),
+            law=Choose(func=next_regime_func, targets=("work", "retire", "dead")),
             exits=("dead",),
         ),
         functions={"utility": _utility},
@@ -418,8 +418,8 @@ def test_partial_state_laws_solve_with_declared_targets():
         )
 
     work_transition = {
-        "work": MarkovTransition(lambda age: jnp.where(age >= 2, 0.0, 1.0)),
-        "dead": MarkovTransition(lambda age: jnp.where(age >= 2, 1.0, 0.0)),
+        "work": MarkovTransition(func=lambda age: jnp.where(age >= 2, 0.0, 1.0)),
+        "dead": MarkovTransition(func=lambda age: jnp.where(age >= 2, 1.0, 0.0)),
     }
     model, params = _build_partial_coverage_model(
         work_transition=work_transition, next_regime_func=_next_regime
@@ -912,10 +912,10 @@ def _model_emitting_total_regime_mass(
             2,
             law={
                 "alive": MarkovTransition(
-                    lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
+                    func=lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
                 ),
                 "dead": MarkovTransition(
-                    lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
+                    func=lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
                 ),
             },
             exits=("dead",),

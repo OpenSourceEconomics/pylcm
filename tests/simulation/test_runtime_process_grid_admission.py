@@ -236,9 +236,9 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
         regimes={
             "alive": Regime(
                 regime_transitions=ByAge(
-                    {
+                    cases={
                         AgeRange(start=0, stop=1): Choose(
-                            _support_next_regime, targets=("done",)
+                            func=_support_next_regime, targets=("done",)
                         )
                     }
                 ),

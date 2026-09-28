@@ -166,7 +166,7 @@ def _make_consent_model() -> tuple[Model, dict]:
             1,
             law={
                 "married_terminal": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_one),
+                    probability=MarkovTransition(func=_prob_one),
                     gate=_consent_gate,
                     routes={
                         "f": StakeholderRoute(
@@ -233,10 +233,10 @@ def _make_dissolution_model() -> tuple[Model, dict]:
     """A collective SOURCE whose gate reads the target's dissolution flag."""
     married = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_ir": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -269,9 +269,9 @@ def _make_dissolution_model() -> tuple[Model, dict]:
     )
     married_ir = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "married_terminal": MarkovTransition(_prob_one)
+                    "married_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),
@@ -314,9 +314,9 @@ def _make_dissolution_model() -> tuple[Model, dict]:
     )
     single_f = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "single_f_terminal": MarkovTransition(_prob_one)
+                    "single_f_terminal": MarkovTransition(func=_prob_one)
                 }
             }
         ),
@@ -331,7 +331,7 @@ def _make_dissolution_model() -> tuple[Model, dict]:
         functions={"utility": _u_zero},
     )
     single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     model = Model(

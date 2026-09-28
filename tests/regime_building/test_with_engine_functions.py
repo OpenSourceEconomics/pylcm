@@ -70,9 +70,9 @@ def _couple(*, functions: Mapping[str, object]) -> Regime:
     """The collective regime of the miniature."""
     return Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): Choose(
-                    lambda: RegimeId.couple_terminal, targets=("couple_terminal",)
+                    func=lambda: RegimeId.couple_terminal, targets=("couple_terminal",)
                 )
             }
         ),

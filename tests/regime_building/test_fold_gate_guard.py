@@ -117,10 +117,10 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (collective, folds `wage_shock`)."""
     source = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -175,7 +175,9 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     )
     reader = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): {"reader_terminal": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(stop=1): {"reader_terminal": MarkovTransition(func=_prob_one)}
+            }
         ),
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -230,10 +232,10 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     """
     source = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=lambda V_ref: V_ref > 0.0,
                         routes={
                             "only": StakeholderRoute(

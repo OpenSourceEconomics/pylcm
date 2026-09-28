@@ -89,7 +89,9 @@ def model(request: pytest.FixtureRequest) -> Model:
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 state_transitions={"income": {"target": income_law}},
                 functions=functions,
@@ -150,7 +152,9 @@ def test_an_unread_runtime_process_does_not_block_a_fixed_draw() -> None:
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 states={"noise": _RUNTIME_NOISE},
                 state_transitions={"wealth": {"target": _wealth_from_fixed_draw}},
@@ -219,7 +223,9 @@ def test_a_dependent_entry_is_contracted_as_a_value_not_averaged_as_a_lottery() 
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
-                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
                 ),
                 state_transitions={"income": {"target": _income_between_two_nodes}},
                 functions={"utility": _no_utility},
@@ -281,14 +287,14 @@ def test_a_draw_conditioned_on_a_sibling_draw_is_rejected() -> None:
     product cannot carry, so the model says so instead of pricing an independence
     it was not given.
     """
-    conditioned = MarkovTransition(_health_probs_from_a_draw)
+    conditioned = MarkovTransition(func=_health_probs_from_a_draw)
     with pytest.raises(ModelInitializationError, match="joint kernel"):
         Model(
             regimes={
                 "source": Regime(
                     regime_transitions=until_exit(
                         22,
-                        law={"target": MarkovTransition(_to_target)},
+                        law={"target": MarkovTransition(func=_to_target)},
                         exits=("target",),
                     ),
                     state_transitions={"health": {"target": conditioned}},

@@ -115,7 +115,7 @@ def _make_model() -> Model:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("couple", "couple_terminal")),
+            law=Choose(func=_next_regime, targets=("couple", "couple_terminal")),
             exits=("couple_terminal",),
         ),
         states={"wage": _WAGE_GRID},

@@ -248,7 +248,7 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
     """Build a minimal model, attaching regime-owned EGM margins as needed."""
     base_alive: dict[str, Any] = {
         "regime_transitions": ByAge(
-            {AgeRange(stop=41): Choose(_next_regime, targets=("dead",))}
+            cases={AgeRange(stop=41): Choose(func=_next_regime, targets=("dead",))}
         ),
         "states": {"wealth": _WEALTH},
         "state_transitions": {"wealth": _next_wealth},
@@ -516,7 +516,9 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
     )
     alive = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
-            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            41,
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
         ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
@@ -592,7 +594,9 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
     )
     alive = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
-            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            41,
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
         ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
@@ -671,7 +675,9 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
     )
     alive = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
-            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            41,
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
         ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
@@ -746,7 +752,9 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
     )
     alive = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
-            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            41,
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
         ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
@@ -825,7 +833,9 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
     )
     alive = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
-            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            41,
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
         ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
@@ -1792,7 +1802,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
     alive = Regime(
         regime_transitions=until_exit(
             27,
-            law=MarkovTransition(_survival_probs, targets=("alive", "dead")),
+            law=MarkovTransition(func=_survival_probs, targets=("alive", "dead")),
             exits=("dead",),
         ),
         states={
@@ -1801,7 +1811,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": {"alive": MarkovTransition(_health_probs)},
+            "health": {"alive": MarkovTransition(func=_health_probs)},
         },
         actions={
             "consumption": LinSpacedGrid(
@@ -1860,7 +1870,7 @@ def _make_mixed_target_model(scale: float) -> Model:
     alive = Regime(
         regime_transitions=until_exit(
             27,
-            law=MarkovTransition(_survival_probs, targets=("alive", "dead")),
+            law=MarkovTransition(func=_survival_probs, targets=("alive", "dead")),
             exits=("dead",),
         ),
         states={
@@ -1869,7 +1879,7 @@ def _make_mixed_target_model(scale: float) -> Model:
         },
         state_transitions={
             "wealth": {"alive": next_wealth},
-            "health": {"alive": MarkovTransition(_health_probs)},
+            "health": {"alive": MarkovTransition(func=_health_probs)},
         },
         actions={
             "consumption": LinSpacedGrid(
@@ -2090,7 +2100,9 @@ def _make_stacked_model(
         base
         | {
             "regime_transitions": ByAge(
-                {AgeRange(stop=41): Choose(_to_retired, targets=("retired",))}
+                cases={
+                    AgeRange(stop=41): Choose(func=_to_retired, targets=("retired",))
+                }
             )
         }
     ) | working_kwargs
@@ -2098,7 +2110,11 @@ def _make_stacked_model(
         base
         | {
             "regime_transitions": ByAge(
-                {AgeRange(start=41, stop=42): Choose(_to_dead, targets=("dead",))}
+                cases={
+                    AgeRange(start=41, stop=42): Choose(
+                        func=_to_dead, targets=("dead",)
+                    )
+                }
             )
         }
     ) | retired_kwargs

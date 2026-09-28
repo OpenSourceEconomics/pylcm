@@ -90,7 +90,9 @@ _DEAD = Regime(
 
 
 _ALIVE_TRANSITIONS = until_exit(
-    20 + _N - 1, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+    20 + _N - 1,
+    law=Choose(func=_next_regime, targets=("alive", "dead")),
+    exits=("dead",),
 )
 
 
@@ -496,7 +498,11 @@ def test_age_specialized_grid_on_never_solved_regime_is_rejected():
                 "alive": _alive_regime(
                     wealth_grid=grid,
                     regime_transitions=ByAge(
-                        {AgeRange(start=100): Choose(_next_regime, targets=("dead",))}
+                        cases={
+                            AgeRange(start=100): Choose(
+                                func=_next_regime, targets=("dead",)
+                            )
+                        }
                     ),
                 ),
                 "dead": _DEAD,

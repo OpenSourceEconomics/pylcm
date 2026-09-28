@@ -97,8 +97,8 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         regime_transitions=until_exit(
             final_age_alive + 5,
             law={
-                "alive": MarkovTransition(_prob_alive),
-                "dead": MarkovTransition(_prob_dead),
+                "alive": MarkovTransition(func=_prob_alive),
+                "dead": MarkovTransition(func=_prob_dead),
             },
             exits=("dead",),
         ),

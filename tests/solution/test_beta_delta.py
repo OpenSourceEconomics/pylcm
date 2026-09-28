@@ -102,7 +102,9 @@ def _make_model(*, H_func=beta_delta_H):
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(next_regime, targets=("working", "dead")), exits=("dead",)
+            2,
+            law=Choose(func=next_regime, targets=("working", "dead")),
+            exits=("dead",),
         ),
         functions={"utility": utility},
         koopmans_aggregator=H_func,

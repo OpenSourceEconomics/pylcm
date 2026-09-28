@@ -116,7 +116,7 @@ def _build_model(
 ) -> Model:
     """Build a source whose declared target's only state is `process`."""
     transition = (
-        _target_id if coarse else {"target": MarkovTransition(_one_probability)}
+        _target_id if coarse else {"target": MarkovTransition(func=_one_probability)}
     )
     return Model(
         regimes={
@@ -354,7 +354,7 @@ def test_the_entry_law_decides_the_action() -> None:
         return jnp.where(go == 1, _ThreeRegimeId.enter, _ThreeRegimeId.stay)
 
     source = Regime(
-        regime_transitions=Choose(_choose, targets=("stay", "enter")),
+        regime_transitions=Choose(func=_choose, targets=("stay", "enter")),
         actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
         state_transitions={"wealth": {"stay": lambda: jnp.asarray(1.0)}},
         functions={"utility": _zero_utility},
@@ -450,7 +450,7 @@ def _build_explicit_entry_model(
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
             ),

@@ -53,7 +53,7 @@ def _next_estate(*, savings: FloatND, match: FloatND) -> ContinuousState:
 def _model(solver: EGM | GridSearch) -> Model:
     source = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
-            1, law={"target": MarkovTransition(_certain_target)}, exits=("target",)
+            1, law={"target": MarkovTransition(func=_certain_target)}, exits=("target",)
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=10)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=10.0, n_points=20)},

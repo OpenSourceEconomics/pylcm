@@ -41,9 +41,9 @@ def next_regime_from_retirement(*, age: int, final_age_alive: float) -> ScalarIn
 def retirement_transitions(*, last_age: UserAge | float) -> ByAge:
     """Stay retired or die until the age before `last_age`, then die."""
     return ByAge.until(
-        last_age,
-        law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
-        then=Choose(next_regime_from_retirement, targets=("dead",)),
+        stop_age_exclusive=last_age,
+        law=Choose(func=next_regime_from_retirement, targets=("retirement", "dead")),
+        then=Choose(func=next_regime_from_retirement, targets=("dead",)),
     )
 
 

@@ -86,7 +86,9 @@ def _build_model(*, enable_jit: bool = True) -> Model:
     """Build the ordinary singleton model used by the production tracer."""
     acting = Regime(
         regime_transitions=until_exit(
-            1, law=Choose(_next_regime, targets=("acting", "done")), exits=("done",)
+            1,
+            law=Choose(func=_next_regime, targets=("acting", "done")),
+            exits=("done",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},

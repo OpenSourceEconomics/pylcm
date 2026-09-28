@@ -34,19 +34,19 @@ QUARTERLY = AgeGrid(start=61, stop=63, step="Q")
 )
 def test_by_age_selects_exact_grid_coordinates(*, selector, expected) -> None:
     """Each selector covers exactly the existing grid points it names."""
-    schedule = ByAge({selector: "b"}).resolve(ANNUAL)
+    schedule = ByAge(cases={selector: "b"}).resolve(ANNUAL)
     assert schedule.covered_ages == expected
 
 
 def test_range_selects_integers_not_intervening_quarters() -> None:
     """A Python `range` names integer ages only, never the quarters between them."""
-    schedule = ByAge({range(61, 63): "b"}).resolve(QUARTERLY)
+    schedule = ByAge(cases={range(61, 63): "b"}).resolve(QUARTERLY)
     assert schedule.covered_ages == (61, 62)
 
 
 def test_age_range_selects_quarterly_points_in_half_open_interval() -> None:
     """An interval selects every existing grid point in `[start, stop)`."""
-    schedule = ByAge({AgeRange(start=62, stop=Fraction(125, 2)): "b"}).resolve(
+    schedule = ByAge(cases={AgeRange(start=62, stop=Fraction(125, 2)): "b"}).resolve(
         QUARTERLY
     )
     assert schedule.covered_ages == (62, Fraction(249, 4))
@@ -54,7 +54,7 @@ def test_age_range_selects_quarterly_points_in_half_open_interval() -> None:
 
 def test_default_fills_every_remaining_nonfinal_age() -> None:
     """`default` covers each non-final age no explicit case selects."""
-    schedule = ByAge({61: "a"}, default="b").resolve(ANNUAL)
+    schedule = ByAge(cases={61: "a"}, default="b").resolve(ANNUAL)
     assert [schedule.at(age) for age in schedule.covered_ages] == [
         "b",
         "a",
@@ -72,25 +72,31 @@ def test_until_exits_on_the_grid_predecessor_of_the_boundary(
     *, grid: AgeGrid, expected_exit: int | Fraction
 ) -> None:
     """`until` applies `then` on the predecessor of `boundary` and the law before."""
-    schedule = ByAge.until(62, law="work", then="retire", start=61).resolve(grid)
+    schedule = ByAge.until(
+        stop_age_exclusive=62, law="work", then="retire", start_age_inclusive=61
+    ).resolve(grid)
     assert schedule.at(expected_exit) == "retire"
 
 
 def test_until_covers_start_up_to_the_boundary() -> None:
     """`until` covers `start <= age < boundary`."""
-    schedule = ByAge.until(63, law="work", then="retire", start=61).resolve(ANNUAL)
+    schedule = ByAge.until(
+        stop_age_exclusive=63, law="work", then="retire", start_age_inclusive=61
+    ).resolve(ANNUAL)
     assert schedule.covered_ages == (61, 62)
 
 
 def test_until_with_only_the_exit_position_leaves_the_ordinary_leg_unused() -> None:
     """A start equal to the predecessor covers the exit age alone."""
-    schedule = ByAge.until(62, law="work", then="retire", start=61).resolve(ANNUAL)
+    schedule = ByAge.until(
+        stop_age_exclusive=62, law="work", then="retire", start_age_inclusive=61
+    ).resolve(ANNUAL)
     assert [schedule.at(age) for age in schedule.covered_ages] == ["retire"]
 
 
 def test_resolved_schedule_rejects_an_uncovered_age() -> None:
     """Inspecting an age outside the coverage raises instead of guessing a law."""
-    schedule = ByAge({61: "a"}).resolve(ANNUAL)
+    schedule = ByAge(cases={61: "a"}).resolve(ANNUAL)
     with pytest.raises(KeyError, match="60"):
         schedule.at(60)
 
@@ -113,18 +119,18 @@ def test_invalid_selectors_are_rejected_at_resolution(cases) -> None:
     """Off-grid, boolean, nonfinite, reversed, empty, overlapping and final-age
     selections raise instead of being rounded, dropped or truncated."""
     with pytest.raises(RegimeInitializationError):
-        ByAge(cases).resolve(ANNUAL)
+        ByAge(cases=cases).resolve(ANNUAL)
 
 
 @pytest.mark.parametrize(
     "build",
     [
-        lambda: ByAge({61: None}),
-        lambda: ByAge({61: "a"}, default=None),
-        lambda: ByAge.until(62, law="a", then=None),
-        lambda: ByAge({61: Phased(solve=None, simulate="a")}),
-        lambda: ByAge({61: ByAge({61: "a"})}),
-        lambda: ByAge({}),
+        lambda: ByAge(cases={61: None}),
+        lambda: ByAge(cases={61: "a"}, default=None),
+        lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),
+        lambda: ByAge(cases={61: Phased(solve=None, simulate="a")}),
+        lambda: ByAge(cases={61: ByAge(cases={61: "a"})}),
+        lambda: ByAge(cases={}),
     ],
 )
 def test_none_and_nested_schedules_are_rejected_inside_a_schedule(build) -> None:
@@ -136,18 +142,18 @@ def test_none_and_nested_schedules_are_rejected_inside_a_schedule(build) -> None
 def test_until_rejects_a_boundary_without_a_predecessor() -> None:
     """The first grid age has no predecessor on which to exit."""
     with pytest.raises(RegimeInitializationError, match="predecessor"):
-        ByAge.until(60, law="a", then="b").resolve(ANNUAL)
+        ByAge.until(stop_age_exclusive=60, law="a", then="b").resolve(ANNUAL)
 
 
 def test_until_rejects_an_off_grid_boundary() -> None:
     """`until` boundaries are exact grid coordinates."""
     with pytest.raises(RegimeInitializationError, match=r"61\.5"):
-        ByAge.until(61.5, law="a", then="b").resolve(ANNUAL)
+        ByAge.until(stop_age_exclusive=61.5, law="a", then="b").resolve(ANNUAL)
 
 
 def test_markov_transition_records_declared_targets() -> None:
     """A vector regime law carries its declared support as a tuple of names."""
-    law = MarkovTransition(_probs, targets=["a", "b"])
+    law = MarkovTransition(func=_probs, targets=["a", "b"])
     assert law.targets == ("a", "b")
 
 
@@ -155,23 +161,23 @@ def test_markov_transition_records_declared_targets() -> None:
 def test_markov_transition_rejects_empty_or_duplicate_targets(targets) -> None:
     """Declared support is nonempty and names each target once."""
     with pytest.raises(RegimeInitializationError):
-        MarkovTransition(_probs, targets=targets)
+        MarkovTransition(func=_probs, targets=targets)
 
 
 def test_markov_transition_without_targets_keeps_state_law_semantics() -> None:
     """A state law declares no regime support."""
-    assert MarkovTransition(_probs).targets is None
+    assert MarkovTransition(func=_probs).targets is None
 
 
 def test_choose_records_declared_targets() -> None:
     """A deterministic selector names its support."""
-    assert Choose(_code, targets=("a", "b")).targets == ("a", "b")
+    assert Choose(func=_code, targets=("a", "b")).targets == ("a", "b")
 
 
 def test_choose_rejects_empty_targets() -> None:
     """A deterministic selector must name at least one target."""
     with pytest.raises(RegimeInitializationError):
-        Choose(_code, targets=())
+        Choose(func=_code, targets=())
 
 
 def test_choose_exposes_the_wrapped_signature() -> None:
@@ -180,4 +186,4 @@ def test_choose_exposes_the_wrapped_signature() -> None:
     def select(work: int) -> int:
         return work
 
-    assert Choose(select, targets=("a",)).__wrapped__ is select  # ty: ignore[unresolved-attribute]
+    assert Choose(func=select, targets=("a",)).__wrapped__ is select  # ty: ignore[unresolved-attribute]

@@ -60,9 +60,9 @@ def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Mo
     process = TauchenAR1Process(n_points=3, gauss_hermite=False)
     source_states = {"shock": process} if carry_process else {}
     transition = (
-        Choose(_next_target, targets=("target",))
+        Choose(func=_next_target, targets=("target",))
         if coarse
-        else {"target": MarkovTransition(_one_probability)}
+        else {"target": MarkovTransition(func=_one_probability)}
     )
     return Model(
         regimes={
@@ -92,7 +92,7 @@ def _target_only_process_model(
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
@@ -204,7 +204,9 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
         return Model(
             regimes={
                 "source": Regime(
-                    regime_transitions={"target": MarkovTransition(_one_probability)},
+                    regime_transitions={
+                        "target": MarkovTransition(func=_one_probability)
+                    },
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
@@ -228,7 +230,9 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
         return Model(
             regimes={
                 "source": Regime(
-                    regime_transitions={"target": MarkovTransition(_one_probability)},
+                    regime_transitions={
+                        "target": MarkovTransition(func=_one_probability)
+                    },
                     states={"shock": process},
                     state_transitions={
                         "extra": {"target": lambda: jnp.float32(0.0)},
@@ -277,7 +281,7 @@ def _explicit_entry_model(process: TauchenAR1Process) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={
                     "shock": {"target": lambda: jnp.float32(0)},
                 },
@@ -341,7 +345,9 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    regime_transitions={"target": MarkovTransition(_one_probability)},
+                    regime_transitions={
+                        "target": MarkovTransition(func=_one_probability)
+                    },
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
@@ -386,16 +392,18 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
             regimes={
                 "source": Regime(
                     regime_transitions=ByAge(
-                        {
-                            AgeRange(20, 22): {
-                                "target": MarkovTransition(_one_probability)
+                        cases={
+                            AgeRange(start=20, stop=22): {
+                                "target": MarkovTransition(func=_one_probability)
                             }
                         }
                     ),
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
-                    regime_transitions={"terminal": MarkovTransition(_one_probability)},
+                    regime_transitions={
+                        "terminal": MarkovTransition(func=_one_probability)
+                    },
                     states={"shock": DiscreteGrid(category_class=_Outcome)},
                     # Target's own outgoing (target -> terminal) law satisfies
                     # completeness; it says nothing about the incoming
@@ -423,7 +431,7 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_shock}},
                 functions={"utility": _zero_utility},
             ),
@@ -466,8 +474,10 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
-                state_transitions={"shock": {"target": MarkovTransition(_entry_probs)}},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                state_transitions={
+                    "shock": {"target": MarkovTransition(func=_entry_probs)}
+                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
@@ -514,8 +524,10 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
-                state_transitions={"shock": {"target": MarkovTransition(_entry_probs)}},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                state_transitions={
+                    "shock": {"target": MarkovTransition(func=_entry_probs)}
+                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(

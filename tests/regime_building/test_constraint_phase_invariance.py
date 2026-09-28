@@ -82,7 +82,7 @@ def _last_regime() -> Regime:
 def _model(*, live_functions, state_transitions, constraints) -> Model:
     live = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(_next_regime, targets=("live", "last")), exits=("last",)
+            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
         ),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},

@@ -230,7 +230,7 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
         regimes={
             "alive": Regime(
                 regime_transitions=until_exit(
-                    21, law={"dead": MarkovTransition(_certain)}, exits=("dead",)
+                    21, law={"dead": MarkovTransition(func=_certain)}, exits=("dead",)
                 ),
                 states={
                     "wealth": _WEALTH,
@@ -239,8 +239,8 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
                 },
                 state_transitions={
                     "wealth": _keep_wealth,
-                    "health": MarkovTransition(_health_probs),
-                    "mood": MarkovTransition(_mood_probs),
+                    "health": MarkovTransition(func=_health_probs),
+                    "mood": MarkovTransition(func=_mood_probs),
                 },
                 functions={"utility": _no_utility},
             ),

@@ -225,7 +225,7 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
             1,
             law={
                 "src_exit": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_one),
+                    probability=MarkovTransition(func=_prob_one),
                     gate=_wage_gate,
                     routes={
                         "only": StakeholderRoute(
@@ -287,10 +287,10 @@ def _build_model(
 
     src = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "src_exit": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
+                        probability=MarkovTransition(func=_prob_one),
                         gate=_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -320,7 +320,11 @@ def _build_model(
     )
     fallback = Regime(
         regime_transitions=ByAge(
-            {AgeRange(start=1, stop=2): {"fallback_exit": MarkovTransition(_prob_one)}}
+            cases={
+                AgeRange(start=1, stop=2): {
+                    "fallback_exit": MarkovTransition(func=_prob_one)
+                }
+            }
         ),
         states={
             "wage": _WAGE,

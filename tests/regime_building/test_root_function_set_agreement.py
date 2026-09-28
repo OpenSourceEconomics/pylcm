@@ -207,10 +207,10 @@ def _make_regimes() -> dict[str, Regime]:
     """
     couple = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "couple_ir": ValueDependentTransition(
-                        probability=MarkovTransition(_probability_one),
+                        probability=MarkovTransition(func=_probability_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -254,9 +254,9 @@ def _make_regimes() -> dict[str, Regime]:
     )
     couple_ir = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "couple_terminal": MarkovTransition(_probability_one)
+                    "couple_terminal": MarkovTransition(func=_probability_one)
                 }
             }
         ),
@@ -299,9 +299,9 @@ def _make_regimes() -> dict[str, Regime]:
     )
     single_f = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=2): {
-                    "single_terminal": MarkovTransition(_probability_one)
+                    "single_terminal": MarkovTransition(func=_probability_one)
                 }
             }
         ),

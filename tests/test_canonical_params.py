@@ -51,12 +51,14 @@ def _prob_dead(*, age: float, hazard: float) -> FloatND:
 def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge(
-            {
+            cases={
                 AgeRange(stop=2): {
                     "retired": MarkovTransition(
-                        lambda age, hazard: 1.0 - _prob_dead(age=age, hazard=hazard)
+                        func=lambda age, hazard: (
+                            1.0 - _prob_dead(age=age, hazard=hazard)
+                        )
                     ),
-                    "dead": MarkovTransition(_prob_dead),
+                    "dead": MarkovTransition(func=_prob_dead),
                 }
             }
         ),
@@ -81,9 +83,9 @@ def _certain_death(age: float) -> FloatND:
 def _retired_regime() -> UserRegime:
     return UserRegime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=3): {
-                    "dead": MarkovTransition(_certain_death),
+                    "dead": MarkovTransition(func=_certain_death),
                 }
             }
         ),
@@ -248,7 +250,7 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
         return jnp.stack([jnp.zeros_like(dead), 1.0 - dead, dead])
 
     work = _work_regime(
-        regime_transitions=MarkovTransition(_prob_vector),
+        regime_transitions=MarkovTransition(func=_prob_vector),
         state_transitions={"wealth": _next_wealth},
     )
     model = _build_model(work)

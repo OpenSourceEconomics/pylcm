@@ -54,7 +54,9 @@ def _stateful_target_model() -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=Choose(_lifecycle_next_regime, targets=("done",)),
+                regime_transitions=Choose(
+                    func=_lifecycle_next_regime, targets=("done",)
+                ),
                 functions={"utility": _lifecycle_utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),

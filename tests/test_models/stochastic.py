@@ -130,8 +130,8 @@ working_life = _base_working_life.replace(
         "wealth": WEALTH_GRID,
     },
     state_transitions={
-        "health": MarkovTransition(next_health),
-        "partner": MarkovTransition(next_partner),
+        "health": MarkovTransition(func=next_health),
+        "partner": MarkovTransition(func=next_partner),
         "wealth": next_wealth,
     },
     actions={
@@ -152,8 +152,8 @@ retirement = _base_retirement.replace(
         "wealth": WEALTH_GRID,
     },
     state_transitions={
-        "health": MarkovTransition(next_health),
-        "partner": MarkovTransition(next_partner),
+        "health": MarkovTransition(func=next_health),
+        "partner": MarkovTransition(func=next_partner),
         "wealth": next_wealth,
     },
     actions={"consumption": CONSUMPTION_GRID},

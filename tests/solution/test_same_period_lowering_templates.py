@@ -170,7 +170,7 @@ def _build_model() -> Model:
             1,
             law={
                 "single": ValueDependentTransition(
-                    probability=MarkovTransition(_probability_of_separating),
+                    probability=MarkovTransition(func=_probability_of_separating),
                     gate=_wage_clears_the_floor,
                     routes={
                         "f": StakeholderRoute(

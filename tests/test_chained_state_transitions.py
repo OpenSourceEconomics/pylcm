@@ -56,7 +56,7 @@ def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
 
 _active = UserRegime(
     regime_transitions=until_exit(
-        2, law=Choose(_next_regime, targets=("active", "dead")), exits=("dead",)
+        2, law=Choose(func=_next_regime, targets=("active", "dead")), exits=("dead",)
     ),
     actions={
         "labor_supply": DiscreteGrid(category_class=_LaborSupply),
@@ -204,7 +204,9 @@ def _f2_next_regime(period: Period) -> ScalarInt:
 def _f2_build_model() -> Model:
     live = UserRegime(
         regime_transitions=until_exit(
-            27, law=Choose(_f2_next_regime, targets=("live", "last")), exits=("last",)
+            27,
+            law=Choose(func=_f2_next_regime, targets=("live", "last")),
+            exits=("last",),
         ),
         states={
             "good": DiscreteGrid(category_class=_Good),
@@ -212,7 +214,7 @@ def _f2_build_model() -> Model:
         },
         actions={"move": DiscreteGrid(category_class=_Move)},
         state_transitions={
-            "good": MarkovTransition(_f2_good_probs),
+            "good": MarkovTransition(func=_f2_good_probs),
             "capital": _f2_next_capital,
         },
         functions={"utility": _f2_utility},

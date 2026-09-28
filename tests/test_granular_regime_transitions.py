@@ -1,4 +1,4 @@
-"""Per-target regime transitions: `transition={target: MarkovTransition(prob)}`.
+"""Per-target regime transitions: `transition={target: MarkovTransition(func=prob)}`.
 
 The granular form declares each target regime's transition probability as its
 own function; the key set IS the regime's reachability declaration — omitted
@@ -54,9 +54,9 @@ def _prob_dead(age: int) -> ScalarFloat:
 
 def _granular_transition() -> dict[str, MarkovTransition]:
     return {
-        "work": MarkovTransition(_prob_work),
-        "retired": MarkovTransition(_prob_retired),
-        "dead": MarkovTransition(_prob_dead),
+        "work": MarkovTransition(func=_prob_work),
+        "retired": MarkovTransition(func=_prob_retired),
+        "dead": MarkovTransition(func=_prob_dead),
     }
 
 
@@ -84,10 +84,10 @@ def _build_model(*, work: UserRegime, retired: UserRegime | None = None) -> Mode
                 3,
                 law={
                     "retired": MarkovTransition(
-                        lambda age: jnp.where(age < 2, 0.5, 0.0),
+                        func=lambda age: jnp.where(age < 2, 0.5, 0.0),
                     ),
                     "dead": MarkovTransition(
-                        lambda age: jnp.where(age < 2, 0.5, 1.0),
+                        func=lambda age: jnp.where(age < 2, 0.5, 1.0),
                     ),
                 },
                 exits=("dead",),
@@ -138,11 +138,11 @@ def test_template_has_per_target_regime_transition_keys() -> None:
             3,
             law={
                 "work": MarkovTransition(
-                    lambda age, hazard: (
+                    func=lambda age, hazard: (
                         1.0 - _prob_dead_with_param(age=age, hazard=hazard)
                     )
                 ),
-                "dead": MarkovTransition(_prob_dead_with_param),
+                "dead": MarkovTransition(func=_prob_dead_with_param),
             },
             exits=("dead",),
         ),
@@ -173,8 +173,8 @@ def test_unknown_target_in_granular_dict_raises() -> None:
     """Every granular key must name a regime of the model."""
     work = _build_regime(
         regime_transitions={
-            "work": MarkovTransition(lambda age: jnp.asarray(0.5)),  # noqa: ARG005
-            "valhalla": MarkovTransition(lambda age: jnp.asarray(0.5)),  # noqa: ARG005
+            "work": MarkovTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
+            "valhalla": MarkovTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
         },
     )
     with pytest.raises(ModelInitializationError, match=r"valhalla"):
@@ -188,11 +188,11 @@ def test_phased_granular_with_differing_key_sets_raises() -> None:
         _build_regime(
             regime_transitions=Phased(
                 solve={
-                    "work": MarkovTransition(lambda age: jnp.asarray(1.0)),  # noqa: ARG005
+                    "work": MarkovTransition(func=lambda age: jnp.asarray(1.0)),  # noqa: ARG005
                 },
                 simulate={
-                    "work": MarkovTransition(lambda age: jnp.asarray(0.5)),  # noqa: ARG005
-                    "dead": MarkovTransition(lambda age: jnp.asarray(0.5)),  # noqa: ARG005
+                    "work": MarkovTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
+                    "dead": MarkovTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
                 },
             ),
         )
@@ -221,8 +221,8 @@ def test_granular_keys_narrow_reachability() -> None:
         regime_transitions=until_exit(
             3,
             law={
-                "retired": MarkovTransition(lambda age: jnp.asarray(0.7)),  # noqa: ARG005
-                "dead": MarkovTransition(lambda age: jnp.asarray(0.3)),  # noqa: ARG005
+                "retired": MarkovTransition(func=lambda age: jnp.asarray(0.7)),  # noqa: ARG005
+                "dead": MarkovTransition(func=lambda age: jnp.asarray(0.3)),  # noqa: ARG005
             },
             exits=("dead",),
         ),

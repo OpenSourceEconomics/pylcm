@@ -194,9 +194,9 @@ def _pass_through_model(
     margin = _pass_through_margin()
     working = ConsumptionSavingsRegime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=0, stop=1): Choose(
-                    _pass_through_next_regime, targets=("dead",)
+                    func=_pass_through_next_regime, targets=("dead",)
                 )
             }
         ),

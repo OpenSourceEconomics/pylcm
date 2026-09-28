@@ -144,7 +144,7 @@ def build_model() -> Model:
         },
         regime_transitions=until_exit(
             final_age_alive + 5,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         constraints={

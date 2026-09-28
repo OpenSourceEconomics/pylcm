@@ -80,7 +80,7 @@ def _entered_process_model(*, fixed_params: dict, enable_jit: bool = False) -> M
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(_one_probability)},
+                    law={"target": MarkovTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 functions={"utility": _zero_utility},
@@ -175,7 +175,7 @@ def test_a_broadcast_that_binds_a_law_still_reaches_a_function() -> None:
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(_one_probability)},
+                    law={"target": MarkovTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 functions={"utility": _mu_utility},
@@ -232,7 +232,7 @@ def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(_one_probability)},
+                    law={"target": MarkovTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 functions={"utility": _zero_utility},
@@ -273,7 +273,7 @@ def test_a_coarse_regime_transition_pins_the_same_law() -> None:
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law=Choose(_always_target, targets=("source", "target")),
+                    law=Choose(func=_always_target, targets=("source", "target")),
                     exits=("target",),
                 ),
                 functions={"utility": _zero_utility},
@@ -327,7 +327,7 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(_one_probability)},
+                    law={"target": MarkovTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 states={

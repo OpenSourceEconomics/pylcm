@@ -110,9 +110,9 @@ _DEFAULT_RETIREMENT_AGE = 24
 def working_life_transitions(*, retirement_age: int) -> ByAge:
     """Work until the age before `retirement_age`, then retire."""
     return ByAge.until(
-        retirement_age,
-        law=Choose(next_regime, targets=("working_life", "retirement")),
-        then=Choose(next_regime, targets=("retirement",)),
+        stop_age_exclusive=retirement_age,
+        law=Choose(func=next_regime, targets=("working_life", "retirement")),
+        then=Choose(func=next_regime, targets=("retirement",)),
     )
 
 
@@ -179,6 +179,7 @@ def get_model(retirement_age: int = 24) -> Model:
         },
         ages=AgeGrid(start=18, stop=retirement_age, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working_life"},
     )
 
 

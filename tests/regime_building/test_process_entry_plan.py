@@ -46,7 +46,7 @@ def _model_with_process_action(*, enable_jit: bool) -> Model:
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(_one_probability)},
+                    law={"target": MarkovTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 functions={"utility": _zero_utility},

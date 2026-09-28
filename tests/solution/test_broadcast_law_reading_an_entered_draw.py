@@ -70,7 +70,9 @@ def _build(state_transitions) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={t: MarkovTransition(_half) for t in ("a", "b")},
+                regime_transitions={
+                    t: MarkovTransition(func=_half) for t in ("a", "b")
+                },
                 state_transitions=state_transitions,
                 functions={"utility": _no_utility},
             ),

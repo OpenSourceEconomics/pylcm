@@ -115,7 +115,9 @@ def get_shared_decision_model() -> Model:
         utilities={"f": _shared_utility_f, "m": _shared_utility_m}
     )
     couple = Regime(
-        regime_transitions=Choose(_to_shared_terminal, targets=("couple_terminal",)),
+        regime_transitions=Choose(
+            func=_to_shared_terminal, targets=("couple_terminal",)
+        ),
         states={"wage": _SHARED_WAGE_GRID},
         state_transitions={"wage": _next_shared_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -134,6 +136,7 @@ def get_shared_decision_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=SharedDecisionRegimeId,
+        initial_regimes={0: "couple"},
         description="A shared household labor choice.",
     )
 
@@ -221,9 +224,9 @@ def get_dissolution_model() -> Model:
     )
     married_with_participation = Regime(
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(start=1, stop=_DISSOLUTION_AGE): {
-                    "married_terminal": MarkovTransition(_probability_one)
+                    "married_terminal": MarkovTransition(func=_probability_one)
                 }
             }
         ),
@@ -262,10 +265,10 @@ def get_dissolution_model() -> Model:
         # this edge by one of them would send both partners there whenever the
         # household stays together.
         regime_transitions=ByAge(
-            {
+            cases={
                 AgeRange(stop=1): {
                     "married_with_participation": ValueDependentTransition(
-                        probability=MarkovTransition(_probability_one),
+                        probability=MarkovTransition(func=_probability_one),
                         gate=_no_dissolution,
                         routes={
                             "f": StakeholderRoute(
@@ -316,5 +319,6 @@ def get_dissolution_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=DissolutionRegimeId,
+        initial_regimes={0: "married"},
         description="Participation constraints and a gated dissolution edge.",
     )

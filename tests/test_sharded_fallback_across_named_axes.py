@@ -198,8 +198,8 @@ def build_model(
         regime_transitions=until_exit(
             3,
             law={
-                "solo": MarkovTransition(_solo_stays_before_age_two),
-                "dead": MarkovTransition(_solo_leaves_from_age_two),
+                "solo": MarkovTransition(func=_solo_stays_before_age_two),
+                "dead": MarkovTransition(func=_solo_leaves_from_age_two),
             },
             exits=("dead",),
         ),
@@ -215,9 +215,9 @@ def build_model(
         regime_transitions=until_exit(
             2,
             law={
-                "pair": MarkovTransition(_stay_before_age_one),
+                "pair": MarkovTransition(func=_stay_before_age_one),
                 "dead": ValueDependentTransition(
-                    probability=MarkovTransition(_leave_from_age_one),
+                    probability=MarkovTransition(func=_leave_from_age_one),
                     gate=_gate_open_above_the_middle,
                     routes={
                         "only": StakeholderRoute(

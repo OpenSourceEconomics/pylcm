@@ -96,7 +96,7 @@ alive_deterministic = UserRegime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    regime_transitions=Choose(next_regime, targets=("dead",)),
+    regime_transitions=Choose(func=next_regime, targets=("dead",)),
 )
 
 dead = UserRegime(
@@ -220,7 +220,7 @@ def matrix_to_dict_of_vectors(*, arr, col_names):
 
 
 THREE_PERIOD_TRANSITIONS = until_exit(
-    2, law=Choose(next_regime, targets=("alive", "dead")), exits=("dead",)
+    2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
 )
 
 

@@ -191,9 +191,9 @@ def _model(*, budget: int | None) -> Model:
         regimes={
             "working": Regime(
                 regime_transitions=ByAge(
-                    {
+                    cases={
                         AgeRange(start=0, stop=1): {
-                            "terminal": MarkovTransition(lambda: jnp.asarray(1.0))
+                            "terminal": MarkovTransition(func=lambda: jnp.asarray(1.0))
                         }
                     }
                 ),

@@ -130,13 +130,13 @@ def _model(*, node_is_reachable: bool = True) -> Model:
         regimes={
             "alive": Regime(
                 regime_transitions=until_exit(
-                    21, law={"dead": MarkovTransition(_certain)}, exits=("dead",)
+                    21, law={"dead": MarkovTransition(func=_certain)}, exits=("dead",)
                 ),
                 actions={"bet": DiscreteGrid(category_class=_Bet)},
                 states={"health": levels, "mood": levels},
                 state_transitions={
-                    "health": MarkovTransition(health_probs),
-                    "mood": MarkovTransition(mood_probs),
+                    "health": MarkovTransition(func=health_probs),
+                    "mood": MarkovTransition(func=mood_probs),
                 },
                 functions={"utility": _bet_payoff},
             ),

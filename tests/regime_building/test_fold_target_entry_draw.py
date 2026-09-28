@@ -69,7 +69,7 @@ def _utility_bonus(*, bonus_shock: FloatND, work: DiscreteAction) -> FloatND:
 def _build_model(*, fold: bool) -> Model:
     start = Regime(
         regime_transitions=ByAge(
-            {AgeRange(stop=1): Choose(_next_bonus, targets=("bonus",))}
+            cases={AgeRange(stop=1): Choose(func=_next_bonus, targets=("bonus",))}
         ),
         states={"wealth": WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -78,7 +78,11 @@ def _build_model(*, fold: bool) -> Model:
     )
     bonus = Regime(
         regime_transitions=ByAge(
-            {AgeRange(start=1, stop=2): Choose(_next_terminal, targets=("terminal",))}
+            cases={
+                AgeRange(start=1, stop=2): Choose(
+                    func=_next_terminal, targets=("terminal",)
+                )
+            }
         ),
         states={
             "bonus_shock": NormalIIDProcess(

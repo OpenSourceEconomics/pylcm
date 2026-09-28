@@ -114,9 +114,9 @@ def _model(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge.until(
-                    2,
-                    law=Choose(_next_regime, targets=("working",)),
-                    then=Choose(_next_regime, targets=("dead",)),
+                    stop_age_exclusive=2,
+                    law=Choose(func=_next_regime, targets=("working",)),
+                    then=Choose(func=_next_regime, targets=("dead",)),
                 ),
                 actions={"decision": DiscreteGrid(_Decision)},
                 functions={"utility": _utility},

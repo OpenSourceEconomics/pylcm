@@ -184,7 +184,7 @@ def build_alive_regime() -> NestedConsumptionSavingsRegime:
         },
         regime_transitions=until_exit(
             final_age_alive + 5,
-            law=Choose(next_regime, targets=("alive", "dead")),
+            law=Choose(func=next_regime, targets=("alive", "dead")),
             exits=("dead",),
         ),
         functions={

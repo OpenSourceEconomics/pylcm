@@ -74,7 +74,7 @@ ONE_MARGIN = LiquidMargin(
 def build_one_margin_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, one-margin model solved by plain EGM."""
     working = ConsumptionSavingsRegime(
-        regime_transitions=Choose(next_regime, targets=("dead",)),
+        regime_transitions=Choose(func=next_regime, targets=("dead",)),
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
@@ -96,6 +96,7 @@ def build_one_margin_model(*, enable_jit: bool = True) -> Model:
     return Model(
         regimes={"working": working, "dead": dead},
         regime_id_class=RegimeId,
+        initial_regimes={0: "working"},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         enable_jit=enable_jit,
     )
@@ -161,7 +162,7 @@ TAX_MARGIN = LiquidMargin(
 def build_kinked_tax_model(*, enable_jit: bool = True) -> Model:
     """Build the smallest NBEGM model with a continuous tax-bracket kink."""
     working = ConsumptionSavingsRegime(
-        regime_transitions=Choose(next_regime, targets=("dead",)),
+        regime_transitions=Choose(func=next_regime, targets=("dead",)),
         states={"liquid": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"liquid": next_liquid},
@@ -189,6 +190,7 @@ def build_kinked_tax_model(*, enable_jit: bool = True) -> Model:
     return Model(
         regimes={"working": working, "dead": dead},
         regime_id_class=RegimeId,
+        initial_regimes={0: "working"},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         enable_jit=enable_jit,
     )
@@ -294,7 +296,7 @@ OUTER_MARGIN = OuterContinuousMargin(
 def build_nested_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, two-margin model solved by nested EGM."""
     working = NestedConsumptionSavingsRegime(
-        regime_transitions=Choose(next_regime, targets=("dead",)),
+        regime_transitions=Choose(func=next_regime, targets=("dead",)),
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         actions={
             "consumption": CONSUMPTION_GRID,
@@ -333,6 +335,7 @@ def build_nested_model(*, enable_jit: bool = True) -> Model:
     return Model(
         regimes={"working": working, "dead": dead},
         regime_id_class=RegimeId,
+        initial_regimes={0: "working"},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         enable_jit=enable_jit,
     )

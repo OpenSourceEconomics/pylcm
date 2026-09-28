@@ -89,13 +89,13 @@ def _model_with_state_probs(next_health_func) -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(next_health_func),
+            "health": MarkovTransition(func=next_health_func),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("alive", "terminal")),
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
             exits=("terminal",),
         ),
     )
@@ -242,13 +242,13 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(swapped_probs),
+            "health": MarkovTransition(func=swapped_probs),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(_local_next_regime, targets=("alive", "terminal")),
+            law=Choose(func=_local_next_regime, targets=("alive", "terminal")),
             exits=("terminal",),
         ),
     )
@@ -320,10 +320,10 @@ def test_per_target_dict_validates_each_entry() -> None:
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
         state_transitions={
             "wealth": next_wealth_passthrough,
-            "heir_present": {"dead": MarkovTransition(bad_heir_probs)},
+            "heir_present": {"dead": MarkovTransition(func=bad_heir_probs)},
         },
         regime_transitions=until_exit(
-            1, law=Choose(_to_dead, targets=("alive", "dead")), exits=("dead",)
+            1, law=Choose(func=_to_dead, targets=("alive", "dead")), exits=("dead",)
         ),
     )
     dead = UserRegime(
@@ -406,7 +406,7 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("alive", "terminal")),
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
             exits=("terminal",),
         ),
     )
@@ -436,13 +436,13 @@ def _model_with_fixed_param_health_probs() -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(health_probs),
+            "health": MarkovTransition(func=health_probs),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("alive", "terminal")),
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
             exits=("terminal",),
         ),
     )
@@ -498,13 +498,13 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": {"terminal": MarkovTransition(health_probs)},
+            "health": {"terminal": MarkovTransition(func=health_probs)},
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("alive", "terminal")),
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
             exits=("terminal",),
         ),
     )
@@ -562,13 +562,13 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(bad_health_probs),
+            "health": MarkovTransition(func=bad_health_probs),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(_next_regime, targets=("alive", "terminal")),
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
             exits=("terminal",),
         ),
     )

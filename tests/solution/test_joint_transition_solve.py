@@ -105,7 +105,7 @@ def _build_model(
             "source": Regime(
                 regime_transitions=until_exit(
                     21,
-                    law={"target": MarkovTransition(_certain_target)},
+                    law={"target": MarkovTransition(func=_certain_target)},
                     exits=("target",),
                 ),
                 functions={"utility": lambda: jnp.asarray(0.0)},
@@ -372,7 +372,7 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
                     1,
                     law={
                         "couple": ValueDependentTransition(
-                            probability=MarkovTransition(_bdy_certain_couple),
+                            probability=MarkovTransition(func=_bdy_certain_couple),
                             gate=_bdy_gate_always_open,
                             routes={
                                 "f": StakeholderRoute(
