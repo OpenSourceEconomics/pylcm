@@ -104,7 +104,7 @@ def _build_model(
     acting = Regime(
         regime_transitions=until_exit(
             3,
-            law=Choose(func=_next_regime, targets=("acting", "done")),
+            law=Choose(func=_next_regime, targets=("acting",)),
             exits=("done",),
         ),
         states={

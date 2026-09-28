@@ -125,12 +125,16 @@ def test_terminal_regime_declares_no_route_program() -> None:
 
 
 def test_decision_program_declares_its_continuation_reads() -> None:
-    """A decision names every stored value leaf it reads across the boundary."""
+    """A decision names every stored value leaf it reads across the boundary.
+
+    At the first period `work` declares only itself as a target, so that is the
+    one leaf it reads.
+    """
     program = _program(witness=_STREAMED[0], regime=_STREAMED[1], family="decision")
     assert [
         (read.target.kind.value, read.target.period, read.target.regime)
         for read in program.requirements.value_reads
-    ] == [("regime_value", 1, "dead"), ("regime_value", 1, "work")]
+    ] == [("regime_value", 1, "work")]
 
 
 def test_ungated_route_program_declares_no_value_read() -> None:
