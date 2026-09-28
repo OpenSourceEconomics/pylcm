@@ -444,8 +444,15 @@ def test_partial_state_laws_solve_with_declared_targets():
             V_arr = period_to_regime_to_V_arr.values[period][regime_name]
             assert V_arr.shape == (2, 3)
             assert_allclose(V_arr, expected, atol=1e-5)
-    for regime_to_V_arr in period_to_regime_to_V_arr.values.values():
-        dead_V = regime_to_V_arr["dead"]
+    dead_periods = [
+        period
+        for period, regime_to_V_arr in period_to_regime_to_V_arr.values.items()
+        if "dead" in regime_to_V_arr
+    ]
+    # Death is first reached from a start at 0, so it is solved from period 1.
+    assert sorted(dead_periods) == [1, 2, 3]
+    for period in dead_periods:
+        dead_V = period_to_regime_to_V_arr.values[period]["dead"]
         assert dead_V.shape == ()
         assert_allclose(dead_V, 0.0, atol=1e-6)
 

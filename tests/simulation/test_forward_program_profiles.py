@@ -68,7 +68,7 @@ def test_all_core_families_profile_actual_output_schemas_without_allocation(
             seed=17,
             log_level="off",
         )
-    assert len(observed) == 5  # Two decisions at0, one at1; state and regime laws.
+    assert len(observed) == 4  # alive decides at 0, done at 1; state and regime laws.
     spaces = MappingProxyType(
         {
             name: regime.solution.state_action_space(

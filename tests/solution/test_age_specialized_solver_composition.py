@@ -67,7 +67,7 @@ def _dcegm_twin_with_wealth_grid(wealth_grid) -> Model:
         },
         ages=AgeGrid(start=MIN_AGE, stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
-        initial_regimes={20: "working_life"},
+        initial_regimes={20: ("working_life", "retirement")},
     )
 
 

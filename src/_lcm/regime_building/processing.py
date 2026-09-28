@@ -3441,8 +3441,16 @@ def _build_solution_phase(  # noqa: PLR0915
         regime_name=regime_name,
         transition_plans=core.transition_plans,
     )
-    solver.validate_build(context=context)
-    solver_kernels = solver.build_period_kernels(context=context)
+    if not spec.terminal and not regimes_to_active_periods[regime_name]:
+        # No required problem solves this regime, so its solver builds nothing
+        # and simulation never enters it.
+        solver_kernels = SolutionKernels(
+            period_kernels=MappingProxyType({}),
+            replay_route=DeclaredReplay.UNSUPPORTED,
+        )
+    else:
+        solver.validate_build(context=context)
+        solver_kernels = solver.build_period_kernels(context=context)
     fail_if_replay_is_undeclared(
         solver=solver,
         replay_route=solver_kernels.replay_route,

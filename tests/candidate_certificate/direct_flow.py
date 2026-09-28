@@ -353,7 +353,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "82057a91e6cf149f750f90b71c9258cf33b310e0675044bf219d466e836614d1",
     COMBINED_CHUNK_PLANNING_SOURCE: "7b8ff3abda0b6f57bc6bf3901287bb8cbc6fe6ba741cdbec902d45fb4fabb047",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "f3b6b4e013eeedeed51455fd342332974077759dc8538c98c5f91eedcbe6eb35",
-    COMBINED_CHUNK_PROFILES_SOURCE: "c5904bbd2652bb487272e892450ca5ab2599f432b1f4af2ec0819785c2b403c9",
+    COMBINED_CHUNK_PROFILES_SOURCE: "406c10f1af4d5492c6d7520f45532cd9f0c5851799d54d93ae4bc1636caa1a36",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "f7461de8c0f7bafdc3c44cc002b209df01fdae5a5de4186aa3f4ef65455e867e",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32",
@@ -398,7 +398,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "a69ea643eba0d6b98ea9b4e0fc5f036a721e79f5703ea9fbc7a21a6a02841b9a",
-    PROCESSING_SOURCE: "c06381eca12ea6da4a1a6cd4716cb202f080134c603dba5567286f877e69cde9",
+    PROCESSING_SOURCE: "69fdd0f650d8598b0eb9759f2f0bb8142652519876fb6c466b9e26fd124a64aa",
     GRID_SEARCH_SOURCE: "a56619a7d0e5a60fc2b4bd4e1bc75131dc0525ea4b22b9acad41082497bee8ed",
     CORE_PROGRAM_SOURCE: "6b96b777960bfdbf6aad394a5c635bebea976a4f6461c24ebe36f80699736924",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -3811,7 +3811,7 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/chunk_profiles.py": (
-        "98de6a34fe3eb9ba74113042d5fe9891e6c75dd12f30051114861d382ebe92f9",
+        "1ce0891793dae0997f1185f3d93ad0deb5b043ef70c251cb6491f7fed8f2b2ad",
         {
             "profile_simulation_chunk": "ce7b40dae432c7528a65fdb2b984bbb4823fd27b359582041bf5f611e8425365",
             "_compile_forward_units_in_parallel": "fb00a156b2b7e43153465e2066ad8be6a4fa47f09a119b291d98e08c57ffad11",
@@ -4108,12 +4108,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "98de6a34fe3eb9ba74113042d5fe9891e6c75dd12f30051114861d382ebe92f9",
+        "1ce0891793dae0997f1185f3d93ad0deb5b043ef70c251cb6491f7fed8f2b2ad",
         {
             "profile_simulation_chunk": "ce7b40dae432c7528a65fdb2b984bbb4823fd27b359582041bf5f611e8425365",
             "_compile_forward_units_in_parallel": "fb00a156b2b7e43153465e2066ad8be6a4fa47f09a119b291d98e08c57ffad11",
             "_compile_forward_unit_if_context_matches": "ebf6bfecb0b41357598f2854db7ba5673c28bfcee5260236c4a3c10194daf3a4",
-            "_profile_next_subjects": "6af8d1029f7664d6757021eca30a3e20747e668c21bd7c28b88b635824f36002",
+            "_profile_next_subjects": "de48a39aa6bbbbb495699d6fc399a470b1b733e1020a29268222f854bad513bc",
             "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
             "_profile_outer_storage": "654d9ed612edcf263c2eead952a5e5abbc11fef8b43af2670db23d0d098eefa1",
             "_record_core": "942d7b15dcf03da3a04ff12b14485b2e2aec2ca3c2f0f554faa9a78d1cbf6e67",

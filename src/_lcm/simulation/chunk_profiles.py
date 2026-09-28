@@ -83,6 +83,7 @@ from _lcm.simulation.program_arguments import gate_route_arguments
 from _lcm.simulation.random import (
     _create_simulation_key,
     _generate_windowed_simulation_keys,
+    _site_simulation_key,
     _split_simulation_key,
 )
 from _lcm.simulation.replay_inputs import replay_payload_reads
@@ -553,11 +554,19 @@ def _profile_next_subjects(
     jax.ShapeDtypeStruct,
 ]:
     """Advance state, membership and ordinary-key metadata in actual dispatch order."""
+    site_scalar = jax.ShapeDtypeStruct((), np.uint32)
+    site_key = cast(
+        "jax.ShapeDtypeStruct",
+        inventory.operation(
+            function=_site_simulation_key,
+            arguments={"key": key, "period": site_scalar, "regime_id": site_scalar},
+        ),
+    )
     split = cast(
         "tuple[jax.ShapeDtypeStruct, ...]",
         inventory.operation(
             function=_split_simulation_key,
-            arguments={"key": key},
+            arguments={"key": site_key},
             static_arguments={"partitionable": jax.config.jax_threefry_partitionable},
         ),
     )

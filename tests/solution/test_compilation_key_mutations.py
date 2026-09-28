@@ -331,8 +331,9 @@ def test_admission_is_checked_per_candidate_not_per_lowering_key(
 ) -> None:
     """Every admitted candidate is measured, also when its key was compiled already.
 
-    The toy's five candidates lower to three executables (two working-life
-    periods share one, two dead periods another), yet residency depends on the
+    The toy's four candidates lower to three executables (two working-life
+    periods share one, the two dead periods reached from the start another), yet
+    residency depends on the
     candidate's position in the plan, so each candidate is measured against the
     budget on its own.
     """
@@ -354,7 +355,7 @@ def test_admission_is_checked_per_candidate_not_per_lowering_key(
     model = _model(execution_config=ExecutionConfig(device_memory_bytes=2**32))
     model.solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
 
-    assert (len(measured), set(measured) == set(lowered), len(lowered)) == (5, True, 3)
+    assert (len(measured), set(measured) == set(lowered), len(lowered)) == (4, True, 3)
 
 
 def test_a_budget_change_reruns_admission_on_the_same_keys(
@@ -379,7 +380,7 @@ def test_a_budget_change_reruns_admission_on_the_same_keys(
         params=params, log_level="off"
     )
 
-    assert (first == measured, len(first)) == (True, 5)
+    assert (first == measured, len(first)) == (True, 4)
 
 
 def test_no_lowering_key_keeps_its_model_alive(monkeypatch: pytest.MonkeyPatch) -> None:
