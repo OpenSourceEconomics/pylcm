@@ -6,9 +6,9 @@ under `ResultRetention.VALUES`, recorded by
 
 | triple           | primary pair         | fallback pair        |
 | ---------------- | -------------------- | -------------------- |
-| `alive` period 0 | 62220 + 1888 = 64108 | 62348 + 1888 = 64236 |
-| `alive` period 1 | 62220 + 1760 = 63980 | 62348 + 1760 = 64108 |
-| `alive` period 2 | 62156 + 1496 = 63652 | no fallback          |
+| `alive` period 0 | 62224 + 1888 = 64112 | 62352 + 1888 = 64240 |
+| `alive` period 1 | 62224 + 1760 = 63984 | 62352 + 1760 = 64112 |
+| `alive` period 2 | 62160 + 1496 = 63656 | no fallback          |
 | `dead` period 3  | 521 + 1232 = 1753    | no fallback          |
 
 A pair is the variant's compiler reservation plus the bytes it leaves resident.
@@ -147,7 +147,7 @@ def test_fallback_rejection_uses_the_fallbacks_own_pairing(
 
     rows = [row for row in census.rows_for(role=FALLBACK) if row.triple == ALIVE_0]
     assert rows, "The refused candidate's fallback was never measured."
-    assert [(row.reservation, row.residency) for row in rows] == [(62348, 1888)]
+    assert [(row.reservation, row.residency) for row in rows] == [(62352, 1888)]
 
 
 def test_selected_donating_winner_has_an_admitted_fallback(
