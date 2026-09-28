@@ -21,6 +21,9 @@ def _get_func_indexing_params(
     class with a `__call__`, such as a built-in Koopmans aggregator — is
     inspected through that `__call__`, where its body lives.
 
+    A law lowered from an age schedule carries the laws it wraps; those are
+    inspected instead, and each law reading the array must index it alike.
+
     Args:
         func: The function to inspect.
         array_param_name: The array parameter whose subscripts to inspect.
@@ -34,6 +37,12 @@ def _get_func_indexing_params(
         ValueError: If computed indices are used instead of bare names.
 
     """
+    sources = getattr(func, "__lcm_sources__", None)
+    if sources is not None:
+        return _indexing_params_of_sources(
+            sources=sources, array_param_name=array_param_name
+        )
+
     func_name = _display_name(func)
 
     if func_name == "<lambda>":
@@ -185,3 +194,22 @@ def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
         return names
 
     return None
+
+
+def _indexing_params_of_sources(
+    *, sources: tuple[Callable, ...], array_param_name: str
+) -> list[str]:
+    """Return the indexing shared by every wrapped law that reads the array."""
+    found = {
+        tuple(_get_func_indexing_params(func=source, array_param_name=array_param_name))
+        for source in sources
+        if array_param_name in inspect.signature(source).parameters
+    }
+    found.discard(())
+    if len(found) > 1:
+        msg = (
+            f"The laws of one age schedule index `{array_param_name}` "
+            f"differently: {sorted(found)}."
+        )
+        raise ValueError(msg)
+    return list(found.pop()) if found else []

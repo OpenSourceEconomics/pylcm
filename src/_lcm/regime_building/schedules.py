@@ -270,6 +270,9 @@ def _with_signature(
     The DAG machinery requires one annotation per argument name across a
     model, so each argument keeps the annotation of the law that reads it, and
     `period` is annotated as the period context argument.
+
+    The `sources` are kept on the wrapper so parameter-indexing inspection
+    reads the laws the user wrote rather than the wrapper's body.
     """
     annotations: dict[str, Any] = {"period": Period}
     for source in sources:
@@ -289,6 +292,7 @@ def _with_signature(
     func.__annotations__ = {
         name: annotations[name] for name in names if name in annotations
     }
+    func.__lcm_sources__ = sources  # ty: ignore[unresolved-attribute]
     return func
 
 

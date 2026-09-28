@@ -31,6 +31,7 @@ from _lcm.simulation import chunk_admission
 from _lcm.variables import from_regime
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -44,7 +45,6 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -84,10 +84,10 @@ def _regime(*, source: int, identity: bool) -> Regime:
         )
 
     return Regime(
-        regime_transitions=until_exit(
+        regime_transitions=ByAge.until(
             2,
-            law=MarkovTransition(probabilities, targets=("r0", "r1", "terminal")),
-            exits=("terminal",),
+            law=MarkovTransition(probabilities, targets=("r0", "r1")),
+            then=MarkovTransition(probabilities, targets=("terminal",)),
         ),
         actions={"decision": DiscreteGrid(_Three)},
         functions={"utility": utility, "landing": _landing},

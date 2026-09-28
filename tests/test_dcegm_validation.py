@@ -13,6 +13,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     Choose,
     DiscreteGrid,
     ExecutionConfig,
@@ -56,6 +57,7 @@ from tests.test_models.deterministic.dcegm_variants import LIQUID_MARGIN
 from tests.test_models.schedules import until_exit
 
 N_PERIODS = 3
+LAST_AGE = 40 + (N_PERIODS - 1) * 10
 
 
 def _build_model(
@@ -234,22 +236,25 @@ def test_sharded_state_cannot_feed_a_dcegm_carry(*, build, match):
 # These are semantic-contract tests, so they select a portable envelope explicitly
 # rather than making their outcome depend on a machine-local native library.
 VALID = dcegm_variants.dcegm_retirement.replace(
+    regime_transitions=retirement_only.retirement_transitions(last_age=LAST_AGE),
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
-    )
+    ),
 )
 PORTABLE_DCEGM_RETIREMENT_FULL = dcegm_variants.dcegm_retirement_full.replace(
+    regime_transitions=base.retirement_transitions(last_age=LAST_AGE),
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
-    )
+    ),
 )
 PORTABLE_DCEGM_WORKING_LIFE = dcegm_variants.dcegm_working_life.replace(
+    regime_transitions=base.working_life_transitions(last_age=LAST_AGE),
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
-    )
+    ),
 )
 
 
@@ -343,7 +348,16 @@ CASES = {
         "not passive",
     ),
     "regime_transition_cliff_in_wealth": (
-        lambda: VALID.replace(regime_transitions=_regime_transition_with_wealth_cliff),
+        lambda: VALID.replace(
+            regime_transitions=ByAge.until(
+                LAST_AGE,
+                law=Choose(
+                    _regime_transition_with_wealth_cliff,
+                    targets=("retirement", "dead"),
+                ),
+                then=Choose(_regime_transition_with_wealth_cliff, targets=("dead",)),
+            )
+        ),
         "regime transition function.*discontinuous",
     ),
     "stochastic_euler_state_transition": (
@@ -388,7 +402,7 @@ def test_semantic_contract_precedes_exact_kernel_capability(monkeypatch):
     from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
 
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
-    malformed = dcegm_variants.dcegm_retirement.replace(
+    malformed = VALID.replace(
         liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources")
     )
 

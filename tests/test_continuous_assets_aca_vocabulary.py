@@ -17,6 +17,7 @@ from _lcm.regime_building.max_Q_over_a import (
 )
 from lcm import (
     AgeGrid,
+    ByAge,
     Choose,
     DiscreteGrid,
     ExecutionConfig,
@@ -33,7 +34,6 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -113,10 +113,10 @@ def _model(
     return Model(
         regimes={
             "working": Regime(
-                regime_transitions=until_exit(
+                regime_transitions=ByAge.until(
                     2,
-                    law=Choose(_next_regime, targets=("working", "dead")),
-                    exits=("dead",),
+                    law=Choose(_next_regime, targets=("working",)),
+                    then=Choose(_next_regime, targets=("dead",)),
                 ),
                 actions={"decision": DiscreteGrid(_Decision)},
                 functions={"utility": _utility},
