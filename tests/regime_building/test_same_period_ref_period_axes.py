@@ -53,7 +53,14 @@ from lcm import (
 from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
 from lcm.transition import MarkovTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    InitialRegimes,
+    ScalarInt,
+)
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models.schedules import until_exit
 
@@ -149,7 +156,9 @@ def _solve(*, later_ceiling: float) -> SolutionResult:
         The complete labelled solution.
 
     """
-    return _make_model(later_ceiling=later_ceiling).solve(
+    return _make_model(
+        later_ceiling=later_ceiling, initial_regimes={0: "couple"}
+    ).solve(
         params={
             "single_f": {"koopmans_aggregator": {"discount_factor": 0.0}},
             "single_f_terminal": {},
@@ -163,7 +172,7 @@ def _solve(*, later_ceiling: float) -> SolutionResult:
     )
 
 
-def _make_model(*, later_ceiling: float) -> Model:
+def _make_model(*, later_ceiling: float, initial_regimes: InitialRegimes) -> Model:
     """Build the couple-and-single model with an age-specialized reference grid."""
 
     def _single_wealth_grid(age: float) -> LinSpacedGrid:
@@ -236,6 +245,7 @@ def _make_model(*, later_ceiling: float) -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes=initial_regimes,
     )
 
 
