@@ -16,6 +16,10 @@ from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import ContinuousState, FloatND
 from tests.test_models import n_nbegm_toy as toy
 
+# The module-scoped simulation runs up against the per-test timeout on the
+# macOS and Windows runners, so the module runs in the Linux slow lane.
+pytestmark = pytest.mark.slow
+
 _PARAMS = {"discount_factor": 0.95}
 # The settings the solve battery converges under (its 120 cells spread their
 # optimum basins over the whole outer axis).
