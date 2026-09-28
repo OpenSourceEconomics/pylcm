@@ -134,11 +134,14 @@ def test_finite_streaming_fold_matches_frozen_corrected_baseline(
                 err_msg=f"carry.{name} at period {period}, width {width}",
             )
 
+    # `dead` is terminal and its payoff reads no age, so every period it is
+    # solved at publishes the value captured at the last period.
     for period, regime_to_v in solution.items():
         for regime, v_arr in regime_to_v.items():
+            captured_period = _N_PERIODS - 1 if regime == "dead" else period
             np.testing.assert_allclose(
                 np.asarray(v_arr),
-                baseline[f"{tag}:solve:p{period}:{regime}"],
+                baseline[f"{tag}:solve:p{captured_period}:{regime}"],
                 rtol=1e-12,
                 atol=1e-12,
                 err_msg=f"solve V at period {period}, regime {regime}",
