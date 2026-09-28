@@ -159,7 +159,7 @@ def get_model(n_periods: int) -> Model:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={50: "working_life"},
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
 

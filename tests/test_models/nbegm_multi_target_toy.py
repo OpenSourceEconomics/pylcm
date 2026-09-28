@@ -225,7 +225,7 @@ def build_model(
         regimes={"alive_a": make(), "alive_b": make(), "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive_a"},
+        initial_regimes={ages.exact_values[0]: "alive_a"},
     )
 
 

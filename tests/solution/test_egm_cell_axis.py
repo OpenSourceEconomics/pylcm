@@ -197,7 +197,7 @@ def _model(width: int | None = None) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
-        initial_regimes={40: "working"},
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 
@@ -324,7 +324,7 @@ def _action_model(width: int | None = None) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
-        initial_regimes={40: "working"},
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 
@@ -509,7 +509,7 @@ def _two_combo_model(width: int | None = None) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
-        initial_regimes={40: "working"},
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 

@@ -140,7 +140,7 @@ def test_model_with_quarterly_steps():
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={18: "working_life"},
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
     params = {
@@ -287,7 +287,7 @@ def test_model_with_integer_ages():
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
     params = {

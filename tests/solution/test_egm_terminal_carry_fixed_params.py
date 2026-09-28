@@ -198,7 +198,7 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         fixed_params=_fixed_scale() if scale_is_fixed else {},
-        initial_regimes={40: "retirement"},
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 

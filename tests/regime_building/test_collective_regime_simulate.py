@@ -1166,7 +1166,7 @@ def _make_dissolution_model() -> Model:
         regimes=_make_dissolution_regimes(),
         ages=ages,
         regime_id_class=DissolutionRegimeId,
-        initial_regimes={0: "married"},
+        initial_regimes={ages.exact_values[0]: "married"},
     )
 
 

@@ -432,7 +432,12 @@ def test_cross_grid_markov_state_matches_brute_force():
         .solve(params=params, log_level="debug")
         .values
     )
-    for period in sorted(brute_solution)[:-1]:
+    early_periods = [p for p in sorted(brute_solution) if "early" in brute_solution[p]]
+    assert early_periods == [
+        p for p in sorted(dcegm_solution) if "early" in dcegm_solution[p]
+    ]
+    assert early_periods
+    for period in early_periods:
         brute_V = np.asarray(brute_solution[period]["early"])
         dcegm_V = np.asarray(dcegm_solution[period]["early"])
         assert brute_V.shape == dcegm_V.shape == (3, 160)

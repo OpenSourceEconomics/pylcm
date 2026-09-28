@@ -306,7 +306,7 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
         regimes=_make_unreachable_role_routing_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=UnreachableRoleRoutingRegimeId,
-        initial_regimes={0: "alone"},
+        initial_regimes={0: ("alone", "married")},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     result = model.simulate(

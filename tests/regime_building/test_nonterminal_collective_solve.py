@@ -208,7 +208,7 @@ def test_nonterminal_collective_full_model_solve_matches_kernel_level():
         regimes=_make_couple_regimes(),
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "couple"},
+        initial_regimes={ages.exact_values[0]: "couple"},
     )
 
     solution = model.solve(params={"discount_factor": 0.95}, log_level="off").values
@@ -372,7 +372,7 @@ def test_collective_model_simulates_end_to_end_via_public_model_api():
         regimes=_make_couple_regimes(),
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "couple"},
+        initial_regimes={ages.exact_values[0]: "couple"},
     )
     result = model.simulate(
         params={"discount_factor": 0.95},

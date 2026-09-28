@@ -425,7 +425,7 @@ def build_model(
             regimes={"alive": alive, "dead": dead},
             ages=ages,
             regime_id_class=DS2024HousingRegimeId,
-            initial_regimes={60: "alive"},
+            initial_regimes={ages.exact_values[0]: "alive"},
         )
 
     negm_solver = NEGM(
@@ -489,7 +489,7 @@ def build_model(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=DS2024HousingRegimeId,
-        initial_regimes={60: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
 

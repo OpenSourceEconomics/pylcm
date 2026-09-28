@@ -600,6 +600,7 @@ def test_joint_lottery_axes_follow_declaration_order_across_hash_seeds(
                 },
                 ages=AgeGrid(start=0, stop=1, step='Y'),
                 regime_id_class=RegimeId,
+                initial_regimes={0: 'source'},
             )
         finally:
             Q_and_F._build_target_continuation = original

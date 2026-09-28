@@ -795,7 +795,7 @@ def test_incomplete_per_target_reachable_target():
             regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
             ages=AgeGrid(start=0, stop=4, step="Y"),
             regime_id_class=_RegimeId,
-            initial_regimes={0: "regime_b"},
+            initial_regimes={0: "regime_a"},
         )
 
 

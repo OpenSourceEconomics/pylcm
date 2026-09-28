@@ -132,7 +132,7 @@ def _get_skill_model() -> Model:
         },
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
     )
 
 
@@ -154,7 +154,7 @@ def _get_must_retire_model() -> Model:
         },
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
     )
 
 
@@ -259,7 +259,7 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
         },
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
     )
     brute_solution = brute_model.solve(params=params, log_level="debug").values
     dcegm_solution = _get_skill_model().solve(params=params, log_level="debug").values
@@ -313,7 +313,7 @@ def test_nan_regime_transition_prob_surfaces_as_error():
         },
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
     params = get_retirement_only_params(n_periods=n_periods)
     # The granular transition replaces the age-based one, so its param goes
@@ -368,13 +368,13 @@ def test_undeclared_stateless_regime_does_not_enter_the_continuation():
         regimes={**shared_regimes, "lost": lost},
         ages=ages,
         regime_id_class=RegimeIdWithLost,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
     )
     without_lost = Model(
         regimes=shared_regimes,
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
     )
     params = _get_skill_model_params()
 
@@ -422,7 +422,7 @@ def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
         regimes=base_model_regimes,
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
     )
     params = get_full_params(n_periods=N_PERIODS, discount_factor=0.98, wage=20.0)
 

@@ -1258,7 +1258,7 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
         execution_config=ExecutionConfig(
             axis_widths={} if subject_width is None else {"subject": subject_width}
         ),
-        initial_regimes={0: "left"},
+        initial_regimes={0: ("left", "right")},
     )
 
 

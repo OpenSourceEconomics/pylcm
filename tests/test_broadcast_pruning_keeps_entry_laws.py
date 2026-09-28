@@ -118,6 +118,7 @@ def _build(*, regimes: dict[str, Regime], **model_slots: Any) -> Model:
         regimes=regimes,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "working"},
         **model_slots,
     )
 

@@ -81,7 +81,7 @@ def make_minimal_model() -> Model:
         regimes={"active": alive, "terminal": dead},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "active"},
+        initial_regimes={ages.exact_values[0]: "active"},
     )
 
 

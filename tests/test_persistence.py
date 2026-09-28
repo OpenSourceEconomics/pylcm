@@ -87,7 +87,8 @@ def _build_tiny_model(*, enable_jit: bool):
         ages=ages,
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
-        initial_regimes={0: "working"},
+        # A retired start at the last age gives every period a solved problem.
+        initial_regimes={0: "working", 3: "retired"},
     )
     params = {"discount_factor": 0.95}
     return model, params

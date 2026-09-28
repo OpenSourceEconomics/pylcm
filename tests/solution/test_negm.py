@@ -190,7 +190,7 @@ def test_negm_configuration_does_not_change_reachability() -> None:
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=ages,
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={20: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
     grid_search_model = Model(
         regimes={
@@ -200,7 +200,7 @@ def test_negm_configuration_does_not_change_reachability() -> None:
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=ages,
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={20: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     assert negm_model.reachability == grid_search_model.reachability

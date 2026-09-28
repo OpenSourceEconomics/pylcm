@@ -222,7 +222,7 @@ def build_model(
         regimes={"young": young, "old": old, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "young"},
+        initial_regimes={ages.exact_values[0]: "young"},
     )
 
 

@@ -90,7 +90,7 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
         seed=3,
         log_level="off",
     )
-    assert result.raw_results["done"][0].states["flag"].dtype == jnp.int32
+    assert result.raw_results["done"][1].states["flag"].dtype == jnp.int32
     assert start_counts
     assert all(count == len(runtime.cache) for runtime, count in start_counts), (
         "Promoted consumers compiled only after the outer admission"

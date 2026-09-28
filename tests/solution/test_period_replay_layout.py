@@ -451,6 +451,7 @@ def test_capture_preserves_consumer_layout_under_device_substitution(
         DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model, fixed_transition,
     )
     from lcm.solvers import GridSearch
+    from tests.test_models.initial_regimes import initial_regimes_of
     from tests.test_models.nbegm_common import (
         RegimeId, feasible, make_alive_dead_model, next_liquid_from_savings,
         savings, utility,
@@ -478,6 +479,7 @@ def test_capture_preserves_consumer_layout_under_device_substitution(
             }},
             states={{"liquid": liquid}}, ages=template.ages,
             regime_id_class=RegimeId,
+            initial_regimes=initial_regimes_of(model=template),
             execution_config=ExecutionConfig(sharded_states=("liquid",)),
         )
     else:
@@ -503,6 +505,7 @@ import dataclasses
 
 import jax.numpy as jnp
 from lcm import DiscreteGrid, ExecutionConfig, IrregSpacedGrid, Model
+from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_models.nbegm_common import RegimeId
 
 # Under a memory budget, `simulate` commits the parameters to the subject mesh
@@ -538,6 +541,7 @@ simulated = Model(
     states={"kind": DiscreteGrid(category_class=toy.ConsumerKind)},
     ages=template.ages,
     regime_id_class=RegimeId,
+    initial_regimes=initial_regimes_of(model=template),
     execution_config=ExecutionConfig(
         sharded_states=("kind",), devices=(0, 1), device_memory_bytes=2**31
     ),

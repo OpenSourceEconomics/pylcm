@@ -2986,8 +2986,13 @@ class Model:
         A pair the engine solves or visits is still refused unless it is a
         declared start. Pairs with an unknown regime code or an off-grid age are
         left to the simulation input validator, which reports them in its own
-        terms.
+        terms, as are a missing `age` or `regime_id` column and columns of
+        unequal length.
         """
+        codes = initial_conditions.get("regime_id")
+        ages = initial_conditions.get("age")
+        if codes is None or ages is None or np.size(codes) != np.size(ages):
+            return
         ids_to_names = {
             int(code): name for name, code in self.regime_names_to_ids.items()
         }
@@ -2995,8 +3000,8 @@ class Model:
         pairs = {
             (age_by_float[age], ids_to_names[code])
             for code, age in zip(
-                np.asarray(initial_conditions["regime_id"]).tolist(),
-                np.asarray(initial_conditions["age"], dtype=np.float64).tolist(),
+                np.asarray(codes).tolist(),
+                np.asarray(ages, dtype=np.float64).tolist(),
                 strict=True,
             )
             if code in ids_to_names and age in age_by_float

@@ -231,7 +231,7 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     params = {
@@ -293,7 +293,7 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     params_alive = {

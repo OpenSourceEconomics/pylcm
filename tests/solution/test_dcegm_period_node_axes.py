@@ -161,7 +161,10 @@ def _model(
         ages=AgeGrid(start=40, stop=70, step="10Y"),
         regime_id_class=DiagnosisRegimes,
         execution_config=ExecutionConfig(devices=(0,)),
-        initial_regimes={40: "parent"},
+        # The parent is a start at each age it declares a law for.
+        initial_regimes={
+            (40, 50) if parent_period is None else 40 + 10 * parent_period: "parent"
+        },
     )
 
 

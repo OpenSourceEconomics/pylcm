@@ -368,7 +368,7 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
             np.asarray(result.raw_results["working"][0].states["wealth"]),
             initial["wealth"],
         )
-        assert not np.asarray(result.raw_results["retired"][0].in_regime).any()
+        assert 0 not in result.raw_results["retired"]
     assert maps[0] == maps[1]
     _assert_raw_equal(actual=results[1], expected=results[0])
     for targets in (None, ["utility"]):

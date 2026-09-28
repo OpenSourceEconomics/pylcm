@@ -294,7 +294,7 @@ def build_model(  # noqa: C901
             regimes={"alive": alive, "dead": dead},
             ages=ages,
             regime_id_class=DS2024HousingFuesRegimeId,
-            initial_regimes={60: "alive"},
+            initial_regimes={ages.exact_values[0]: "alive"},
         )
 
     inner_solver = DCEGM(
@@ -337,7 +337,7 @@ def build_model(  # noqa: C901
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=DS2024HousingFuesRegimeId,
-        initial_regimes={60: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
 

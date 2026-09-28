@@ -491,7 +491,7 @@ def build_model(
         ages=ages,
         regime_id_class=HousingRegimeId,
         execution_config=execution_config,
-        initial_regimes={20: "working"},
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 

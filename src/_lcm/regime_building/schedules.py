@@ -360,20 +360,6 @@ def resolve_demand(
             )
         work.extend((False, period + 1, target, here) for target in reads)
 
-    def _restricted(
-        *,
-        by_regime: Mapping[RegimeName, Mapping[int, tuple[str, ...]]],
-        keep: set[tuple[int, RegimeName]],
-    ) -> MappingProxyType[RegimeName, MappingProxyType[int, tuple[str, ...]]]:
-        return MappingProxyType(
-            {
-                name: MappingProxyType(
-                    {p: t for p, t in by_period.items() if (p, name) in keep}
-                )
-                for name, by_period in by_regime.items()
-            }
-        )
-
     return dataclasses.replace(
         schedules,
         coverage_by_regime=MappingProxyType(
@@ -392,6 +378,22 @@ def resolve_demand(
         ),
         nodes=frozenset(valued),
         visited_nodes=frozenset(visited),
+    )
+
+
+def _restricted(
+    *,
+    by_regime: Mapping[RegimeName, Mapping[int, tuple[str, ...]]],
+    keep: set[tuple[int, RegimeName]],
+) -> MappingProxyType[RegimeName, MappingProxyType[int, tuple[str, ...]]]:
+    """Keep each regime's per-period entries only at the pairs in `keep`."""
+    return MappingProxyType(
+        {
+            name: MappingProxyType(
+                {p: t for p, t in by_period.items() if (p, name) in keep}
+            )
+            for name, by_period in by_regime.items()
+        }
     )
 
 

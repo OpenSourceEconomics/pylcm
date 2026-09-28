@@ -425,7 +425,7 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
             ages=AgeGrid(start=20, stop=23, step="Y"),
             regime_id_class=_ThreeRegimeId,
             enable_jit=False,
-            initial_regimes={20: "target"},
+            initial_regimes={20: "source"},
         )
 
 
@@ -548,7 +548,7 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
-        initial_regimes={20: "source"},
+        initial_regimes={(20, 21): "source"},
     )
 
     solution = model.solve(

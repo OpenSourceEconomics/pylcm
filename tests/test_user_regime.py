@@ -77,7 +77,7 @@ def test_regime_name_does_not_contain_separator():
             regimes={f"work{QNAME_DELIMITER}test": working, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
-            initial_regimes={0: "work__test"},
+            initial_regimes={ages.exact_values[0]: "work__test"},
         )
 
 

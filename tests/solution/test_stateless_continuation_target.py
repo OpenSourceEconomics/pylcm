@@ -105,7 +105,7 @@ def test_a_stateless_regime_carries_its_own_value():
     """The stateless regime's value is its utility, not zero."""
     solution = _solve_with_bequest(10.0)
     np.testing.assert_array_almost_equal(
-        np.asarray(solution[0]["gone"]).ravel(), [10.0], decimal=DECIMAL_PRECISION
+        np.asarray(solution[1]["gone"]).ravel(), [10.0], decimal=DECIMAL_PRECISION
     )
 
 
@@ -265,7 +265,7 @@ def _solve_with_process_only_target(level: float):
 def test_a_process_only_regime_carries_its_own_value():
     """The process-only regime's value varies with the shock, centred on the level."""
     solution = _solve_with_process_only_target(10.0)
-    retired = np.asarray(solution[0]["gone"]).ravel()
+    retired = np.asarray(solution[1]["gone"]).ravel()
     # Tauchen nodes are symmetric about the mean, so the middle node is the level.
     np.testing.assert_array_almost_equal(retired[1], 10.0, decimal=DECIMAL_PRECISION)
     assert retired[0] < retired[1] < retired[2]

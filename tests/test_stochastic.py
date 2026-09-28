@@ -152,7 +152,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
     model_stochastic = Model(
@@ -163,7 +163,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
     # Use survival_probs=1.0 for all but the last period so no subject dies early.

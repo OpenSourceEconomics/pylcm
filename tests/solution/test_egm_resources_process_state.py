@@ -197,7 +197,7 @@ def _get_model(solver: str) -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=ProcessResourcesRegimeId,
-        initial_regimes={40: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
 

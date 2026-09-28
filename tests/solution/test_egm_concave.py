@@ -275,7 +275,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
         regimes={"retirement": retirement, "dead": dead},
         ages=ages,
         regime_id_class=_InterestRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
     params = {
         "discount_factor": 0.95,

@@ -153,7 +153,8 @@ def test_per_target_params_solve_and_bind_per_target() -> None:
         "retired": {"discount_factor": 0.95},
     }
     regime_to_v = model.solve(params=params, log_level="debug").values
-    assert set(regime_to_v[0]) >= {"work", "retired"}
+    assert set(regime_to_v[0]) == {"work"}
+    assert "retired" in regime_to_v[1]
 
 
 def test_old_mangled_spelling_is_gone() -> None:

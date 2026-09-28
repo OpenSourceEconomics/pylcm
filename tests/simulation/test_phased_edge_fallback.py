@@ -202,9 +202,7 @@ def test_a_routed_row_lands_in_the_simulate_legs_regime() -> None:
     np.testing.assert_array_equal(
         np.asarray(result.raw_results["shelter"][1].in_regime), [True, False]
     )
-    np.testing.assert_array_equal(
-        np.asarray(result.raw_results["hardship"][1].in_regime), [False, False]
-    )
+    assert 1 not in result.raw_results["hardship"]
 
 
 def test_a_routed_row_lands_at_the_simulate_legs_state() -> None:

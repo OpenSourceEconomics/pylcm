@@ -222,7 +222,7 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         regimes={"alive": alive, "gone": gone},
         ages=ages,
         regime_id_class=RenamedRegimeId,
-        initial_regimes={0: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
 

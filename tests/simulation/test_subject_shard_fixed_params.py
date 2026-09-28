@@ -74,6 +74,7 @@ _SCRIPT = textwrap.dedent(
             },
             ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={START_AGE: "working_life"},
             fixed_params=fixed_params,
             execution_config=execution_config,
         )

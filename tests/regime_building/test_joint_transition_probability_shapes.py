@@ -127,4 +127,4 @@ def test_a_correctly_shaped_probability_function_is_accepted(probabilities) -> N
 
     period_to_regime_to_V_arr = model.solve(params=_params(), log_level="debug").values
 
-    assert set(period_to_regime_to_V_arr[0]) == {"working", "dead"}
+    assert set(period_to_regime_to_V_arr[0]) == {"working"}

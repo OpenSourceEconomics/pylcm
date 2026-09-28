@@ -198,7 +198,7 @@ def _get_dcegm_model() -> Model:
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={40: "retirement"},
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -231,7 +231,7 @@ def _get_brute_model() -> Model:
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={40: "retirement"},
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -339,5 +339,5 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
             regimes={"retirement": retirement, "dead": _make_dead_regime()},
             ages=ages,
             regime_id_class=RegimeId,
-            initial_regimes={40: "retirement"},
+            initial_regimes={ages.exact_values[0]: "retirement"},
         )

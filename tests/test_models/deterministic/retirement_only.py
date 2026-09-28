@@ -70,7 +70,7 @@ def get_model(n_periods: int) -> Model:
         },
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 

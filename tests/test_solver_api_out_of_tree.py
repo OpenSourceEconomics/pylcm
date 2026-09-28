@@ -23,6 +23,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     ByAge,
     Choose,
     LinSpacedGrid,
@@ -231,7 +232,9 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
         },
         ages=AgeGrid(start=0, stop=last_age, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        # Every acting age is a start, so each one is solved even where the
+        # regime dies into the terminal one after a single period.
+        initial_regimes={AgeRange(stop=last_age): "alive"},
     )
 
 

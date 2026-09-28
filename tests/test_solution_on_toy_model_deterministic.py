@@ -247,7 +247,7 @@ def test_deterministic_solve(*, discount_factor, n_wealth_points):
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     params_alive = {
@@ -298,7 +298,7 @@ def test_deterministic_simulate(*, discount_factor, n_wealth_points):
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     params_alive = {

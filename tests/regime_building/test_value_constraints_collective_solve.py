@@ -393,7 +393,7 @@ def test_ir_model_via_public_model_api():
         regimes=_make_ir_regimes(),
         ages=ages,
         regime_id_class=IRRegimeId,
-        initial_regimes={0: "single_f"},
+        initial_regimes={ages.exact_values[0]: "married"},
     )
     solution = model.solve(
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},

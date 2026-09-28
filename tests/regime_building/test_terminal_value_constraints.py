@@ -122,7 +122,9 @@ def _make_model(*, participation: bool) -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "couple"},
+        # `single_f_terminal` is also a start, so the control without the predicate
+        # that reads it solves the same problems and takes the same parameters.
+        initial_regimes={0: "couple", 1: "single_f_terminal"},
     )
 
 

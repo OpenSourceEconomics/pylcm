@@ -249,7 +249,7 @@ def _get_model(variant: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=ages,
         regime_id_class=PassiveRegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
 

@@ -71,7 +71,7 @@ def _build_model(*, working_solver: object | None = None) -> Model:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
 

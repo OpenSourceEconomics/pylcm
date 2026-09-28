@@ -692,5 +692,5 @@ def test_state_only_in_transitions_with_terminal_regime():
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )

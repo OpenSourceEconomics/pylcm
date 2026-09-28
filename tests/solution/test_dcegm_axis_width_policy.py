@@ -191,7 +191,7 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=execution_config,
-        initial_regimes={40: "working"},
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 

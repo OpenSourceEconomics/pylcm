@@ -396,7 +396,7 @@ def _build_partial_coverage_model(
         regimes={"work": work, "retire": retire, "dead": dead_regime},
         regime_id_class=_PartialCoverageRegimeId,
         ages=AgeGrid(start=0, stop=3, step="Y"),
-        initial_regimes={0: "work"},
+        initial_regimes={0: ("work", "retire")},
     )
     params = {
         "discount_factor": 0.9,

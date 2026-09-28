@@ -13,6 +13,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -129,7 +130,12 @@ def _build_model(*, with_bystander: bool) -> Model:
         regimes=regimes,
         ages=AGES,
         regime_id_class=RegimeIdWithBystander if with_bystander else RegimeId,
-        initial_regimes={40: "source"},
+        # Nothing transitions into the bystander; it is solved only as a start.
+        initial_regimes=(
+            {40: "source", AgeRange(start=40): "bystander"}
+            if with_bystander
+            else {40: "source"}
+        ),
     )
 
 

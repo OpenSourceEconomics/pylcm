@@ -2138,6 +2138,7 @@ def _make_stacked_model(
         },
         ages=AgeGrid(start=40, stop=42, step="Y"),
         regime_id_class=_StackedRegimeId,
+        initial_regimes={40: "working"},
         **model_kwargs,
     )
 

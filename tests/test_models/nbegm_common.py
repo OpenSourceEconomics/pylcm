@@ -273,5 +273,5 @@ def make_alive_dead_model(
         states=dict(model_states) if model_states else {},
         fixed_params=dict(fixed_params) if fixed_params else {},
         execution_config=execution_config,
-        initial_regimes={0: "alive"},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
