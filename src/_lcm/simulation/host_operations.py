@@ -1,12 +1,19 @@
 """Profile exact pure forward operations against current owned device payloads.
 
-An executable is determined by its callable (its code and the values it captured
-when traced), the trace settings, and the abstract operands. Every value that
-differs between calls reaches an operation as an operand, so caching a callable,
-closures included, is exact under JAX's purity contract; the owner's lifetime is a
-memory question only. The cache owns abstract signatures and executable code;
-argument arrays and live-footprint providers belong to the calling simulation
-unit. No compiler options are supplied.
+Two entry paths share one executable cache:
+
+- `dispatch` / `prepare_abstract` accept only module-level pure functions with
+  immutable static bindings, so a process-wide instance never retains a closure or
+  the values it captured.
+- `admit_producer` accepts any pure callable, closures included, keyed by the
+  callable's identity. An executable is determined by its callable (its code and
+  captured values), the trace settings and the abstract operands, so this reuse is
+  exact under JAX's purity contract; the owning instance's lifetime bounds what it
+  retains.
+
+The cache owns abstract signatures and executable code; argument arrays and
+live-footprint providers belong to the calling simulation unit. No compiler options
+are supplied.
 """
 
 import dataclasses
@@ -357,19 +364,23 @@ def _validated_operation_function(
 ) -> Callable[..., object]:
     """Validate a profiled operation's function identity once at registration.
 
-    The executable is determined by the function (its code and captured values),
-    the trace settings and the abstract operands, so a pure function qualifies
-    whether or not it closes over values. `inspect.unwrap` and the default values
-    below depend only on the function object, never on a call's current
+    Only module-level functions qualify: this entry path backs process-wide
+    caches, and a closure would pin its captured values there for the life of the
+    process. `inspect.unwrap`, the module-level/closure/qualname checks and the
+    default values below depend only on the function object, never on a call's current
     arguments; they cannot change between calls with the same `function`. Cache
     them per function so a warm dispatch does no re-inspection, while every
     value-dependent check in `_validated_static_arguments` stays on the per-call
     path below.
     """
     original = inspect.unwrap(function)
-    if not isinstance(original, FunctionType):
+    if (
+        not isinstance(original, FunctionType)
+        or original.__closure__
+        or "<locals>" in original.__qualname__
+    ):
         raise ExecutionPlanningError(
-            "Profiled simulation operations require pure Python functions."
+            "Profiled simulation operations require module-level pure functions."
         )
     for default in (
         *tuple(original.__defaults__ or ()),
