@@ -9,9 +9,6 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
 
-from lcm import Choose
-from tests.test_models.schedules import until_exit
-
 ScenarioName = Literal[
     "singleton-hard-max",
     "singleton-ev1",
@@ -200,6 +197,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     import lcm
     from lcm import (
         AgeGrid,
+        Choose,
         DiscreteGrid,
         LinSpacedGrid,
         Model,
@@ -208,6 +206,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
         fixed_transition,
     )
     from lcm.typing import ScalarInt
+    from tests.test_models.schedules import until_exit
 
     @categorical(ordered=False)
     class RegimeId:
@@ -272,6 +271,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
         regime_id_class=RegimeId,
         states={"permanent_type": permanent_type},
         state_transitions={"permanent_type": fixed_transition("permanent_type")},
+        initial_regimes={0: "working"},
         **execution_kwargs,
     )
     return model, {"discount_factor": 0.95}
@@ -282,6 +282,7 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
 
     from lcm import (
         AgeGrid,
+        Choose,
         LinSpacedGrid,
         Model,
         NormalIIDProcess,
@@ -289,6 +290,7 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
         categorical,
     )
     from lcm.typing import ScalarInt
+    from tests.test_models.schedules import until_exit
 
     @categorical(ordered=False)
     class RegimeId:
