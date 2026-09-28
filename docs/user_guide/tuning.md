@@ -140,8 +140,8 @@ Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 A product-coded Markov state often combines a component that never changes, such as a
 fixed effect or a permanent type, with components that do. With a plain
 `MarkovTransition`, the law keeps the fixed part by giving zero probability to every
-code outside the current group, and the continuation still sums over all of those zero
-rows in every period. The wasted work grows with the size of the fixed component.
+code outside the current group. Declaring this structure lets continuation lookup select
+the current group and makes the fixed component available for sharding.
 
 Declare the group of each code with `fixed_component`:
 
@@ -163,8 +163,11 @@ of codes. At model construction the state is rewritten into:
 - a DAG function `kind_health` that recombines the original code, so utility,
   constraints and other functions keep reading `kind_health` unchanged.
 
-The continuation then looks up the group by index instead of summing over it. The rows
-it skips have probability zero, so this is the same function with a shorter sum.
+Continuation lookup selects the current group by index. For a linear expectation, the
+original probability vector and lottery-slot order are retained, including
+zero-probability slots; the reduction is not shortened. This preserves the original
+reduction layout while keeping value reads local to the current group. Published values
+can still differ in floating-point rounding between the annotated and original models.
 
 Use it when a Markov state's transition matrix is block-diagonal across a component,
 that is, when most entries of each row are structurally zero. A state without such a

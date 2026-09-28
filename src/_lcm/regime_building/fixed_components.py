@@ -22,6 +22,7 @@ from _lcm.grids.categorical import categorical
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.regime_building.broadcast import merge_model_slots
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
+from _lcm.transition_plans import OriginalLotteryLayout
 from _lcm.typing import RegimeNamesToIds
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -55,6 +56,18 @@ class FixedComponentSplit:
 
     fixed_of_code: tuple[int, ...]
     """Group of each original code."""
+
+
+@dataclass(frozen=True)
+class FixedComponentLaw:
+    """Restricted storage law with explicit immutable original-slot provenance."""
+
+    restricted: Callable[..., FloatND]
+    original_layout: OriginalLotteryLayout
+
+    @no_type_check
+    def __call__(self, *args: object, **kwargs: object) -> FloatND:
+        return self.restricted(*args, **kwargs)
 
 
 def split_initial_conditions(
@@ -122,7 +135,7 @@ def split_initial_conditions(
     return out if isinstance(out, pd.DataFrame) else MappingProxyType(out)
 
 
-def factor_fixed_components(  # noqa: C901
+def factor_fixed_components(
     *,
     regimes: Mapping[str, Regime],
     fixed_params: UserParams,
@@ -173,37 +186,44 @@ def factor_fixed_components(  # noqa: C901
         )
     splits, parts = _create_splits(regimes=merged, groups=groups, occupied=occupied)
     model_states = dict(states)
-    model_laws = dict(state_transitions)
+    # Renaming must keep the original insertion slot. Canonical edge lowering
+    # uses declaration order for lottery axes; pop-and-append permutes a mixed
+    # annotated/unannotated Cartesian reduction even after its sizes are restored.
+    model_laws = {
+        f"{name}_rest" if name in splits else name: (
+            _lower_law(
+                law=law, name=name, split=splits[name], code_by_parts=parts[name]
+            )
+            if name in splits
+            else law
+        )
+        for name, law in state_transitions.items()
+    }
     for name, split in splits.items():
         if name in model_states:
             del model_states[name]
             model_states[f"{name}_rest"] = split.rest_grid
         model_states[f"{name}_fixed"] = split.fixed_grid
-        if name in model_laws:
-            model_laws[f"{name}_rest"] = _lower_law(
-                law=model_laws.pop(name),
-                name=name,
-                split=split,
-                code_by_parts=parts[name],
-            )
         model_laws[f"{name}_fixed"] = fixed_transition(f"{name}_fixed")
     new_regimes: dict[str, Regime] = {}
     for regime_name, regime in regimes.items():
         regime_states = dict(regime.states)
-        laws: dict[str, object] = dict(regime.state_transitions)
+        laws: dict[str, object] = {
+            f"{name}_rest" if name in splits else name: (
+                _lower_law(
+                    law=law, name=name, split=splits[name], code_by_parts=parts[name]
+                )
+                if name in splits
+                else law
+            )
+            for name, law in regime.state_transitions.items()
+        }
         regime_functions = dict(regime.functions)
         for name, split in splits.items():
             if name in regime_states:
                 grid = regime_states.pop(name)
                 regime_states[f"{name}_rest"] = (
                     None if grid is None else split.rest_grid
-                )
-            if name in laws:
-                laws[f"{name}_rest"] = _lower_law(
-                    law=laws.pop(name),
-                    name=name,
-                    split=split,
-                    code_by_parts=parts[name],
                 )
             if regime_name in split.grids:
                 regime_functions[name] = _recombine(
@@ -417,14 +437,47 @@ def _lower_law(
             "or use fixed_transition; an unannotated/reset law cannot "
             "establish group preservation."
         )
-    return MarkovTransition(
-        _restricted_law(
+    provenance = FixedComponentLaw(
+        restricted=_restricted_law(
             func=law.func,
             state_name=name,
             fixed_of_code=np.asarray(split.fixed_of_code),
             code_by_parts=code_by_parts,
-        )
+        ),
+        original_layout=OriginalLotteryLayout(
+            state_name=name,
+            rest_of_code=split.rest_of_code,
+            fixed_of_code=split.fixed_of_code,
+            probabilities=law.func,
+        ),
     )
+    return MarkovTransition(_publish_fixed_component_law(provenance))
+
+
+def _publish_fixed_component_law(
+    provenance: FixedComponentLaw,
+) -> Callable[..., FloatND]:
+    """Publish an inspectable bound-method forwarder with the restricted signature.
+
+    The fingerprint guard rejects opaque callable-object dispatch. A Python bound
+    method instead exposes the exact receiver attributes it reads, without any
+    certificate exception. ``__wrapped__`` is the explicit lowering protocol read
+    by the canonical plan builder, never recovered from closure cell contents.
+    """
+    bound = provenance.__call__
+
+    @no_type_check
+    def forwarded(*args: object, **kwargs: object) -> FloatND:
+        return bound(*args, **kwargs)
+
+    forwarded.__wrapped__ = bound  # ty: ignore[unresolved-attribute]
+    signature = inspect.signature(provenance.restricted)
+    forwarded.__signature__ = signature  # ty: ignore[unresolved-attribute]
+    forwarded.__annotations__ = dict(
+        getattr(provenance.restricted, "__annotations__", {})
+    )
+    forwarded.__name__ = getattr(provenance.restricted, "__name__", "restricted")
+    return forwarded
 
 
 def _group_codes(
