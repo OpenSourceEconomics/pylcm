@@ -7,6 +7,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -35,6 +36,7 @@ from tests.simulation.initial_conditions._models import (
     make_state_only_constraint_model,
 )
 from tests.simulation.initial_conditions._oracle import exhaustive_scalar_feasibility
+from tests.test_models.schedules import until_exit
 
 _CONSTRAINT_PARAMS = {
     "discount_factor": 0.95,
@@ -417,13 +419,14 @@ def _sealed_model() -> Model:
         return jnp.where(age >= 18, RegimeId.dead, RegimeId.working)
 
     working = UserRegime(
-        regime_transitions=next_regime,
+        regime_transitions=until_exit(
+            19, law=Choose(next_regime, targets=("working", "dead")), exits=("dead",)
+        ),
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.5, n_points=3)},
         functions={"utility": utility},
         constraints={"feasible": feasible},
-        active=lambda age: age < 19,
     )
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     return Model(
@@ -491,8 +494,11 @@ def _age_specialized_model() -> Model:
         return jnp.where(age >= 65, RegimeId.dead, RegimeId.working_life)
 
     working_life = UserRegime(
-        regime_transitions=next_regime,
-        active=lambda age: age < 75,
+        regime_transitions=until_exit(
+            75,
+            law=Choose(next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         state_transitions={"wealth": next_wealth},
@@ -506,7 +512,6 @@ def _age_specialized_model() -> Model:
     )
     dead = UserRegime(
         regime_transitions=None,
-        active=lambda age: age >= 75,
         functions={"utility": lambda: 0.0},
     )
     return Model(

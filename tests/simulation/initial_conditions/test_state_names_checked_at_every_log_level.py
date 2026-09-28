@@ -8,7 +8,7 @@ the mapping form must too.
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, Choose, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.typing import (
     BoolND,
@@ -18,6 +18,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -57,8 +58,9 @@ def _next_regime(age: float) -> ScalarInt:
 _MODEL = Model(
     regimes={
         "alive": Regime(
-            active=lambda age: age < 2,
-            regime_transitions=_next_regime,
+            regime_transitions=until_exit(
+                2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+            ),
             states={
                 "wealth": LinSpacedGrid(start=1, stop=10, n_points=4),
                 "health": DiscreteGrid(_Health),

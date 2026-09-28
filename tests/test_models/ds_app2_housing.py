@@ -47,6 +47,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -74,6 +75,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 # Lifecycle anchors (years). Working life starts at 20, retirement at 60, and
 # the terminal bequest regime is entered at T = 70.
@@ -350,7 +352,7 @@ def build_model(
     else:
         ages = AgeGrid(start=START_AGE, stop=START_AGE + n_periods - 1, step="Y")
     final_age = int(ages.exact_values[-1])
-    retirement_age = min(RETIREMENT_AGE, final_age)
+    retirement_age = min(RETIREMENT_AGE, final_age - 1)
 
     # Housing must stay strictly positive: the CES service flow
     # `H^{1-gamma_H}` diverges to -inf at `H = 0` (you cannot live in zero
@@ -426,8 +428,11 @@ def build_model(
     )
 
     working = NestedConsumptionSavingsRegime(
-        regime_transitions=next_regime,
-        active=lambda age, ra=retirement_age: age < ra,
+        regime_transitions=until_exit(
+            retirement_age,
+            law=Choose(next_regime, targets=("working",)),
+            exits=("retired",),
+        ),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
@@ -453,8 +458,12 @@ def build_model(
     )
 
     retired = NestedConsumptionSavingsRegime(
-        regime_transitions=next_regime_from_retired,
-        active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
+        regime_transitions=until_exit(
+            final_age,
+            law=Choose(next_regime_from_retired, targets=("retired",)),
+            exits=("dead",),
+            start=retirement_age,
+        ),
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={
             "liquid": inner_liquid_law,
@@ -473,7 +482,6 @@ def build_model(
 
     dead = UserRegime(
         regime_transitions=None,
-        active=lambda age, fa=final_age: age >= fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )

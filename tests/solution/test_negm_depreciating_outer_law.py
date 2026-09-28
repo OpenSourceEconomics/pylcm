@@ -26,6 +26,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
@@ -38,6 +39,13 @@ from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_serviceflow_toy as toy
+from tests.test_models.schedules import until_exit
+
+_ALIVE_TRANSITIONS = until_exit(
+    20 + (toy.N_PERIODS - 1) * 5,
+    law=Choose(toy.next_regime, targets=("alive", "dead")),
+    exits=("dead",),
+)
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 
@@ -69,7 +77,6 @@ def _scaled_law_brute(alpha: float):
 def _build_negm_model(*, alpha: float, durable_law=None) -> Model:
     """The service-flow toy with a scaled durable law, solved by NEGM."""
     alive = NestedConsumptionSavingsRegime(
-        active=lambda age, n=toy.FINAL_AGE_ALIVE: age <= n,
         states={"wealth": toy.WEALTH_GRID, "illiquid": toy.ILLIQUID_GRID},
         state_transitions={
             "wealth": toy.next_wealth,
@@ -79,7 +86,7 @@ def _build_negm_model(*, alpha: float, durable_law=None) -> Model:
             "consumption": toy.CONSUMPTION_GRID,
             "illiquid_investment": toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=toy.next_regime,
+        regime_transitions=_ALIVE_TRANSITIONS,
         functions={
             "utility": toy.utility,
             "new_durable": toy.new_durable,
@@ -113,7 +120,6 @@ def _build_negm_model(*, alpha: float, durable_law=None) -> Model:
 def _build_brute_model(alpha: float) -> Model:
     """The same model solved by grid search over the durable and consumption."""
     alive = Regime(
-        active=lambda age, n=toy.FINAL_AGE_ALIVE: age <= n,
         states={"wealth": toy.WEALTH_GRID, "illiquid": toy.ILLIQUID_GRID},
         state_transitions={
             "wealth": toy.next_wealth_brute,
@@ -123,7 +129,7 @@ def _build_brute_model(alpha: float) -> Model:
             "consumption": toy.CONSUMPTION_GRID_BRUTE,
             "new_durable": toy.OUTER_GRID,
         },
-        regime_transitions=toy.next_regime,
+        regime_transitions=_ALIVE_TRANSITIONS,
         functions={
             "utility": toy.utility,
             "serviced_durable": toy.serviced_durable_brute,

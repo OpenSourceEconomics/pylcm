@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
+    ByAge,
     ConsumptionSavingsRegime,
     DiscreteGrid,
     LinSpacedGrid,
@@ -156,11 +157,14 @@ def build_model(
         "liquid": {"old": young_liquid_law, "dead": young_liquid_law},
         "kind": {"old": lcm.fixed_transition("kind")},
     }
-    young_transition = {
-        "old": MarkovTransition(prob_to_old),
-        "dead": MarkovTransition(prob_young_dead),
-    }
-    young_active = lambda age: age < 1  # noqa: E731
+    young_transition = ByAge(
+        {
+            0: {
+                "old": MarkovTransition(prob_to_old),
+                "dead": MarkovTransition(prob_young_dead),
+            }
+        }
+    )
     # Built per branch: the NBEGM schedule solver takes its DAG role names from
     # the regime's liquid margin, which only the margin-declaring class carries.
     if isinstance(young_solver, NBEGM):
@@ -171,7 +175,6 @@ def build_model(
             constraints=young_constraints,
             regime_transitions=young_transition,
             functions=young_functions,
-            active=young_active,
             solver=young_solver,
             liquid=LiquidMargin(
                 state="liquid",
@@ -188,7 +191,6 @@ def build_model(
             constraints=young_constraints,
             regime_transitions=young_transition,
             functions=young_functions,
-            active=young_active,
             solver=young_solver,
         )
     old_actions = {"consumption": consumption_grid}
@@ -204,16 +206,16 @@ def build_model(
             "kind": {"dead": lcm.fixed_transition("kind")},
         },
         constraints={"feasible": feasible},
-        regime_transitions={"dead": MarkovTransition(lambda: jnp.array(1.0))},
+        regime_transitions=ByAge(
+            {1: {"dead": MarkovTransition(lambda: jnp.array(1.0))}}
+        ),
         functions=old_functions,
-        active=lambda age: age == 1,
         solver=GridSearch(),
     )
     dead = Regime(
         regime_transitions=None,
         states={"liquid": liquid_grid},
         functions={"utility": bequest},
-        active=lambda age: age >= 2,
         solver=GridSearch(),
     )
     return Model(

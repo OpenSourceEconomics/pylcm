@@ -11,6 +11,8 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ByAge,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     LogSpacedGrid,
@@ -25,6 +27,7 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
+    UserAge,
 )
 
 
@@ -107,9 +110,18 @@ CONSUMPTION_GRID = LogSpacedGrid(start=4, stop=50, n_points=100)
 _DEFAULT_AGE_GRID = AgeGrid(start=25, stop=65, step="20Y")
 _RETIREMENT_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
+
+def working_life_transitions(*, retirement_age: UserAge | float) -> ByAge:
+    """Work until the age before `retirement_age`, then retire."""
+    return ByAge.until(
+        retirement_age,
+        law=Choose(next_regime, targets=("working_life", "retirement")),
+        then=Choose(next_regime, targets=("retirement",)),
+    )
+
+
 working_life = Regime(
-    regime_transitions=next_regime,
-    active=lambda age: age < _RETIREMENT_AGE,
+    regime_transitions=working_life_transitions(retirement_age=_RETIREMENT_AGE),
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
@@ -127,7 +139,6 @@ working_life = Regime(
 
 retirement = Regime(
     regime_transitions=None,
-    active=lambda age: age >= _RETIREMENT_AGE,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_retirement},
 )
@@ -152,14 +163,11 @@ def get_model(
     retirement_age = age_grid.exact_values[-1]
 
     wl = working_life.replace(
-        active=lambda age, _ra=retirement_age: age < _ra,
-    )
-    ret = retirement.replace(
-        active=lambda age, _ra=retirement_age: age >= _ra,
+        regime_transitions=working_life_transitions(retirement_age=retirement_age),
     )
 
     return Model(
-        regimes={"working_life": wl, "retirement": ret},
+        regimes={"working_life": wl, "retirement": retirement},
         ages=age_grid,
         regime_id_class=RegimeId,
         description="A tiny consumption-savings model.",

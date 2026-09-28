@@ -17,6 +17,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -79,8 +81,9 @@ def _entry_health(wealth: float) -> FloatND:
 
 def _working_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "regime_transitions": {"retired": MarkovTransition(_always_retire)},
-        "active": lambda age: age < 1,
+        "regime_transitions": ByAge(
+            {AgeRange(stop=1): {"retired": MarkovTransition(_always_retire)}}
+        ),
         "states": {"wealth": _WEALTH_GRID},
         "state_transitions": {
             "wealth": _next_wealth,
@@ -96,7 +99,6 @@ def _working_regime(**overrides: Any) -> Regime:
 def _retired_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "regime_transitions": None,
-        "active": lambda age: age >= 1,
         "states": {"wealth": _WEALTH_GRID},
         "functions": {"utility": _utility_with_health},
     }

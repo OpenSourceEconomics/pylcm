@@ -28,7 +28,7 @@ from lcm.result import (
     _coerce_jax_scalar_for_arrow,
     _collect_array_tree_leaf_sizes,
 )
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -37,6 +37,7 @@ from tests.test_models.deterministic.regression import (
     get_model,
     get_params,
     working_life,
+    working_life_transitions,
 )
 
 
@@ -49,7 +50,7 @@ def simulate_inputs():
             **working_life.actions,
             "consumption": working_life.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
-        active=lambda age: age <= final_age_alive,
+        regime_transitions=working_life_transitions(last_age=final_age_alive + 1),
     )
     user_regimes = {"working_life": updated_working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
@@ -62,7 +63,7 @@ def simulate_inputs():
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=finalized_user_regimes,
+        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
@@ -146,7 +147,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         ages = AgeGrid(start=START_AGE, stop=stop_age, step="Y")
         updated_working_life = working_life.replace(
             functions=updated_functions,
-            active=lambda age: age <= final_age_alive,
+            regime_transitions=working_life_transitions(last_age=final_age_alive + 1),
         )
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income

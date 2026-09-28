@@ -30,6 +30,7 @@ from scipy.stats import norm
 from _lcm.grids import Grid
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     LogNormalIIDProcess,
     MarkovTransition,
@@ -69,10 +70,6 @@ def _one_probability() -> FloatND:
 
 def _target_id() -> ScalarInt:
     return RegimeId.target
-
-
-def _source_is_early(age: float) -> bool:
-    return age < 22
 
 
 def _gauss_hermite(n_points: int) -> tuple[np.ndarray, np.ndarray]:
@@ -125,7 +122,6 @@ def _build_model(
         regimes={
             "source": Regime(
                 regime_transitions=transition,
-                active=_source_is_early,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
@@ -358,8 +354,7 @@ def test_the_entry_law_decides_the_action() -> None:
         return jnp.where(go == 1, _ThreeRegimeId.enter, _ThreeRegimeId.stay)
 
     source = Regime(
-        regime_transitions=_choose,
-        active=_source_is_early,
+        regime_transitions=Choose(_choose, targets=("stay", "enter")),
         actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
         state_transitions={"wealth": {"stay": lambda: jnp.asarray(1.0)}},
         functions={"utility": _zero_utility},
@@ -456,7 +451,6 @@ def _build_explicit_entry_model(
         regimes={
             "source": Regime(
                 regime_transitions={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
             ),

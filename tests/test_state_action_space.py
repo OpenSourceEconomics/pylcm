@@ -143,7 +143,6 @@ def test_create_v_interpolation_info():
             "wealth": lambda wealth: wealth,
             "health": lambda health: health,
         },
-        active=lambda age: age < 5,
     )
 
     v_interpolation_info = create_v_interpolation_info(user_regime=regime)

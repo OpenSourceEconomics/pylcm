@@ -39,10 +39,6 @@ def _one_probability() -> FloatND:
     return jnp.asarray(1.0)
 
 
-def _source_is_early(age: float) -> bool:
-    return age < 22
-
-
 def _enter_shock() -> ScalarFloat:
     return jnp.asarray(_ENTRY)
 
@@ -70,7 +66,6 @@ def _build_model() -> Model:
         regimes={
             "source": Regime(
                 regime_transitions={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
                 state_transitions={
                     "shock": {"target": _enter_shock},
                     "wealth": {"target": _double_the_entry},

@@ -107,16 +107,24 @@ def _legacy_model() -> Model:
     return Model(
         regimes={
             "working": _regime(
-                regime_transitions={
-                    "working": MarkovTransition(stay),
-                    "dead": MarkovTransition(die),
-                    "retirement": MarkovTransition(retire),
-                },
-                active=lambda age: age < 65,
+                regime_transitions=ByAge(
+                    {
+                        AgeRange(stop=65): {
+                            "working": MarkovTransition(stay),
+                            "dead": MarkovTransition(die),
+                            "retirement": MarkovTransition(retire),
+                        }
+                    }
+                ),
             ),
             "retirement": _regime(
-                regime_transitions=lambda: RegimeId.dead,
-                active=lambda age: 65 <= age < 75,
+                regime_transitions=ByAge(
+                    {
+                        AgeRange(start=65, stop=75): Choose(
+                            lambda: RegimeId.dead, targets=("dead",)
+                        )
+                    }
+                ),
             ),
             "dead": DEAD,
         },
@@ -161,11 +169,6 @@ def test_dated_model_edges_are_the_declared_support_at_each_period(
 @pytest.mark.parametrize(
     "override",
     [
-        {
-            "retirement": _regime(
-                regime_transitions="dead", active=lambda age: age >= 65
-            )
-        },
         {"retirement": _regime(regime_transitions=lambda: RegimeId.dead)},
         {
             "retirement": _regime(
@@ -173,7 +176,7 @@ def test_dated_model_edges_are_the_declared_support_at_each_period(
             )
         },
     ],
-    ids=["active", "bare-callable", "targetless-vector"],
+    ids=["bare-callable", "targetless-vector"],
 )
 def test_dated_model_rejects_legacy_declarations(override: dict) -> None:
     """A dated model reads coverage and support only from the declarations."""

@@ -13,6 +13,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -48,13 +50,16 @@ def _prob_dead(*, age: float, hazard: float) -> FloatND:
 
 def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": {
-            "retired": MarkovTransition(
-                lambda age, hazard: 1.0 - _prob_dead(age=age, hazard=hazard)
-            ),
-            "dead": MarkovTransition(_prob_dead),
-        },
-        "active": lambda age: age < 2,
+        "regime_transitions": ByAge(
+            {
+                AgeRange(stop=2): {
+                    "retired": MarkovTransition(
+                        lambda age, hazard: 1.0 - _prob_dead(age=age, hazard=hazard)
+                    ),
+                    "dead": MarkovTransition(_prob_dead),
+                }
+            }
+        ),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {
             "wealth": {
@@ -75,12 +80,15 @@ def _certain_death(age: float) -> FloatND:
 
 def _retired_regime() -> UserRegime:
     return UserRegime(
-        regime_transitions={
-            "dead": MarkovTransition(_certain_death),
-        },
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=3): {
+                    "dead": MarkovTransition(_certain_death),
+                }
+            }
+        ),
         # Outlives `work` by one age, so the mass `work` sends it in its final
         # transition lands on an active regime.
-        active=lambda age: age < 3,
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},

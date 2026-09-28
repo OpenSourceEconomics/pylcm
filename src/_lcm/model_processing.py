@@ -45,7 +45,7 @@ from _lcm.regime_building.processing import (
     Regime,
     process_regimes,
 )
-from _lcm.regime_building.schedules import compute_active_periods_by_regime
+from _lcm.regime_building.schedules import resolve_regime_schedules
 from _lcm.simulation.policy_programs import declare_finite_replay_programs
 from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
@@ -362,7 +362,13 @@ def _representative_for_validation(
         phased_specs=phased_specs,
         ages=ages,
         active_periods_by_regime=(
-            compute_active_periods_by_regime(ages=ages, user_regimes=user_regimes)
+            resolve_regime_schedules(
+                user_regimes=user_regimes,
+                ages=ages,
+                regime_names_to_ids={
+                    name: code for code, name in enumerate(user_regimes)
+                },
+            ).coverage_by_regime
             if active_periods_by_regime is None
             else active_periods_by_regime
         ),
@@ -639,7 +645,7 @@ def _validate_constraint_phase_invariance(
         ages: The model's age grid, or `None` when no age-specialized function
             needs resolving before the ancestry is walked.
         active_periods_by_regime: Immutable mapping of regime names to their
-            active periods, as prepared by `compute_active_periods_by_regime`.
+            active periods, as resolved from the declarations.
 
     Returns:
         A list of error messages. Empty list if validation passes.
@@ -682,10 +688,9 @@ def _validate_constraint_phase_invariance(
         # dependency structure is age-invariant, so any active age serves.
         ancestry_funcs = solve_funcs
         if ages is not None:
-            # Read the PREPARED active periods rather than recomputing them:
-            # `compute_active_periods_by_regime` is the single canonical
-            # evaluation point, and a second call site could disagree with it
-            # (Fraction vs. float32-rounded ages).
+            # Read the PREPARED coverage rather than recomputing it: the
+            # schedules resolved once at model construction are the single
+            # canonical source.
             active_periods = (
                 ()
                 if active_periods_by_regime is None

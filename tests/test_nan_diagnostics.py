@@ -8,7 +8,7 @@ import pytest
 from _lcm.engine import StateActionSpace
 from _lcm.grids import LinSpacedGrid
 from _lcm.solution.validate_V import validate_V
-from lcm import Model, categorical
+from lcm import Choose, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
@@ -19,6 +19,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 def _make_state_action_space(
@@ -127,13 +128,15 @@ def _build_nan_model() -> tuple[Model, dict]:
         state_transitions={"wealth": next_wealth},
         functions={"utility": utility},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(next_regime, targets=("non_terminal", "terminal")),
+            exits=("terminal",),
+        ),
     )
     terminal = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 1,
     )
     model = Model(
         regimes={"non_terminal": non_terminal, "terminal": terminal},
@@ -183,13 +186,15 @@ def _build_always_nan_model() -> tuple[Model, dict]:
         state_transitions={"wealth": next_wealth},
         functions={"utility": utility},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(next_regime, targets=("non_terminal", "terminal")),
+            exits=("terminal",),
+        ),
     )
     terminal = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 1,
     )
     model = Model(
         regimes={"non_terminal": non_terminal, "terminal": terminal},

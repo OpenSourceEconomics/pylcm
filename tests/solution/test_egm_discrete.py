@@ -20,6 +20,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     MarkovTransition,
     Model,
@@ -28,6 +30,10 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
+from lcm_examples.iskhakov_et_al_2017 import (
+    retirement_transitions,
+    working_life_transitions,
+)
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import base
 from tests.test_models.deterministic.dcegm_variants import (
@@ -39,10 +45,12 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_retirement_only_params,
 )
 from tests.test_models.deterministic.retirement_only import RetirementOnlyRegimeId
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 N_PERIODS = 4
+LAST_AGE = 40 + (N_PERIODS - 1) * 10
 
 
 def _retirement_stay_prob(*, age: float, final_age_alive: float) -> FloatND:
@@ -108,14 +116,15 @@ def _get_skill_model() -> Model:
             "wage_factor": wage_factor,
             "labor_income": labor_income_by_skill,
         },
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement = dcegm_retirement_full.replace(
-        regime_transitions=RETIREMENT_TRANSITION,
+        regime_transitions=until_exit(
+            LAST_AGE, law=RETIREMENT_TRANSITION, exits=("dead",)
+        ),
         state_transitions={
             "wealth": dcegm_retirement_full.state_transitions["wealth"],
         },
-        active=lambda age, la=last_age: age < la,
     )
     return Model(
         regimes={
@@ -137,10 +146,10 @@ def _get_must_retire_model() -> Model:
         regimes={
             "working_life": dcegm_working_life.replace(
                 constraints={"must_retire": must_retire},
-                active=lambda age, la=last_age: age < la,
+                regime_transitions=working_life_transitions(last_age=last_age),
             ),
             "retirement": dcegm_retirement_full.replace(
-                active=lambda age, la=last_age: age < la
+                regime_transitions=retirement_transitions(last_age=last_age)
             ),
             "dead": base.dead,
         },
@@ -238,12 +247,13 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
                     "wage_factor": wage_factor,
                     "labor_income": labor_income_by_skill,
                 },
-                active=lambda age, la=last_age: age < la,
+                regime_transitions=working_life_transitions(last_age=last_age),
             ),
             "retirement": base.retirement.replace(
-                regime_transitions=RETIREMENT_TRANSITION,
+                regime_transitions=until_exit(
+                    LAST_AGE, law=RETIREMENT_TRANSITION, exits=("dead",)
+                ),
                 state_transitions={"wealth": base.next_wealth},
-                active=lambda age, la=last_age: age < la,
             ),
             "dead": base.dead,
         },
@@ -289,11 +299,14 @@ def test_nan_regime_transition_prob_surfaces_as_error():
     model = Model(
         regimes={
             "retirement": dcegm_retirement.replace(
-                regime_transitions={
-                    "retirement": MarkovTransition(_stay_prob_from_param),
-                    "dead": MarkovTransition(_death_prob_from_param),
-                },
-                active=lambda age, la=last_age: age < la,
+                regime_transitions=ByAge(
+                    {
+                        AgeRange(stop=last_age): {
+                            "retirement": MarkovTransition(_stay_prob_from_param),
+                            "dead": MarkovTransition(_death_prob_from_param),
+                        }
+                    }
+                ),
             ),
             "dead": base.dead,
         },
@@ -340,11 +353,12 @@ def test_undeclared_stateless_regime_does_not_enter_the_continuation():
     lost = base.dead.replace(functions={"utility": _lost_utility})
     shared_regimes = {
         "working_life": base.working_life.replace(
-            active=lambda age, la=last_age: age < la
+            regime_transitions=working_life_transitions(last_age=last_age)
         ),
         "retirement": dcegm_retirement_full.replace(
-            regime_transitions=RETIREMENT_TRANSITION,
-            active=lambda age, la=last_age: age < la,
+            regime_transitions=until_exit(
+                LAST_AGE, law=RETIREMENT_TRANSITION, exits=("dead",)
+            ),
         ),
         "dead": base.dead,
     }
@@ -387,14 +401,15 @@ def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
     base_model_regimes = {
         "working_life": dcegm_working_life.replace(
             constraints={"nothing_is_feasible": _nothing_is_feasible},
-            active=lambda age: age < 70,
+            regime_transitions=working_life_transitions(last_age=70),
         ),
         "retirement": dcegm_retirement_full.replace(
-            regime_transitions=RETIREMENT_TRANSITION,
+            regime_transitions=until_exit(
+                LAST_AGE, law=RETIREMENT_TRANSITION, exits=("dead",)
+            ),
             state_transitions={
                 "wealth": dcegm_retirement_full.state_transitions["wealth"],
             },
-            active=lambda age: age < 70,
         ),
         "dead": base.dead,
     }

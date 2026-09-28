@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
 
+from lcm import Choose
+from tests.test_models.schedules import until_exit
+
 ScenarioName = Literal[
     "singleton-hard-max",
     "singleton-ev1",
@@ -248,8 +251,11 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     model = Model(
         regimes={
             "working": Regime(
-                regime_transitions=next_regime,
-                active=lambda age: age < 5,
+                regime_transitions=until_exit(
+                    5,
+                    law=Choose(next_regime, targets=("working", "retired")),
+                    exits=("retired",),
+                ),
                 states={"wealth": wealth},
                 state_transitions={"wealth": next_wealth},
                 actions={"consumption": consumption},
@@ -258,7 +264,6 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
             ),
             "retired": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= 5,
                 states={"wealth": wealth},
                 functions={"utility": retired_utility},
             ),
@@ -310,8 +315,11 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
     model = Model(
         regimes={
             "working": Regime(
-                regime_transitions=next_regime,
-                active=lambda age: age < 4,
+                regime_transitions=until_exit(
+                    4,
+                    law=Choose(next_regime, targets=("working", "retired")),
+                    exits=("retired",),
+                ),
                 states={
                     "wealth": wealth,
                     "wage_shock": NormalIIDProcess(
@@ -329,7 +337,6 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
             ),
             "retired": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= 4,
                 states={"wealth": wealth},
                 functions={"utility": retired_utility},
             ),

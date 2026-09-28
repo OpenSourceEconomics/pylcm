@@ -17,6 +17,9 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.grids import ContinuousGrid
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -108,12 +111,13 @@ def _model(
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        regime_transitions=next_regime,
+        regime_transitions=ByAge(
+            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+        ),
         functions={
             "utility": utility,
             "savings": savings,
         },
-        active=lambda age: age == 0,
         solver=DCEGM(
             savings_grid=savings_grid
             if savings_grid is not None
@@ -126,7 +130,6 @@ def _model(
         regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
-        active=lambda age: age == 1,
         solver=GridSearch(),
     )
     return Model(
@@ -296,12 +299,13 @@ def _grid_search_model(
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        regime_transitions=next_regime,
+        regime_transitions=ByAge(
+            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+        ),
         functions={
             "utility": utility,
             "savings": savings,
         },
-        active=lambda age: age == 0,
         solver=GridSearch(),
     )
     done_regime = Regime(
@@ -309,7 +313,6 @@ def _grid_search_model(
         regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
-        active=lambda age: age == 1,
         solver=GridSearch(),
     )
     return Model(
@@ -357,12 +360,13 @@ def _replace_constraints(*, constraints: dict) -> Model:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        regime_transitions=next_regime,
+        regime_transitions=ByAge(
+            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+        ),
         functions={
             "utility": utility,
             "savings": savings,
         },
-        active=lambda age: age == 0,
         solver=GridSearch(),
     )
     done_regime = Regime(
@@ -370,7 +374,6 @@ def _replace_constraints(*, constraints: dict) -> Model:
         regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
-        active=lambda age: age == 1,
         solver=GridSearch(),
     )
     return Model(

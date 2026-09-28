@@ -21,6 +21,7 @@ from _lcm.regime_building.stochastic_state_transitions import (
 )
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     MarkovTransition,
     Model,
@@ -31,6 +32,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -84,11 +86,13 @@ def _model(law: Any) -> Model:
         "functions": {"utility": utility},
     }
     live = Regime(
-        regime_transitions=_next_regime, state_transitions={"good": law}, **common
-    ).replace(active=lambda age: age < 2)
-    last = Regime(regime_transitions=None, state_transitions={}, **common).replace(
-        active=lambda age: age >= 2
-    )
+        regime_transitions=until_exit(
+            2, law=Choose(_next_regime, targets=("live", "last")), exits=("last",)
+        ),
+        state_transitions={"good": law},
+        **common,
+    ).replace()
+    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
     return Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
@@ -210,7 +214,9 @@ def test_markov_and_process_states_coexist():
         "functions": {"utility": utility_with_shock},
     }
     live = Regime(
-        regime_transitions=_next_regime,
+        regime_transitions=until_exit(
+            2, law=Choose(_next_regime, targets=("live", "last")), exits=("last",)
+        ),
         state_transitions={
             "good": Phased(
                 solve=MarkovTransition(next_good_belief),
@@ -218,10 +224,8 @@ def test_markov_and_process_states_coexist():
             )
         },
         **common,
-    ).replace(active=lambda age: age < 2)
-    last = Regime(regime_transitions=None, state_transitions={}, **common).replace(
-        active=lambda age: age >= 2
-    )
+    ).replace()
+    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
     model = Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
@@ -283,13 +287,13 @@ def test_continuation_helper_resolves_from_the_solve_phase():
         },
     }
     live = Regime(
-        regime_transitions=_next_regime,
+        regime_transitions=until_exit(
+            2, law=Choose(_next_regime, targets=("live", "last")), exits=("last",)
+        ),
         state_transitions={"good": MarkovTransition(next_good)},
         **common,
-    ).replace(active=lambda age: age < 2)
-    last = Regime(regime_transitions=None, state_transitions={}, **common).replace(
-        active=lambda age: age >= 2
-    )
+    ).replace()
+    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
     model = Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),

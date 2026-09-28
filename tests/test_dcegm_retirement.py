@@ -26,6 +26,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_full_model,
     get_full_params,
 )
+from tests.test_models.schedules import until_exit
 
 pytestmark = [
     pytest.mark.slow,
@@ -105,18 +106,22 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(*, age: float, la: float = last_age) -> bool:
-        return age < la
+    working_transitions = base.working_life_transitions(last_age=last_age)
 
     mixed = Model(
         regimes={
-            "working_life": base.working_life.replace(active=active),
+            "working_life": base.working_life.replace(
+                regime_transitions=working_transitions
+            ),
             "retirement": dcegm_variants.dcegm_retirement_full.replace(
-                active=active,
-                regime_transitions={
-                    "retirement": MarkovTransition(_retirement_stay_prob),
-                    "dead": MarkovTransition(_retirement_death_prob),
-                },
+                regime_transitions=until_exit(
+                    last_age,
+                    law={
+                        "retirement": MarkovTransition(_retirement_stay_prob),
+                        "dead": MarkovTransition(_retirement_death_prob),
+                    },
+                    exits=("dead",),
+                ),
             ),
             "dead": base.dead,
         },
@@ -148,15 +153,17 @@ def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(*, age: float, la: float = last_age) -> bool:
-        return age < la
+    working_transitions = base.working_life_transitions(last_age=last_age)
+    retirement_transitions = base.retirement_transitions(last_age=last_age)
 
     brute = Model(
         regimes={
             "working_life": base.working_life.replace(
-                active=active, taste_shocks=shocks
+                regime_transitions=working_transitions, taste_shocks=shocks
             ),
-            "retirement": base.retirement.replace(active=active),
+            "retirement": base.retirement.replace(
+                regime_transitions=retirement_transitions
+            ),
             "dead": base.dead,
         },
         ages=ages,
@@ -165,9 +172,11 @@ def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
     dcegm = Model(
         regimes={
             "working_life": dcegm_variants.dcegm_working_life.replace(
-                active=active, taste_shocks=shocks
+                regime_transitions=working_transitions, taste_shocks=shocks
             ),
-            "retirement": dcegm_variants.dcegm_retirement_full.replace(active=active),
+            "retirement": dcegm_variants.dcegm_retirement_full.replace(
+                regime_transitions=retirement_transitions
+            ),
             "dead": base.dead,
         },
         ages=ages,

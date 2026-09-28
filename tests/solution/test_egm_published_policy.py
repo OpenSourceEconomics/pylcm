@@ -49,7 +49,9 @@ def _two_period_bequest_model() -> Model:
     )
     return Model(
         regimes={
-            "retirement": dcegm_retirement.replace(active=lambda age: age < 50),
+            "retirement": dcegm_retirement.replace(
+                regime_transitions=retirement_only.retirement_transitions(last_age=50)
+            ),
             "dead": bequest_dead,
         },
         ages=AgeGrid(start=40, stop=50, step="10Y"),

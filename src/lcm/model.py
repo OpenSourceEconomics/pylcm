@@ -616,9 +616,9 @@ class Model:
 
         # The single canonical coverage schedule, read once here from the raw
         # regimes and threaded through pruning, validation, and model-structure
-        # preparation below. A dated model takes it from each `regime_transitions`
+        # preparation below. It comes from each `regime_transitions`
         # declaration, whose laws are lowered to the engine's period-independent
-        # vocabulary; any other model evaluates each `active` predicate.
+        # vocabulary.
         schedules = resolve_regime_schedules(
             user_regimes=regimes,
             ages=ages,
@@ -630,13 +630,11 @@ class Model:
         declared_transitions = {
             name: regime.regime_transitions for name, regime in regimes.items()
         }
-        if schedules.dated:
-            regimes = {
-                name: regime.replace(regime_transitions=schedules.transitions[name])
-                for name, regime in regimes.items()
-            }
+        regimes = {
+            name: regime.replace(regime_transitions=schedules.transitions[name])
+            for name, regime in regimes.items()
+        }
         active_periods_by_regime = schedules.coverage_by_regime
-        self._dated = schedules.dated
 
         model_slots = {
             "functions": functions,
@@ -722,7 +720,7 @@ class Model:
             user_regimes=self._engine_user_regimes,
             ages=self.ages,
             active_periods_by_regime=active_periods_by_regime,
-            support_by_phase=schedules.support_by_phase if schedules.dated else None,
+            support_by_phase=schedules.support_by_phase,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
@@ -732,15 +730,11 @@ class Model:
         )
         # Public regimes keep each transition as declared; the engine copy
         # holds the lowered law every internal consumer reads.
-        self.user_regimes = (
-            MappingProxyType(
-                {
-                    name: regime.replace(regime_transitions=declared_transitions[name])
-                    for name, regime in self._engine_user_regimes.items()
-                }
-            )
-            if schedules.dated
-            else self._engine_user_regimes
+        self.user_regimes = MappingProxyType(
+            {
+                name: regime.replace(regime_transitions=declared_transitions[name])
+                for name, regime in self._engine_user_regimes.items()
+            }
         )
         self.initial_nodes = resolve_initial_nodes(
             initial_regimes=initial_regimes,
@@ -3066,10 +3060,9 @@ class Model:
         )
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
-        if getattr(self, "_dated", False):
-            validate_regime_selection(
-                regimes=self._regimes, flat_params=flat_params, ages=self.ages
-            )
+        validate_regime_selection(
+            regimes=self._regimes, flat_params=flat_params, ages=self.ages
+        )
         if array_writer is not None:
             array_writer.publish(stage="params", tree=flat_params)
         return flat_params

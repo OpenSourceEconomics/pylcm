@@ -33,7 +33,7 @@ def _numeric_retirement_model(n_periods: int) -> Model:
         if name != "inverse_marginal_utility"
     }
     numeric_regime = dcegm_retirement.replace(
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=retirement_only.retirement_transitions(last_age=last_age),
         functions=functions_without_inverse,
     )
     return Model(

@@ -16,8 +16,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _PAGE = Path(__file__).parents[1] / "docs" / "reference" / "custom_solvers.md"
 _FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
@@ -98,8 +99,11 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_next_regime,
-                active=lambda age: age < _N_PERIODS - 1,
+                regime_transitions=until_exit(
+                    _N_PERIODS - 1,
+                    law=Choose(_next_regime, targets=("alive", "dead")),
+                    exits=("dead",),
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _utility},

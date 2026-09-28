@@ -18,6 +18,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -67,22 +69,23 @@ def test_simulating_a_regime_with_no_active_target_names_the_regime_and_period()
 def _build_model() -> Model:
     """Build a worker who retires into a regime that cannot be left."""
     worker = Regime(
-        regime_transitions={"retired": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): {"retired": MarkovTransition(_prob_one)}}
+        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": {"retired": _keep_wealth}},
         functions={"utility": _utility},
     )
     retired = Regime(
-        regime_transitions={"dead": MarkovTransition(_prob_one)},
-        active=lambda age: (age >= 1) & (age < 3),
+        regime_transitions=ByAge(
+            {AgeRange(start=1, stop=3): {"dead": MarkovTransition(_prob_one)}}
+        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": {"dead": _keep_wealth}},
         functions={"utility": _utility},
     )
     dead = Regime(
         regime_transitions=None,
-        active=lambda age: age >= _DEAD_ACTIVE_FROM,
         states={"wealth": _WEALTH},
         functions={"utility": _utility},
     )

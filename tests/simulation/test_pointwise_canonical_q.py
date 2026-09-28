@@ -75,7 +75,7 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 def _bonus_model() -> Model:
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
     alive = dcegm_retirement.replace(
-        active=lambda age: age < 50,
+        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         solver=solver,
         liquid=dataclasses.replace(dcegm_retirement.liquid, resources="resources"),
         actions={

@@ -296,9 +296,6 @@ class PreparedModelStructure:
     active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
     """Periods in which each regime is locally active."""
 
-    support_is_declared: bool = False
-    """Whether every regime transition declares its per-period support."""
-
 
 def prepare_model_structure(
     *,
@@ -307,15 +304,12 @@ def prepare_model_structure(
     active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]],
     support_by_phase: Mapping[
         str, Mapping[RegimeName, Mapping[int, tuple[RegimeName, ...]]]
-    ]
-    | None = None,
+    ],
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
 
-    `active_periods_by_regime` must be the single canonical coverage mapping,
-    computed once by the caller — this function does not evaluate
-    `Regime.active` itself. `support_by_phase` holds the per-period targets a
-    dated model declares; without it, support is read off the transitions.
+    `active_periods_by_regime` and `support_by_phase` are the coverage and the
+    per-period targets resolved once from the declarations by the caller.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes)
     age_normalization = normalize_age_specialization(
@@ -325,21 +319,10 @@ def prepare_model_structure(
         active_periods_by_regime=active_periods_by_regime,
     )
     phased_specs = age_normalization.phased_specs
-    transitions_by_phase: Mapping[PhaseName, Mapping[RegimeName, object]] = {
-        "solution": {
-            regime_name: spec.solution.regime_transition
-            for regime_name, spec in phased_specs.items()
-        },
-        "simulation": {
-            regime_name: spec.simulation.regime_transition
-            for regime_name, spec in phased_specs.items()
-        },
-    }
     try:
         reachability = build_model_reachability(
             n_periods=ages.n_periods,
             active_periods_by_regime=active_periods_by_regime,
-            transitions_by_phase=transitions_by_phase,
             support_by_phase=support_by_phase,
             terminal_regimes={
                 regime_name
@@ -355,7 +338,6 @@ def prepare_model_structure(
         grid_schedule=age_normalization.grid_schedule,
         reachability=reachability,
         active_periods_by_regime=active_periods_by_regime,
-        support_is_declared=support_by_phase is not None,
     )
 
 
@@ -456,7 +438,6 @@ def process_regimes(
         all_regime_names=all_regime_names,
         solution_reachability=reachability.solution,
         simulation_reachability=reachability.simulation,
-        support_is_declared=prepared_structure.support_is_declared,
     )
     solve_nested_transitions = {
         regime_name: _extract_phase_transitions(phase_slice=spec.solution)

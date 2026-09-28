@@ -57,6 +57,7 @@ from lcm.solvers import (
 )
 from lcm.typing import FloatND, RegimeName, ScalarFloat, ScalarInt, StateName
 from tests.conftest import assert_agrees_to_ulp
+from tests.test_models.schedules import until_exit
 
 # The out-of-tree solver module builds arrays at import, which initializes a JAX
 # backend; every name it supplies is therefore imported inside the function that
@@ -596,8 +597,11 @@ def _model(
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions={"dead": MarkovTransition(_certain)},
-                active=lambda age: age < _N_PERIODS - 1,
+                regime_transitions=until_exit(
+                    _N_PERIODS - 1,
+                    law={"dead": MarkovTransition(_certain)},
+                    exits=("dead",),
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": lambda wealth, type1: wealth * (type1 + 1.0)},

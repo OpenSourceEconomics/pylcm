@@ -26,6 +26,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -38,6 +39,7 @@ from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
 _LAST_AGE = 22
@@ -106,8 +108,11 @@ def _solve_coarse_into_process_only_target(
     """
     process = _UNIFORM_SHOCK if process is None else process
     alive = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
@@ -183,8 +188,11 @@ def test_a_coarse_transition_into_an_ar1_target_is_refused():
 def _solve_with_entry_law(level: float):
     """The same model, with the parent declaring how the target is entered."""
     alive = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth, "shock": {"gone": _enter_shock}},
@@ -291,8 +299,11 @@ def _tiny_next_regime() -> ScalarInt:
 def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
     """Solve a model whose entire continuation sits at the `1e-8` scale."""
     alive = Regime(
-        regime_transitions=_tiny_next_regime,
-        active=lambda age: age < 41,
+        regime_transitions=until_exit(
+            41,
+            law=Choose(_tiny_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": _TINY_WEALTH},
         actions={"consumption": _TINY_CONSUMPTION},
         state_transitions={"wealth": _next_wealth},

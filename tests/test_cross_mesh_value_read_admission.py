@@ -46,6 +46,8 @@ import pytest
 import tests.conftest
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -203,15 +205,15 @@ def build_model(
 
     """
     working = Regime(
-        active=lambda age: age < 1,
-        regime_transitions={"retired": MarkovTransition(_retire)},
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): {"retired": MarkovTransition(_retire)}}
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _WORKING_UTILITY[tuple(working_reads)]},
         state_transitions={"wealth": _next_wealth},
     )
     retired = Regime(
-        active=lambda age: age >= 1,
         regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _RETIRED_UTILITY[tuple(retired_reads)]},

@@ -23,6 +23,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     MarkovTransition,
@@ -258,8 +260,9 @@ def _make_unreachable_role_routing_regimes():
     select on a role a subject started in `alone` with.
     """
     alone = Regime(
-        regime_transitions={"alone_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): {"alone_terminal": MarkovTransition(_prob_one)}}
+        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -271,7 +274,6 @@ def _make_unreachable_role_routing_regimes():
     )
     alone_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -342,17 +344,24 @@ def _shift_dissolution_one_age() -> dict:
     """Move the dissolution miniature one age later, freeing age 0 for a start."""
     regimes = _make_dissolution_regimes()
     windows = {
-        "married": lambda age: (age >= 1) & (age < 2),
-        "married_ir": lambda age: (age >= 2) & (age < 3),
-        "married_terminal": lambda age: age >= 3,
-        "single_f": lambda age: (age >= 2) & (age < 3),
-        "single_f_terminal": lambda age: age >= 3,
-        "single_m": lambda age: (age >= 2) & (age < 3),
-        "single_m_terminal": lambda age: age >= 3,
+        "married": AgeRange(start=1, stop=2),
+        "married_ir": AgeRange(start=2, stop=3),
+        "single_f": AgeRange(start=2, stop=3),
+        "single_m": AgeRange(start=2, stop=3),
     }
     return {
-        name: regime.replace(active=windows[name]) for name, regime in regimes.items()
+        name: regime.replace(
+            regime_transitions=ByAge({windows[name]: _law(regime.regime_transitions)})
+        )
+        if name in windows
+        else regime
+        for name, regime in regimes.items()
     }
+
+
+def _law(transitions: object) -> object:
+    """The single law a regime's transitions declare."""
+    return transitions.laws[0] if isinstance(transitions, ByAge) else transitions
 
 
 def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role():
@@ -365,8 +374,9 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
     every row following one partner's dissolution path.
     """
     prelude = Regime(
-        regime_transitions={"married": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): {"married": MarkovTransition(_prob_one)}}
+        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},

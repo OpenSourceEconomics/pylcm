@@ -54,6 +54,8 @@ from _lcm.simulation.gated_routing import (
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     ProjectedRegimeValue,
@@ -298,8 +300,9 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         ),
     }
     src = Regime(
-        regime_transitions={name: edges[name] for name in edge_order},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): {name: edges[name] for name in edge_order}}
+        ),
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -307,25 +310,21 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
     )
     target_a = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_target_a},
     )
     target_b = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_target_b},
     )
     fallback_a = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_fallback_a},
     )
     fallback_b = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_fallback_b},
     )

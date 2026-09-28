@@ -47,6 +47,7 @@ from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
+from tests.test_models.schedules import until_exit
 
 _N_SUBJECTS = 2
 
@@ -202,8 +203,11 @@ def _make_participation_model() -> Model:
 
     """
     couple = Regime(
-        regime_transitions={"couple_terminal": MarkovTransition(_certain_transition)},
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law={"couple_terminal": MarkovTransition(_certain_transition)},
+            exits=("couple_terminal",),
+        ),
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -225,7 +229,6 @@ def _make_participation_model() -> Model:
     )
     couple_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -235,8 +238,11 @@ def _make_participation_model() -> Model:
         },
     )
     single_f = Regime(
-        regime_transitions={"single_f_terminal": MarkovTransition(_certain_transition)},
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law={"single_f_terminal": MarkovTransition(_certain_transition)},
+            exits=("single_f_terminal",),
+        ),
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -244,7 +250,6 @@ def _make_participation_model() -> Model:
     )
     single_f_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _zero_terminal_utility},
     )

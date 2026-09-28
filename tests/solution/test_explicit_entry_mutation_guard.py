@@ -35,6 +35,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _RISK_AVERSION = 2.0
 # Nodes `(0, 1, 2)` under payoff `shock**2` give `V = (0, 1, 4)`; entering at
@@ -69,8 +70,11 @@ def _build_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_one_probability)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(_one_probability)},
+                    exits=("target",),
+                ),
                 state_transitions={"shock": {"target": _enter_between_nodes}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),

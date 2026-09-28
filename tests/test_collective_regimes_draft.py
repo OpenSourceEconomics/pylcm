@@ -7,6 +7,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -23,6 +24,7 @@ from lcm.typing import (
     IntND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 # Shared building blocks: a stripped-down couples problem, in which the two
 # stakeholders differ only in their disutility of work.
@@ -113,8 +115,11 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     property of the merged regime and is reported when the model finalizes it.
     """
     married = Regime(
-        regime_transitions=_next_regime_widowed,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_next_regime_widowed, targets=("married", "widowed")),
+            exits=("widowed",),
+        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -128,7 +133,6 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     )
     widowed = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         actions={
             "labor_supply_f": DiscreteGrid(category_class=LaborSupply),

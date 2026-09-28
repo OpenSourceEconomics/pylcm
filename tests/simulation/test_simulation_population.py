@@ -18,6 +18,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
+    working_life_transitions,
 )
 
 
@@ -30,7 +31,9 @@ def _model() -> Model:
     """Build a small three-period model with one acting regime."""
     return Model(
         regimes={
-            "working_life": working_life.replace(active=lambda age: age <= 19),
+            "working_life": working_life.replace(
+                regime_transitions=working_life_transitions(last_age=20)
+            ),
             "dead": dead,
         },
         ages=AgeGrid(start=18, stop=20, step="Y"),

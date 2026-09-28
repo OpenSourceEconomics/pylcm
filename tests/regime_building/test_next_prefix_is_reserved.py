@@ -28,6 +28,7 @@ from lcm import (
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
 _SHOCK = NormalIIDProcess(n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0)
@@ -62,8 +63,9 @@ def _build(
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                ),
                 states={"wealth": _WEALTH} if states is None else states,
                 state_transitions=(
                     {"wealth": {"target": _keep_wealth}}
@@ -149,8 +151,11 @@ def test_a_constraint_may_not_read_a_targets_draw() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    regime_transitions={"target": MarkovTransition(_to_target)},
-                    active=lambda age: age < 22,
+                    regime_transitions=until_exit(
+                        22,
+                        law={"target": MarkovTransition(_to_target)},
+                        exits=("target",),
+                    ),
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
@@ -216,8 +221,9 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                ),
                 states={"wealth": _WEALTH, "aime": aime},
                 state_transitions={
                     "wealth": {"target": _next_wealth_reading_a_sibling},
@@ -330,10 +336,13 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": MarkovTransition(_probability_reading_a_next_name)
-                    },
-                    active=lambda age: age < 22,
+                    regime_transitions=until_exit(
+                        22,
+                        law={
+                            "target": MarkovTransition(_probability_reading_a_next_name)
+                        },
+                        exits=("target",),
+                    ),
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
@@ -366,8 +375,11 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
         Model(
             regimes={
                 "source": Regime(
-                    regime_transitions={"target": MarkovTransition(_to_target)},
-                    active=lambda age: age < 22,
+                    regime_transitions=until_exit(
+                        22,
+                        law={"target": MarkovTransition(_to_target)},
+                        exits=("target",),
+                    ),
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},

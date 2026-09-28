@@ -29,6 +29,7 @@ from lcm import (
 from lcm.transition import MarkovTransition
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 N_POINTS = 5
 OUTSIDE_OPTION = 0.2
@@ -68,11 +69,14 @@ def _utility(
 
 def _build_model(*, fold: bool) -> Model:
     alive = Regime(
-        regime_transitions={
-            "alive": MarkovTransition(_probability_alive),
-            "dead": MarkovTransition(_probability_dead),
-        },
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3,
+            law={
+                "alive": MarkovTransition(_probability_alive),
+                "dead": MarkovTransition(_probability_dead),
+            },
+            exits=("dead",),
+        ),
         states={
             "wealth": WEALTH,
             "wage_shock": NormalIIDProcess(
@@ -90,7 +94,6 @@ def _build_model(*, fold: bool) -> Model:
     )
     dead = Regime(
         regime_transitions=None,
-        active=lambda age: age >= LAST_ALIVE_AGE,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
     return Model(

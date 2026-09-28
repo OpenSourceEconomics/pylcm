@@ -30,6 +30,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, IntND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 # The entry names 10.0 at the middle node, outside income's support.
@@ -74,8 +75,9 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                ),
                 states={},
                 state_transitions={
                     "income": {"target": _entry_income},

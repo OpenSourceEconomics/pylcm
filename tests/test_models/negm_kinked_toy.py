@@ -24,6 +24,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -44,6 +45,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 N_X = 12
 N_Z = 12
@@ -174,14 +176,17 @@ def build_alive_regime() -> NestedConsumptionSavingsRegime:
     """The non-terminal NEGM regime (two assets, two continuous actions)."""
     final_age_alive = 20 + (N_PERIODS - 2) * 5
     return NestedConsumptionSavingsRegime(
-        active=lambda age, n=final_age_alive: age <= n,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         state_transitions={"wealth": next_wealth, "illiquid": durable_transition},
         actions={
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=next_regime,
+        regime_transitions=until_exit(
+            final_age_alive + 5,
+            law=Choose(next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -212,10 +217,8 @@ def build_alive_regime() -> NestedConsumptionSavingsRegime:
 
 def build_dead_regime() -> Regime:
     """The terminal regime."""
-    final_age_alive = 20 + (N_PERIODS - 2) * 5
     return Regime(
         regime_transitions=None,
-        active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )
 

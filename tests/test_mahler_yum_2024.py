@@ -28,7 +28,7 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import Model
+from lcm import ByAge, Model, Regime
 from lcm_examples.mahler_yum_2024 import (
     RETIREMENT_REGIME,
     START_PARAMS,
@@ -168,23 +168,29 @@ def test_retirement_split_removes_exactly_the_work_only_dimensions():
         "productivity_shock",
     }
     assert retirement_dimensions <= working_dimensions
-    working_transition = cast("Mapping[str, object]", WORKING_REGIME.regime_transitions)
-    retirement_transition = cast(
-        "Mapping[str, object]", RETIREMENT_REGIME.regime_transitions
-    )
-    assert set(working_transition) == {"working", "retirement", "dead"}
-    assert set(retirement_transition) == {"retirement", "dead"}
+    assert _targets(WORKING_REGIME) == {"working", "retirement", "dead"}
+    assert _targets(RETIREMENT_REGIME) == {"retirement", "dead"}
+
+
+def _targets(regime: Regime) -> set[str]:
+    """Every target any age of the regime's schedule declares."""
+    schedule = cast("ByAge", regime.regime_transitions)
+    return set().union(*(cast("Mapping[str, object]", law) for law in schedule.laws))
+
+
+def _covered_periods(regime: Regime) -> set[int]:
+    schedule = cast("ByAge", regime.regime_transitions)
+    return set(schedule.resolve(ages).law_by_period)
 
 
 def test_living_regimes_partition_ages_at_65():
     """Every living age belongs to working life or retirement according to age 65."""
+    working = _covered_periods(WORKING_REGIME)
+    retirement = _covered_periods(RETIREMENT_REGIME)
     activity = np.array(
         [
-            [
-                WORKING_REGIME.active(int(age)),
-                RETIREMENT_REGIME.active(age=int(age)),
-            ]
-            for age in ages.values[:-1]
+            [period in working, period in retirement]
+            for period in range(len(ages.values) - 1)
         ]
     )
     expected = np.array(

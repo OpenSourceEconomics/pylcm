@@ -22,7 +22,7 @@ from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import _IIDProcess
-from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
+from _lcm.typing import ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
@@ -523,7 +523,6 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
             f"{invalid_variable_names}.",
         )
 
-    error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_state_transition_grammar_errors(regime))
     error_messages.extend(_joint_transition_grammar_errors(regime))
     error_messages.extend(
@@ -1131,13 +1130,6 @@ def _find_function_output_grid_indexing(
             continue
         clashes.append((node.value.id, node.slice.id))
     return clashes
-
-
-def _validate_active(active: ActiveFunction) -> list[str]:
-    """Validate the active attribute is a callable."""
-    if not callable(active):
-        return ["active must be a callable that takes age (float) and returns bool."]
-    return []
 
 
 def _state_transition_grammar_errors(regime: lcm.regime.Regime) -> list[str]:

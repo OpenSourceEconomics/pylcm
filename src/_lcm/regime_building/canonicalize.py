@@ -105,7 +105,6 @@ def canonicalize_phased_regimes(
     all_regime_names: frozenset[RegimeName],
     solution_reachability: PhaseReachability | None = None,
     simulation_reachability: PhaseReachability | None = None,
-    support_is_declared: bool = False,
 ) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
     """Canonicalize the laws of already phase-normalized regime specs.
 
@@ -121,9 +120,6 @@ def canonicalize_phased_regimes(
         simulation_reachability: Construction-time simulate graph. When provided,
             state laws are canonicalized only over targets retained in at least
             one simulate period.
-        support_is_declared: Whether each regime transition declares its
-            support. A per-target state law may then name further known
-            targets, which stay unused.
 
     Returns:
         Immutable mapping of regime names to per-phase specs whose every
@@ -168,7 +164,6 @@ def canonicalize_phased_regimes(
                     for kernel in kernels.values()
                     for output in kernel.outputs
                 ),
-                support_is_declared=support_is_declared,
             )
             canonical_joint, joint_errors = _canonicalize_joint_transitions(
                 phase_slice=phase_slice,
@@ -206,7 +201,6 @@ def _canonicalize_phase_transitions(
     source_label: str = "",
     temporal_targets: frozenset[RegimeName] | None = None,
     claimed_joint_cells: frozenset[tuple[RegimeName, StateName]] = frozenset(),
-    support_is_declared: bool = False,
 ) -> tuple[_CanonicalStateTransitions, list[str]]:
     """Expand one phase slice's laws into the canonical per-target form.
 
@@ -255,10 +249,8 @@ def _canonicalize_phase_transitions(
             state_name=state_name,
             named_targets=frozenset(named),
             required=frozenset(required),
-            declared_targets=declared_targets,
             all_regime_names=all_regime_names,
             source_label=source_label,
-            support_is_declared=support_is_declared,
         )
         cells = {
             target_regime_name: law
@@ -413,35 +405,24 @@ def _per_target_law_errors(
     state_name: StateName,
     named_targets: frozenset[RegimeName],
     required: frozenset[RegimeName],
-    declared_targets: frozenset[RegimeName],
     all_regime_names: frozenset[RegimeName],
     source_label: str,
-    support_is_declared: bool = False,
 ) -> list[str]:
-    """Check a per-target state law against graph coverage and candidate support."""
+    """Check a per-target state law against graph coverage and known regimes."""
     error_messages: list[str] = []
     missing = required - named_targets
     if missing:
         error_messages.append(
             f"{source_label}: state_transitions['{state_name}'] does not "
             f"cover reachable target(s) {sorted(missing)} retained in the temporal "
-            "graph. Provide a law "
-            f"for each, or narrow candidate support by declaring per-target "
-            f"regime transitions (`regime_transitions={{target: "
-            f"MarkovTransition(...)}}`).",
+            "graph. Provide a law for each, or remove the target from the "
+            "regime transition's declared support.",
         )
     unknown = named_targets - all_regime_names
     if unknown:
         error_messages.append(
             f"{source_label}: state_transitions['{state_name}'] names "
             f"unknown regime(s) {sorted(unknown)}.",
-        )
-    unreachable = (named_targets & all_regime_names) - declared_targets
-    if unreachable and not support_is_declared:
-        error_messages.append(
-            f"{source_label}: state_transitions['{state_name}'] names "
-            f"target(s) {sorted(unreachable)} that the regime transition "
-            f"does not include in its candidate support.",
         )
     return error_messages
 

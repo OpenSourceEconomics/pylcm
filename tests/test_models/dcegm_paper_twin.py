@@ -28,6 +28,7 @@ import jax.numpy as jnp
 from _lcm.grids import ContinuousGrid
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -47,6 +48,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 MIN_AGE = 20
 N_PERIODS = 10
@@ -212,14 +214,25 @@ def _working_life(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        regime_transitions=next_regime_from_working,
+        regime_transitions=until_exit(
+            LAST_ALIVE_AGE + 1,
+            law=Choose(
+                next_regime_from_working,
+                targets=(
+                    "working_life",
+                    "retirement",
+                    "done_from_working",
+                    "done_retired",
+                ),
+            ),
+            exits=("done_from_working", "done_retired"),
+        ),
         states={"wealth": WEALTH_GRID},
         actions={
             "work_choice": DiscreteGrid(category_class=WorkChoice),
             "consumption": CONSUMPTION_GRID,
         },
         taste_shocks=ExtremeValueTasteShocks(),
-        active=lambda age: age <= LAST_ALIVE_AGE,
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={
@@ -235,7 +248,6 @@ def _working_life(
         states=brute.states,
         actions=brute.actions,
         taste_shocks=brute.taste_shocks,
-        active=brute.active,
         state_transitions={"wealth": next_wealth_from_savings},
         constraints={},
         functions={
@@ -259,10 +271,15 @@ def _retirement(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        regime_transitions=next_regime_from_retirement,
+        regime_transitions=until_exit(
+            LAST_ALIVE_AGE + 1,
+            law=Choose(
+                next_regime_from_retirement, targets=("retirement", "done_retired")
+            ),
+            exits=("done_retired",),
+        ),
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
-        active=lambda age: age <= LAST_ALIVE_AGE,
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retired},
@@ -274,7 +291,6 @@ def _retirement(
         states=brute.states,
         actions=brute.actions,
         taste_shocks=brute.taste_shocks,
-        active=brute.active,
         state_transitions={"wealth": next_wealth_from_savings},
         constraints={},
         functions={

@@ -23,8 +23,7 @@ and its keys are the regime's stakeholders in the order written:
 
 ```python
 couple = Regime(
-    regime_transitions=to_couple_terminal,
-    active=lambda age: age < 1,
+    regime_transitions=Choose(to_couple_terminal, targets=("couple_terminal",)),
     states={"wage": LinSpacedGrid(start=8.0, stop=40.0, n_points=2)},
     state_transitions={"wage": next_wage},
     actions={"work": DiscreteGrid(category_class=Work)},

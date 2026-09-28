@@ -26,6 +26,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -128,8 +129,9 @@ def _model(*, node_is_reachable: bool = True) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions={"dead": MarkovTransition(_certain)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21, law={"dead": MarkovTransition(_certain)}, exits=("dead",)
+                ),
                 actions={"bet": DiscreteGrid(category_class=_Bet)},
                 states={"health": levels, "mood": levels},
                 state_transitions={

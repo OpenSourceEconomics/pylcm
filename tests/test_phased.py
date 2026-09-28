@@ -19,6 +19,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
@@ -33,6 +34,7 @@ from lcm.exceptions import InvalidSimulationInputError, RegimeInitializationErro
 from lcm.persistence import load_solution
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserParams
+from tests.test_models.schedules import choose_among, until_exit
 
 
 def _solve_variant(wealth: float) -> FloatND:
@@ -450,8 +452,11 @@ def _consumption_leq_wealth(*, consumption: float, wealth: float) -> bool:
 def _build_phased_law_model(*, phased_law: bool) -> Model:
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        regime_transitions=_next_regime_working,
-        active=lambda age: age < 64,
+        regime_transitions=until_exit(
+            64,
+            law=Choose(_next_regime_working, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         state_transitions={
             "wealth": Phased(solve=_belief_next_wealth, simulate=_true_next_wealth)
@@ -543,8 +548,11 @@ def test_phased_law_params_template_unions_both_variants() -> None:
     """The params template lists both laws' parameters under `next_<state>`."""
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        regime_transitions=_next_regime_working,
-        active=lambda age: age < 64,
+        regime_transitions=until_exit(
+            64,
+            law=Choose(_next_regime_working, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         state_transitions={
             "wealth": Phased(solve=_belief_drift_law, simulate=_true_drift_law)
@@ -570,8 +578,11 @@ def _build_wrong_beliefs_model() -> Model:
     """One shared law, `rho` renamed apart per phase, `sigma` shared."""
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        regime_transitions=_next_regime_working,
-        active=lambda age: age < 64,
+        regime_transitions=until_exit(
+            64,
+            law=Choose(_next_regime_working, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={"income": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
         state_transitions={
             "income": Phased(
@@ -829,12 +840,16 @@ def _realized_next_regime(age: float) -> ScalarInt:  # noqa: ARG001
 def _build_phased_transition_model(*, phased_transition: bool) -> Model:
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        regime_transitions=Phased(
-            solve=_plan_next_regime, simulate=_realized_next_regime
-        )
-        if phased_transition
-        else _plan_next_regime,
-        active=lambda age: age < 64,
+        regime_transitions=until_exit(
+            64,
+            law=choose_among(
+                Phased(solve=_plan_next_regime, simulate=_realized_next_regime)
+                if phased_transition
+                else _plan_next_regime,
+                targets=("working", "dead"),
+            ),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -910,8 +925,11 @@ def test_regime_draw_reads_carried_value() -> None:
     """
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        regime_transitions=_retire_when_pension_rich,
-        active=lambda age: age < 64,
+        regime_transitions=until_exit(
+            64,
+            law=Choose(_retire_when_pension_rich, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
@@ -982,8 +1000,11 @@ def test_model_builds_when_a_transition_reads_a_phased_function():
     model = Model(
         regimes={
             "working": UserRegime(
-                regime_transitions={"dead": MarkovTransition(lambda: jnp.float32(1))},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"dead": MarkovTransition(lambda: jnp.float32(1))},
+                    exits=("dead",),
+                ),
                 states={"wealth": wealth_grid},
                 state_transitions={"wealth": {"dead": next_wealth}},
                 functions={

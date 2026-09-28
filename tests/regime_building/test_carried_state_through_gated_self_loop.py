@@ -44,6 +44,8 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Phased,
@@ -64,7 +66,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 _BETA = 0.95
@@ -124,22 +126,25 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
 
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
-        regime_transitions={
-            "src": ValueDependentTransition(
-                probability=MarkovTransition(_prob_stay),
-                gate=_repeat_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="src_fallback",
-                            projection={"wage": _identity_wage},
-                        ),
-                    )
-                },
-            ),
-            "src_exit": MarkovTransition(_prob_exit_boundary),
-        },
-        active=lambda age: age < 2,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=2): {
+                    "src": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_stay),
+                        gate=_repeat_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="src_fallback",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            )
+                        },
+                    ),
+                    "src_exit": MarkovTransition(_prob_exit_boundary),
+                }
+            }
+        ),
         states={
             "wage": _WAGE,
             "career": Phased(solve=_impute_career, simulate=_CAREER),
@@ -160,13 +165,11 @@ def _make_regimes() -> dict[str, Regime]:
     )
     src_exit = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _u_src_exit},
     )
     src_fallback = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _u_src_fallback},
     )
@@ -190,11 +193,14 @@ def _solve_and_simulate():
             ),
             ages=ages,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes=regimes_dict,
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes=regimes_dict,
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=ages,
         ),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,

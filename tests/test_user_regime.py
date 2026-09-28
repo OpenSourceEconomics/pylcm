@@ -14,6 +14,7 @@ from _lcm.regime_building.transitions import (
     collect_state_transitions,
 )
 from lcm import (
+    Choose,
     DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
@@ -34,6 +35,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 def utility(consumption):
@@ -60,14 +62,12 @@ def test_regime_name_does_not_contain_separator():
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
-        regime_transitions=lambda: 0,
-        active=lambda age: age < 5,
+        regime_transitions="dead",
         state_transitions={"wealth": fixed_transition("wealth")},
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0},
-        active=lambda age: age >= 5,
     )
     ages = AgeGrid(start=0, stop=5, step="Y")
 
@@ -87,7 +87,6 @@ def test_function_name_does_not_contain_separator():
             actions={f"consumption{QNAME_DELIMITER}action": CONSUMPTION_GRID},
             regime_transitions=next_wealth,
             functions={"utility": utility, f"helper{QNAME_DELIMITER}func": lambda: 1},
-            active=lambda age: age < 5,
             state_transitions={"wealth": fixed_transition("wealth")},
         )
 
@@ -99,7 +98,6 @@ def test_state_name_does_not_contain_separator():
             states={f"my{QNAME_DELIMITER}wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
             regime_transitions=next_wealth,
-            active=lambda age: age < 5,
             state_transitions={
                 f"my{QNAME_DELIMITER}wealth": fixed_transition(
                     f"my{QNAME_DELIMITER}wealth"
@@ -109,12 +107,11 @@ def test_state_name_does_not_contain_separator():
 
 
 def test_terminal_regime_creation():
-    """Terminal regime (transition=None) can be created with states and utility."""
+    """A terminal regime (`regime_transitions=None`) can have states and utility."""
     regime = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={"wealth": WEALTH_GRID},
-        active=lambda age: age >= 5,
     )
     assert regime.terminal is True
 
@@ -126,7 +123,6 @@ def test_terminal_regime_with_actions():
         functions={"utility": lambda wealth, bequest_share: wealth * bequest_share},
         states={"wealth": WEALTH_GRID},
         actions={"bequest_share": LinSpacedGrid(start=0, stop=1, n_points=11)},
-        active=lambda age: age >= 5,
     )
     assert regime.terminal is True
     assert "bequest_share" in regime.actions
@@ -139,7 +135,6 @@ def test_non_terminal_regime_has_transition():
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         regime_transitions=next_wealth,
-        active=lambda age: age < 5,
         state_transitions={"wealth": fixed_transition("wealth")},
     )
     assert regime.terminal is False
@@ -151,25 +146,19 @@ def test_terminal_regime_can_be_created_without_states():
         regime_transitions=None,
         functions={"utility": lambda: 0},
         states={},
-        active=lambda age: age >= 5,
     )
     assert regime.terminal is True
     assert regime.states == {}
 
 
-def test_regime_with_active_callable():
-    """Regime can specify active periods with a callable."""
-    regime = UserRegime(
-        regime_transitions=next_wealth,
-        functions={"utility": utility},
-        states={"wealth": WEALTH_GRID},
-        actions={"consumption": CONSUMPTION_GRID},
-        active=lambda age: age < 5,
-        state_transitions={"wealth": fixed_transition("wealth")},
-    )
-    assert callable(regime.active)
-    assert regime.active(3) is True
-    assert regime.active(5) is False
+def test_regime_has_no_activity_argument():
+    """Where a regime is solved comes only from its `regime_transitions`."""
+    with pytest.raises(TypeError, match="active"):
+        UserRegime(
+            regime_transitions="dead",
+            functions={"utility": utility},
+            active=lambda age: age < 5,  # ty: ignore[unknown-argument]
+        )
 
 
 def _finalize(regime: UserRegime) -> UserRegime:
@@ -191,19 +180,6 @@ def test_regime_requires_utility_in_functions():
     )
     with pytest.raises(RegimeInitializationError, match=r"utility.*must be provided"):
         _finalize(regime)
-
-
-def test_active_validation_rejects_non_callable():
-    """Active attribute must be a callable."""
-    with pytest.raises(RegimeInitializationError, match="active"):
-        UserRegime(
-            regime_transitions=next_wealth,
-            functions={"utility": utility},
-            states={"wealth": WEALTH_GRID},
-            actions={"consumption": CONSUMPTION_GRID},
-            active=[0, 1, 2],  # ty: ignore[invalid-argument-type]  # Not a callable
-            state_transitions={"wealth": fixed_transition("wealth")},
-        )
 
 
 def test_markov_transition_rejects_non_callable():
@@ -424,15 +400,17 @@ def test_regime_with_fixed_states_only():
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         constraints={"borrowing": fixed_borrowing},
-        regime_transitions=fixed_next_regime,
+        regime_transitions=until_exit(
+            final_age + 1,
+            law=Choose(fixed_next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": fixed_utility},
-        active=lambda age: age <= final_age,
         state_transitions={"wealth": fixed_transition("wealth")},
     )
     dead_regime = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age > final_age,
     )
     model = Model(
         regimes={"working_life": working_regime, "dead": dead_regime},

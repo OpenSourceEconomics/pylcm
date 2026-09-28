@@ -60,6 +60,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
+    working_life_transitions,
 )
 
 _N_PERIODS = 3
@@ -488,7 +489,7 @@ def _model(
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= last_age,
+                regime_transitions=working_life_transitions(last_age=last_age + 1),
                 states={
                     "wealth": LinSpacedGrid(
                         start=1, stop=float(n_wealth), n_points=n_wealth

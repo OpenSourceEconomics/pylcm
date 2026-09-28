@@ -37,23 +37,15 @@ def _utility() -> ScalarFloat:
     return jnp.asarray(0, dtype=_FLOAT_DTYPE)
 
 
-def _active_alive(age: float) -> bool:
-    return age == 0
-
-
-def _active_done(age: float) -> bool:
-    return age == 1
-
-
 def _invalid_costly_regime_probabilities() -> FloatND:
     """Return invalid mass after a visible sort workspace completes."""
     sample = jnp.sin(jnp.arange(4096, dtype=_FLOAT_DTYPE))
     probability = _FLOAT_DTYPE(0.25) + _FLOAT_DTYPE(0) * jnp.sort(sample)[2048]
-    return jnp.stack((probability, probability))
+    return jnp.stack((probability,))
 
 
 def _valid_regime_probabilities() -> FloatND:
-    return jnp.asarray([0, 1], dtype=_FLOAT_DTYPE)
+    return jnp.asarray([1], dtype=_FLOAT_DTYPE)
 
 
 def _inputs(
@@ -65,13 +57,11 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=MarkovTransition(probabilities),
-                active=_active_alive,
+                regime_transitions=MarkovTransition(probabilities, targets=("done",)),
                 functions={"utility": _utility},
             ),
             "done": Regime(
                 regime_transitions=None,
-                active=_active_done,
                 functions={"utility": _utility},
             ),
         },
@@ -144,7 +134,7 @@ def _done_payoff() -> ScalarFloat:
 
 
 def _parameterized_regime_probabilities(done_probability: float) -> FloatND:
-    return jnp.stack((jnp.asarray(0, dtype=_FLOAT_DTYPE), done_probability))
+    return jnp.stack((done_probability,))
 
 
 def _numerical_inputs(
@@ -155,14 +145,12 @@ def _numerical_inputs(
         regimes={
             "alive": Regime(
                 regime_transitions=MarkovTransition(
-                    _parameterized_regime_probabilities
+                    _parameterized_regime_probabilities, targets=("done",)
                 ),
-                active=_active_alive,
                 functions={"utility": _alive_payoff},
             ),
             "done": Regime(
                 regime_transitions=None,
-                active=_active_done,
                 functions={"utility": _done_payoff},
             ),
         },

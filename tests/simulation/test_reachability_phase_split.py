@@ -46,10 +46,6 @@ def _probability_low(probability_high: ScalarFloat) -> ScalarFloat:
     return 1 - probability_high
 
 
-def _source_is_active(age: float) -> bool:
-    return age < 1
-
-
 def _target_is_active(age: float) -> bool:
     return age >= 1
 
@@ -62,17 +58,14 @@ def _build_model() -> Model:
                     "low": MarkovTransition(_probability_low),
                     "high": MarkovTransition(_probability_high),
                 },
-                active=_source_is_active,
                 functions={"utility": _zero_utility},
             ),
             "low": Regime(
                 regime_transitions=None,
-                active=_target_is_active,
                 functions={"utility": _low_utility},
             ),
             "high": Regime(
                 regime_transitions=None,
-                active=_target_is_active,
                 functions={"utility": _high_utility},
             ),
         },

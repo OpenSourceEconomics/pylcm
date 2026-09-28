@@ -13,6 +13,7 @@ from _lcm.persistence import snapshots as _snapshot_module
 from _lcm.persistence.io import _get_platform
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     Model,
     SimulateSnapshot,
@@ -26,6 +27,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult as _PublicSimulationResult
 from lcm.solver_api import SolutionResult, ValueStore
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 def test_forward_refs_bound_after_import() -> None:
@@ -64,18 +66,20 @@ def _build_tiny_model(*, enable_jit: bool):
         return jnp.where(period >= 1, 1, 0)
 
     working = UserRegime(
-        regime_transitions=next_regime,
+        regime_transitions=until_exit(
+            2,
+            law=Choose(next_regime, targets=("working", "retired")),
+            exits=("retired",),
+        ),
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1, n_points=3)},
         functions={"utility": utility},
-        active=lambda age: age < 2,
     )
     retired = UserRegime(
         regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         functions={"utility": _retired_utility},
-        active=lambda age: age >= 2,
     )
     ages = AgeGrid(start=0, stop=3, step="Y")
     model = Model(

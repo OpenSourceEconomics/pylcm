@@ -22,6 +22,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -42,6 +43,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -161,13 +163,13 @@ def _get_model(variant: str) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(*, age: int, la: float = last_age) -> bool:
-        return age < la
-
     if variant == "brute":
         working = UserRegime(
-            regime_transitions=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(next_regime, targets=("working_life", "dead")),
+                exits=("dead",),
+            ),
             actions={
                 "labor_supply": DiscreteGrid(category_class=LaborChoice),
                 "consumption": CONSUMPTION_GRID,
@@ -183,8 +185,11 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "dcegm_no_skill":
         working = ConsumptionSavingsRegime(
-            regime_transitions=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(next_regime, targets=("working_life", "dead")),
+                exits=("dead",),
+            ),
             actions={
                 "labor_supply": DiscreteGrid(category_class=LaborChoice),
                 "consumption": CONSUMPTION_GRID,
@@ -211,8 +216,11 @@ def _get_model(variant: str) -> Model:
             fixed_transition("skill") if variant == "dcegm_fixed_skill" else next_skill
         )
         working = ConsumptionSavingsRegime(
-            regime_transitions=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(next_regime, targets=("working_life", "dead")),
+                exits=("dead",),
+            ),
             actions={
                 "labor_supply": DiscreteGrid(category_class=LaborChoice),
                 "consumption": CONSUMPTION_GRID,

@@ -18,6 +18,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _ONE_NODE = UniformIIDProcess(n_points=1, start=0.0, stop=2.0)
 
@@ -77,8 +78,9 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                ),
                 state_transitions={"shock": {"target": _enter_at_the_node}},
                 functions={"utility": _no_utility},
             ),
@@ -107,8 +109,9 @@ def _model_entering_at(enter_law) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={
                     "shock": {"target": enter_law},

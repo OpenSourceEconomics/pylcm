@@ -83,6 +83,8 @@ from _lcm.simulation.simulate import _initial_own_stakeholder
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -173,20 +175,23 @@ def _make_f2_regimes() -> dict[str, Regime]:
     """Source and target BOTH declare a continuous state named `x` on a
     runtime-points `IrregSpacedGrid`, with DIFFERENT points."""
     src = Regime(
-        regime_transitions={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_threshold_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="fallback", projection={"x": _identity_x}
-                        )
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_one),
+                        gate=_threshold_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={"x": _identity_x}
+                                )
+                            )
+                        },
                     )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         states={"x": IrregSpacedGrid(n_points=2)},
         state_transitions={"x": _next_x_offgrid},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -194,7 +199,6 @@ def _make_f2_regimes() -> dict[str, Regime]:
     )
     target = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"x": IrregSpacedGrid(n_points=2)},
         functions={"utility": _u_target},
     )
@@ -203,7 +207,6 @@ def _make_f2_regimes() -> dict[str, Regime]:
     # repro with a second (solve-side) namespace question.
     fallback = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_fallback},
     )
@@ -498,20 +501,23 @@ def _stateless_gate(V_target: FloatND) -> BoolND:
 def _make_f3_regimes() -> dict[str, Regime]:
     """A 3-regime model whose gated target is STATELESS (terminal scrap value)."""
     src = Regime(
-        regime_transitions={
-            "stateless_target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_stateless_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="stateless_fallback", projection={}
-                        )
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "stateless_target": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_one),
+                        gate=_stateless_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="stateless_fallback", projection={}
+                                )
+                            )
+                        },
                     )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _identity_x},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -519,12 +525,10 @@ def _make_f3_regimes() -> dict[str, Regime]:
     )
     stateless_target = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         functions={"utility": _u_stateless_target},
     )
     stateless_fallback = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         functions={"utility": _u_stateless_fallback},
     )
     return {

@@ -73,7 +73,7 @@ LIQUID_MARGIN = LiquidMargin(
 
 
 dcegm_retirement = ConsumptionSavingsRegime(
-    regime_transitions=retirement_only.next_regime_from_retirement,
+    regime_transitions=retirement_only.retirement_transitions(last_age=70),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth_from_savings},
@@ -88,7 +88,7 @@ dcegm_retirement = ConsumptionSavingsRegime(
 
 
 dcegm_working_life = ConsumptionSavingsRegime(
-    regime_transitions=base.next_regime_from_working,
+    regime_transitions=base.working_life_transitions(last_age=70),
     actions={
         "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
@@ -108,7 +108,7 @@ dcegm_working_life = ConsumptionSavingsRegime(
 
 
 dcegm_retirement_full = ConsumptionSavingsRegime(
-    regime_transitions=base.next_regime_from_retirement,
+    regime_transitions=base.retirement_transitions(last_age=70),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth_from_savings},
@@ -134,7 +134,9 @@ def get_retirement_only_model(
     return Model(
         regimes={
             "retirement": dcegm_retirement.replace(
-                active=lambda age, la=last_age: age < la
+                regime_transitions=retirement_only.retirement_transitions(
+                    last_age=last_age
+                )
             ),
             "dead": dead,
         },
@@ -168,10 +170,12 @@ def get_full_model(
     return Model(
         regimes={
             "working_life": dcegm_working_life.replace(
-                active=lambda age, la=last_age: age < la, solver=dcegm_solver
+                regime_transitions=base.working_life_transitions(last_age=last_age),
+                solver=dcegm_solver,
             ),
             "retirement": dcegm_retirement_full.replace(
-                active=lambda age, la=last_age: age < la, solver=dcegm_solver
+                regime_transitions=base.retirement_transitions(last_age=last_age),
+                solver=dcegm_solver,
             ),
             "dead": dead,
         },

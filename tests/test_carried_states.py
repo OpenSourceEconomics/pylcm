@@ -19,6 +19,9 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     LinSpacedGrid,
     Model,
     Phased,
@@ -27,6 +30,7 @@ from lcm import (
 from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -37,6 +41,11 @@ class RegimeId:
 
 def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 62, RegimeId.working, RegimeId.dead)
+
+
+WORKING_TRANSITIONS = until_exit(
+    64, law=Choose(_next_regime, targets=("working", "dead")), exits=("dead",)
+)
 
 
 def _impute_pension_wealth(aime: float) -> float:
@@ -65,15 +74,10 @@ def _consumption_leq_wealth(*, consumption: float, wealth: float) -> bool:
     return consumption <= wealth
 
 
-def _working_active(age: float) -> bool:
-    return age < 64
-
-
 def _build_pension_regime() -> UserRegime:
     """A non-terminal regime whose pension wealth is a carried state."""
     return UserRegime(
-        regime_transitions=_next_regime,
-        active=_working_active,
+        regime_transitions=WORKING_TRANSITIONS,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
@@ -107,8 +111,7 @@ def _build_pension_model(*, pension_as_pair: bool) -> Model:
         working = _build_pension_regime()
     else:
         working = UserRegime(
-            regime_transitions=_next_regime,
-            active=_working_active,
+            regime_transitions=WORKING_TRANSITIONS,
             states={
                 "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
                 "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
@@ -275,8 +278,13 @@ def _build_handover_model() -> Model:
     hand-over on the crossing.
     """
     working = UserRegime(
-        regime_transitions=_next_regime_from_working,
-        active=lambda age: age < 64,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=64): Choose(
+                    _next_regime_from_working, targets=("working", "retired")
+                )
+            }
+        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
@@ -295,8 +303,13 @@ def _build_handover_model() -> Model:
         functions={"utility": _utility},
     )
     retired = UserRegime(
-        regime_transitions=_next_regime_from_retired,
-        active=lambda age: 64 <= age < 66,
+        regime_transitions=ByAge(
+            {
+                AgeRange(start=64, stop=66): Choose(
+                    _next_regime_from_retired, targets=("retired", "dead")
+                )
+            }
+        ),
         states={
             "pension_wealth": Phased(
                 solve=_retired_imputed_pension_wealth,
@@ -455,8 +468,9 @@ def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
         return next_pension_wealth >= 0.0
 
     working = UserRegime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 64,
+        regime_transitions=until_exit(
+            64, law=Choose(_next_regime, targets=("working", "dead")), exits=("dead",)
+        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),

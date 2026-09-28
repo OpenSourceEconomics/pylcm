@@ -58,6 +58,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -212,11 +213,14 @@ def build_model(
         else MarkovTransition(_half_before_age_two)
     )
     solo = Regime(
-        regime_transitions={
-            "solo": MarkovTransition(_all_before_age_two),
-            "dead": MarkovTransition(_none_before_age_two),
-        },
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3,
+            law={
+                "solo": MarkovTransition(_all_before_age_two),
+                "dead": MarkovTransition(_none_before_age_two),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_x},
@@ -226,12 +230,15 @@ def build_model(
         },
     )
     pair = Regime(
-        regime_transitions={
-            "pair": MarkovTransition(_half_before_age_two),
-            "mate": leaving,
-            "dead": MarkovTransition(_none_before_age_two),
-        },
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law={
+                "pair": MarkovTransition(_half_before_age_two),
+                "mate": leaving,
+                "dead": MarkovTransition(_none_before_age_two),
+            },
+            exits=("mate", "dead"),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_level},
@@ -244,11 +251,14 @@ def build_model(
         },
     )
     mate = Regime(
-        regime_transitions={
-            "mate": MarkovTransition(_all_before_age_two),
-            "dead": MarkovTransition(_none_before_age_two),
-        },
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3,
+            law={
+                "mate": MarkovTransition(_all_before_age_two),
+                "dead": MarkovTransition(_none_before_age_two),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_level},
@@ -259,7 +269,6 @@ def build_model(
     )
     dead = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )

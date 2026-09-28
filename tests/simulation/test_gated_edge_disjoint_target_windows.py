@@ -1,6 +1,6 @@
 """Simulation reads only the edge references of targets reachable in a period.
 
-A regime may declare two gated edges whose targets are active over disjoint age
+A regime may declare two gated edges whose targets are solved over disjoint age
 windows. In a period where one edge carries all the probability, the other edge's
 gate references and leg fallbacks name regimes the next period never solved, and
 simulation must not demand their landing values.
@@ -11,6 +11,9 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -94,10 +97,9 @@ WEALTH_GRID = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.5, stop=9.0, n_points=5)
 
 
-def _decision_regime(*, regime_transitions: object, active: object) -> Regime:
+def _decision_regime(*, regime_transitions: ByAge) -> Regime:
     return Regime(
-        regime_transitions=regime_transitions,  # ty: ignore[invalid-argument-type]
-        active=active,  # ty: ignore[invalid-argument-type]
+        regime_transitions=regime_transitions,
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
@@ -109,22 +111,30 @@ def _decision_regime(*, regime_transitions: object, active: object) -> Regime:
 def _build_model(*, enable_jit: bool) -> Model:
     wealth_grid = WEALTH_GRID
     source = _decision_regime(
-        regime_transitions={
-            "near": _edge(probability=p_near, fallback_regime="source"),
-            "far": _edge(probability=p_far, fallback_regime="far_fallback"),
-        },
-        active=lambda age: age < 2,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "near": _edge(probability=p_near, fallback_regime="source"),
+                    "far": _edge(probability=p_far, fallback_regime="far_fallback"),
+                },
+                AgeRange(start=1, stop=2): {
+                    "far": _edge(probability=p_far, fallback_regime="far_fallback"),
+                },
+            }
+        ),
     )
-    near = _decision_regime(regime_transitions=near_next, active=lambda age: age == 1)
+    near = _decision_regime(
+        regime_transitions=ByAge(
+            {AgeRange(start=1, stop=2): Choose(near_next, targets=("far",))}
+        )
+    )
     far = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 2,
         states={"wealth": wealth_grid},
         functions={"utility": utility_state},
     )
     far_fallback = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 2,
         states={"wealth": wealth_grid},
         functions={"utility": utility_state},
     )

@@ -30,6 +30,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _FIRST_AGE = 20
@@ -90,14 +91,17 @@ def _prob_dead(*, age: int, final_age_alive: float) -> FloatND:
 def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
     final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
     alive = ConsumptionSavingsRegime(
-        active=lambda age, n=final_age_alive: age <= n,
         states={"liquid": _LIQUID_GRID, "income": _INCOME},
         state_transitions={"liquid": {"alive": _next_liquid, "dead": _next_liquid}},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions={
-            "alive": MarkovTransition(_prob_alive),
-            "dead": MarkovTransition(_prob_dead),
-        },
+        regime_transitions=until_exit(
+            final_age_alive + 5,
+            law={
+                "alive": MarkovTransition(_prob_alive),
+                "dead": MarkovTransition(_prob_dead),
+            },
+            exits=("dead",),
+        ),
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -118,7 +122,6 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
     )
     dead = Regime(
         regime_transitions=None,
-        active=lambda age, n=_FIRST_AGE: age > n,
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _bequest},
     )

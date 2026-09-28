@@ -14,10 +14,11 @@ schedules.
 import jax
 import jax.numpy as jnp
 
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
 from lcm.params import MappingLeaf, as_leaf
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -86,13 +87,15 @@ def test_validation_vmaps_over_action_combos():
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=_next_regime,
-        active=lambda age, n=n_periods: age < n - 1,
+        regime_transitions=until_exit(
+            n_periods - 1,
+            law=Choose(_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age, n=n_periods: age >= n - 1,
     )
 
     model = Model(

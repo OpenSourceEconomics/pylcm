@@ -21,6 +21,9 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -146,7 +149,13 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     last_age = ages.exact_values[-1]
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     retirement = regime_type(
-        regime_transitions=next_regime_from_retirement,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=last_age): Choose(
+                    next_regime_from_retirement, targets=("dead", "retirement")
+                )
+            }
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -184,7 +193,6 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
             if is_dcegm
             else {}
         ),
-        active=lambda age, la=last_age: age < la,
     )
     return Model(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},

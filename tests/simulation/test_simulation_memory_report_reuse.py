@@ -18,13 +18,20 @@ import pytest
 
 from _lcm.execution import workspace_planning
 from _lcm.simulation import chunk_admission, host_operations, runtime
-from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model, NormalIIDProcess, Regime
+from lcm import (
+    AgeGrid,
+    Choose,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    NormalIIDProcess,
+    Regime,
+)
 from lcm.exceptions import ExecutionPlanningError
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 from tests.simulation.test_normal_process_grid_admission import _inputs
 from tests.simulation.test_process_grid_entry_admission import (
-    _initial_age,
     _next_regime,
     _terminal_utility,
     _utility,
@@ -221,8 +228,7 @@ def _axis_width_case(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_next_regime,
-                active=_initial_age,
+                regime_transitions=Choose(_next_regime, targets=("done",)),
                 states={"income": NormalIIDProcess(n_points=5, gauss_hermite=False)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _utility},

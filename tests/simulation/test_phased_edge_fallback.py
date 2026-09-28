@@ -31,6 +31,7 @@ from lcm import (
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 
@@ -85,47 +86,47 @@ def _settled_wealth(wealth: ContinuousState) -> ContinuousState:
 
 def _make_model() -> Model:
     worker = Regime(
-        regime_transitions={
-            "retired": ValueDependentTransition(
-                probability=MarkovTransition(_certain),
-                gate=_well_off,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=Phased(
-                            solve=ProjectedRegimeValue(
-                                regime="hardship",
-                                projection={"wealth": _whole_wealth},
-                            ),
-                            simulate=ProjectedRegimeValue(
-                                regime="shelter",
-                                stakeholder="guest",
-                                projection={"wealth": _settled_wealth},
-                            ),
+        regime_transitions=until_exit(
+            1,
+            law={
+                "retired": ValueDependentTransition(
+                    probability=MarkovTransition(_certain),
+                    gate=_well_off,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=Phased(
+                                solve=ProjectedRegimeValue(
+                                    regime="hardship",
+                                    projection={"wealth": _whole_wealth},
+                                ),
+                                simulate=ProjectedRegimeValue(
+                                    regime="shelter",
+                                    stakeholder="guest",
+                                    projection={"wealth": _settled_wealth},
+                                ),
+                            )
                         )
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                    },
+                )
+            },
+            exits=("retired",),
+        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _zero},
     )
     retired = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={"utility": _generous},
     )
     hardship = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={"utility": _meagre},
     )
     shelter = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(utilities={"guest": _lavish, "host": _zero})

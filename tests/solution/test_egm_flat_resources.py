@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.fues import refine_envelope
-from lcm import AgeGrid, IrregSpacedGrid, LinSpacedGrid, Model
+from lcm import AgeGrid, Choose, IrregSpacedGrid, LinSpacedGrid, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
@@ -34,6 +34,7 @@ from tests.test_models.deterministic.retirement_only import (
     RetirementOnlyRegimeId,
     next_regime_from_retirement,
 )
+from tests.test_models.schedules import until_exit
 
 # Number of model periods; the last one is spent in the terminal `dead` regime.
 N_PERIODS = 4
@@ -104,13 +105,13 @@ def _get_means_tested_model(variant: str) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(*, age: int, la: float = last_age) -> bool:
-        return age < la
-
     if variant == "brute":
         regime = UserRegime(
-            regime_transitions=next_regime_from_retirement,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+                exits=("dead",),
+            ),
             actions={"consumption": CONSUMPTION_GRID},
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_brute},
@@ -119,8 +120,11 @@ def _get_means_tested_model(variant: str) -> Model:
         )
     else:
         regime = ConsumptionSavingsRegime(
-            regime_transitions=next_regime_from_retirement,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+                exits=("dead",),
+            ),
             actions={"consumption": CONSUMPTION_GRID},
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_from_savings},
@@ -160,8 +164,11 @@ def _get_corner_model() -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
     regime = ConsumptionSavingsRegime(
-        regime_transitions=next_regime_from_retirement,
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=until_exit(
+            last_age,
+            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CORNER_CONSUMPTION_GRID},
         states={"wealth": CORNER_WEALTH_GRID},
         state_transitions={"wealth": next_wealth_from_savings},

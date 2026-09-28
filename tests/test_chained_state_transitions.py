@@ -11,6 +11,7 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -19,6 +20,7 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -53,7 +55,9 @@ def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
 
 
 _active = UserRegime(
-    regime_transitions=_next_regime,
+    regime_transitions=until_exit(
+        2, law=Choose(_next_regime, targets=("active", "dead")), exits=("dead",)
+    ),
     actions={
         "labor_supply": DiscreteGrid(category_class=_LaborSupply),
         "consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3),
@@ -67,7 +71,6 @@ _active = UserRegime(
         "wealth": _next_wealth,
     },
     functions={"utility": _utility},
-    active=lambda age: age < 2,
 )
 
 
@@ -200,8 +203,9 @@ def _f2_next_regime(period: Period) -> ScalarInt:
 
 def _f2_build_model() -> Model:
     live = UserRegime(
-        regime_transitions=_f2_next_regime,
-        active=lambda age: age < 27,
+        regime_transitions=until_exit(
+            27, law=Choose(_f2_next_regime, targets=("live", "last")), exits=("last",)
+        ),
         states={
             "good": DiscreteGrid(category_class=_Good),
             "capital": DiscreteGrid(category_class=_Capital),
@@ -215,7 +219,6 @@ def _f2_build_model() -> Model:
     )
     last = UserRegime(
         regime_transitions=None,
-        active=lambda age: age >= 27,
         functions={"utility": lambda: jnp.array(0.0)},
     )
     return Model(

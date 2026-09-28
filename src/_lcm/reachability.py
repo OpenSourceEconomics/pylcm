@@ -8,11 +8,10 @@ changes after construction, and no runtime probability value narrows or widens i
 Every retained edge in `targets_by_period` / `edge_status_by_period` is
 `EdgeStatus.CONDITIONAL` — there is no `TRUE` status, because no declaration form
 proves unconditional positive probability independently of state, action, and free
-runtime parameters. A coarse (bare callable / bare `MarkovTransition`) regime
-transition is therefore conservative: it retains an edge to every regime active in
-the next period, and every such edge is checked for a valid state handoff (a carried
-state, a deterministic/stochastic law, or an explicit target-local/entry law) at
-model build. A per-target dict narrows support to its declared key set instead.
+runtime parameters. Each regime transition declares its support per period,
+and every declared edge is checked for a valid state handoff (a carried state, a
+deterministic/stochastic law, or an explicit target-local/entry law) at model
+build.
 
 The solve and simulate phases build independent graphs (`ModelReachability.solution`
 / `.simulation`) from the same construction-time semantics, and may retain different
@@ -166,13 +165,11 @@ def candidate_targets_from_transition(
 
     * `None`: terminal, no targets.
     * per-target mapping: its keys are the declared candidate universe.
-    * coarse callable / Markov transition: all regimes are candidates.
+    * lowered callable / Markov transition: all regimes are candidates.
 
-    The coarse default is intentionally conservative. After the temporal activity
-    intersection, every retained coarse edge is validated. A narrower coarse
-    transition must expose static support metadata in a future API or use the
-    existing per-target form; pylcm does not infer structural zeros by executing a
-    transition at selected states or parameter values.
+    This reads an engine law, whose period-specific support lives in the model
+    graph; pylcm does not infer structural zeros by executing a transition at
+    selected states or parameter values.
     """
     if transition is None:
         return ()
@@ -189,42 +186,56 @@ def build_phase_reachability(
     *,
     n_periods: int,
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
-    candidate_targets_by_source: Mapping[RegimeName, Collection[RegimeName]],
+    support_by_period: Mapping[RegimeName, Mapping[int, Collection[RegimeName]]],
     terminal_regimes: Collection[RegimeName] = (),
-    support_by_period: Mapping[RegimeName, Mapping[int, Collection[RegimeName]]]
-    | None = None,
 ) -> PhaseReachability:
     """Build one static graph; every retained edge is `CONDITIONAL`.
 
-    With `support_by_period`, a candidate is retained at a period only where
-    the source declares it at that period.
+    A source's retained targets at a period are exactly its declared support
+    there. Every declared target must be covered at the next period; the graph
+    never drops a declared target.
     """
     if n_periods < 1:
         raise ValueError("n_periods must be positive")
 
     regimes = frozenset(active_periods_by_regime)
-    unknown_sources = frozenset(candidate_targets_by_source) - regimes
+    active = {
+        regime: frozenset(periods)
+        for regime, periods in active_periods_by_regime.items()
+    }
+    unknown_sources = frozenset(support_by_period) - regimes
     unknown_targets = {
         target
-        for targets in candidate_targets_by_source.values()
+        for by_period in support_by_period.values()
+        for targets in by_period.values()
         for target in targets
         if target not in regimes
     }
     if unknown_sources or unknown_targets:
         raise ValueError(
-            "Candidate support contains unknown regimes: "
+            "Declared support contains unknown regimes: "
             f"sources={sorted(unknown_sources)}, targets={sorted(unknown_targets)}"
         )
+    uncovered = sorted(
+        (source, period, target)
+        for source, by_period in support_by_period.items()
+        for period, targets in by_period.items()
+        for target in targets
+        if period + 1 not in active[target]
+    )
+    if uncovered:
+        raise ValueError(
+            "Declared targets must be covered at the next period; "
+            f"(source, period, target) = {uncovered}"
+        )
 
-    active = {
-        regime: frozenset(periods)
-        for regime, periods in active_periods_by_regime.items()
-    }
     terminal = frozenset(terminal_regimes)
     candidates = MappingProxyType(
         {
-            source: tuple(sorted(set(targets)))
-            for source, targets in candidate_targets_by_source.items()
+            source: tuple(
+                sorted({target for targets in by_period.values() for target in targets})
+            )
+            for source, by_period in support_by_period.items()
         }
     )
     active_by_period = tuple(
@@ -238,21 +249,16 @@ def build_phase_reachability(
         period_targets: dict[RegimeName, tuple[RegimeName, ...]] = {}
         period_status: dict[tuple[RegimeName, RegimeName], EdgeStatus] = {}
         for source in sorted(regimes):
+            declared = (
+                ()
+                if source in terminal or period not in active[source]
+                else tuple(support_by_period.get(source, {}).get(period, ()))
+            )
             retained: list[RegimeName] = []
             for target in candidates.get(source, ()):
-                if (
-                    source in terminal
-                    or period not in active[source]
-                    or period + 1 not in active[target]
-                    or (
-                        support_by_period is not None
-                        and target
-                        not in support_by_period.get(source, {}).get(period, ())
-                    )
-                ):
-                    status = EdgeStatus.FALSE
-                else:
-                    status = EdgeStatus.CONDITIONAL
+                status = (
+                    EdgeStatus.CONDITIONAL if target in declared else EdgeStatus.FALSE
+                )
                 period_status[(source, target)] = status
                 if status != EdgeStatus.FALSE:
                     retained.append(target)
@@ -274,77 +280,27 @@ def build_model_reachability(
     *,
     n_periods: int,
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
-    transitions_by_phase: Mapping[PhaseName, Mapping[RegimeName, object]],
-    terminal_regimes: Collection[RegimeName] = (),
     support_by_phase: Mapping[
         str, Mapping[RegimeName, Mapping[int, Collection[RegimeName]]]
-    ]
-    | None = None,
+    ],
+    terminal_regimes: Collection[RegimeName] = (),
 ) -> ModelReachability:
-    """Build solve and simulate graphs from the same construction-time semantics.
+    """Build solve and simulate graphs from the declared per-period support.
 
     `active_periods_by_regime` must be the single canonical coverage mapping
-    computed once at model preparation — this function evaluates no predicate.
-
-    With `support_by_phase`, each source's retained targets at a period are
-    exactly its declared support there; the caller has already checked that
-    every declared target is covered at the next period, so nothing is dropped.
-    Without it, a transition's candidates are its per-target keys or every
-    regime, retained where the target is active at the next period.
+    computed once at model preparation from the declarations.
     """
     return ModelReachability(
-        solution=_build_phase_from_transitions(
+        solution=build_phase_reachability(
             n_periods=n_periods,
             active_periods_by_regime=active_periods_by_regime,
-            transitions=transitions_by_phase["solution"],
+            support_by_period=support_by_phase["solution"],
             terminal_regimes=terminal_regimes,
-            support=None if support_by_phase is None else support_by_phase["solution"],
         ),
-        simulation=_build_phase_from_transitions(
+        simulation=build_phase_reachability(
             n_periods=n_periods,
             active_periods_by_regime=active_periods_by_regime,
-            transitions=transitions_by_phase["simulation"],
+            support_by_period=support_by_phase["simulation"],
             terminal_regimes=terminal_regimes,
-            support=(
-                None if support_by_phase is None else support_by_phase["simulation"]
-            ),
         ),
-    )
-
-
-def _build_phase_from_transitions(
-    *,
-    n_periods: int,
-    active_periods_by_regime: Mapping[RegimeName, Collection[int]],
-    transitions: Mapping[RegimeName, object],
-    terminal_regimes: Collection[RegimeName],
-    support: Mapping[RegimeName, Mapping[int, Collection[RegimeName]]] | None,
-) -> PhaseReachability:
-    """Build one phase's graph from that phase's declared regime transitions."""
-    all_regime_names = frozenset(active_periods_by_regime)
-    if support is not None:
-        return build_phase_reachability(
-            n_periods=n_periods,
-            active_periods_by_regime=active_periods_by_regime,
-            candidate_targets_by_source={
-                source: sorted(
-                    {target for targets in by_period.values() for target in targets}
-                )
-                for source, by_period in support.items()
-            },
-            terminal_regimes=terminal_regimes,
-            support_by_period=support,
-        )
-    candidates = {
-        source: candidate_targets_from_transition(
-            transition=transitions.get(source),
-            all_regime_names=all_regime_names,
-        )
-        for source in all_regime_names
-    }
-    return build_phase_reachability(
-        n_periods=n_periods,
-        active_periods_by_regime=active_periods_by_regime,
-        candidate_targets_by_source=candidates,
-        terminal_regimes=terminal_regimes,
     )

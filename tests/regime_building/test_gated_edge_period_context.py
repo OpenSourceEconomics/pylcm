@@ -27,6 +27,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _BETA = 0.5
 _AGES = AgeGrid(start=40, stop=50, step="5Y")
@@ -146,43 +147,46 @@ def _make_model(
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
-                        gate=gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
+                regime_transitions=until_exit(
+                    45,
+                    law={
+                        "target": ValueDependentTransition(
+                            probability=MarkovTransition(_prob_one),
+                            gate=gate,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="fallback",
+                                        projection={
+                                            "x": (
+                                                _identity_x
+                                                if action_sensitive
+                                                else _age_projection
+                                                if split_context
+                                                else _context_projection
+                                            )
+                                        },
+                                    )
+                                )
+                            },
+                            gate_references={}
+                            if action_sensitive
+                            else {
+                                "V_reference": ProjectedRegimeValue(
+                                    regime="reference",
                                     projection={
                                         "x": (
-                                            _identity_x
-                                            if action_sensitive
-                                            else _age_projection
+                                            _age_projection
                                             if split_context
                                             else _context_projection
                                         )
                                     },
                                 )
-                            )
-                        },
-                        gate_references={}
-                        if action_sensitive
-                        else {
-                            "V_reference": ProjectedRegimeValue(
-                                regime="reference",
-                                projection={
-                                    "x": (
-                                        _age_projection
-                                        if split_context
-                                        else _context_projection
-                                    )
-                                },
-                            )
-                        },
-                    )
-                },
-                active=lambda age: age < 45,
+                            },
+                        )
+                    },
+                    exits=("target",),
+                ),
                 states={"x": _X},
                 state_transitions={
                     "x": (
@@ -194,7 +198,6 @@ def _make_model(
             ),
             "target": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= 45,
                 states={"x": _X},
                 functions={
                     "utility": (
@@ -204,13 +207,11 @@ def _make_model(
             ),
             "reference": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= 45,
                 states={"x": _X},
                 functions={"utility": _utility_reference},
             ),
             "fallback": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= 45,
                 states={"x": _X},
                 functions={
                     "utility": (

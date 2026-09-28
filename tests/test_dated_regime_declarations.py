@@ -128,7 +128,7 @@ def test_invalid_selectors_are_rejected_at_resolution(cases) -> None:
     ],
 )
 def test_none_and_nested_schedules_are_rejected_inside_a_schedule(build) -> None:
-    """Terminality is only the top-level `transition=None`; wrappers cannot hold it."""
+    """Only a top-level `regime_transitions=None` is terminal; wrappers cannot be."""
     with pytest.raises(RegimeInitializationError):
         build()
 

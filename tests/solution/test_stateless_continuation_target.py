@@ -17,6 +17,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -26,6 +27,7 @@ from lcm import (
 )
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
 _LEAVE_AT_WEALTH = 3.0
@@ -68,8 +70,11 @@ def _enter_shock() -> FloatND:
 def _solve_with_bequest(bequest: float):
     """Solve a two-regime model whose terminal regime carries no state."""
     alive = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
@@ -148,15 +153,18 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
         return (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
 
     alive = Regime(
-        regime_transitions={
-            "alive": MarkovTransition(
-                lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
-            ),
-            "gone": MarkovTransition(
-                lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
-            ),
-        },
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law={
+                "alive": MarkovTransition(
+                    lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
+                ),
+                "gone": MarkovTransition(
+                    lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
+                ),
+            },
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
@@ -208,8 +216,11 @@ def _solve_with_process_only_target(level: float):
     target's process. Once entered, the process carries its own intrinsic law.
     """
     alive = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={

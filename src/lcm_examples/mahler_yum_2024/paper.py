@@ -41,8 +41,6 @@ survival, preference heterogeneity — is imported unchanged from the
 brute-force module, so the two configurations cannot drift apart silently.
 """
 
-from functools import partial
-
 import jax.numpy as jnp
 
 from lcm import (
@@ -71,6 +69,8 @@ from lcm.typing import (
 )
 from lcm_examples.mahler_yum_2024 import (
     _WEALTH_GRID_POINTS,
+    RETIREMENT_TRANSITIONS,
+    WORKING_TRANSITIONS,
     DiscountType,
     Education,
     Health,
@@ -84,7 +84,6 @@ from lcm_examples.mahler_yum_2024 import (
     benefits,
     college_coefficient,
     consumption_utility,
-    dead_is_active,
     discount_factor,
     effort_cost,
     good_health_coefficient,
@@ -98,19 +97,12 @@ from lcm_examples.mahler_yum_2024 import (
     pension,
     prod_shock_grid,
     productivity_type_multiplier,
-    retirement_is_active,
     retirement_net_income,
-    retirement_to_dead_probability,
-    retirement_to_retirement_probability,
     risk_aversion,
     scaled_productivity_shock,
     taxed_income,
     work_disutility,
-    working_is_active,
     working_net_income,
-    working_to_dead_probability,
-    working_to_retirement_probability,
-    working_to_working_probability,
 )
 
 N_HABIT_GRID = 17
@@ -237,7 +229,6 @@ def build_dead_regime() -> Regime:
     """The paper-mode dead regime (terminal, with the Euler axis declared)."""
     return Regime(
         regime_transitions=None,
-        active=partial(dead_is_active, initial_age=int(ages.values[0])),
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
             "discount_type": DiscreteGrid(category_class=DiscountType),
@@ -295,12 +286,7 @@ def build_working_regime(
 ) -> NestedConsumptionSavingsRegime:
     """The paper-mode working regime with continuous effort and habit."""
     return NestedConsumptionSavingsRegime(
-        regime_transitions={
-            "working": MarkovTransition(working_to_working_probability),
-            "retirement": MarkovTransition(working_to_retirement_probability),
-            "dead": MarkovTransition(working_to_dead_probability),
-        },
-        active=working_is_active,
+        regime_transitions=WORKING_TRANSITIONS,
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
             "health": DiscreteGrid(category_class=Health),
@@ -365,11 +351,7 @@ def build_retirement_regime(
 ) -> NestedConsumptionSavingsRegime:
     """The paper-mode retirement regime without work-only dimensions."""
     return NestedConsumptionSavingsRegime(
-        regime_transitions={
-            "retirement": MarkovTransition(retirement_to_retirement_probability),
-            "dead": MarkovTransition(retirement_to_dead_probability),
-        },
-        active=partial(retirement_is_active, final_age_alive=int(ages.values[-2])),
+        regime_transitions=RETIREMENT_TRANSITIONS,
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
             "health": DiscreteGrid(category_class=Health),

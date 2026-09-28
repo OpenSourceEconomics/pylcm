@@ -24,10 +24,13 @@ is small, has no free structure, and scales along its grid knobs —
 it usable as a benchmark workload as well as a worked example.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ByAge,
     CollectiveUtility,
     LinSpacedGrid,
     Model,
@@ -97,30 +100,33 @@ def get_model(
     probability = _transition_probabilities(last_age=last_age)
 
     couple = Regime(
-        regime_transitions={
-            "couple": ValueDependentTransition(
-                probability=MarkovTransition(probability["stays_married"]),
-                gate=_no_dissolution,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f",
-                            projection={"wealth": _half_of_couple_wealth},
+        regime_transitions=_until_last_age(
+            {
+                "couple": ValueDependentTransition(
+                    probability=MarkovTransition(probability["stays_married"]),
+                    gate=_no_dissolution,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f",
+                                projection={"wealth": _half_of_couple_wealth},
+                            ),
                         ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m",
-                            projection={"wealth": _half_of_couple_wealth},
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m",
+                                projection={"wealth": _half_of_couple_wealth},
+                            ),
                         ),
-                    ),
-                },
-            ),
-            "couple_terminal": MarkovTransition(probability["reaches_last_age"]),
-        },
-        active=lambda age: age < last_age,
+                    },
+                ),
+                "couple_terminal": MarkovTransition(probability["reaches_last_age"]),
+            },
+            terminal="couple_terminal",
+            last_age=last_age,
+        ),
         states={"wealth": couple_wealth},
         state_transitions={"wealth": _next_couple_wealth},
         actions={"consumption": consumption},
@@ -153,7 +159,6 @@ def get_model(
     )
     couple_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= last_age,
         states={"wealth": couple_wealth},
         actions={"consumption": consumption},
         functions={
@@ -167,34 +172,37 @@ def get_model(
         constraints={"affordable": _consumption_within_couple_wealth},
     )
     single_f = Regime(
-        regime_transitions={
-            "couple": ValueDependentTransition(
-                probability=MarkovTransition(probability["meets_a_partner"]),
-                gate=_mutual_consent,
-                routes={
-                    "her": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
+        regime_transitions=_until_last_age(
+            {
+                "couple": ValueDependentTransition(
+                    probability=MarkovTransition(probability["meets_a_partner"]),
+                    gate=_mutual_consent,
+                    routes={
+                        "her": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f",
+                                projection={"wealth": _half_of_couple_wealth},
+                            ),
+                        )
+                    },
+                    gate_references={
+                        "V_alone_f": ProjectedRegimeValue(
                             regime="single_f",
                             projection={"wealth": _half_of_couple_wealth},
                         ),
-                    )
-                },
-                gate_references={
-                    "V_alone_f": ProjectedRegimeValue(
-                        regime="single_f",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                    "V_alone_m": ProjectedRegimeValue(
-                        regime="single_m",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                },
-            ),
-            "single_f": MarkovTransition(probability["meets_nobody"]),
-            "single_f_terminal": MarkovTransition(probability["reaches_last_age"]),
-        },
-        active=lambda age: age < last_age,
+                        "V_alone_m": ProjectedRegimeValue(
+                            regime="single_m",
+                            projection={"wealth": _half_of_couple_wealth},
+                        ),
+                    },
+                ),
+                "single_f": MarkovTransition(probability["meets_nobody"]),
+                "single_f_terminal": MarkovTransition(probability["reaches_last_age"]),
+            },
+            terminal="single_f_terminal",
+            last_age=last_age,
+        ),
         states={"wealth": wealth},
         # Marrying pools two people's wealth, so the coordinate the couple's
         # grid is entered at is not the one her own regime would carry
@@ -212,43 +220,44 @@ def get_model(
         functions={"utility": _single_utility},
         constraints={"affordable": _consumption_within_single_wealth},
     )
-    single_f_terminal = _single_terminal(
-        wealth=wealth, consumption=consumption, last_age=last_age
-    )
+    single_f_terminal = _single_terminal(wealth=wealth, consumption=consumption)
     # Spelled out rather than replaced off `single_f`: his transition names his
     # own regimes and enters the household in his own role. Replacing her
     # transition would carry her already-lowered gated edge forward and meet
     # his declaration of the same target, which is refused because the two
     # disagree on the routes.
     single_m = Regime(
-        regime_transitions={
-            "couple": ValueDependentTransition(
-                probability=MarkovTransition(probability["meets_a_partner"]),
-                gate=_mutual_consent,
-                routes={
-                    "his": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
+        regime_transitions=_until_last_age(
+            {
+                "couple": ValueDependentTransition(
+                    probability=MarkovTransition(probability["meets_a_partner"]),
+                    gate=_mutual_consent,
+                    routes={
+                        "his": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m",
+                                projection={"wealth": _half_of_couple_wealth},
+                            ),
+                        )
+                    },
+                    gate_references={
+                        "V_alone_f": ProjectedRegimeValue(
+                            regime="single_f",
+                            projection={"wealth": _half_of_couple_wealth},
+                        ),
+                        "V_alone_m": ProjectedRegimeValue(
                             regime="single_m",
                             projection={"wealth": _half_of_couple_wealth},
                         ),
-                    )
-                },
-                gate_references={
-                    "V_alone_f": ProjectedRegimeValue(
-                        regime="single_f",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                    "V_alone_m": ProjectedRegimeValue(
-                        regime="single_m",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                },
-            ),
-            "single_m": MarkovTransition(probability["meets_nobody"]),
-            "single_m_terminal": MarkovTransition(probability["reaches_last_age"]),
-        },
-        active=lambda age: age < last_age,
+                    },
+                ),
+                "single_m": MarkovTransition(probability["meets_nobody"]),
+                "single_m_terminal": MarkovTransition(probability["reaches_last_age"]),
+            },
+            terminal="single_m_terminal",
+            last_age=last_age,
+        ),
         states={"wealth": wealth},
         state_transitions={
             "wealth": {
@@ -269,7 +278,7 @@ def get_model(
             "single_m": single_m,
             "single_f_terminal": single_f_terminal,
             "single_m_terminal": _single_terminal(
-                wealth=wealth, consumption=consumption, last_age=last_age
+                wealth=wealth, consumption=consumption
             ),
         },
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
@@ -441,13 +450,18 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _single_terminal(
-    *, wealth: LinSpacedGrid, consumption: LinSpacedGrid, last_age: int
-) -> Regime:
+# keyword-only-exempt: primary-argument=law
+def _until_last_age(
+    law: Mapping[str, object], *, terminal: str, last_age: int
+) -> ByAge:
+    """Apply `law` until the age before `last_age`, then only its `terminal` cell."""
+    return ByAge.until(last_age, law=law, then={terminal: law[terminal]})
+
+
+def _single_terminal(*, wealth: LinSpacedGrid, consumption: LinSpacedGrid) -> Regime:
     """Build one single's terminal regime, identical for her and for him."""
     return Regime(
         regime_transitions=None,
-        active=lambda age: age >= last_age,
         states={"wealth": wealth},
         actions={"consumption": consumption},
         functions={"utility": _terminal_utility},
@@ -458,7 +472,7 @@ def _single_terminal(
 def _transition_probabilities(*, last_age: int) -> dict:
     """Build the four age-dependent transition probabilities of one model.
 
-    Every non-terminal regime is active up to `last_age` and hands its rows to
+    Every non-terminal regime is solved up to `last_age` and hands its rows to
     its own terminal regime there, so the probabilities need the age at which
     that happens. Closing over it keeps the split a property of the model
     rather than a parameter a caller could set inconsistently with `ages`.

@@ -10,7 +10,16 @@ empirical calibration.
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    ByAge,
+    Choose,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -97,9 +106,18 @@ def borrowing_constraint(
 
 _DEFAULT_RETIREMENT_AGE = 24
 
+
+def working_life_transitions(*, retirement_age: int) -> ByAge:
+    """Work until the age before `retirement_age`, then retire."""
+    return ByAge.until(
+        retirement_age,
+        law=Choose(next_regime, targets=("working_life", "retirement")),
+        then=Choose(next_regime, targets=("retirement",)),
+    )
+
+
 working_life = Regime(
-    regime_transitions=next_regime,
-    active=lambda age: age < _DEFAULT_RETIREMENT_AGE,
+    regime_transitions=working_life_transitions(retirement_age=_DEFAULT_RETIREMENT_AGE),
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100),
@@ -132,7 +150,6 @@ working_life = Regime(
 
 retirement = Regime(
     regime_transitions=None,
-    active=lambda age: age >= _DEFAULT_RETIREMENT_AGE,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100),
@@ -152,16 +169,13 @@ def get_model(retirement_age: int = 24) -> Model:
 
     """
     wl = working_life.replace(
-        active=lambda age, _ra=retirement_age: age < _ra,
-    )
-    ret = retirement.replace(
-        active=lambda age, _ra=retirement_age: age >= _ra,
+        regime_transitions=working_life_transitions(retirement_age=retirement_age),
     )
 
     return Model(
         regimes={
             "working_life": wl,
-            "retirement": ret,
+            "retirement": retirement,
         },
         ages=AgeGrid(start=18, stop=retirement_age, step="Y"),
         regime_id_class=RegimeId,

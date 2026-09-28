@@ -26,6 +26,7 @@ from lcm import (
 from lcm.transition import MarkovTransition
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 # Utility strictly prefers 1.0, so every solved row lands at the same
@@ -78,21 +79,24 @@ def _same_target_fallback_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": ValueDependentTransition(
-                        probability=MarkovTransition(_always_true),
-                        gate=_always_closed,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="target", projection={"x": _half_x}
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "target": ValueDependentTransition(
+                            probability=MarkovTransition(_always_true),
+                            gate=_always_closed,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="target", projection={"x": _half_x}
+                                    )
                                 )
-                            )
-                        },
-                        off_grid="pointwise",
-                    )
-                },
-                active=lambda age: age < 1,
+                            },
+                            off_grid="pointwise",
+                        )
+                    },
+                    exits=("target",),
+                ),
                 states={"x": _X},
                 state_transitions={"x": _next_x},
                 actions={"saving": _SAVING},
@@ -100,7 +104,6 @@ def _same_target_fallback_model() -> Model:
             ),
             "target": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= 1,
                 states={"x": _X},
                 functions={"utility": _constant_utility},
             ),

@@ -75,6 +75,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -95,6 +96,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.envelope_configs import envelope_config
+from tests.test_models.schedules import until_exit
 
 # Lifecycle: T = 20 periods. The last period is the terminal bequest regime, so
 # there are 19 decision periods. Ages are abstract unit steps from 0.
@@ -528,15 +530,17 @@ def build_model(
 
     dead = UserRegime(
         regime_transitions=None,
-        active=lambda age, fa=final_age_alive: age >= fa,
         states={"assets": assets_grid, "housing": DiscreteGrid(category_class=Housing)},
         functions={"utility": bequest},
     )
 
     if variant == "brute":
         working = UserRegime(
-            regime_transitions=next_regime,
-            active=lambda age, fa=final_age_alive: age < fa,
+            regime_transitions=until_exit(
+                final_age_alive,
+                law=Choose(next_regime, targets=("working", "dead")),
+                exits=("dead",),
+            ),
             states={
                 "assets": assets_grid,
                 "housing": DiscreteGrid(category_class=Housing),
@@ -566,8 +570,11 @@ def build_model(
         )
 
     working = ConsumptionSavingsRegime(
-        regime_transitions=next_regime,
-        active=lambda age, fa=final_age_alive: age < fa,
+        regime_transitions=until_exit(
+            final_age_alive,
+            law=Choose(next_regime, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={
             "assets": assets_grid,
             "housing": DiscreteGrid(category_class=Housing),

@@ -76,7 +76,7 @@ def _bonus_model(constraints: dict | None = None) -> Model:
     # it is the only one that qualifies for the off-grid read.
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
     alive = dcegm_retirement.replace(
-        active=lambda age: age < 50,
+        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         solver=solver,
         actions={
             "consumption": dcegm_retirement.actions["consumption"],

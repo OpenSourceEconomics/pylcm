@@ -45,6 +45,7 @@ from lcm.typing import (
 )
 from tests.collective_fixtures import DISCOUNT_FACTOR, Work
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 
 def test_gate_scalar_parameter_is_a_model_parameter():
@@ -199,32 +200,35 @@ def _build_model(
 
     """
     single_f = Regime(
-        regime_transitions={
-            "married_terminal": ValueDependentTransition(
-                probability=MarkovTransition(_marry_for_sure),
-                gate=gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
+        regime_transitions=until_exit(
+            1,
+            law={
+                "married_terminal": ValueDependentTransition(
+                    probability=MarkovTransition(_marry_for_sure),
+                    gate=gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f_terminal",
+                                projection={"wage": wife_fallback_projection},
+                            ),
+                        )
+                    },
+                    gate_references={
+                        "V_single_f_ref": ProjectedRegimeValue(
                             regime="single_f_terminal",
-                            projection={"wage": wife_fallback_projection},
+                            projection={"wage": _wage_itself},
                         ),
-                    )
-                },
-                gate_references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f_terminal",
-                        projection={"wage": _wage_itself},
-                    ),
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m_terminal",
-                        projection={"wage": husband_reference_projection},
-                    ),
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                        "V_single_m_ref": ProjectedRegimeValue(
+                            regime="single_m_terminal",
+                            projection={"wage": husband_reference_projection},
+                        ),
+                    },
+                )
+            },
+            exits=("married_terminal",),
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -232,7 +236,6 @@ def _build_model(
     )
     married_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -243,13 +246,11 @@ def _build_model(
     )
     single_f_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _utility_single_f_terminal},
     )
     single_m_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _utility_single_m_terminal},
     )

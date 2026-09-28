@@ -22,7 +22,7 @@ from _lcm.typing import (
     InitialConditions,
 )
 from _lcm.utils.logging import LogLevel, get_logger
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, AgeRange, ByAge, Choose, LinSpacedGrid, Model, categorical
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
@@ -314,8 +314,9 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
     actions = {"consumption": LinSpacedGrid(start=2, stop=3, n_points=2)}
     regimes = {
         name: UserRegime(
-            regime_transitions=next_regime,
-            active=lambda age: age == 0,
+            regime_transitions=ByAge(
+                {AgeRange(start=0, stop=1): Choose(next_regime, targets=("dead",))}
+            ),
             states=states,
             actions=actions,
             state_transitions={"wealth": lambda wealth: wealth},
@@ -329,7 +330,6 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
     }
     regimes["dead"] = UserRegime(
         regime_transitions=None,
-        active=lambda age: age == 1,
         states=states,
         functions={"utility": terminal_utility},
     )

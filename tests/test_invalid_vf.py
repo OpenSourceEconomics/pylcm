@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.grids import LinSpacedGrid
-from lcm import Model, categorical
+from lcm import Choose, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
@@ -14,6 +14,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from tests.test_models.schedules import until_exit
 
 
 @pytest.fixture
@@ -77,14 +78,16 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
         constraints={
             "borrowing_constraint": borrowing_constraint,
         },
-        regime_transitions=next_regime,
-        active=lambda age, n=n_periods: age < n - 1,
+        regime_transitions=until_exit(
+            n_periods - 1,
+            law=Choose(next_regime, targets=("non_terminal", "terminal")),
+            exits=("terminal",),
+        ),
     )
 
     terminal = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age, n=n_periods: age >= n - 1,
     )
 
     ages = AgeGrid(start=0, stop=n_periods, step="Y")

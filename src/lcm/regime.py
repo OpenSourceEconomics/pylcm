@@ -22,9 +22,9 @@ from _lcm.constraints.processed import ConstraintLike
 from _lcm.gated_edge import GatedEdge
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.regime_building.phases import normalize_regime_phases
-from _lcm.regime_building.schedules import declaration_view, is_dated_declaration
+from _lcm.regime_building.schedules import declaration_view, uses_declaration_vocabulary
 from _lcm.regime_building.transitions import collect_state_transitions
-from _lcm.typing import ActionName, ActiveFunction, FunctionName, RegimeName, StateName
+from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import (
     _validate_collective_regime,
     _validate_fold_declarations,
@@ -94,54 +94,36 @@ class Regime:
     )
     """Regime transition, or `None` for terminal regimes.
 
-    Dated forms, which also declare where the regime is solved:
+    Nonterminal forms, which also declare where the regime is solved and where
+    it may go:
 
     - regime name ⇒ deterministic move to that regime
     - `Choose(func, targets=...)` ⇒ deterministic, `func` returns the global
       regime code of one of `targets`
     - `MarkovTransition(func, targets=...)` ⇒ stochastic, `func` returns a
       probability vector over all regimes, nonzero only on `targets`
-    - `ByAge({...})` ⇒ one of the above, or a per-target dict, per selected age
-
-    A plain nonterminal law covers every non-final age; a `ByAge` covers
-    exactly the ages its cases select. Once any regime of a model uses a dated
-    form, no regime may declare `active`, a bare callable or a vector
-    `MarkovTransition` without `targets`.
-
-    Legacy forms:
-
-    - bare callable ⇒ deterministic, returns the target regime id
-    - `MarkovTransition` ⇒ stochastic, returns a probability vector over all
-      regimes
     - per-target dict ⇒ stochastic, maps target regime names to either
       `MarkovTransition`-wrapped functions returning that target's probability,
       or `ValueDependentTransition` declarations that additionally gate and
-      route the selected target. The key set declares the regime's reachable
-      targets; omitted regimes are structurally unreachable. An ordinary cell
-      requires an explicit `MarkovTransition`. A bare probability callable is
-      accepted only inside `ValueDependentTransition` and wrapped in the
-      derived `decomposed_transition` view.
+      route the selected target. The key set is the regime's support. A bare
+      probability callable is accepted only inside `ValueDependentTransition`
+      and wrapped in the derived `decomposed_transition` view.
+    - `ByAge({...})` ⇒ one of the above per selected age
 
-    A bare callable or bare `MarkovTransition` declares conservative support
-    over every regime active in the next period — every temporally
-    compatible candidate must therefore have a valid state handoff (a
-    carried state, a deterministic/stochastic law, or an explicit
-    target-local/entry law). Use a per-target mapping to declare narrower
-    support instead. Runtime-zero transition probabilities do not narrow
-    this topology; only the declared form does.
+    A plain nonterminal law covers every non-final age; a `ByAge` covers
+    exactly the ages its cases select. Every declared target must be solved at
+    the next age, and every target needs a valid state handoff (a carried
+    state, a deterministic/stochastic law, or an explicit target-local/entry
+    law). Runtime-zero transition probabilities do not narrow this topology;
+    only the declaration does. A bare callable or a vector `MarkovTransition`
+    without `targets` is the engine's lowered form of these declarations;
+    `Model` rejects it as a user declaration.
 
     `Phased` gives each phase its own variant (matching form required; for
     per-target dicts, identical key sets). A value-dependent target must be
     value-dependent in both phases or neither. Its two declarations share the
     identical gate and equal routes, references, and off-grid contract; only
     their probabilities may differ.
-    """
-
-    active: ActiveFunction = lambda _age: True
-    """Callable that takes age (float) and returns True if regime is active.
-
-    Only for models without dated transitions; a dated model derives coverage
-    from `regime_transitions`.
     """
 
     # `None` masks a model-level entry of the same name.
@@ -485,17 +467,12 @@ class Regime:
         value = ensure_containers_are_immutable(getattr(self, name))
         object.__setattr__(self, name, value)
 
-    @property
-    def declares_active(self) -> bool:
-        """Whether `active` was set rather than left at its default."""
-        return self.active is not type(self).__dataclass_fields__["active"].default
-
     def __post_init__(self) -> None:
         transition = self.regime_transitions
-        if not is_dated_declaration(transition):
+        if not uses_declaration_vocabulary(transition):
             self._post_init_engine_view()
             return
-        # Validate the dated declaration through its period-independent engine
+        # Validate the declaration through its period-independent engine
         # view, then keep the declaration itself for the model to resolve.
         object.__setattr__(self, "regime_transitions", declaration_view(transition))
         try:

@@ -19,6 +19,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -47,8 +48,9 @@ def _build() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                ),
                 state_transitions={"shock": {"target": _enter_at_several_values}},
                 functions={"utility": _no_utility},
             ),

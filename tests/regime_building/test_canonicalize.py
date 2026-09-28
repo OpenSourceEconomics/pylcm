@@ -245,7 +245,7 @@ def test_coarse_deterministic_regime_transition_canonicalizes_to_shared_cells() 
 
 
 def test_temporal_graph_limits_canonical_transition_bundles() -> None:
-    """Dormant catalog targets do not create canonical transition bundles."""
+    """Only the graph's declared targets create canonical transition bundles."""
     regimes = {
         "work": _regime(state_transitions={"wealth": _next_wealth}),
         "retire": _regime(state_transitions={"wealth": _next_wealth}),
@@ -261,11 +261,7 @@ def test_temporal_graph_limits_canonical_transition_bundles() -> None:
     graph = build_phase_reachability(
         n_periods=2,
         active_periods_by_regime={"work": {0}, "retire": {1}, "dead": {1}},
-        candidate_targets_by_source={
-            "work": {"work", "retire", "dead"},
-            "retire": {"work", "retire", "dead"},
-            "dead": set(),
-        },
+        support_by_period={"work": {0: ("retire", "dead")}},
         terminal_regimes={"dead"},
     )
 

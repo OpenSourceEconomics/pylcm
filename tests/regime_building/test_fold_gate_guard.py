@@ -33,6 +33,8 @@ from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from lcm import (
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     NormalIIDProcess,
@@ -48,7 +50,7 @@ from lcm.exceptions import ModelInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 
 
 @categorical(ordered=True)
@@ -96,7 +98,7 @@ def _solve_kwargs(*, regimes: dict[str, Regime], ages: AgeGrid) -> dict:
         certainty_equivalent=LinearExpectation(),
     )
     return {
-        "user_regimes": finalized,
+        "user_regimes": lower_declarations(finalized, ages=ages),
         "ages": ages,
         "regime_names_to_ids": MappingProxyType(
             {name: jnp.int32(i) for i, name in enumerate(names)}
@@ -114,32 +116,33 @@ _AGES_2P = AgeGrid(start=0, stop=2, step="Y")
 def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (collective, folds `wage_shock`)."""
     source = Regime(
-        regime_transitions={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_no_dissolution_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="source_terminal", projection={}
-                        ),
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_one),
+                        gate=_no_dissolution_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="source_terminal", projection={}
+                                ),
+                            )
+                        },
                     )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     source_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         functions={"utility": _u_zero},
     )
     target = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
@@ -166,14 +169,14 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     """`reader` (collective) --same_period_refs--> `ref_target` (collective, folded)."""
     ref_target = Regime(
         regime_transitions=None,
-        active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
     )
     reader = Regime(
-        regime_transitions={"reader_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): {"reader_terminal": MarkovTransition(_prob_one)}}
+        ),
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
@@ -193,7 +196,6 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     )
     reader_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
@@ -227,38 +229,39 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     plays no part in the ordering this fixture exercises.
     """
     source = Regime(
-        regime_transitions={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=lambda V_ref: V_ref > 0.0,
-                routes={
-                    "only": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="source_terminal", projection={}
-                        ),
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_one),
+                        gate=lambda V_ref: V_ref > 0.0,
+                        routes={
+                            "only": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="source_terminal", projection={}
+                                ),
+                            )
+                        },
+                        gate_references={
+                            "V_ref": ProjectedRegimeValue(
+                                regime="ref_target",
+                                projection={"wage_shock": lambda: 0.0},
+                            )
+                        },
                     )
-                },
-                gate_references={
-                    "V_ref": ProjectedRegimeValue(
-                        regime="ref_target",
-                        projection={"wage_shock": lambda: 0.0},
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     source_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         functions={"utility": _u_zero},
     )
     target = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
@@ -266,7 +269,6 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     )
     ref_target = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},

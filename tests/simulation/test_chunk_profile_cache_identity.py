@@ -33,7 +33,7 @@ from _lcm.simulation.chunk_profile_cache import (
     profile_cache_registry,
 )
 from _lcm.simulation.runtime import SimulationRuntime
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Regime, categorical
 from lcm.execution import ExecutionConfig
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
@@ -60,16 +60,11 @@ def _next_regime() -> ScalarInt:
     return _RegimeId.done
 
 
-def _only_initial_age(age: float) -> bool:
-    return age == 0
-
-
 def _budgeted_model(*, device_memory_bytes: int = 2**32) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_next_regime,
-                active=_only_initial_age,
+                regime_transitions=Choose(_next_regime, targets=("done",)),
                 functions={"utility": _utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),

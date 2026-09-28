@@ -14,6 +14,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -31,6 +32,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
 
@@ -81,8 +83,13 @@ def _couple(
 ) -> Regime:
     """The collective regime of the miniature, with `functions` supplied."""
     return Regime(
-        regime_transitions=lambda: RegimeId.couple_terminal,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(
+                lambda: RegimeId.couple_terminal, targets=("couple", "couple_terminal")
+            ),
+            exits=("couple_terminal",),
+        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -114,7 +121,6 @@ def test_a_none_body_may_still_arrive_from_the_model_level():
     )
     terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(
@@ -140,7 +146,6 @@ def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
     )
     terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(
@@ -203,7 +208,6 @@ def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
     )
     terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(

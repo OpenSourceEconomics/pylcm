@@ -19,7 +19,16 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, RouwenhorstAR1Process
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    RouwenhorstAR1Process,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
@@ -226,8 +235,13 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_support_next_regime,
-                active=lambda age: age == 0,
+                regime_transitions=ByAge(
+                    {
+                        AgeRange(start=0, stop=1): Choose(
+                            _support_next_regime, targets=("done",)
+                        )
+                    }
+                ),
                 states=states,
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 state_transitions={"assets": _support_next_assets},

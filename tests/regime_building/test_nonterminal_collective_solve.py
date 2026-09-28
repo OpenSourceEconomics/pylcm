@@ -41,7 +41,16 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import CollectiveUtility, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeRange,
+    ByAge,
+    Choose,
+    CollectiveUtility,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import PowerMean
 from lcm.koopmans_aggregation import LinearAggregator
@@ -55,7 +64,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 
 
 @categorical(ordered=True)
@@ -99,8 +108,9 @@ _EXPECTED_V_PERIOD_0 = np.array([[46.0, 92.0], [78.0, 156.0]])
 
 def _make_couple_regimes() -> dict[str, Regime]:
     couple = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): Choose(_next_regime, targets=("couple_terminal",))}
+        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -110,7 +120,6 @@ def _make_couple_regimes() -> dict[str, Regime]:
     )
     couple_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -133,11 +142,14 @@ def test_nonterminal_collective_regime_solves_with_continuation():
             ),
             ages=ages,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes=_make_couple_regimes(),
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes=_make_couple_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=ages,
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -241,8 +253,9 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
       (m, wage=40): work analogously -> V=(80.375+5m, 156)
     """
     couple = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): Choose(_next_regime, targets=("couple_terminal",))}
+        ),
         states={"mood": DiscreteGrid(category_class=Mood), "wage": _WAGE_GRID},
         state_transitions={
             "mood": MarkovTransition(_next_mood),
@@ -257,7 +270,6 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     )
     couple_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"mood": DiscreteGrid(category_class=Mood), "wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -277,11 +289,14 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
             ),
             ages=ages,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes={"couple": couple, "couple_terminal": couple_terminal},
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes={"couple": couple, "couple_terminal": couple_terminal},
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=ages,
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -372,8 +387,9 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
         return wage
 
     couple = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): Choose(_next_regime, targets=("couple_terminal",))}
+        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -383,7 +399,6 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
     )
     single_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_single},
     )
@@ -400,11 +415,14 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
                 ),
                 ages=ages,
             ),
-            user_regimes=finalize_regimes(
-                user_regimes={"couple": couple, "single_terminal": single_terminal},
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
+            user_regimes=lower_declarations(
+                finalize_regimes(
+                    user_regimes={"couple": couple, "single_terminal": single_terminal},
+                    derived_categoricals={},
+                    koopmans_aggregator=LinearAggregator(),
+                    certainty_equivalent=LinearExpectation(),
+                ),
+                ages=ages,
             ),
             ages=ages,
             regime_names_to_ids=MappingProxyType(

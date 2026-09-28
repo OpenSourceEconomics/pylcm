@@ -25,6 +25,7 @@ from lcm import (
 )
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 AGES = AgeGrid(start=40, stop=50, step="5Y")
 X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
@@ -85,20 +86,23 @@ def _gate(*, V_target: FloatND, marriage_bonus: float) -> BoolND:
 def _build_model(*, with_bystander: bool) -> Model:
     regimes = {
         "source": Regime(
-            regime_transitions={
-                "target": ValueDependentTransition(
-                    probability=MarkovTransition(_certain_target),
-                    gate=_gate,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
+            regime_transitions=until_exit(
+                45,
+                law={
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_certain_target),
+                        gate=_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={"x": _identity_x}
+                                )
                             )
-                        )
-                    },
-                )
-            },
-            active=lambda age: age < 45,
+                        },
+                    )
+                },
+                exits=("target",),
+            ),
             states={"x": X},
             state_transitions={"x": fixed_transition("x")},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -106,13 +110,11 @@ def _build_model(*, with_bystander: bool) -> Model:
         ),
         "target": Regime(
             regime_transitions=None,
-            active=lambda age: age >= 45,
             states={"x": X},
             functions={"utility": _utility_target},
         ),
         "fallback": Regime(
             regime_transitions=None,
-            active=lambda age: age >= 45,
             states={"x": X},
             functions={"utility": _utility_fallback},
         ),
@@ -120,7 +122,6 @@ def _build_model(*, with_bystander: bool) -> Model:
     if with_bystander:
         regimes["bystander"] = Regime(
             regime_transitions=None,
-            active=lambda age: age >= 45,
             states={"marriage_bonus": BONUS_GRID},
             functions={"utility": _utility_bystander},
         )

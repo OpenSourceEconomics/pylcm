@@ -35,7 +35,9 @@ import yaml
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedGrid,
+    ByAge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -188,12 +190,15 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         states={"wealth": wealth_grid},
         state_transitions={"wealth": {"alive": next_wealth, "gone": next_wealth}},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions={
-            "alive": MarkovTransition(prob_survive),
-            "gone": MarkovTransition(prob_gone),
-        },
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=3): {
+                    "alive": MarkovTransition(prob_survive),
+                    "gone": MarkovTransition(prob_gone),
+                }
+            }
+        ),
         functions={"utility": utility, "resources": resources, "savings": savings},
-        active=lambda age: age < 3,
         solver=solver,
         **(
             {
@@ -212,7 +217,6 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": bequest},
-        active=lambda age: age >= 3,
         solver=GridSearch(),
     )
     return Model(

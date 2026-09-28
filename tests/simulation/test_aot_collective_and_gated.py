@@ -41,6 +41,7 @@ from tests.collective_fixtures import (
     make_two_stakeholder_model,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _N_SUBJECTS = 2
 
@@ -241,28 +242,31 @@ def _make_consent_model() -> Model:
 
     """
     single = Regime(
-        regime_transitions={
-            "married_terminal": ValueDependentTransition(
-                probability=MarkovTransition(_certain_transition),
-                gate=_consent_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
+        regime_transitions=until_exit(
+            1,
+            law={
+                "married_terminal": ValueDependentTransition(
+                    probability=MarkovTransition(_certain_transition),
+                    gate=_consent_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_terminal",
+                                projection={"education": _identity_education},
+                            ),
+                        )
+                    },
+                    gate_references={
+                        "V_single_ref": ProjectedRegimeValue(
                             regime="single_terminal",
                             projection={"education": _identity_education},
-                        ),
-                    )
-                },
-                gate_references={
-                    "V_single_ref": ProjectedRegimeValue(
-                        regime="single_terminal",
-                        projection={"education": _identity_education},
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                        )
+                    },
+                )
+            },
+            exits=("married_terminal",),
+        ),
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -270,13 +274,11 @@ def _make_consent_model() -> Model:
     )
     single_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _single_terminal_utility},
     )
     married_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={

@@ -38,6 +38,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid, GridSearch, TwoMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _FIRST_AGE = 20
@@ -158,7 +159,6 @@ def _build_model(*, variant: str) -> Model:
             "illiquid_feasible": _illiquid_feasible,
             "budget_feasible": _budget_feasible,
         }
-    active = lambda age, n=final_age_alive: age <= n  # noqa: E731
     states = {"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID}
     state_transitions = {
         "wealth": {"alive": _next_wealth, "dead": _next_wealth},
@@ -168,10 +168,14 @@ def _build_model(*, variant: str) -> Model:
         "consumption": _CONSUMPTION_GRID,
         "illiquid_investment": _ILLIQUID_INVESTMENT_GRID,
     }
-    transition = {
-        "alive": MarkovTransition(_prob_alive),
-        "dead": MarkovTransition(_prob_dead),
-    }
+    transition = until_exit(
+        _FIRST_AGE + (_N_PERIODS - 1) * 5,
+        law={
+            "alive": MarkovTransition(_prob_alive),
+            "dead": MarkovTransition(_prob_dead),
+        },
+        exits=("dead",),
+    )
     functions = {
         "utility": _utility,
         "new_illiquid": _new_illiquid,
@@ -185,7 +189,6 @@ def _build_model(*, variant: str) -> Model:
     # distinction survives a `**kwargs` splat.
     if variant == "brute":
         alive = Regime(
-            active=active,
             states=states,
             state_transitions=state_transitions,
             actions=actions,
@@ -198,7 +201,6 @@ def _build_model(*, variant: str) -> Model:
         )
     else:
         alive = NestedConsumptionSavingsRegime(
-            active=active,
             states=states,
             state_transitions=state_transitions,
             actions=actions,
@@ -223,7 +225,6 @@ def _build_model(*, variant: str) -> Model:
         )
     dead = Regime(
         regime_transitions=None,
-        active=lambda age, n=_FIRST_AGE: age > n,
         states={"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID},
         functions={"utility": _bequest},
     )

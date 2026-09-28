@@ -21,7 +21,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    ByAge,
+    Choose,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
@@ -67,6 +76,7 @@ from lcm.typing import (
     StateName,
 )
 from tests.test_models import n_nbegm_toy
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -190,20 +200,24 @@ class WealthSolver(Solver):
 
 
 def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
-    transition = (
-        {"alive": MarkovTransition(stay_alive)} if self_looping else next_regime_dead
-    )
     # A regime that dies into the terminal one leaves the last period to it, so
     # a simulated subject always has somewhere to go. A self-looping regime is
-    # its own target and stays active throughout.
-    alive_active = (
-        (lambda _age: True) if self_looping else (lambda age: age < _N_PERIODS - 1)
+    # its own target at every one of `_N_PERIODS` acting ages, which takes one
+    # more age for it to die into the terminal regime at the end.
+    transition = (
+        ByAge.until(
+            _N_PERIODS,
+            law={"alive": MarkovTransition(stay_alive)},
+            then={"dead": MarkovTransition(stay_alive)},
+        )
+        if self_looping
+        else Choose(next_regime_dead, targets=("dead",))
     )
+    last_age = _N_PERIODS if self_looping else _N_PERIODS - 1
     return Model(
         regimes={
             "alive": Regime(
                 regime_transitions=transition,
-                active=alive_active,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": utility},
@@ -215,7 +229,7 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
                 functions={"utility": lambda wealth: 0.0 * wealth},
             ),
         },
-        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=0, stop=last_age, step="Y"),
         regime_id_class=RegimeId,
     )
 
@@ -662,8 +676,11 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=next_regime_dead,
-                active=lambda age: age < _N_PERIODS - 1,
+                regime_transitions=until_exit(
+                    _N_PERIODS - 1,
+                    law=Choose(next_regime_dead, targets=("alive", "dead")),
+                    exits=("dead",),
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": utility},
@@ -731,8 +748,11 @@ def _choice_model(*, solver: Solver) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_die_at_the_end,
-                active=lambda age: age < _N_PERIODS - 1,
+                regime_transitions=until_exit(
+                    _N_PERIODS - 1,
+                    law=Choose(_die_at_the_end, targets=("alive", "dead")),
+                    exits=("dead",),
+                ),
                 states={"wealth": _WEALTH},
                 actions={"consumption": _CONSUMPTION},
                 state_transitions={"wealth": next_wealth},

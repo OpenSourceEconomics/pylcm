@@ -9,6 +9,8 @@ import jax.numpy as jnp
 from _lcm.grids import UniformContinuousGrid
 from lcm import (
     AgeGrid,
+    ByAge,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -22,6 +24,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     FloatND,
     ScalarInt,
+    UserAge,
     UserParams,
 )
 from lcm_examples.mortality import (
@@ -34,6 +37,7 @@ from lcm_examples.mortality import (
 from lcm_examples.mortality import (
     utility_working as utility,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -60,6 +64,16 @@ _DEFAULT_LAST_ACTIVE_AGE = START_AGE + _DEFAULT_N_PERIODS - 2
 DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
+
+def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
+    """Work until the age before `last_age`, then die."""
+    return until_exit(
+        last_age,
+        law=Choose(next_regime, targets=("working_life", "dead")),
+        exits=("dead",),
+    )
+
+
 working_life = UserRegime(
     actions={
         "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -72,14 +86,13 @@ working_life = UserRegime(
         "wealth": next_wealth,
     },
     constraints={"borrowing_constraint": borrowing_constraint},
-    regime_transitions=next_regime,
+    regime_transitions=working_life_transitions(last_age=_DEFAULT_LAST_ACTIVE_AGE + 1),
     functions={
         "utility": utility,
         "labor_income": labor_income,
         "is_working": is_working,
         "wage": wage,
     },
-    active=lambda age: age <= _DEFAULT_LAST_ACTIVE_AGE,
 )
 
 
@@ -106,7 +119,9 @@ def get_model(
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive,
+                regime_transitions=working_life_transitions(
+                    last_age=final_age_alive + 1
+                ),
                 states={"wealth": wealth_grid},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),

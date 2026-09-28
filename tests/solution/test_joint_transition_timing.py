@@ -18,6 +18,7 @@ from lcm import (
 )
 from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -53,8 +54,9 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_certain)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21, law={"target": MarkovTransition(_certain)}, exits=("target",)
+                ),
                 actions={"choice": DiscreteGrid(category_class=Choice)},
                 functions={"utility": lambda: jnp.asarray(0.0)},
                 joint_transitions={

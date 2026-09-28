@@ -43,6 +43,7 @@ from _lcm.solution import backward_induction
 from _lcm.solution.solve_inputs import SolveInputMappings
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -54,6 +55,7 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ScalarInt
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
+from tests.test_models.schedules import until_exit
 
 # Points of the wealth grid, so one regime value is this many elements.
 _N_WEALTH = 64
@@ -100,8 +102,9 @@ def _build_model(
 ) -> Model:
     """Build one acting regime over three periods into a terminal regime."""
     acting = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3, law=Choose(_next_regime, targets=("acting", "done")), exits=("done",)
+        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH),
         },
@@ -114,7 +117,6 @@ def _build_model(
     )
     done = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 3,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH),
         },

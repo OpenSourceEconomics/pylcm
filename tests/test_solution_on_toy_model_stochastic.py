@@ -20,6 +20,7 @@ from lcm import (
 from lcm.typing import DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_solution_on_toy_model_deterministic import (
+    THREE_PERIOD_TRANSITIONS,
     RegimeId,
     alive_deterministic,
     dead,
@@ -224,7 +225,7 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
     model = Model(
         regimes={
             "alive": alive_stochastic.replace(
-                states=new_states, active=lambda age: age < n_periods - 1
+                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
             ),
             "dead": dead,
         },
@@ -285,7 +286,7 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
     model = Model(
         regimes={
             "alive": alive_stochastic.replace(
-                states=new_states, active=lambda age: age < n_periods - 1
+                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
             ),
             "dead": dead,
         },

@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from dags import rename_arguments
 
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, Choose, Model
 from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
@@ -18,6 +18,7 @@ from lcm.consumption_savings_regime import (
     outer_unchanged,
 )
 from tests.test_models import negm_kinked_toy as toy
+from tests.test_models.schedules import until_exit
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 _FINAL_AGE_ALIVE = 20 + (toy.N_PERIODS - 2) * 5
@@ -28,7 +29,6 @@ def _alive_regime_with_outer_node_named(
 ) -> NestedConsumptionSavingsRegime:
     """The kinked toy's alive regime with its outer post-decision node renamed."""
     return NestedConsumptionSavingsRegime(
-        active=lambda age, n=_FINAL_AGE_ALIVE: age <= n,
         states={"wealth": toy.WEALTH_GRID, "illiquid": toy.ILLIQUID_GRID},
         state_transitions={
             "wealth": toy.next_wealth,
@@ -40,7 +40,11 @@ def _alive_regime_with_outer_node_named(
             "consumption": toy.CONSUMPTION_GRID,
             "illiquid_investment": toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=toy.next_regime,
+        regime_transitions=until_exit(
+            _FINAL_AGE_ALIVE + 5,
+            law=Choose(toy.next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions={
             "utility": toy.utility,
             outer_node: toy.new_durable,

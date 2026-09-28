@@ -47,7 +47,10 @@ from tests.solution.test_egm_markov_states import (
 from tests.test_models import dcegm_paper_twin
 from tests.test_models.deterministic import dcegm_variants
 from tests.test_models.deterministic.base import RegimeId as FullRegimeId
-from tests.test_models.deterministic.retirement_only import RetirementOnlyRegimeId
+from tests.test_models.deterministic.retirement_only import (
+    RetirementOnlyRegimeId,
+    retirement_transitions,
+)
 
 CONSUMPTION_GRID_STEP = float(
     dcegm_variants.CONSUMPTION_GRID.to_jax()[1]
@@ -310,7 +313,7 @@ def _phase_variant_savings_model(n_periods: int) -> Model:
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     retirement = dcegm_variants.dcegm_retirement.replace(
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=retirement_transitions(last_age=last_age),
         constraints={
             "borrowing_limit": post_decision_lower_bound(
                 margin=dcegm_variants.LIQUID_MARGIN,

@@ -1,0 +1,63 @@
+"""Dated regime transitions shared by the test models."""
+
+from collections.abc import Mapping
+
+from lcm import ByAge, Choose, MarkovTransition, Phased
+from lcm.typing import UserAge
+
+
+# keyword-only-exempt: primary-argument=boundary
+def until_exit(
+    boundary: UserAge | float,
+    *,
+    law: object,
+    exits: tuple[str, ...],
+    start: UserAge | float | None = None,
+) -> ByAge:
+    """Apply `law` up to the age before `boundary`, then only its `exits`.
+
+    The regime is solved at every age in `[start, boundary)`. On the last of
+    them only the `exits` targets are declared, so a target that is not solved
+    at `boundary` never appears there.
+
+    - per-target mapping ⇒ the exit cells are the mapping's own cells
+    - `Choose` / vector `MarkovTransition` ⇒ the same function over `exits`
+    - `Phased` ⇒ each phase's law restricted the same way
+    """
+    return ByAge.until(
+        boundary, law=law, then=_restricted(law, exits=exits), start=start
+    )
+
+
+# keyword-only-exempt: primary-argument=law
+def _restricted(law: object, *, exits: tuple[str, ...]) -> object:
+    if isinstance(law, Phased):
+        return Phased(
+            solve=_restricted(law.solve, exits=exits),
+            simulate=_restricted(law.simulate, exits=exits),
+        )
+    if isinstance(law, Mapping):
+        return {target: law[target] for target in exits}
+    if isinstance(law, Choose):
+        return Choose(law.func, targets=exits)
+    if isinstance(law, MarkovTransition):
+        return MarkovTransition(law.func, targets=exits)
+    msg = f"No exit restriction for {law!r}."
+    raise TypeError(msg)
+
+
+# keyword-only-exempt: primary-argument=law
+def choose_among(law: object, *, targets: tuple[str, ...]) -> object:
+    """Declare the support of a deterministic selector, per phase if `Phased`.
+
+    A per-target mapping or a `MarkovTransition` already declares its support
+    and is returned unchanged.
+    """
+    if isinstance(law, Mapping | MarkovTransition):
+        return law
+    if isinstance(law, Phased):
+        return Phased(
+            solve=choose_among(law.solve, targets=targets),
+            simulate=choose_among(law.simulate, targets=targets),
+        )
+    return Choose(law, targets=targets)  # ty: ignore[invalid-argument-type]

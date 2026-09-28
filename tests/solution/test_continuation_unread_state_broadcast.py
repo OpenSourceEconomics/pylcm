@@ -40,6 +40,7 @@ import pytest
 from _lcm.solution import backward_induction, grid_search
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -67,6 +68,7 @@ from tests.solution.test_covered_axis_parity import (
     _shapes_and_dtypes,
     _ulp_excess,
 )
+from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _FINAL_AGE_ALIVE = _N_PERIODS - 2
@@ -184,9 +186,12 @@ def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
             "wealth": _next_wealth,
         },
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=_next_regime,
+        regime_transitions=until_exit(
+            _FINAL_AGE_ALIVE + 1,
+            law=Choose(_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": _utility},
-        active=lambda age: age <= _FINAL_AGE_ALIVE,
     )
     dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
     model = Model(

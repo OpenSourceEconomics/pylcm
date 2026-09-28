@@ -44,6 +44,7 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -83,8 +84,11 @@ def _regime(*, source: int, identity: bool) -> Regime:
         )
 
     return Regime(
-        active=lambda age: age < 2,
-        regime_transitions=MarkovTransition(probabilities),
+        regime_transitions=until_exit(
+            2,
+            law=MarkovTransition(probabilities, targets=("r0", "r1", "terminal")),
+            exits=("terminal",),
+        ),
         actions={"decision": DiscreteGrid(_Three)},
         functions={"utility": utility, "landing": _landing},
         constraints={"feasible": lambda landing: (landing >= -4) & (landing <= 19)},
@@ -113,7 +117,6 @@ def _model(
             "r0": _regime(source=0, identity=identity),
             "r1": _regime(source=1, identity=identity),
             "terminal": Regime(
-                active=lambda age: age == 2,
                 regime_transitions=None,
                 functions={
                     "utility": lambda assets, pref_type, spousal_income: (

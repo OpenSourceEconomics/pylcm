@@ -17,6 +17,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -36,6 +37,7 @@ from lcm.typing import (
     UserFunction,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -57,8 +59,11 @@ def _next_regime(period: int) -> ScalarInt:
 
 def _make_model(policy_bonus: UserFunction) -> Model:
     working_life = UserRegime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 75,
+        regime_transitions=until_exit(
+            75,
+            law=Choose(_next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=6),
@@ -76,7 +81,6 @@ def _make_model(policy_bonus: UserFunction) -> Model:
     )
     dead = UserRegime(
         regime_transitions=None,
-        active=lambda age: age >= 75,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -98,8 +102,11 @@ def _bonus_of_age(age: float) -> Callable[[], float]:
 def _make_next_state_model(policy_bonus: UserFunction) -> Model:
     """A model whose law of motion `next_wealth = wealth + policy_bonus` reads a fn."""
     working_life = UserRegime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 75,
+        regime_transitions=until_exit(
+            75,
+            law=Choose(_next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=0, stop=2000, n_points=11)},
         state_transitions={
             "wealth": lambda wealth, policy_bonus: wealth + policy_bonus,
@@ -108,7 +115,6 @@ def _make_next_state_model(policy_bonus: UserFunction) -> Model:
     )
     dead = UserRegime(
         regime_transitions=None,
-        active=lambda age: age >= 75,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -243,8 +249,11 @@ def _f1_boost_of_age(age: float):
 
 def _f1_make_model(boost: UserFunction) -> Model:
     working = UserRegime(
-        regime_transitions=_f1_next_regime,
-        active=lambda age: age < 55,
+        regime_transitions=until_exit(
+            55,
+            law=Choose(_f1_next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         states={"capital": DiscreteGrid(category_class=_Capital)},
         actions={"invest": DiscreteGrid(category_class=_Invest)},
         state_transitions={"capital": _f1_next_capital},
@@ -252,7 +261,6 @@ def _f1_make_model(boost: UserFunction) -> Model:
     )
     dead = UserRegime(
         regime_transitions=None,
-        active=lambda age: age >= 55,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -322,8 +330,11 @@ def _cap_of_age(age: float) -> Callable[..., bool]:
 
 def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
     working_life = UserRegime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 75,
+        regime_transitions=until_exit(
+            75,
+            law=Choose(_next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         state_transitions={"wealth": _next_wealth_spend},
@@ -335,7 +346,6 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
     )
     dead = UserRegime(
         regime_transitions=None,
-        active=lambda age: age >= 75,
         functions={"utility": lambda: 0.0},
     )
     return Model(

@@ -39,6 +39,7 @@ from tests.test_models.nbegm_common import (
     savings,
     utility,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -134,12 +135,15 @@ def _build_living_regime(
             "alive_b": lcm.fixed_transition("kind"),
         },
     }
-    regime_transition = {
-        "alive_a": MarkovTransition(prob_to_alive_a),
-        "alive_b": MarkovTransition(prob_to_alive_b),
-        "dead": MarkovTransition(prob_to_dead),
-    }
-    active = lambda age, fa=final_age: age < fa  # noqa: E731
+    regime_transition = until_exit(
+        final_age,
+        law={
+            "alive_a": MarkovTransition(prob_to_alive_a),
+            "alive_b": MarkovTransition(prob_to_alive_b),
+            "dead": MarkovTransition(prob_to_dead),
+        },
+        exits=("dead",),
+    )
     # Built per branch: the NBEGM schedule solver takes its DAG role names from
     # the regime's liquid margin, which only the margin-declaring class carries.
     if isinstance(solver, NBEGM):
@@ -150,7 +154,6 @@ def _build_living_regime(
             constraints=constraints,
             regime_transitions=regime_transition,
             functions=functions,
-            active=active,
             solver=solver,
             liquid=LiquidMargin(
                 state="liquid",
@@ -166,7 +169,6 @@ def _build_living_regime(
         constraints=constraints,
         regime_transitions=regime_transition,
         functions=functions,
-        active=active,
         solver=solver,
     )
 
@@ -217,7 +219,6 @@ def build_model(
         regime_transitions=None,
         states={"liquid": liquid_grid},
         functions={"utility": bequest},
-        active=lambda age, fa=final_age: age >= fa,
         solver=GridSearch(),
     )
     return Model(

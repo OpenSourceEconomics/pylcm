@@ -3,6 +3,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -13,6 +14,7 @@ from lcm.execution import ExecutionConfig
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import GridSearch, Solver
 from lcm.typing import ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -57,7 +59,6 @@ def _make_three_type_model(
     `devices` restricts the model to a subset of the four.
     """
     working = UserRegime(
-        active=lambda age: age < 4,
         solver=GridSearch() if solver is None else solver,
         functions={
             "utility": lambda wealth, consumption, type1: (
@@ -67,8 +68,15 @@ def _make_three_type_model(
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        regime_transitions=lambda age: jnp.where(
-            age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+        regime_transitions=until_exit(
+            4,
+            law=Choose(
+                lambda age: jnp.where(
+                    age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+                ),
+                targets=("working", "retired"),
+            ),
+            exits=("retired",),
         ),
     )
     retired = UserRegime(

@@ -14,6 +14,9 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     LinearAggregator,
     LinSpacedGrid,
@@ -45,8 +48,9 @@ def _next_regime(age: float) -> ScalarInt:
 
 def _build_work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": _next_regime,
-        "active": lambda age: age < 2,
+        "regime_transitions": ByAge(
+            {AgeRange(stop=2): Choose(_next_regime, targets=("dead", "work"))}
+        ),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -60,7 +64,6 @@ def _build_model(work: UserRegime) -> Model:
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 1,
     )
     return Model(
         regimes={"work": work, "dead": dead},
@@ -138,7 +141,6 @@ def test_model_level_derived_categoricals_are_merged() -> None:
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 1,
     )
     model = Model(
         regimes={"work": work, "dead": dead},

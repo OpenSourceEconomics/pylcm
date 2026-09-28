@@ -14,6 +14,8 @@ from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.solution import backward_induction
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
@@ -188,17 +190,19 @@ def _model(*, budget: int | None) -> Model:
     return Model(
         regimes={
             "working": Regime(
-                active=lambda age: age == 0,
-                regime_transitions={
-                    "terminal": MarkovTransition(lambda: jnp.asarray(1.0))
-                },
+                regime_transitions=ByAge(
+                    {
+                        AgeRange(start=0, stop=1): {
+                            "terminal": MarkovTransition(lambda: jnp.asarray(1.0))
+                        }
+                    }
+                ),
                 states={"wealth": grid},
                 state_transitions={"wealth": lambda wealth: wealth},
                 functions={"utility": _utility},
                 solver=_TwoProgramSolver(),
             ),
             "terminal": Regime(
-                active=lambda age: age == 1,
                 regime_transitions=None,
                 states={"wealth": grid},
                 functions={"utility": lambda wealth: wealth},

@@ -9,10 +9,8 @@ module is the single place that reads it for that purpose:
   non-final age;
 - a `ByAge` schedule covers exactly the ages its cases select.
 
-A model is *dated* once any regime uses a regime name, `Choose`, `ByAge` or a
-vector `MarkovTransition` with `targets`. A dated model reads coverage and
-support only from these declarations. A model using none of them keeps its
-`active` predicates and conservative coarse support.
+Coverage and support come only from these declarations. A bare callable or a
+vector `MarkovTransition` without `targets` names no support and is rejected.
 
 The engine downstream reads one law per regime and phase. A schedule whose
 covered periods select different laws is lowered into one equivalent law whose
@@ -52,9 +50,6 @@ _PHASES: tuple[PhaseKey, PhaseKey] = ("solution", "simulation")
 class RegimeSchedules:
     """Coverage and per-period support of every regime, from its declaration."""
 
-    dated: bool
-    """Whether coverage comes from the declarations rather than `active`."""
-
     coverage_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
     """Periods at which each regime is solved."""
 
@@ -67,15 +62,16 @@ class RegimeSchedules:
     """Each regime's transition in the engine's period-independent vocabulary."""
 
 
-def is_dated_declaration(transition: object) -> bool:
-    """Whether a regime transition uses the dated vocabulary."""
+def uses_declaration_vocabulary(transition: object) -> bool:
+    """Whether a regime transition has a form the engine cannot read directly."""
     if isinstance(transition, ByAge | Choose | str):
         return True
     if isinstance(transition, MarkovTransition):
         return transition.targets is not None
     if isinstance(transition, Phased):
-        return is_dated_declaration(transition.solve) or is_dated_declaration(
-            transition.simulate
+        return any(
+            uses_declaration_vocabulary(side)
+            for side in (transition.solve, transition.simulate)
         )
     return False
 
@@ -99,27 +95,6 @@ def declaration_view(transition: object) -> object:
     return _plain_law(law=transition, code_by_name=None)
 
 
-def compute_active_periods_by_regime(
-    *,
-    ages: AgeGrid,
-    user_regimes: Mapping[RegimeName, object],
-) -> MappingProxyType[RegimeName, tuple[int, ...]]:
-    """Evaluate every regime's `active` predicate exactly once.
-
-    The single evaluation point for models without dated transitions: every
-    subsystem that needs to know which periods a regime is active in
-    (reachability, age specialization, broadcast pruning, model-input
-    validation) consumes this mapping instead of re-evaluating
-    `Regime.active` or calling `AgeGrid.get_periods_where` itself.
-    """
-    return MappingProxyType(
-        {
-            regime_name: tuple(ages.get_periods_where(regime.active))  # ty: ignore[unresolved-attribute]
-            for regime_name, regime in user_regimes.items()
-        }
-    )
-
-
 def resolve_regime_schedules(
     *,
     user_regimes: Mapping[RegimeName, Any],
@@ -127,26 +102,7 @@ def resolve_regime_schedules(
     regime_names_to_ids: Mapping[RegimeName, int],
 ) -> RegimeSchedules:
     """Resolve every regime's declared coverage, support and engine law."""
-    dated = any(
-        is_dated_declaration(regime.regime_transitions)
-        for regime in user_regimes.values()
-    )
-    if not dated:
-        return RegimeSchedules(
-            dated=False,
-            coverage_by_regime=compute_active_periods_by_regime(
-                ages=ages, user_regimes=user_regimes
-            ),
-            support_by_phase=MappingProxyType({}),
-            transitions=MappingProxyType(
-                {
-                    name: regime.regime_transitions
-                    for name, regime in user_regimes.items()
-                }
-            ),
-        )
-
-    _fail_if_legacy_declarations(user_regimes=user_regimes)
+    _fail_if_support_is_undeclared(user_regimes=user_regimes)
     all_periods = tuple(range(ages.n_periods))
     coverage: dict[RegimeName, tuple[int, ...]] = {}
     support: dict[
@@ -169,33 +125,39 @@ def resolve_regime_schedules(
                 f"Regime '{name}' declares a schedule that covers no age of the model."
             )
         coverage[name] = tuple(law_by_period)
-        lowered_sides = {}
-        for phase, side in zip(_PHASES, ("solve", "simulate"), strict=True):
-            side_by_period = {
+        side_by_phase = {
+            phase: {
                 period: _phase_side(law=law, side=side)
                 for period, law in law_by_period.items()
             }
+            for phase, side in zip(_PHASES, ("solve", "simulate"), strict=True)
+        }
+        for phase, side_by_period in side_by_phase.items():
             support[phase][name] = MappingProxyType(
                 {
                     period: _declared_support(law=law, all_regimes=user_regimes)
                     for period, law in side_by_period.items()
                 }
             )
-            lowered_sides[phase] = _lower_side(
-                law_by_period=side_by_period, code_by_name=regime_names_to_ids
-            )
+        solve_side, simulate_side = side_by_phase.values()
+        # A schedule without phase variation lowers to one shared engine law.
+        solve_law = _lower_side(
+            law_by_period=solve_side, code_by_name=regime_names_to_ids
+        )
         transitions[name] = (
-            lowered_sides["solution"]
-            if lowered_sides["solution"] is lowered_sides["simulation"]
+            solve_law
+            if all(law is solve_side[period] for period, law in simulate_side.items())
             else Phased(
-                solve=lowered_sides["solution"], simulate=lowered_sides["simulation"]
+                solve=solve_law,
+                simulate=_lower_side(
+                    law_by_period=simulate_side, code_by_name=regime_names_to_ids
+                ),
             )
         )
     _fail_if_a_target_is_uncovered(
         support_by_phase=support, coverage_by_regime=coverage, ages=ages
     )
     return RegimeSchedules(
-        dated=True,
         coverage_by_regime=MappingProxyType(coverage),
         support_by_phase=MappingProxyType(
             {phase: MappingProxyType(by_regime) for phase, by_regime in support.items()}
@@ -715,16 +677,10 @@ def _distinct(values: Any) -> tuple[Any, ...]:  # noqa: ANN401
     return tuple({id(value): value for value in values}.values())
 
 
-def _fail_if_legacy_declarations(*, user_regimes: Mapping[RegimeName, Any]) -> None:
-    """A dated model reads coverage and support only from the declarations."""
+def _fail_if_support_is_undeclared(*, user_regimes: Mapping[RegimeName, Any]) -> None:
+    """Every nonterminal law names the regimes it may select."""
     errors = []
     for name, regime in user_regimes.items():
-        if regime.declares_active:
-            errors.append(
-                f"Regime '{name}' declares `active`. A dated model is solved "
-                "where each transition declares a law: wrap the law in `ByAge` "
-                "to restrict its ages, e.g. `ByAge({AgeRange(stop=65): law})`."
-            )
         transition = regime.regime_transitions
         laws = (
             transition.laws

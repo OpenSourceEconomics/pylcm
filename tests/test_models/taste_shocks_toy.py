@@ -19,6 +19,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -35,6 +36,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=10.0, n_points=6)
 TERMINAL_WEALTH_GRID = LinSpacedGrid(start=0.0, stop=12.0, n_points=25)
@@ -87,7 +89,9 @@ def next_regime(age: int) -> ScalarInt:  # noqa: ARG001
 
 
 alive = UserRegime(
-    regime_transitions=next_regime,
+    regime_transitions=until_exit(
+        41, law=Choose(next_regime, targets=("alive", "done")), exits=("done",)
+    ),
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
@@ -97,7 +101,6 @@ alive = UserRegime(
     constraints={"budget_constraint": budget_constraint},
     functions={"utility": utility_alive},
     taste_shocks=ExtremeValueTasteShocks(),
-    active=lambda age: age < 41,
 )
 
 done = UserRegime(

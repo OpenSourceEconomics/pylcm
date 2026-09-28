@@ -5,6 +5,7 @@ import pytest
 from lcm import AgeGrid, MarkovTransition, Model, Regime, categorical
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -42,10 +43,6 @@ def _positive_dormant_probability() -> ScalarFloat:
     return jnp.asarray(0.1)
 
 
-def _source_is_active(age: float) -> bool:
-    return age < 1
-
-
 def _target_is_active(age: float) -> bool:
     return age >= 1
 
@@ -59,17 +56,14 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
                     "low": MarkovTransition(_probability_low),
                     "high": MarkovTransition(_probability_high),
                 },
-                active=_source_is_active,
                 functions={"utility": _zero_utility},
             ),
             "low": Regime(
                 regime_transitions=None,
-                active=_target_is_active,
                 functions={"utility": _low_utility},
             ),
             "high": Regime(
                 regime_transitions=None,
-                active=_target_is_active,
                 functions={"utility": _high_utility},
             ),
         },
@@ -112,21 +106,22 @@ def test_positive_granular_probability_outside_graph_is_rejected() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": MarkovTransition(_complement_of_dormant_probability),
-                    "dormant": MarkovTransition(_positive_dormant_probability),
-                },
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "target": MarkovTransition(_complement_of_dormant_probability),
+                        "dormant": MarkovTransition(_positive_dormant_probability),
+                    },
+                    exits=("target", "dormant"),
+                ),
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= 1,
                 functions={"utility": _low_utility},
             ),
             "dormant": Regime(
                 regime_transitions=None,
-                active=lambda age: age < 1,
                 functions={"utility": _low_utility},
             ),
         },

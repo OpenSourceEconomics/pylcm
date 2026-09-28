@@ -16,6 +16,8 @@ from jax import numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ByAge,
+    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
@@ -136,7 +138,6 @@ def create_model(
     )
 
     alive = Regime(
-        active=lambda age, n=final_age_alive: age <= n,
         states={
             "wealth": wealth_grid,
             "income": income_grid,
@@ -149,14 +150,17 @@ def create_model(
                 start=0.1, stop=5, n_points=consumption_n_points
             ),
         },
-        regime_transitions=next_regime,
+        regime_transitions=ByAge.until(
+            final_age_alive + 10,
+            law=Choose(next_regime, targets=("alive", "dead")),
+            then=Choose(next_regime, targets=("dead",)),
+        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
 
     dead = Regime(
         regime_transitions=None,
-        active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )
 

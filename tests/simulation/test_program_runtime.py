@@ -29,7 +29,16 @@ from _lcm.simulation.program_types import (
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
 from benchmarks.asv._simulation_witnesses import WITNESSES
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical, fixed_transition
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.regime import Regime as UserRegime
@@ -65,8 +74,13 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
     model = Model(
         regimes={
             "alive": UserRegime(
-                regime_transitions=_width_collision_next_regime,
-                active=lambda age: age == 0,
+                regime_transitions=ByAge(
+                    {
+                        AgeRange(start=0, stop=1): Choose(
+                            _width_collision_next_regime, targets=("done",)
+                        )
+                    }
+                ),
                 functions={"utility": _width_collision_utility},
                 actions={
                     "_lcm_subject_width": LinSpacedGrid(start=1, stop=2, n_points=2)

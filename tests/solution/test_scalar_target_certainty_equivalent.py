@@ -27,6 +27,7 @@ from lcm import (
 )
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _LOW_PAYOFF = 1.0
 _HIGH_PAYOFF = 9.0
@@ -49,11 +50,14 @@ def _no_flow_payoff(wealth):
 def _solve_with_geometric_certainty_equivalent():
     """Solve a model whose only continuation is an even stateless lottery."""
     alive = Regime(
-        regime_transitions={
-            "low": MarkovTransition(lambda: jnp.array(0.5)),
-            "high": MarkovTransition(lambda: jnp.array(0.5)),
-        },
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law={
+                "low": MarkovTransition(lambda: jnp.array(0.5)),
+                "high": MarkovTransition(lambda: jnp.array(0.5)),
+            },
+            exits=("low", "high"),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         # No flow payoff and no discounting, so the regime's value *is* the
         # certainty equivalent of the continuation lottery. Utility reads

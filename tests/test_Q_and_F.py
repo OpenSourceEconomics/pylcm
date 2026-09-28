@@ -33,6 +33,7 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
+    Choose,
     LinearAggregator,
     LinearExpectation,
     PowerMean,
@@ -50,7 +51,7 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,
@@ -58,6 +59,7 @@ from tests.test_models.deterministic.regression import (
     utility,
     working_life,
 )
+from tests.test_models.schedules import choose_among, until_exit
 
 
 @pytest.mark.illustrative
@@ -74,7 +76,7 @@ def test_get_Q_and_F_function():
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=finalized_user_regimes,
+        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
@@ -346,7 +348,6 @@ def _build_partial_coverage_model(
         return wealth - consumption
 
     work = UserRegime(
-        active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
             "health": DiscreteGrid(category_class=_PartialCoverageHealth),
@@ -360,11 +361,14 @@ def _build_partial_coverage_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        regime_transitions=work_transition,
+        regime_transitions=until_exit(
+            3,
+            law=choose_among(work_transition, targets=("work", "retire", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": _utility},
     )
     retire = UserRegime(
-        active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
             "health": DiscreteGrid(category_class=_PartialCoverageHealth),
@@ -376,7 +380,11 @@ def _build_partial_coverage_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        regime_transitions=next_regime_func,
+        regime_transitions=until_exit(
+            3,
+            law=Choose(next_regime_func, targets=("work", "retire", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": _utility},
     )
     dead_regime = UserRegime(
@@ -900,15 +908,18 @@ def _model_emitting_total_regime_mass(
     """
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        regime_transitions={
-            "alive": MarkovTransition(
-                lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
-            ),
-            "dead": MarkovTransition(
-                lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
-            ),
-        },
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law={
+                "alive": MarkovTransition(
+                    lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
+                ),
+                "dead": MarkovTransition(
+                    lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
+                ),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -1024,7 +1035,6 @@ def _model_with_alive_active_at_every_age(
     )
     dead = UserRegime(
         regime_transitions=None,
-        active=lambda age: age < 2,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )

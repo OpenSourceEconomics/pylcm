@@ -25,6 +25,9 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -46,6 +49,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -156,11 +160,6 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _active(age: int) -> bool:
-    last_age = 40 + (N_PERIODS - 1) * 10
-    return age < last_age
-
-
 DCEGM_SOLVER = DCEGM(
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
@@ -209,8 +208,11 @@ def _same_grid_markov_model(solver: str) -> Model:
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
@@ -332,11 +334,14 @@ def _cross_grid_markov_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     early = regime_type(
-        regime_transitions={
-            "late": MarkovTransition(to_live_prob),
-            "dead": MarkovTransition(to_dead_prob),
-        },
-        active=lambda age: age < 40 + (N_PERIODS - 1) * 10,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=40 + (N_PERIODS - 1) * 10): {
+                    "late": MarkovTransition(to_live_prob),
+                    "dead": MarkovTransition(to_dead_prob),
+                }
+            }
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health3)},
         state_transitions={
@@ -370,11 +375,14 @@ def _cross_grid_markov_model(solver: str) -> Model:
         ),
     )
     late = regime_type(
-        regime_transitions={
-            "late": MarkovTransition(to_live_prob),
-            "dead": MarkovTransition(to_dead_prob),
-        },
-        active=lambda age: age < 40 + (N_PERIODS - 1) * 10,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=40 + (N_PERIODS - 1) * 10): {
+                    "late": MarkovTransition(to_live_prob),
+                    "dead": MarkovTransition(to_dead_prob),
+                }
+            }
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
@@ -485,8 +493,11 @@ def _joint_process_markov_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -617,8 +628,11 @@ def _point_mass_floor_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={

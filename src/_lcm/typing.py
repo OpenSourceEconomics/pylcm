@@ -7,7 +7,7 @@ they are re-exported here so engine-internal code can import everything from
 `_lcm.typing`.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -358,7 +358,3 @@ class NextStateSimulationFunction(Protocol):
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
     ]: ...
-
-
-# Function that determines if a regime is active at a given age.
-ActiveFunction = Callable[..., bool]

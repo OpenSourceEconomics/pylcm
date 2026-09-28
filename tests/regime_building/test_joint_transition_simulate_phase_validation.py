@@ -17,10 +17,19 @@ import pytest
 from _lcm.engine import StateActionSpace
 from _lcm.transition_checks import _evaluate_joint_weights
 from _lcm.utils.logging import get_logger
-from lcm import AgeGrid, JointTransition, LinSpacedGrid, Model, Phased, categorical
+from lcm import (
+    AgeGrid,
+    Choose,
+    JointTransition,
+    LinSpacedGrid,
+    Model,
+    Phased,
+    categorical,
+)
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError, PyLCMError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _SUPPORT = jnp.asarray([1.0, 2.0])
 
@@ -89,8 +98,9 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _build_model(*, simulate_probabilities) -> Model:
     working = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 64,
+        regime_transitions=until_exit(
+            64, law=Choose(_next_regime, targets=("working", "dead")), exits=("dead",)
+        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "experience": Phased(

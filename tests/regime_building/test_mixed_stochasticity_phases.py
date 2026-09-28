@@ -15,6 +15,7 @@ import pandas as pd
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     MarkovTransition,
     Model,
@@ -23,6 +24,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -86,11 +88,13 @@ def _simulate(law: Any) -> pd.DataFrame:
         "functions": {"utility": utility},
     }
     live = Regime(
-        regime_transitions=_next_regime, state_transitions={"good": law}, **common
-    ).replace(active=lambda age: age < 2)
-    last = Regime(regime_transitions=None, state_transitions={}, **common).replace(
-        active=lambda age: age >= 2
-    )
+        regime_transitions=until_exit(
+            2, law=Choose(_next_regime, targets=("live", "last")), exits=("last",)
+        ),
+        state_transitions={"good": law},
+        **common,
+    ).replace()
+    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
     model = Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),

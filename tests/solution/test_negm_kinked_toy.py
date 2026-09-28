@@ -26,6 +26,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     LiquidMargin,
@@ -49,6 +50,7 @@ from lcm.typing import (
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED, assert_agrees_to_ulp
 from tests.test_models import kinked_toy_oracle, negm_kinked_toy
+from tests.test_models.schedules import until_exit
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 # Blocking the outer sweep only reschedules the `lax.map` over the outer nodes,
@@ -99,7 +101,6 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
         outer_grid=_grid(start=0.0, stop=_ILLIQUID_MAX, n_points=outer_n),
     )
     alive = NestedConsumptionSavingsRegime(
-        active=lambda age, n=_FINAL_AGE_ALIVE: age <= n,
         states={
             "wealth": _grid(start=_WEALTH_MIN, stop=_WEALTH_MAX, n_points=_N_WEALTH),
             "illiquid": _grid(start=0.0, stop=_ILLIQUID_MAX, n_points=_N_ILLIQUID),
@@ -114,7 +115,11 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
                 start=-_INVESTMENT_BOUND, stop=_INVESTMENT_BOUND, n_points=25
             ),
         },
-        regime_transitions=negm_kinked_toy.next_regime,
+        regime_transitions=until_exit(
+            _FINAL_AGE_ALIVE + 5,
+            law=Choose(negm_kinked_toy.next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions={
             "utility": negm_kinked_toy.utility,
             "new_durable": negm_kinked_toy.new_durable,
@@ -143,7 +148,6 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
     )
     dead = Regime(
         regime_transitions=None,
-        active=lambda age, n=_FINAL_AGE_ALIVE: age > n,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -199,7 +203,6 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
     NEGM's off-grid inner solve weakly improves on.
     """
     alive = Regime(
-        active=lambda age, n=_FINAL_AGE_ALIVE: age <= n,
         states={
             "wealth": _grid(start=_WEALTH_MIN, stop=_WEALTH_MAX, n_points=_N_WEALTH),
             "illiquid": _grid(start=0.0, stop=_ILLIQUID_MAX, n_points=_N_ILLIQUID),
@@ -216,7 +219,11 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
                 start=-_INVESTMENT_BOUND, stop=_INVESTMENT_BOUND, n_points=n_investment
             ),
         },
-        regime_transitions=negm_kinked_toy.next_regime,
+        regime_transitions=until_exit(
+            _FINAL_AGE_ALIVE + 5,
+            law=Choose(negm_kinked_toy.next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         constraints={
             "liquid_floor": _liquid_floor,
             "illiquid_floor": _illiquid_floor,
@@ -229,7 +236,6 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
     )
     dead = Regime(
         regime_transitions=None,
-        active=lambda age, n=_FINAL_AGE_ALIVE: age > n,
         functions={"utility": lambda: 0.0},
     )
     return Model(

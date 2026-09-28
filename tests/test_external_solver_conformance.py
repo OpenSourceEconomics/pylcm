@@ -97,6 +97,7 @@ from tests.conformance_solver import (
     TerminalCounterSolver,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _WEALTH_GRID = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
@@ -387,11 +388,14 @@ def _model(
     return Model(
         regimes={
             "active": Regime(
-                regime_transitions={
-                    "active": MarkovTransition(_stay_active),
-                    "retired": MarkovTransition(_enter_retirement),
-                },
-                active=lambda age: age < _N_PERIODS,
+                regime_transitions=until_exit(
+                    _N_PERIODS,
+                    law={
+                        "active": MarkovTransition(_stay_active),
+                        "retired": MarkovTransition(_enter_retirement),
+                    },
+                    exits=("retired",),
+                ),
                 states={
                     "wealth": wealth_grid,
                     "productivity": _PRODUCTIVITY_GRID,
@@ -421,7 +425,6 @@ def _model(
             ),
             "retired": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= _N_PERIODS,
                 functions={"utility": _retired_utility},
                 solver=TerminalCounterSolver(),
             ),

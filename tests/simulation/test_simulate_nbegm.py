@@ -9,6 +9,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     ConsumptionSavingsRegime,
     LinSpacedGrid,
     LiquidMargin,
@@ -21,6 +22,7 @@ from lcm import (
 from lcm.regime import Regime
 from lcm.solvers import NBEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.slow
 
@@ -77,7 +79,9 @@ def _model(*, hand_written: bool = False) -> Model:
         states={"liquid": _ACTION_GRID},
         state_transitions={"liquid": {"alive": next_liquid, "dead": next_liquid}},
         constraints={"borrowing_limit": borrowing_limit},
-        regime_transitions=next_regime,
+        regime_transitions=until_exit(
+            2, law=Choose(next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         functions={
             "utility": utility,
             "savings": Phased(
@@ -85,7 +89,6 @@ def _model(*, hand_written: bool = False) -> Model:
                 simulate=simulate_savings,
             ),
         },
-        active=lambda age: age < 2,
         solver=NBEGM(savings_grid=_SAVINGS_GRID),
         liquid=_MARGIN,
     )
@@ -93,7 +96,6 @@ def _model(*, hand_written: bool = False) -> Model:
         regime_transitions=None,
         states={"liquid": _ACTION_GRID},
         functions={"utility": terminal_utility},
-        active=lambda age: age == 2,
     )
     return Model(
         regimes={"alive": alive, "dead": dead},

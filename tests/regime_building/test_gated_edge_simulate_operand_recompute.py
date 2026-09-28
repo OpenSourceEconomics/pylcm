@@ -100,6 +100,8 @@ from _lcm.simulation.gated_routing import (
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     ProjectedRegimeValue,
@@ -168,25 +170,28 @@ def _value_gate(*, V_target: FloatND, V_ref: FloatND) -> BoolND:
 
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
-        regime_transitions={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_value_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="fallback", projection={"x": _identity_x}
-                        )
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_one),
+                        gate=_value_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={"x": _identity_x}
+                                )
+                            )
+                        },
+                        gate_references={
+                            "V_ref": ProjectedRegimeValue(
+                                regime="ref", projection={"x": _identity_x}
+                            )
+                        },
                     )
-                },
-                gate_references={
-                    "V_ref": ProjectedRegimeValue(
-                        regime="ref", projection={"x": _identity_x}
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         states={"x": _X2},
         state_transitions={"x": _next_x_offgrid},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -194,19 +199,16 @@ def _make_regimes() -> dict[str, Regime]:
     )
     target = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"x": _X2},
         functions={"utility": _u_target},
     )
     ref = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"x": _X2},
         functions={"utility": _u_ref},
     )
     fallback = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"x": _X2},
         functions={"utility": _u_fallback},
     )
@@ -382,20 +384,23 @@ def _threshold_gate(*, V_target: FloatND, gate_threshold: FloatND) -> BoolND:
 
 def _make_curved_regimes() -> dict[str, Regime]:
     src = Regime(
-        regime_transitions={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_threshold_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="fallback", projection={"x": _identity_x}
-                        )
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_one),
+                        gate=_threshold_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={"x": _identity_x}
+                                )
+                            )
+                        },
                     )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         states={"x": _X2},
         state_transitions={"x": _next_x_offgrid},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -403,14 +408,12 @@ def _make_curved_regimes() -> dict[str, Regime]:
     )
     target = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"x": _X2},
         actions={"invest": DiscreteGrid(category_class=Invest)},
         functions={"utility": _u_curved_target},
     )
     fallback = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"x": _X2},
         functions={"utility": _u_fallback},
     )

@@ -24,7 +24,16 @@ from _lcm.grids.base import Grid
 from _lcm.solution import backward_induction
 from _lcm.solution.kernel_output import ConsumedKernelOutput
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from lcm import AgeGrid, AgeSpecializedGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    AgeSpecializedGrid,
+    ByAge,
+    Choose,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
@@ -184,7 +193,13 @@ def _pass_through_model(
     """
     margin = _pass_through_margin()
     working = ConsumptionSavingsRegime(
-        regime_transitions=_pass_through_next_regime,
+        regime_transitions=ByAge(
+            {
+                AgeRange(start=0, stop=1): Choose(
+                    _pass_through_next_regime, targets=("dead",)
+                )
+            }
+        ),
         states={"wealth": wealth_grid},
         actions={"consumption": _PASS_THROUGH_CONSUMPTION_GRID},
         state_transitions={"wealth": _pass_through_next_wealth},
@@ -197,13 +212,11 @@ def _pass_through_model(
         },
         liquid=margin,
         solver=EGM(savings_grid=_PASS_THROUGH_SAVINGS_GRID),
-        active=lambda age: age == 0,
     )
     dead = Regime(
         regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": _pass_through_terminal_utility},
-        active=lambda age: age == 1,
     )
     return Model(
         regimes={"working": working, "dead": dead},

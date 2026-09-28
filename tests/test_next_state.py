@@ -16,7 +16,7 @@ from _lcm.regime_building.processing import (
 from lcm import LinearAggregator, LinearExpectation
 from lcm.ages import AgeGrid
 from lcm.typing import ContinuousState, ScalarInt
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 from tests.test_models.deterministic.regression import dead, working_life
 
 
@@ -33,7 +33,7 @@ def test_get_next_state_function_with_solve_target():
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=finalized_user_regimes,
+        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,

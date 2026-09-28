@@ -32,6 +32,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
 _WEALTH_VALUES = np.array([1.0, 2.0, 3.0, 4.0])
@@ -228,8 +229,9 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions={"dead": MarkovTransition(_certain)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21, law={"dead": MarkovTransition(_certain)}, exits=("dead",)
+                ),
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=_Binary),

@@ -14,6 +14,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -99,9 +100,8 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints={"declared": constraint},
-        regime_transitions=next_regime,
+        regime_transitions=Choose(next_regime, targets=("done",)),
         functions={"utility": utility, "savings": savings},
-        active=lambda age: age == 0,
         solver=solver,
         liquid=_LIQUID,
     )
@@ -110,7 +110,6 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
         regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
-        active=lambda age: age == 1,
         solver=GridSearch(),
     )
     return Model(

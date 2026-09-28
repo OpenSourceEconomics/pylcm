@@ -18,7 +18,7 @@ is valid because the problem is smooth and concave, has one continuous state and
 and has no discrete choice.
 
 ```python
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, Choose, Model
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     post_decision_lower_bound,
@@ -41,7 +41,7 @@ from lcm_examples.specialized_consumption_savings import (
 )
 
 working = ConsumptionSavingsRegime(
-    regime_transitions=next_regime,
+    regime_transitions=Choose(next_regime, targets=("dead",)),
     states={"wealth": WEALTH_GRID},
     actions={"consumption": CONSUMPTION_GRID},
     state_transitions={"wealth": next_wealth},
@@ -54,14 +54,12 @@ working = ConsumptionSavingsRegime(
     },
     liquid=ONE_MARGIN,
     solver=EGM(savings_grid=SAVINGS_GRID),
-    active=lambda age: age == 0,
 )
 
 dead = Regime(
     regime_transitions=None,
     states={"wealth": WEALTH_GRID},
     functions={"utility": terminal_utility},
-    active=lambda age: age == 1,
 )
 
 model = Model(
@@ -108,7 +106,7 @@ exemption:
 import jax.numpy as jnp
 
 import lcm
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, Choose, Model
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
@@ -171,7 +169,7 @@ margin = LiquidMargin(
 )
 
 working = ConsumptionSavingsRegime(
-    regime_transitions=next_regime,
+    regime_transitions=Choose(next_regime, targets=("dead",)),
     states={"liquid": LIQUID_GRID},
     actions={"consumption": CONSUMPTION_GRID},
     state_transitions={"liquid": next_liquid},
@@ -187,14 +185,12 @@ working = ConsumptionSavingsRegime(
     },
     liquid=margin,
     solver=NBEGM(savings_grid=SAVINGS_GRID),
-    active=lambda age: age == 0,
 )
 
 dead = Regime(
     regime_transitions=None,
     states={"liquid": LIQUID_GRID},
     functions={"utility": terminal_utility},
-    active=lambda age: age == 1,
 )
 
 model = Model(
@@ -242,7 +238,7 @@ post-decision illiquid stock, `NEGM` runs a one-dimensional `DCEGM` liquid solve
 then compares the outer candidates.
 
 ```python
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, Choose, Model
 from lcm.consumption_savings_regime import (
     NestedConsumptionSavingsRegime,
     post_decision_lower_bound,
@@ -273,7 +269,7 @@ from lcm_examples.specialized_consumption_savings import (
 )
 
 working = NestedConsumptionSavingsRegime(
-    regime_transitions=next_regime,
+    regime_transitions=Choose(next_regime, targets=("dead",)),
     states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
     actions={
         "consumption": CONSUMPTION_GRID,
@@ -303,14 +299,12 @@ working = NestedConsumptionSavingsRegime(
         inner=DCEGM(savings_grid=SAVINGS_GRID, envelope=LTMEnvelope()),
         outer_grid=ILLIQUID_GRID,
     ),
-    active=lambda age: age == 0,
 )
 
 dead = Regime(
     regime_transitions=None,
     states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
     functions={"utility": nested_terminal_utility},
-    active=lambda age: age == 1,
 )
 
 model = Model(

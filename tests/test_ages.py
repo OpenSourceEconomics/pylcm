@@ -14,7 +14,9 @@ from tests.test_models.deterministic.base import (
     RegimeId,
     dead,
     retirement,
+    retirement_transitions,
     working_life,
+    working_life_transitions,
 )
 
 
@@ -129,9 +131,11 @@ def test_model_with_quarterly_steps():
     model = Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive
+                regime_transitions=working_life_transitions(last_age=19)
             ),
-            "retirement": retirement.replace(active=lambda age: age <= final_age_alive),
+            "retirement": retirement.replace(
+                regime_transitions=retirement_transitions(last_age=19)
+            ),
             "dead": dead,
         },
         ages=ages,
@@ -273,9 +277,11 @@ def test_model_with_integer_ages():
     model = Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age, la=last_age: age < la
+                regime_transitions=working_life_transitions(last_age=last_age)
             ),
-            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "retirement": retirement.replace(
+                regime_transitions=retirement_transitions(last_age=last_age)
+            ),
             "dead": dead,
         },
         ages=ages,

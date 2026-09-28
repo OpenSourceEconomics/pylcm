@@ -32,6 +32,7 @@ from lcm import (
 from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _WAGE = IrregSpacedGrid(points=(1.0, 2.0, 3.0))
 
@@ -75,15 +76,17 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 
 def _make_model(*, participation: bool) -> Model:
     couple = Regime(
-        regime_transitions={"couple_terminal": MarkovTransition(_certain)},
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law={"couple_terminal": MarkovTransition(_certain)},
+            exits=("couple_terminal",),
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     couple_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={
             "utility": CollectiveUtility(
@@ -108,7 +111,6 @@ def _make_model(*, participation: bool) -> Model:
     )
     single_f_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _outside_option},
     )

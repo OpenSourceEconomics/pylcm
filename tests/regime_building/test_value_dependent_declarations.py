@@ -17,6 +17,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Model,
@@ -193,27 +195,32 @@ def _solve(regimes):
 def _new_vocabulary_regimes() -> dict[str, Regime]:
     """The dissolution miniature, declared in the value-dependent vocabulary."""
     married = Regime(
-        regime_transitions={
-            "married_ir": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_no_dissolution_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f", projection={"wage": _identity_wage}
-                        ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m", projection={"wage": _identity_wage}
-                        ),
-                    ),
-                },
-            )
-        },
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "married_ir": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_one),
+                        gate=_no_dissolution_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                    )
+                }
+            }
+        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -224,8 +231,13 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         },
     )
     married_ir = Regime(
-        regime_transitions={"married_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            {
+                AgeRange(start=1, stop=2): {
+                    "married_terminal": MarkovTransition(_prob_one)
+                }
+            }
+        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -255,7 +267,6 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
     )
     married_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 2,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -265,8 +276,13 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        regime_transitions={"single_f_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            {
+                AgeRange(start=1, stop=2): {
+                    "single_f_terminal": MarkovTransition(_prob_one)
+                }
+            }
+        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -274,7 +290,6 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
     )
     single_f_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 2,
         states={"wage": _WAGE_3},
         functions={"utility": _u_zero},
     )
@@ -318,8 +333,9 @@ def test_a_gate_must_be_keyed_by_the_target_it_opens():
     """
     with pytest.raises(RegimeInitializationError, match="per-target"):
         Regime(
-            regime_transitions=_a_value_dependent_transition(),
-            active=lambda age: age < 1,
+            regime_transitions=ByAge(
+                {AgeRange(stop=1): _a_value_dependent_transition()}
+            ),
             states={"wage": _WAGE_3},
             state_transitions={"wage": fixed_transition("wage")},
             functions={
@@ -364,17 +380,20 @@ def _phased_edge_regime(
         else MarkovTransition(_prob_half)
     )
     return Regime(
-        regime_transitions=Phased(
-            solve={
-                "married_ir": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_one),
-                    gate=solve_gate,
-                    routes={"f": route_f, "m": route_m},
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): Phased(
+                    solve={
+                        "married_ir": ValueDependentTransition(
+                            probability=MarkovTransition(_prob_one),
+                            gate=solve_gate,
+                            routes={"f": route_f, "m": route_m},
+                        )
+                    },
+                    simulate={"married_ir": simulate_cell},
                 )
-            },
-            simulate={"married_ir": simulate_cell},
+            }
         ),
-        active=lambda age: age < 1,
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         functions={
@@ -443,14 +462,17 @@ def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
     )
 
     regime = Regime(
-        regime_transitions={
-            "married_ir": ValueDependentTransition(
-                probability=_prob_one,
-                gate=_no_dissolution_gate,
-                routes={"f": route_f, "m": route_m},
-            )
-        },
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "married_ir": ValueDependentTransition(
+                        probability=_prob_one,
+                        gate=_no_dissolution_gate,
+                        routes={"f": route_f, "m": route_m},
+                    )
+                }
+            }
+        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},

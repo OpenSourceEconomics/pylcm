@@ -40,6 +40,7 @@ from lcm.typing import (
     UserParams,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -102,8 +103,11 @@ def _build_model(
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_certain_target)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21,
+                    law={"target": MarkovTransition(_certain_target)},
+                    exits=("target",),
+                ),
                 functions={"utility": lambda: jnp.asarray(0.0)},
                 joint_transitions={
                     "target": {
@@ -364,22 +368,25 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
     return Model(
         regimes={
             "single": Regime(
-                regime_transitions={
-                    "couple": ValueDependentTransition(
-                        probability=MarkovTransition(_bdy_certain_couple),
-                        gate=_bdy_gate_always_open,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_terminal",
-                                    projection={"wealth": _bdy_identity_wealth},
-                                ),
-                            )
-                        },
-                    )
-                },
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "couple": ValueDependentTransition(
+                            probability=MarkovTransition(_bdy_certain_couple),
+                            gate=_bdy_gate_always_open,
+                            routes={
+                                "f": StakeholderRoute(
+                                    target_stakeholder="f",
+                                    fallback=ProjectedRegimeValue(
+                                        regime="single_terminal",
+                                        projection={"wealth": _bdy_identity_wealth},
+                                    ),
+                                )
+                            },
+                        )
+                    },
+                    exits=("couple",),
+                ),
                 states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
                 functions={"utility": _bdy_single_utility},
                 joint_transitions={
@@ -399,13 +406,11 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
             ),
             "single_terminal": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= 1,
                 states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
                 functions={"utility": _bdy_fallback_utility},
             ),
             "couple": Regime(
                 regime_transitions=None,
-                active=lambda age: age >= 1,
                 actions={"household_choice": DiscreteGrid(category_class=BDYChoice)},
                 states={
                     "wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS),

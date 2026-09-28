@@ -62,10 +62,6 @@ def _target_utility(*, wealth: ScalarFloat, income: ScalarFloat) -> ScalarFloat:
     return wealth + income
 
 
-def _active_source(age: float) -> bool:
-    return age == 0
-
-
 def _active_target(age: float) -> bool:
     return age == 1
 
@@ -130,7 +126,6 @@ def _inputs(
         regimes={
             "source": Regime(
                 regime_transitions={"target": MarkovTransition(_certain_target)},
-                active=_active_source,
                 functions={"utility": _utility},
                 joint_transitions={
                     "target": {
@@ -148,7 +143,6 @@ def _inputs(
             ),
             "target": Regime(
                 regime_transitions=None,
-                active=_active_target,
                 states={
                     "wealth": LinSpacedGrid(start=0, stop=1, n_points=2),
                     "income": LinSpacedGrid(start=0, stop=1, n_points=2),

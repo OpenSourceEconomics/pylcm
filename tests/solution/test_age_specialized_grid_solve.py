@@ -33,17 +33,21 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.regime_building.age_specialization import _TRAIT_DESCRIPTIONS, _GridTraits
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedGrid,
+    ByAge,
+    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
     Model,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _N = 6  # ages 20..25; working ages 20..24, terminal at 25
 _AGES = AgeGrid(start=20, stop=20 + _N - 1, step="Y")
@@ -80,19 +84,22 @@ def _next_regime(*, period, last):
 
 
 _DEAD = Regime(
-    active=lambda age: age >= 20 + _N - 1,
     regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
 
-def _alive_regime(*, wealth_grid, active=lambda age: age < 20 + _N - 1):
+_ALIVE_TRANSITIONS = until_exit(
+    20 + _N - 1, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+)
+
+
+def _alive_regime(*, wealth_grid, regime_transitions=_ALIVE_TRANSITIONS):
     return Regime(
-        active=active,
         states={"wealth": wealth_grid},
         actions={"consumption": _CGRID},
         state_transitions={"wealth": _next_wealth},
-        regime_transitions=_next_regime,
+        regime_transitions=regime_transitions,
         constraints={"bc": _bc},
         functions={"utility": _utility},
     )
@@ -472,21 +479,26 @@ def test_grid_mode_switch_across_ages_is_rejected():
         _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
-def test_age_specialized_grid_on_never_active_regime_is_rejected():
-    """An age-specialized grid on a regime active at no age is a modelling error.
+def test_age_specialized_grid_on_never_solved_regime_is_rejected():
+    """A regime whose schedule covers no model age is a modelling error.
 
-    There is no age at which to resolve the builder, so the marker must be
-    rejected up front, rather than travelling unresolved into the ordinary grid
-    machinery it does not satisfy.
+    There is no age at which to resolve the grid builder, so the model is
+    rejected up front, rather than the marker travelling unresolved into the
+    ordinary grid machinery it does not satisfy.
     """
     grid = AgeSpecializedGrid(
         build=lambda _age: LinSpacedGrid(start=0.5, stop=25.0, n_points=15),
         signature=lambda _age: 0,
     )
-    with pytest.raises(RegimeInitializationError, match="active at no model age"):
+    with pytest.raises(ModelInitializationError, match="covers no age"):
         Model(
             regimes={
-                "alive": _alive_regime(wealth_grid=grid, active=lambda _age: False),
+                "alive": _alive_regime(
+                    wealth_grid=grid,
+                    regime_transitions=ByAge(
+                        {AgeRange(start=100): Choose(_next_regime, targets=("dead",))}
+                    ),
+                ),
                 "dead": _DEAD,
             },
             ages=_AGES,

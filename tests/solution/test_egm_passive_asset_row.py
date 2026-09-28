@@ -48,6 +48,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -179,10 +180,6 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _active(age: int) -> bool:
-    return age < 40 + (N_PERIODS - 1) * 10
-
-
 def _shared_functions() -> dict:
     return {
         "utility": utility,
@@ -212,11 +209,14 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
     working = regime_type(
-        regime_transitions={
-            "working_life": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "working_life": MarkovTransition(stay_prob),
+                "dead": MarkovTransition(death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
@@ -413,11 +413,14 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
     working = regime_type(
-        regime_transitions={
-            "working_life": MarkovTransition(stay_prob_share),
-            "dead": MarkovTransition(death_prob_share),
-        },
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "working_life": MarkovTransition(stay_prob_share),
+                "dead": MarkovTransition(death_prob_share),
+            },
+            exits=("dead",),
+        ),
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,

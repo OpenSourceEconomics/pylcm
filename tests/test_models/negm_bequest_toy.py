@@ -19,6 +19,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -40,6 +41,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 N_X = 8
 N_Z = 8
@@ -168,7 +170,6 @@ def _build_dead_regime() -> Regime:
     """The terminal regime: a bequest over both continuous states."""
     return Regime(
         regime_transitions=None,
-        active=lambda age, n=FINAL_AGE_ALIVE: age > n,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": bequest},
     )
@@ -177,14 +178,17 @@ def _build_dead_regime() -> Regime:
 def build_negm_model() -> Model:
     """Build the bequest toy solved by the nested EGM."""
     alive = NestedConsumptionSavingsRegime(
-        active=lambda age, n=FINAL_AGE_ALIVE: age <= n,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         state_transitions={"wealth": next_wealth, "illiquid": durable_transition},
         actions={
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=next_regime,
+        regime_transitions=until_exit(
+            FINAL_AGE_ALIVE + 5,
+            law=Choose(next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -267,7 +271,6 @@ def feasible_brute(
 def build_brute_model() -> Model:
     """Build the economically identical grid-search twin (the parity oracle)."""
     alive = Regime(
-        active=lambda age, n=FINAL_AGE_ALIVE: age <= n,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         state_transitions={
             "wealth": next_wealth_brute,
@@ -277,7 +280,11 @@ def build_brute_model() -> Model:
             "consumption": CONSUMPTION_GRID_BRUTE,
             "new_durable": OUTER_GRID,
         },
-        regime_transitions=next_regime,
+        regime_transitions=until_exit(
+            FINAL_AGE_ALIVE + 5,
+            law=Choose(next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": utility_brute},
         constraints={"feasible": feasible_brute},
     )

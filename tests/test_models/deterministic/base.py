@@ -19,9 +19,11 @@ from lcm_examples.iskhakov_et_al_2017 import (
     next_regime_from_working,
     next_wealth,
     retirement,
+    retirement_transitions,
     utility_retirement,
     utility_working,
     working_life,
+    working_life_transitions,
 )
 
 __all__ = [
@@ -39,7 +41,9 @@ __all__ = [
     "next_regime_from_working",
     "next_wealth",
     "retirement",
+    "retirement_transitions",
     "utility_retirement",
     "utility_working",
     "working_life",
+    "working_life_transitions",
 ]

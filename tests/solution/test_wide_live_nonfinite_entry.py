@@ -29,6 +29,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 
@@ -190,8 +191,9 @@ def _build_model(
         certainty_equivalent=certainty_equivalent,
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_certain)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21, law={"target": MarkovTransition(_certain)}, exits=("target",)
+                ),
                 state_transitions={
                     "income": {"target": _make_entry(rare_entry)},
                     **{

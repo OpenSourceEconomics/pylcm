@@ -25,6 +25,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -53,6 +54,7 @@ from tests.test_models.ds2024_housing import (
     income_transition,
     income_value,
 )
+from tests.test_models.schedules import until_exit
 
 START_AGE = 60
 
@@ -254,7 +256,6 @@ def build_model(  # noqa: C901
 
     dead = UserRegime(
         regime_transitions=None,
-        active=lambda age, fa=final_age: age >= fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -269,8 +270,11 @@ def build_model(  # noqa: C901
 
     if variant == "brute":
         alive = UserRegime(
-            regime_transitions=next_regime,
-            active=lambda age, fa=final_age: age < fa,
+            regime_transitions=until_exit(
+                final_age,
+                law=Choose(next_regime, targets=("alive", "dead")),
+                exits=("dead",),
+            ),
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
@@ -298,8 +302,11 @@ def build_model(  # noqa: C901
         n_constrained_points=32,
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=next_regime,
-        active=lambda age, fa=final_age: age < fa,
+        regime_transitions=until_exit(
+            final_age,
+            law=Choose(next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,

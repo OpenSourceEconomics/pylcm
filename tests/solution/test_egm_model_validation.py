@@ -6,6 +6,9 @@ import pytest
 from _lcm.egm.validation import _grid_sample
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -114,13 +117,14 @@ def _model(
         states=states,
         state_transitions=state_transitions,
         constraints={} if constraint is None else {"cap": constraint},
-        regime_transitions=next_regime,
+        regime_transitions=ByAge(
+            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+        ),
         functions={
             "utility": utility,
             "savings": post_decision,
             **({"resources": resources_func} if resources_func else {}),
         },
-        active=lambda age: age == 0,
         solver=EGM(
             savings_grid=_SAVINGS_GRID,
         ),
@@ -136,7 +140,6 @@ def _model(
         regime_transitions=None,
         states=done_states,
         functions=done_functions,
-        active=lambda age: age == 1,
         solver=GridSearch(),
     )
     return Model(

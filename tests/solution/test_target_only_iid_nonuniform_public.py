@@ -47,10 +47,6 @@ def _target_id() -> ScalarInt:
     return RegimeId.target
 
 
-def _source_early(age: float) -> bool:
-    return age < 22
-
-
 def _oracle() -> float:
     raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(3)
     values = np.exp(math.sqrt(2.0) * raw_nodes)
@@ -71,7 +67,6 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
         regimes={
             "source": Regime(
                 regime_transitions=transition,
-                active=_source_early,
                 functions={"utility": _zero},
             ),
             "target": Regime(

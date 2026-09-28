@@ -12,6 +12,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     CESAggregator,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinearAggregator,
@@ -33,6 +34,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -160,10 +162,13 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         states=working_life_states,
         state_transitions=working_life_state_transitions,
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=next_regime,
+        regime_transitions=until_exit(
+            FINAL_AGE_ALIVE + 1,
+            law=Choose(next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         functions=functions,
         koopmans_aggregator=custom_W,
-        active=lambda age: age <= FINAL_AGE_ALIVE,
     )
 
     # Terminal regime: when pref_type is declared as a state across
@@ -183,7 +188,6 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         regime_transitions=None,
         functions={"utility": dead_utility},
         states=dead_states,
-        active=lambda age: age > FINAL_AGE_ALIVE,
     )
 
     return Model(
@@ -238,7 +242,6 @@ def test_default_H_injected_for_non_terminal():
     regime = UserRegime(
         functions={"utility": lambda: 0.0},
         regime_transitions=lambda: {"a": 1.0},
-        active=lambda age: age < 1,
     )
     finalized = finalize_regimes(
         user_regimes={"regime": regime},
@@ -272,7 +275,6 @@ def test_custom_W_not_overwritten():
 
     r = UserRegime(
         regime_transitions=lambda: {"a": 1.0},
-        active=lambda age: age < 1,
         functions={"utility": lambda: 0.0},
         koopmans_aggregator=my_W,
     )
@@ -655,10 +657,16 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
     """Solve a two-regime model whose discount factor is a `Series` over ages."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        regime_transitions=lambda age: jnp.where(
-            age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+        regime_transitions=until_exit(
+            2,
+            law=Choose(
+                lambda age: jnp.where(
+                    age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+                ),
+                targets=("alive", "dead"),
+            ),
+            exits=("dead",),
         ),
-        active=lambda age: age < 2,
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -701,10 +709,16 @@ def _solve_with_aggregator_slot(
     """Return the aggregator params template and `alive`'s first V array."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        regime_transitions=lambda age: jnp.where(
-            age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+        regime_transitions=until_exit(
+            2,
+            law=Choose(
+                lambda age: jnp.where(
+                    age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+                ),
+                targets=("alive", "dead"),
+            ),
+            exits=("dead",),
         ),
-        active=lambda age: age < 2,
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},

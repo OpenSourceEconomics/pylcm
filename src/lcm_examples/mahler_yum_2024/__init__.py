@@ -86,7 +86,6 @@ and reading the columnwise spread.
 import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import make_dataclass
-from functools import partial
 from pathlib import Path
 
 import jax
@@ -97,6 +96,7 @@ from scipy.interpolate import make_interp_spline
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -565,25 +565,36 @@ def savings_constraint(
     return net_income + wealth * gross_interest_rate >= saving
 
 
-def working_is_active(age: int) -> bool:
-    return age < retirement_age
+_WORKING_TO_DEAD = MarkovTransition(working_to_dead_probability)
+_RETIREMENT_TO_DEAD = MarkovTransition(retirement_to_dead_probability)
 
+# Work until the age before retirement, then retire or die.
+WORKING_TRANSITIONS = ByAge.until(
+    retirement_age,
+    law={
+        "working": MarkovTransition(working_to_working_probability),
+        "dead": _WORKING_TO_DEAD,
+    },
+    then={
+        "retirement": MarkovTransition(working_to_retirement_probability),
+        "dead": _WORKING_TO_DEAD,
+    },
+)
 
-def retirement_is_active(*, age: int, final_age_alive: int) -> bool:
-    return retirement_age <= age <= final_age_alive
-
-
-def dead_is_active(*, age: int, initial_age: float) -> bool:
-    return age > initial_age
+# Retire from `retirement_age`; certain death before the last age.
+RETIREMENT_TRANSITIONS = ByAge.until(
+    ages.exact_values[-1],
+    law={
+        "retirement": MarkovTransition(retirement_to_retirement_probability),
+        "dead": _RETIREMENT_TO_DEAD,
+    },
+    then={"dead": _RETIREMENT_TO_DEAD},
+    start=retirement_age,
+)
 
 
 WORKING_REGIME = Regime(
-    regime_transitions={
-        "working": MarkovTransition(working_to_working_probability),
-        "retirement": MarkovTransition(working_to_retirement_probability),
-        "dead": MarkovTransition(working_to_dead_probability),
-    },
-    active=working_is_active,
+    regime_transitions=WORKING_TRANSITIONS,
     states={
         "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
         "health": DiscreteGrid(category_class=Health),
@@ -637,14 +648,7 @@ WORKING_REGIME = Regime(
 
 
 RETIREMENT_REGIME = Regime(
-    regime_transitions={
-        "retirement": MarkovTransition(retirement_to_retirement_probability),
-        "dead": MarkovTransition(retirement_to_dead_probability),
-    },
-    active=partial(
-        retirement_is_active,
-        final_age_alive=int(ages.values[-2]),
-    ),
+    regime_transitions=RETIREMENT_TRANSITIONS,
     states={
         "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
         "health": DiscreteGrid(category_class=Health),
@@ -700,7 +704,6 @@ def dead_utility(discount_type: DiscreteState) -> FloatND:  # noqa: ARG001
 
 DEAD_REGIME = Regime(
     regime_transitions=None,
-    active=partial(dead_is_active, initial_age=int(ages.values[0])),
     states={
         # Mirrors the living regimes' `discount_type` so the dead value is
         # indexable along the same fixed-state axis. See `dead_utility`.

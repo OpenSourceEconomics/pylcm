@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from _lcm.execution.core_program import core_program_graph
-from lcm import AgeGrid, ExecutionConfig, Model
+from lcm import AgeGrid, Choose, ExecutionConfig, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS
 from lcm.typing import FloatND
@@ -36,6 +36,7 @@ from tests.solution.test_egm_process_states import (
     savings,
     utility_consumption_only,
 )
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -61,8 +62,11 @@ def _model(width: int | None = None) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
     working = ConsumptionSavingsRegime(
-        regime_transitions=next_regime,
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=until_exit(
+            last_age,
+            law=Choose(next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "income": _income_process("iid")},
         state_transitions={"wealth": next_wealth_from_savings_iid},

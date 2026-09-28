@@ -20,6 +20,9 @@ from _lcm.solution.contract import (
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     LinSpacedGrid,
     Model,
     categorical,
@@ -129,12 +132,13 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         actions={"consumption": _ACTION_GRID},
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
-        regime_transitions=next_regime,
+        regime_transitions=ByAge(
+            {AgeRange(start=0, stop=1): Choose(next_regime, targets=("done",))}
+        ),
         functions={
             "utility": utility,
             "savings": savings,
         },
-        active=lambda age: age == 0,
         solver=solver,
         liquid=LiquidMargin(
             state="wealth",
@@ -148,7 +152,6 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
-        active=lambda age: age == 1,
         solver=GridSearch(),
     )
     return Model(

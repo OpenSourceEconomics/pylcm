@@ -23,6 +23,7 @@ from _lcm.solution.preconditions import check_solver_params
 from lcm import (
     AgeGrid,
     CESAggregator,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     PowerMean,
@@ -42,6 +43,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models import nbegm_ride_discrete_toy as ride_toy
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -95,7 +97,9 @@ def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     kind = DiscreteGrid(category_class=_Kind)
     alive = ConsumptionSavingsRegime(
-        regime_transitions=_next_regime,
+        regime_transitions=until_exit(
+            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         states={"wealth": wealth, "kind": kind},
         state_transitions={
             "wealth": _next_wealth,
@@ -113,7 +117,6 @@ def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
             savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             probe_schedule=probe_schedule,
         ),
-        active=lambda age: age < 41,
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",

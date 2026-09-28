@@ -21,10 +21,11 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Phased, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Phased, categorical
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -100,10 +101,11 @@ def _make_model(*, H_func=beta_delta_H):
         },
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=next_regime,
+        regime_transitions=until_exit(
+            2, law=Choose(next_regime, targets=("working", "dead")), exits=("dead",)
+        ),
         functions={"utility": utility},
         koopmans_aggregator=H_func,
-        active=lambda age: age <= 1,
     )
 
     dead = UserRegime(
@@ -116,7 +118,6 @@ def _make_model(*, H_func=beta_delta_H):
             ),
         },
         functions={"utility": terminal_utility},
-        active=lambda age: age > 1,
     )
 
     return Model(

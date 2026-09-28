@@ -39,7 +39,9 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedGrid,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -53,6 +55,7 @@ from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -168,11 +171,14 @@ def _make_model(*, later_ceiling: float) -> Model:
         return LinSpacedGrid(start=0.0, stop=ceiling, n_points=2)
 
     single_f = Regime(
-        regime_transitions={
-            "single_f": MarkovTransition(_stays_single),
-            "single_f_terminal": MarkovTransition(_leaves_single),
-        },
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law={
+                "single_f": MarkovTransition(_stays_single),
+                "single_f_terminal": MarkovTransition(_leaves_single),
+            },
+            exits=("single_f_terminal",),
+        ),
         states={
             "wealth": AgeSpecializedGrid(
                 build=_single_wealth_grid, signature=lambda age: age < 0.5
@@ -183,13 +189,13 @@ def _make_model(*, later_ceiling: float) -> Model:
     )
     single_f_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 2,
         states={"wealth": LinSpacedGrid(start=0.0, stop=INITIAL_CEILING, n_points=2)},
         functions={"utility": _zero_utility},
     )
     couple = Regime(
-        regime_transitions={"couple_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {AgeRange(stop=1): {"couple_terminal": MarkovTransition(_prob_one)}}
+        ),
         states={"wealth": COUPLE_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -211,7 +217,6 @@ def _make_model(*, later_ceiling: float) -> Model:
     )
     couple_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": COUPLE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={

@@ -43,6 +43,7 @@ _SCRIPT = textwrap.dedent(
         dead,
         get_params,
         working_life,
+    working_life_transitions,
     )
 
     n_devices = int(sys.argv[1])
@@ -60,7 +61,9 @@ _SCRIPT = textwrap.dedent(
         return Model(
             regimes={
                 "working_life": working_life.replace(
-                    active=lambda age: age <= final_age_alive,
+                    regime_transitions=working_life_transitions(
+                        last_age=final_age_alive + 1
+                    ),
                     states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                     actions={
                         "labor_supply": working_life.actions["labor_supply"],

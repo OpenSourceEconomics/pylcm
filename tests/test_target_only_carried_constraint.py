@@ -21,9 +21,19 @@ from typing import cast
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Phased, categorical
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
+    LinSpacedGrid,
+    Model,
+    Phased,
+    categorical,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt, UserFunction
+from tests.test_models.schedules import choose_among
 
 BEQUEST_SCALE = 0.8
 
@@ -92,8 +102,13 @@ def _dead(*, values_bequest: bool) -> UserRegime:
 def _carried_retired() -> UserRegime:
     """`retired` carries `pension_wealth`: imputed in solve, gridded in simulate."""
     return UserRegime(
-        regime_transitions=_from_retired,
-        active=lambda age: 62 <= age < 64,
+        regime_transitions=ByAge(
+            {
+                AgeRange(start=62, stop=64): Choose(
+                    _from_retired, targets=("retired", "dead")
+                )
+            }
+        ),
         states={
             "pension_wealth": Phased(
                 solve=_impute_pension_wealth,
@@ -108,8 +123,13 @@ def _carried_retired() -> UserRegime:
 def _ordinary_retired() -> UserRegime:
     """`retired` grids `pension_wealth` ORDINARILY in both phases."""
     return UserRegime(
-        regime_transitions=_from_retired,
-        active=lambda age: 62 <= age < 64,
+        regime_transitions=ByAge(
+            {
+                AgeRange(start=62, stop=64): Choose(
+                    _from_retired, targets=("retired", "dead")
+                )
+            }
+        ),
         states={"pension_wealth": LinSpacedGrid(start=0.0, stop=20.0, n_points=4)},
         state_transitions={"pension_wealth": _evolve_pension_wealth},
         functions={"utility": _retired_utility},
@@ -141,8 +161,13 @@ def _working(*, regime_transitions: UserFunction | Phased) -> UserRegime:
         return consumption <= wealth
 
     return UserRegime(
-        regime_transitions=regime_transitions,
-        active=lambda age: age < 62,
+        regime_transitions=ByAge(
+            {
+                AgeRange(start=60, stop=62): choose_among(
+                    regime_transitions, targets=("retired",)
+                )
+            }
+        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=4),

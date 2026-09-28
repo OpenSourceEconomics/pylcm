@@ -38,10 +38,6 @@ def _one_probability() -> FloatND:
     return jnp.asarray(1.0)
 
 
-def _source_is_early(age: float) -> bool:
-    return age < 22
-
-
 def _process() -> NormalIIDProcess:
     # Binned nodes are exactly (0, 1, 2), so entry at 1.5 is off-node but on-support.
     return NormalIIDProcess(
@@ -85,7 +81,6 @@ def _build_model(*, enable_jit: bool) -> Model:
         regimes={
             "source": Regime(
                 regime_transitions={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
                 state_transitions={
                     "shock": {"target": _enter_shock},
                     "other": {"target": _enter_other},

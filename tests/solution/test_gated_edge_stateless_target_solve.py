@@ -14,6 +14,7 @@ from lcm.collective import (
 from lcm.regime import Regime
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _BETA = 0.9
 _TARGET_VALUE = 1.0
@@ -63,20 +64,23 @@ def _closed_gate(V_target: FloatND) -> BoolND:
 
 def _build_model(*, gate, enable_jit: bool) -> Model:
     src = Regime(
-        regime_transitions={
-            "stateless_target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="stateless_fallback", projection={}
+        regime_transitions=until_exit(
+            1,
+            law={
+                "stateless_target": ValueDependentTransition(
+                    probability=MarkovTransition(_prob_one),
+                    gate=gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="stateless_fallback", projection={}
+                            )
                         )
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                    },
+                )
+            },
+            exits=("stateless_target",),
+        ),
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _identity_x},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -84,12 +88,10 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
     )
     stateless_target = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         functions={"utility": _u_stateless_target},
     )
     stateless_fallback = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         functions={"utility": _u_stateless_fallback},
     )
     return Model(

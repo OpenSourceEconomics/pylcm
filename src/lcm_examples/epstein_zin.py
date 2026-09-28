@@ -38,6 +38,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ByAge,
     CertaintyEquivalent,
     CESAggregator,
     DiscreteGrid,
@@ -165,7 +166,11 @@ def get_model(
         n_points=n_consumption_points,
     )
     alive = Regime(
-        regime_transitions=MarkovTransition(next_regime),
+        regime_transitions=ByAge.until(
+            last_age,
+            law=MarkovTransition(next_regime, targets=("alive", "dead")),
+            then=MarkovTransition(next_regime, targets=("dead",)),
+        ),
         states={
             "wealth": wealth_grid,
             "health": DiscreteGrid(category_class=HealthStatus),
@@ -179,7 +184,6 @@ def get_model(
         functions={"utility": utility_alive},
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=certainty_equivalent,
-        active=lambda age, la=last_age: age < la,
     )
     dead = Regime(
         regime_transitions=None,

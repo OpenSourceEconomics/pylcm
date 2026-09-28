@@ -37,6 +37,7 @@ from tests.solution.test_egm_euler_point_axis import (
     stay_prob,
     utility,
 )
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -67,11 +68,14 @@ def _model(width: int | None = None) -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        regime_transitions={
-            "working": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "working": MarkovTransition(stay_prob),
+                "dead": MarkovTransition(death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH)},
         state_transitions={"wealth": next_wealth},

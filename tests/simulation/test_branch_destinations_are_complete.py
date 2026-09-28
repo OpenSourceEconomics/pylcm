@@ -29,6 +29,7 @@ from lcm import (
 )
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _WAGE = IrregSpacedGrid(points=(1.0, 2.0))
 
@@ -66,37 +67,39 @@ def _prosperous_enough(wage: ContinuousState) -> BoolND:
 
 def _make_model() -> Model:
     household = Regime(
-        regime_transitions={
-            "household_next": ValueDependentTransition(
-                probability=MarkovTransition(_certain),
-                gate=_prosperous_enough,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="care_pair",
-                            stakeholder="carer",
-                            projection={"wage": _identity_wage},
+        regime_transitions=until_exit(
+            1,
+            law={
+                "household_next": ValueDependentTransition(
+                    probability=MarkovTransition(_certain),
+                    gate=_prosperous_enough,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="care_pair",
+                                stakeholder="carer",
+                                projection={"wage": _identity_wage},
+                            ),
                         ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="lodging",
-                            projection={"wage": _identity_wage},
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="lodging",
+                                projection={"wage": _identity_wage},
+                            ),
                         ),
-                    ),
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                    },
+                )
+            },
+            exits=("household_next",),
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     household_next = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={
             "utility": CollectiveUtility(
@@ -106,7 +109,6 @@ def _make_model() -> Model:
     )
     care_pair = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={
             "utility": CollectiveUtility(
@@ -116,7 +118,6 @@ def _make_model() -> Model:
     )
     lodging = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _zero},
     )

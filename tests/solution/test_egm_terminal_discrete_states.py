@@ -23,6 +23,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -42,6 +43,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 N_PERIODS = 4
 # The lowest wealth nodes are where grid search is least reliable (the value
@@ -163,7 +165,11 @@ def _get_dcegm_model() -> Model:
         n_constrained_points=64,
     )
     retirement = ConsumptionSavingsRegime(
-        regime_transitions=next_regime_from_retirement,
+        regime_transitions=until_exit(
+            last_age,
+            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -185,7 +191,6 @@ def _get_dcegm_model() -> Model:
             resources="wealth",
             post_decision_state="savings_post",
         ),
-        active=lambda age, la=last_age: age < la,
     )
     return Model(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
@@ -200,7 +205,11 @@ def _get_brute_model() -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     retirement = UserRegime(
-        regime_transitions=next_regime_from_retirement,
+        regime_transitions=until_exit(
+            last_age,
+            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -212,7 +221,6 @@ def _get_brute_model() -> Model:
         },
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
-        active=lambda age, la=last_age: age < la,
     )
     return Model(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
@@ -297,7 +305,11 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
 
     # The parent does NOT carry `pref_type`; only `dead` does.
     retirement = ConsumptionSavingsRegime(
-        regime_transitions=next_regime_from_retirement,
+        regime_transitions=until_exit(
+            last_age,
+            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={"wealth": next_wealth_from_savings},
@@ -313,7 +325,6 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
             resources="wealth",
             post_decision_state="savings_post",
         ),
-        active=lambda age, la=last_age: age < la,
     )
     with pytest.raises(ModelInitializationError, match="pref_type"):
         Model(

@@ -25,6 +25,7 @@ from tests.test_models.deterministic.retirement_only import (
     RetirementOnlyRegimeId,
     dead,
     get_params,
+    retirement_transitions,
 )
 
 
@@ -48,7 +49,7 @@ def _model(
 ) -> Model:
     """Small real DC-EGM model exercising either numerical envelope consumer."""
     retirement = dcegm_retirement.replace(
-        active=lambda age: age < 60,
+        regime_transitions=retirement_transitions(last_age=60),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=6)},
         solver=DCEGM(
             savings_grid=LinSpacedGrid(start=0.0, stop=12.0, n_points=8),

@@ -173,7 +173,6 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
                 if with_a_safe_alternative
                 else {"lottery": MarkovTransition(_certain)}
             ),
-            active=lambda age: age < 21,
             actions={"plan": DiscreteGrid(category_class=Plan)}
             if with_a_safe_alternative
             else {},

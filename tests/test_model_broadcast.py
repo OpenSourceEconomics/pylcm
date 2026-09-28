@@ -15,6 +15,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -72,8 +74,7 @@ def _retired_transition() -> dict[str, MarkovTransition]:
 
 def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": _work_transition(),
-        "active": lambda age: age < 2,
+        "regime_transitions": ByAge({AgeRange(stop=2): _work_transition()}),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -85,8 +86,7 @@ def _work_regime(**overrides: Any) -> UserRegime:
 
 def _retired_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": _retired_transition(),
-        "active": lambda age: age < 2,
+        "regime_transitions": ByAge({AgeRange(stop=2): _retired_transition()}),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},

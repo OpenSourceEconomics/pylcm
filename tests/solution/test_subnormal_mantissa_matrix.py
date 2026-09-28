@@ -28,6 +28,7 @@ from lcm import (
 )
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -132,11 +133,14 @@ def _model(
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "common": MarkovTransition(_certain),
-                    "rare": MarkovTransition(rare_probability),
-                },
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21,
+                    law={
+                        "common": MarkovTransition(_certain),
+                        "rare": MarkovTransition(rare_probability),
+                    },
+                    exits=("common", "rare"),
+                ),
                 functions={"utility": _no_utility},
                 certainty_equivalent=certainty_equivalent,
             ),

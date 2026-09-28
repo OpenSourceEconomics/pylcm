@@ -23,6 +23,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -41,6 +42,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -149,17 +151,17 @@ def _get_model(solver: str) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(*, age: int, la: float = last_age) -> bool:
-        return age < la
-
     states = {
         "wealth": WEALTH_GRID,
         "wage": RouwenhorstAR1Process(n_points=N_WAGE_NODES),
     }
     if solver == "dcegm":
         alive = ConsumptionSavingsRegime(
-            regime_transitions=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(next_regime, targets=("alive", "dead")),
+                exits=("dead",),
+            ),
             actions={"consumption": CONSUMPTION_GRID},
             states=states,
             state_transitions={"wealth": next_wealth},
@@ -180,8 +182,11 @@ def _get_model(solver: str) -> Model:
         )
     else:
         alive = UserRegime(
-            regime_transitions=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(next_regime, targets=("alive", "dead")),
+                exits=("dead",),
+            ),
             actions={"consumption": CONSUMPTION_GRID},
             states=states,
             state_transitions={"wealth": next_wealth_brute},

@@ -18,6 +18,7 @@ from _lcm.pandas_utils import (
 from _lcm.params.processing import broadcast_to_template
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     JointTransition,
     LinSpacedGrid,
@@ -35,6 +36,7 @@ from tests.test_models.basic_discrete import (
     Health,
 )
 from tests.test_models.regime_markov import get_model as get_regime_markov_model
+from tests.test_models.schedules import until_exit
 from tests.test_models.stochastic import get_model as get_stochastic_model
 
 
@@ -1089,8 +1091,14 @@ def test_convert_series_per_target_transition() -> None:
             "wealth": _next_wealth,
         },
         functions={"utility": _utility},
-        regime_transitions=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law=Choose(
+                lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
+                targets=("working", "retired"),
+            ),
+            exits=("retired",),
+        ),
     )
     retired = UserRegime(
         regime_transitions=None,
@@ -1192,10 +1200,14 @@ def test_convert_series_structured_derived_categoricals() -> None:
         return wealth
 
     regime_a = UserRegime(
-        regime_transitions=lambda age: jnp.where(
-            age >= 1, _RId.regime_b, _RId.regime_a
+        regime_transitions=until_exit(
+            1,
+            law=Choose(
+                lambda age: jnp.where(age >= 1, _RId.regime_b, _RId.regime_a),
+                targets=("regime_a", "regime_b"),
+            ),
+            exits=("regime_b",),
         ),
-        active=lambda age: age < 1,
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         state_transitions={"wealth": _next_wealth_sc},
         functions={"utility": func_a, "derived": _derived_a},
@@ -1245,8 +1257,14 @@ def test_convert_series_runtime_grid_param() -> None:
         dead: ScalarInt
 
     alive = UserRegime(
-        regime_transitions=lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(
+                lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
+                targets=("alive", "dead"),
+            ),
+            exits=("dead",),
+        ),
         states={"wealth": IrregSpacedGrid(n_points=4)},
         state_transitions={"wealth": lambda wealth: wealth},
         functions={"utility": lambda wealth: wealth},
@@ -1370,8 +1388,14 @@ def test_convert_series_cross_grid_transition() -> None:
             "wealth": lambda wealth: wealth,
         },
         functions={"utility": lambda health, wealth: wealth + health},
-        regime_transitions=lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(
+                lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
+                targets=("pre65", "post65"),
+            ),
+            exits=("post65",),
+        ),
     )
     post65 = UserRegime(
         regime_transitions=None,

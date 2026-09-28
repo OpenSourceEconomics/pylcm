@@ -14,6 +14,9 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -112,8 +115,7 @@ def get_shared_decision_model() -> Model:
         utilities={"f": _shared_utility_f, "m": _shared_utility_m}
     )
     couple = Regime(
-        regime_transitions=_to_shared_terminal,
-        active=lambda age: age < 1,
+        regime_transitions=Choose(_to_shared_terminal, targets=("couple_terminal",)),
         states={"wage": _SHARED_WAGE_GRID},
         state_transitions={"wage": _next_shared_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -121,7 +123,6 @@ def get_shared_decision_model() -> Model:
     )
     couple_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _SHARED_WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": shared_utility},
@@ -210,19 +211,22 @@ def get_dissolution_model() -> Model:
     """
     single_f = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         functions={"utility": _single_f_value},
     )
     single_m = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         functions={"utility": _single_m_value},
     )
     married_with_participation = Regime(
-        regime_transitions={"married_terminal": MarkovTransition(_probability_one)},
-        active=lambda age: (age >= 1) & (age < _DISSOLUTION_AGE),
+        regime_transitions=ByAge(
+            {
+                AgeRange(start=1, stop=_DISSOLUTION_AGE): {
+                    "married_terminal": MarkovTransition(_probability_one)
+                }
+            }
+        ),
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -257,29 +261,32 @@ def get_dissolution_model() -> Model:
         # gate-closed branch is each stakeholder's own single regime, so keying
         # this edge by one of them would send both partners there whenever the
         # household stays together.
-        regime_transitions={
-            "married_with_participation": ValueDependentTransition(
-                probability=MarkovTransition(_probability_one),
-                gate=_no_dissolution,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f",
-                            projection={"wage": _identity_wage},
-                        ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m",
-                            projection={"wage": _identity_wage},
-                        ),
-                    ),
-                },
-            )
-        },
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "married_with_participation": ValueDependentTransition(
+                        probability=MarkovTransition(_probability_one),
+                        gate=_no_dissolution,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                    )
+                }
+            }
+        ),
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -291,7 +298,6 @@ def get_dissolution_model() -> Model:
     )
     married_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= _DISSOLUTION_AGE,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={

@@ -13,6 +13,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -61,8 +63,7 @@ def _granular_transition() -> dict[str, MarkovTransition]:
 
 def _build_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": _granular_transition(),
-        "active": lambda age: age < 2,
+        "regime_transitions": ByAge({AgeRange(stop=2): _granular_transition()}),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -78,15 +79,18 @@ def _build_model(*, work: UserRegime, retired: UserRegime | None = None) -> Mode
     # `dead` in its own final transition.
     if retired is None:
         retired = _build_regime(
-            regime_transitions={
-                "retired": MarkovTransition(
-                    lambda age: jnp.where(age < 2, 0.5, 0.0),
-                ),
-                "dead": MarkovTransition(
-                    lambda age: jnp.where(age < 2, 0.5, 1.0),
-                ),
-            },
-            active=lambda age: age < 3,
+            regime_transitions=ByAge(
+                {
+                    AgeRange(stop=3): {
+                        "retired": MarkovTransition(
+                            lambda age: jnp.where(age < 2, 0.5, 0.0),
+                        ),
+                        "dead": MarkovTransition(
+                            lambda age: jnp.where(age < 2, 0.5, 1.0),
+                        ),
+                    }
+                }
+            ),
         )
     dead = UserRegime(
         regime_transitions=None,
@@ -153,8 +157,8 @@ def test_plain_callable_cell_is_rejected() -> None:
 
 
 def test_empty_granular_dict_is_rejected() -> None:
-    """`transition={}` is not the terminal spelling; terminality is `None`."""
-    with pytest.raises(RegimeInitializationError, match=r"transition=None"):
+    """`regime_transitions={}` is not the terminal spelling; terminality is `None`."""
+    with pytest.raises(RegimeInitializationError, match=r"regime_transitions=None"):
         _build_regime(regime_transitions={})
 
 

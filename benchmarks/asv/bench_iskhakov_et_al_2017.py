@@ -16,6 +16,8 @@ chosen, death occurs at a fixed age) as in the original paper.
 
 import statistics
 
+from lcm import ByAge, Choose
+
 from . import _gpu_mem
 
 # Warm samples each class's setup_cache collects per commit, shared by
@@ -144,24 +146,33 @@ def _make_model_and_params(
         states={"wealth": wealth_grid},
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=next_regime_from_working,
+        regime_transitions=ByAge.until(
+            last_age,
+            law=Choose(
+                next_regime_from_working,
+                targets=("working_life", "retirement", "dead"),
+            ),
+            then=Choose(next_regime_from_working, targets=("dead",)),
+        ),
         functions={
             "utility": utility_working,
             "labor_income": labor_income,
             "is_working": is_working,
         },
         taste_shocks=ExtremeValueTasteShocks(),
-        active=lambda age: age < last_age,
     )
 
     retirement = Regime(
-        regime_transitions=next_regime_from_retirement,
+        regime_transitions=ByAge.until(
+            last_age,
+            law=Choose(next_regime_from_retirement, targets=("retirement", "dead")),
+            then=Choose(next_regime_from_retirement, targets=("dead",)),
+        ),
         actions={"consumption": consumption_grid},
         states={"wealth": wealth_grid},
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
-        active=lambda age: age < last_age,
     )
 
     if solver == "dcegm":
@@ -195,7 +206,6 @@ def _make_model_and_params(
             states=working_life.states,
             actions=working_life.actions,
             taste_shocks=working_life.taste_shocks,
-            active=working_life.active,
             state_transitions={"wealth": next_wealth_from_savings},
             constraints={},
             functions={**dict(working_life.functions), **dcegm_functions},
@@ -206,7 +216,6 @@ def _make_model_and_params(
             regime_transitions=retirement.regime_transitions,
             states=retirement.states,
             actions=retirement.actions,
-            active=retirement.active,
             state_transitions={"wealth": next_wealth_from_savings},
             constraints={},
             functions={**dict(retirement.functions), **dcegm_functions},
@@ -217,7 +226,6 @@ def _make_model_and_params(
     dead = Regime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda _age: True,
     )
 
     model = Model(

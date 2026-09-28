@@ -14,8 +14,9 @@ must therefore flip the chosen action from staying to leaving.
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import ScalarInt
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
 _LEAVE_AT_CONSUMPTION = 0.7
@@ -52,8 +53,11 @@ def _next_regime(*, consumption, age):
 def _simulate_with_bequest(bequest: float):
     """Simulate a two-regime model whose terminal regime carries no state."""
     alive = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},

@@ -15,6 +15,7 @@ import pytest
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -31,6 +32,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -78,7 +80,6 @@ def _terminal_regime() -> UserRegime:
         regime_transitions=None,
         functions={"utility": _utility_terminal},
         states={"wealth": WEALTH_GRID},
-        active=lambda age: age >= 1,
     )
 
 
@@ -92,8 +93,11 @@ def _model_with_state_probs(next_health_func) -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     return Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
@@ -242,14 +246,16 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=_local_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_local_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     terminal = UserRegime(
         regime_transitions=None,
         functions={"utility": _utility_terminal},
         states={"wealth": WEALTH_GRID},
-        active=lambda age: age >= 1,
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="subscript"):
@@ -325,8 +331,11 @@ def test_per_target_dict_skips_unreachable_targets() -> None:
             "wealth": next_wealth_passthrough,
             "heir_present": {"unreachable": MarkovTransition(bad_heir_probs)},
         },
-        regime_transitions=_to_dead,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_to_dead, targets=("alive", "unreachable", "dead")),
+            exits=("unreachable", "dead"),
+        ),
     )
     unreachable = UserRegime(
         regime_transitions=None,
@@ -336,13 +345,11 @@ def test_per_target_dict_skips_unreachable_targets() -> None:
             "heir_present": DiscreteGrid(category_class=_Heir),
         },
         # Active only at age 0 — never the next period of `alive`.
-        active=lambda age: age < 1,
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": _utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
-        active=lambda age: age >= 1,
     )
     model = Model(
         regimes={"alive": alive, "unreachable": unreachable, "dead": dead},
@@ -392,8 +399,9 @@ def test_per_target_dict_validates_each_entry() -> None:
             "wealth": next_wealth_passthrough,
             "heir_present": {"dead": MarkovTransition(bad_heir_probs)},
         },
-        regime_transitions=_to_dead,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1, law=Choose(_to_dead, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
         regime_transitions=None,
@@ -402,7 +410,6 @@ def test_per_target_dict_validates_each_entry() -> None:
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=3),
             "heir_present": DiscreteGrid(category_class=_Heir),
         },
-        active=lambda age: age >= 1,
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
@@ -474,8 +481,11 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     model = Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
@@ -507,8 +517,11 @@ def _model_with_fixed_param_health_probs() -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     return Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
@@ -566,14 +579,16 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     terminal = UserRegime(
         regime_transitions=None,
         functions={"utility": _utility_terminal_with_health},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
-        active=lambda age: age >= 1,
     )
     return Model(
         regimes={"alive": alive, "terminal": terminal},
@@ -628,8 +643,11 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     model = Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},

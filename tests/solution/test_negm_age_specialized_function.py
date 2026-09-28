@@ -23,6 +23,7 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
+    Choose,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
@@ -47,6 +48,7 @@ from tests.test_models.negm_kinked_toy import (
     resources_before_outer_cost,
     utility,
 )
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -106,7 +108,6 @@ def _build_model(*, helper_name: str, override) -> Model:
         if helper_name == "keep_illiquid":
             no_adjustment = "keep_illiquid"
     alive = NestedConsumptionSavingsRegime(
-        active=lambda age: age <= _FINAL_AGE_ALIVE,
         states={
             "wealth": negm_kinked_toy.WEALTH_GRID,
             "illiquid": negm_kinked_toy.ILLIQUID_GRID,
@@ -119,7 +120,11 @@ def _build_model(*, helper_name: str, override) -> Model:
             "consumption": negm_kinked_toy.CONSUMPTION_GRID,
             "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=next_regime,
+        regime_transitions=until_exit(
+            _FINAL_AGE_ALIVE + _AGE_STEP,
+            law=Choose(next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions=functions,
         solver=replace(NEGM_SOLVER),
         liquid=LiquidMargin(

@@ -21,7 +21,11 @@ import pytest
 
 from lcm import AgeGrid, MarkovTransition, Model
 from lcm.typing import BoolND, DiscreteAction
-from lcm_examples.iskhakov_et_al_2017 import dead
+from lcm_examples.iskhakov_et_al_2017 import (
+    dead,
+    retirement_transitions,
+    working_life_transitions,
+)
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
@@ -31,6 +35,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_full_params,
     get_retirement_only_params,
 )
+from tests.test_models.schedules import until_exit
 
 # MSS inserts the same exact crossing FUES does, so the published value functions
 # agree far tighter than the LTM no-insertion tolerance (5e-3): the residual is
@@ -52,7 +57,11 @@ def _retirement_only_model(*, envelope, n_periods):
         regimes={
             "retirement": _with_backend(
                 regime=dcegm_retirement, envelope=envelope_config(envelope)
-            ).replace(active=lambda age, la=last_age: age < la),
+            ).replace(
+                regime_transitions=retirement_only.retirement_transitions(
+                    last_age=last_age
+                )
+            ),
             "dead": dead,
         },
         ages=ages,
@@ -67,10 +76,10 @@ def _full_model(*, envelope, n_periods):
         regimes={
             "working_life": _with_backend(
                 regime=dcegm_working_life, envelope=envelope
-            ).replace(active=lambda age, la=last_age: age < la),
+            ).replace(regime_transitions=working_life_transitions(last_age=last_age)),
             "retirement": _with_backend(
                 regime=dcegm_retirement_full, envelope=envelope
-            ).replace(active=lambda age, la=last_age: age < la),
+            ).replace(regime_transitions=retirement_transitions(last_age=last_age)),
             "dead": base.dead,
         },
         ages=ages,
@@ -139,16 +148,17 @@ def test_mss_publishes_neg_inf_for_all_infeasible_combo_like_fues():
                     regime=dcegm_working_life, envelope=envelope
                 ).replace(
                     constraints={"nothing_is_feasible": _nothing_is_feasible},
-                    active=lambda age: age < 70,
+                    regime_transitions=working_life_transitions(last_age=70),
                 ),
                 "retirement": _with_backend(
                     regime=dcegm_retirement_full, envelope=envelope
                 ).replace(
-                    regime_transitions=retirement_transition,
+                    regime_transitions=until_exit(
+                        70, law=retirement_transition, exits=("dead",)
+                    ),
                     state_transitions={
                         "wealth": dcegm_retirement_full.state_transitions["wealth"],
                     },
-                    active=lambda age: age < 70,
                 ),
                 "dead": base.dead,
             },

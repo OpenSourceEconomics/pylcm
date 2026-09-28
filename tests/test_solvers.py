@@ -37,7 +37,9 @@ from lcm_examples.iskhakov_et_al_2017 import (
     get_model,
     get_params,
     retirement,
+    retirement_transitions,
     working_life,
+    working_life_transitions,
 )
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
@@ -59,9 +61,12 @@ def _build_model(*, working_solver: object | None = None) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age, la=last_age: age < la, **overrides
+                regime_transitions=working_life_transitions(last_age=last_age),
+                **overrides,
             ),
-            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "retirement": retirement.replace(
+                regime_transitions=retirement_transitions(last_age=last_age)
+            ),
             "dead": dead,
         },
         ages=ages,

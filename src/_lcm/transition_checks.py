@@ -391,7 +391,7 @@ def validate_regime_selection(
     flat_params: FlatParams,
     ages: AgeGrid,
 ) -> None:
-    """Validate regime-selection laws of a dated model, at every log level.
+    """Validate every regime-selection law, at every log level.
 
     Every covered source period's selection must put finite mass in [0, 1] that
     sums to one on its declared targets, and zero mass elsewhere; a failure
@@ -446,26 +446,6 @@ def validate_regime_transitions_all_periods(
     # offending target instead, which a NaN cannot.
     if not validation_enabled(logger):
         return
-
-    last_period = ages.n_periods - 1
-    non_terminal_active_at_last = [
-        regime_name
-        for regime_name, regime in regimes.items()
-        if not regime.terminal and last_period in regime.active_periods
-    ]
-    if non_terminal_active_at_last:
-        if summary is not None:
-            raise _SerialValidationRequired
-        raise_or_warn(
-            logger=logger,
-            error=InvalidRegimeTransitionProbabilitiesError(
-                f"Non-terminal regime(s) {non_terminal_active_at_last} are active at "
-                f"the last period (age {ages.exact_values[last_period]}). Non-terminal "
-                "regimes must not be active at the last period because there is no "
-                "next period to transition to. Adjust the 'active' function on these "
-                "regimes to exclude the last age."
-            ),
-        )
 
     for period in range(ages.n_periods - 1):
         for regime_name, regime in regimes.items():

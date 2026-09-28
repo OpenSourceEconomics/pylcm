@@ -14,9 +14,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import ScalarInt
+from tests.test_models.schedules import until_exit
 
 _LAST_AGE = 22
 
@@ -38,8 +39,11 @@ def _next_regime(*, wealth, age):
 
 def _build_model():
     alive = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},

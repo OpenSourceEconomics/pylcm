@@ -35,7 +35,9 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedGrid,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -50,6 +52,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _AGES = AgeGrid(start=0, stop=3, step="Y")
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
@@ -218,20 +221,23 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         {"principal": _project_principal} if fallback_projects_principal else {}
     )
     src = Regime(
-        regime_transitions={
-            "src_exit": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_wage_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="annuity", projection=projection
+        regime_transitions=until_exit(
+            1,
+            law={
+                "src_exit": ValueDependentTransition(
+                    probability=MarkovTransition(_prob_one),
+                    gate=_wage_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="annuity", projection=projection
+                            )
                         )
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                    },
+                )
+            },
+            exits=("src_exit",),
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -239,13 +245,11 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
     )
     src_exit = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
     annuity = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={
             "principal": AgeSpecializedGrid(
                 build=_principal_grid, signature=_principal_ceiling
@@ -282,25 +286,28 @@ def _build_model(
         gate_ref_projection["career"] = _project_career
 
     src = Regime(
-        regime_transitions={
-            "src_exit": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="fallback", projection=fallback_projection
-                        )
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "src_exit": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_one),
+                        gate=_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection=fallback_projection
+                                )
+                            )
+                        },
+                        gate_references={
+                            "V_fallback_ref": ProjectedRegimeValue(
+                                regime="fallback", projection=gate_ref_projection
+                            )
+                        },
                     )
-                },
-                gate_references={
-                    "V_fallback_ref": ProjectedRegimeValue(
-                        regime="fallback", projection=gate_ref_projection
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -308,13 +315,13 @@ def _build_model(
     )
     src_exit = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
     fallback = Regime(
-        regime_transitions={"fallback_exit": MarkovTransition(_prob_one)},
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            {AgeRange(start=1, stop=2): {"fallback_exit": MarkovTransition(_prob_one)}}
+        ),
         states={
             "wage": _WAGE,
             "career": Phased(solve=_impute_career, simulate=_CAREER),
@@ -325,7 +332,6 @@ def _build_model(
     )
     fallback_exit = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 2,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )

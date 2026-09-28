@@ -29,7 +29,7 @@ from _lcm.simulation.programs import (
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import ArgmaxQOverAFunction, QAndFFunction
 from benchmarks.asv._simulation_witnesses import WITNESSES
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import ACTION_PRODUCT_AXIS
@@ -43,6 +43,7 @@ from lcm.typing import (
 )
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import taste_shocks_toy
+from tests.test_models.schedules import until_exit
 
 # A regime whose solve kernel streams its action product, and one whose
 # collective kernel keeps the canonical dense reducer and whose routing a host
@@ -254,8 +255,11 @@ def _branch_terminal_utility() -> FloatND:
 def _branching_regime() -> UserRegime:
     """Return one of the two regimes a subject moves between."""
     return UserRegime(
-        regime_transitions=_branch_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law=Choose(_branch_next_regime, targets=("stay", "switch", "done")),
+            exits=("done",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         state_transitions={"wealth": _branch_next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3)},

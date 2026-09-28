@@ -13,9 +13,18 @@ small-integer expression rather than a tolerance-bounded approximation.
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, CollectiveUtility, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    Choose,
+    CollectiveUtility,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import ContinuousAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 DISCOUNT_FACTOR = 0.95
 
@@ -74,8 +83,11 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
     flow payoff: `(1 + 0.95 * 10, 2 + 0.95 * 4) = (10.5, 5.8)`.
     """
     couple = Regime(
-        regime_transitions=_next_couple_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_next_couple_regime, targets=("couple", "couple_terminal")),
+            exits=("couple_terminal",),
+        ),
         states={},
         actions={},
         functions={
@@ -86,7 +98,6 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
     )
     couple_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={},
         actions={},
         functions={
@@ -124,8 +135,11 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
     `(1 + 0.95 * 1, 2 + 0.95 * 2) = (1.95, 3.9)`.
     """
     couple = Regime(
-        regime_transitions=_next_couple_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_next_couple_regime, targets=("couple", "couple_terminal")),
+            exits=("couple_terminal",),
+        ),
         states={},
         actions={"consumption": CONSUMPTION_GRID},
         functions={
@@ -136,7 +150,6 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
     )
     couple_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={},
         actions={"consumption": CONSUMPTION_GRID},
         functions={

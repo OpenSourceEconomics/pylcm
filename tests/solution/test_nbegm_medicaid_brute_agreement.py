@@ -26,6 +26,7 @@ from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch
 from lcm.typing import FloatND, UserFunction
 from tests.test_models import nbegm_medicaid_toy as toy
+from tests.test_models.schedules import until_exit
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 2.0) & (_LIQUID < 22.0)
@@ -198,10 +199,14 @@ def _build_model(
             }
         },
         constraints={},
-        regime_transitions={
-            "alive": MarkovTransition(toy.prob_stay_alive),
-            "dead": MarkovTransition(toy.prob_die),
-        },
+        regime_transitions=until_exit(
+            1.0,
+            law={
+                "alive": MarkovTransition(toy.prob_stay_alive),
+                "dead": MarkovTransition(toy.prob_die),
+            },
+            exits=("dead",),
+        ),
         functions={
             "utility": toy.utility,
             "predicate": predicate,
@@ -211,7 +216,6 @@ def _build_model(
             "savings": toy.savings,
             **({} if extra_functions is None else extra_functions),
         },
-        active=lambda age: age < 1.0,
         solver=NBEGM(
             savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=40),
             envelope_arithmetic="ordinary",
@@ -227,7 +231,6 @@ def _build_model(
         regime_transitions=None,
         states={"liquid": grid},
         functions={"utility": toy.bequest},
-        active=lambda age: age >= 1.0,
         solver=GridSearch(),
     )
     return Model(

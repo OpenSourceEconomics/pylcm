@@ -68,7 +68,6 @@ class MockRegime(UserRegime):
             self, "solver", solver if solver is not None else GridSearch()
         )
         # Match UserRegime's defaults for fields MockRegime callers don't touch
-        object.__setattr__(self, "active", lambda _age: True)
         object.__setattr__(self, "derived_categoricals", MappingProxyType({}))
         object.__setattr__(self, "joint_transitions", MappingProxyType({}))
         object.__setattr__(self, "description", "")

@@ -7,13 +7,14 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
 from tests.test_models.regime_markov import Health
 from tests.test_models.regime_markov import RegimeId as MarkovRegimeId
 from tests.test_models.regime_markov import alive as markov_alive
 from tests.test_models.regime_markov import dead as markov_dead
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -57,13 +58,15 @@ def _make_model(*, n_periods=3, extra_fixed_params=None):
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=_next_regime,
-        active=lambda age, n=n_periods: age < n - 1,
+        regime_transitions=until_exit(
+            n_periods - 1,
+            law=Choose(_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age, n=n_periods: age >= n - 1,
     )
 
     fixed_params = extra_fixed_params or {}
@@ -340,8 +343,9 @@ def test_series_fixed_param_with_derived_categoricals():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         derived_categoricals={
             "wealth_group": DiscreteGrid(category_class=_WealthGroup)
         },
@@ -349,7 +353,6 @@ def test_series_fixed_param_with_derived_categoricals():
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
@@ -378,13 +381,13 @@ def test_model_broadcast_merges_into_regimes():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
@@ -413,14 +416,14 @@ def test_model_broadcast_same_name_at_both_levels_raises():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         derived_categoricals={"wealth_group": wg_grid},
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
     with pytest.raises(Exception, match="Ambiguous"):
         Model(
@@ -446,14 +449,14 @@ def test_model_broadcast_conflicting_grids_raise():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         derived_categoricals={"wealth_group": DiscreteGrid(category_class=_OtherGroup)},
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
     with pytest.raises(Exception, match="Ambiguous"):
         Model(
@@ -486,14 +489,14 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
 
     alive = UserRegime(
         functions={"utility": lambda: 0.0},
-        regime_transitions=_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         derived_categoricals={"group_a": DiscreteGrid(category_class=_GroupA)},
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
         derived_categoricals={"group_b": DiscreteGrid(category_class=_GroupB)},
     )
     model = Model(

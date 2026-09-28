@@ -24,7 +24,7 @@ from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.solution.nnbegm import (
     _fail_if_the_solve_grid_cannot_reconstruct_a_candidate,
 )
-from lcm import AgeGrid, LinSpacedGrid, Model
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model
 from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
@@ -42,11 +42,11 @@ from lcm.solvers import AdaptiveOuterMesh, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import n_nbegm_toy
+from tests.test_models.schedules import until_exit
 
 
 def _valid_regime() -> NestedConsumptionSavingsRegime:
     return NestedConsumptionSavingsRegime(
-        active=lambda age: age <= 20,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,
             "illiquid": n_nbegm_toy.ILLIQUID_GRID,
@@ -59,7 +59,11 @@ def _valid_regime() -> NestedConsumptionSavingsRegime:
             "consumption": n_nbegm_toy.CONSUMPTION_GRID,
             "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=n_nbegm_toy.next_regime,
+        regime_transitions=until_exit(
+            25,
+            law=Choose(n_nbegm_toy.next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions={
             "utility": n_nbegm_toy.utility,
             "new_illiquid": n_nbegm_toy.new_illiquid,
@@ -159,7 +163,6 @@ def test_a_utility_composite_of_consumption_and_the_durable_is_accepted() -> Non
 def test_a_regime_with_a_non_nested_solver_is_left_alone() -> None:
     """The dynamic NNBEGM check ignores regimes not bound to NNBEGM."""
     regime = Regime(
-        active=_VALID.active,
         states=_VALID.states,
         state_transitions=_VALID.state_transitions,
         actions={"illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID},
@@ -253,7 +256,6 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
     )
     dead = Regime(
         regime_transitions=None,
-        active=lambda age: age > 20,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,
             "illiquid": n_nbegm_toy.ILLIQUID_GRID,

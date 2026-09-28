@@ -74,7 +74,7 @@ from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.typing import RegimeName
 from _lcm.utils.logging import LogLevel
-from lcm import fixed_transition
+from lcm import AgeRange, ByAge, Choose, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -85,6 +85,7 @@ from lcm.solvers import GridSearch, Solver
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
+from tests.test_models.schedules import until_exit
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized; otherwise the tests skip.
@@ -462,7 +463,6 @@ def _make_three_type_model(
     `devices` restricts the model to a subset of the four.
     """
     working = UserRegime(
-        active=lambda age: age < 4,
         solver=GridSearch() if solver is None else solver,
         functions={
             "utility": lambda wealth, consumption, type1: (
@@ -472,8 +472,15 @@ def _make_three_type_model(
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        regime_transitions=lambda age: jnp.where(
-            age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+        regime_transitions=until_exit(
+            4,
+            law=Choose(
+                lambda age: jnp.where(
+                    age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+                ),
+                targets=("working", "retired"),
+            ),
+            exits=("retired",),
         ),
     )
     retired = UserRegime(
@@ -1146,33 +1153,44 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     def _next_wealth(*, wealth: Any, consumption: Any) -> Any:
         return wealth - consumption
 
-    def _worker(*, regime_transitions: Any, active: Any) -> UserRegime:
+    def _next_from_first(age: Any) -> Any:
+        return jnp.where(age >= 1, _TwoBlockRegimeId.second, _TwoBlockRegimeId.first)
+
+    def _worker(*, regime_transitions: ByAge) -> UserRegime:
         return UserRegime(
             functions={"utility": _utility},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             state_transitions={"wealth": _next_wealth},
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
             regime_transitions=regime_transitions,
-            active=active,
         )
 
     first = _worker(
-        regime_transitions=lambda age: jnp.where(
-            age >= 1, _TwoBlockRegimeId.second, _TwoBlockRegimeId.first
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): Choose(_next_from_first, targets=("first",)),
+                AgeRange(start=1, stop=3): Choose(
+                    _next_from_first, targets=("second",)
+                ),
+            }
         ),
-        active=lambda age: age < 3,
     )
     second = _worker(
-        regime_transitions=lambda age: jnp.where(
-            age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
+        regime_transitions=until_exit(
+            4,
+            law=Choose(
+                lambda age: jnp.where(
+                    age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
+                ),
+                targets=("second", "dead"),
+            ),
+            exits=("dead",),
         ),
-        active=lambda _age: True,
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-        active=lambda age: age >= 4,
     )
     return Model(
         regimes={"first": first, "second": second, "dead": dead},
@@ -1779,14 +1797,6 @@ def _uniform_placement_transition() -> ScalarInt:
     return _UniformPlacementRegimeId.done
 
 
-def _uniform_placement_initial_age(age: float) -> bool:
-    return age == 0
-
-
-def _uniform_placement_terminal_age(age: float) -> bool:
-    return age == 1
-
-
 def _uniform_placement_model(
     *, selected: tuple[int, ...], sharded: bool, stateless_terminal: bool = False
 ) -> Model:
@@ -1795,15 +1805,15 @@ def _uniform_placement_model(
     return Model(
         regimes={
             "alive": UserRegime(
-                regime_transitions=_uniform_placement_transition,
-                active=_uniform_placement_initial_age,
+                regime_transitions=Choose(
+                    _uniform_placement_transition, targets=("done",)
+                ),
                 states={"income": UniformIIDProcess(n_points=5)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _uniform_placement_utility},
             ),
             "done": UserRegime(
                 regime_transitions=None,
-                active=_uniform_placement_terminal_age,
                 functions={
                     "utility": _stateless_placement_terminal
                     if stateless_terminal

@@ -17,8 +17,11 @@ from _lcm.probability import normalized_scaled_weights, scaled_exact_product
 from _lcm.solution.preconditions import check_solver_params
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CertaintyEquivalent,
     CESAggregator,
+    Choose,
     DiscreteGrid,
     LinearExpectation,
     LinSpacedGrid,
@@ -59,6 +62,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.epstein_zin import get_model, get_params
+from tests.test_models.schedules import until_exit
 
 
 def test_power_certainty_equivalent_transform_and_inverse_are_inverses():
@@ -243,13 +247,14 @@ def _check_probes(model: Model) -> None:
 def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) -> Model:
     """Build a minimal model, attaching regime-owned EGM margins as needed."""
     base_alive: dict[str, Any] = {
-        "regime_transitions": _next_regime,
+        "regime_transitions": ByAge(
+            {AgeRange(stop=41): Choose(_next_regime, targets=("dead",))}
+        ),
         "states": {"wealth": _WEALTH},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": _CONSUMPTION},
         "constraints": {"budget": _budget},
         "functions": {"utility": _utility_alive},
-        "active": lambda age: age < 41,
     }
     base_dead: dict[str, Any] = {
         "regime_transitions": None,
@@ -510,7 +515,9 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=_next_regime,
+        regime_transitions=until_exit(
+            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -527,7 +534,6 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
-        active=lambda age: age < 41,
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
@@ -585,7 +591,9 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=_next_regime,
+        regime_transitions=until_exit(
+            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -600,7 +608,6 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
-        active=lambda age: age < 41,
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
@@ -663,7 +670,9 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=_next_regime,
+        regime_transitions=until_exit(
+            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -681,7 +690,6 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
-        active=lambda age: age < 41,
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
@@ -737,7 +745,9 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=_next_regime,
+        regime_transitions=until_exit(
+            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -752,7 +762,6 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
-        active=lambda age: age < 41,
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
@@ -815,7 +824,9 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=_next_regime,
+        regime_transitions=until_exit(
+            41, law=Choose(_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_with_transfer,
@@ -830,7 +841,6 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
         solver=nbegm,
-        active=lambda age: age < 41,
         liquid=LiquidMargin(
             state="wealth",
             action="consumption",
@@ -1780,7 +1790,11 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         return consumption
 
     alive = Regime(
-        regime_transitions=MarkovTransition(_survival_probs),
+        regime_transitions=until_exit(
+            27,
+            law=MarkovTransition(_survival_probs, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         states={
             "wealth": LinSpacedGrid(start=0.5 * scale, stop=12.0 * scale, n_points=6),
             "health": DiscreteGrid(category_class=_Health),
@@ -1798,7 +1812,6 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         functions={"utility": utility_alive},
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
-        active=lambda age: age < 27,
     )
     dead = Regime(
         regime_transitions=None,
@@ -1845,7 +1858,11 @@ def _make_mixed_target_model(scale: float) -> Model:
         return consumption
 
     alive = Regime(
-        regime_transitions=MarkovTransition(_survival_probs),
+        regime_transitions=until_exit(
+            27,
+            law=MarkovTransition(_survival_probs, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         states={
             "wealth": LinSpacedGrid(start=0.5 * scale, stop=12.0 * scale, n_points=6),
             "health": DiscreteGrid(category_class=_Health),
@@ -1863,7 +1880,6 @@ def _make_mixed_target_model(scale: float) -> Model:
         functions={"utility": utility_alive},
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
-        active=lambda age: age < 27,
     )
     dead = Regime(
         regime_transitions=None, states={}, functions={"utility": utility_dead}
@@ -2067,14 +2083,24 @@ def _make_stacked_model(
         "constraints": {"budget": _budget},
         "functions": {"utility": _utility_alive},
     }
-    # Staggered activity so each edge lands on a regime that is active in the
-    # next period, and no non-terminal regime survives into the last one:
+    # Staggered schedules so each edge lands on a regime solved in the next
+    # period, and no non-terminal regime is solved at the last age:
     # working (40) -> retired (41) -> dead (42).
     working: dict[str, Any] = (
-        base | {"regime_transitions": _to_retired, "active": lambda age: age < 41}
+        base
+        | {
+            "regime_transitions": ByAge(
+                {AgeRange(stop=41): Choose(_to_retired, targets=("retired",))}
+            )
+        }
     ) | working_kwargs
     retired: dict[str, Any] = (
-        base | {"regime_transitions": _to_dead, "active": lambda age: 41 <= age < 42}
+        base
+        | {
+            "regime_transitions": ByAge(
+                {AgeRange(start=41, stop=42): Choose(_to_dead, targets=("dead",))}
+            )
+        }
     ) | retired_kwargs
     return Model(
         regimes={

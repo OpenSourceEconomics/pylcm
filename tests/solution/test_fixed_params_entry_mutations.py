@@ -16,6 +16,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LogNormalIIDProcess,
     MarkovTransition,
     Model,
@@ -38,10 +39,6 @@ def one_probability() -> ScalarFloat:
 
 def target_id() -> ScalarInt:
     return RegimeId.target
-
-
-def active(age: float) -> bool:
-    return age < 22
 
 
 def zero() -> ScalarFloat:
@@ -102,12 +99,15 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
     runtime template — and still prices the continuation at the law's own
     weighted expectation rather than an unweighted node average.
     """
-    transition = target_id if coarse else {"target": MarkovTransition(one_probability)}
+    transition = (
+        Choose(target_id, targets=("target",))
+        if coarse
+        else {"target": MarkovTransition(one_probability)}
+    )
     model = Model(
         regimes={
             "source": Regime(
                 regime_transitions=transition,
-                active=active,
                 functions={"utility": zero},
             ),
             "target": Regime(

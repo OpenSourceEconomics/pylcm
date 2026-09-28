@@ -71,7 +71,6 @@ def _build(state_transitions) -> Model:
         regimes={
             "source": Regime(
                 regime_transitions={t: MarkovTransition(_half) for t in ("a", "b")},
-                active=lambda age: age < 22,
                 state_transitions=state_transitions,
                 functions={"utility": _no_utility},
             ),

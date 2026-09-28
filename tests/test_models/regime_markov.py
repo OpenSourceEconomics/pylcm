@@ -11,6 +11,7 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -35,7 +36,11 @@ def _next_regime_probs(
 
 
 alive = UserRegime(
-    regime_transitions=MarkovTransition(_next_regime_probs),
+    regime_transitions=until_exit(
+        62,
+        law=MarkovTransition(_next_regime_probs, targets=("alive", "dead")),
+        exits=("dead",),
+    ),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -45,7 +50,6 @@ alive = UserRegime(
         "wealth": lambda wealth: wealth,
     },
     functions={"utility": lambda wealth, health: wealth + health},
-    active=lambda age: age < 62,
 )
 
 dead = UserRegime(

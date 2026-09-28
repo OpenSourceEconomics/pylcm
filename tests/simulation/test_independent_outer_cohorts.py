@@ -20,6 +20,7 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -30,6 +31,7 @@ from lcm import (
 )
 from lcm.typing import ScalarInt
 from tests.test_models import n_nbegm_toy as toy
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -49,9 +51,15 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
     return Model(
         regimes={
             "working": Regime(
-                active=lambda age: age < 2,
-                regime_transitions=lambda age: jnp.where(
-                    age < 1, _RegimeId.working, _RegimeId.retired
+                regime_transitions=until_exit(
+                    2,
+                    law=Choose(
+                        lambda age: jnp.where(
+                            age < 1, _RegimeId.working, _RegimeId.retired
+                        ),
+                        targets=("working", "retired"),
+                    ),
+                    exits=("retired",),
                 ),
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},

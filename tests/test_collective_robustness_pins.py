@@ -22,6 +22,8 @@ from _lcm.regime_building.collective import _gather_along_actions
 from _lcm.regime_building.V import _get_identity_coordinate
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -185,22 +187,25 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
 
     """
     source = Regime(
-        regime_transitions={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_enters_target),
-                gate=_no_dissolution,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="fallback",
-                            projection={"wage": _identity_wage},
-                        ),
-                    )
-                },
-            ),
-            "fallback": MarkovTransition(_never_entered),
-        },
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            {
+                AgeRange(stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_enters_target),
+                        gate=_no_dissolution,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            )
+                        },
+                    ),
+                    "fallback": MarkovTransition(_never_entered),
+                }
+            }
+        ),
         states={"wage": GATE_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -208,13 +213,11 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
     )
     target = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": GATE_WAGE_GRID},
         functions={"utility": _terminal_wage_utility},
     )
     fallback = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wage": GATE_WAGE_GRID},
         functions={"utility": _fallback_wage_utility},
     )

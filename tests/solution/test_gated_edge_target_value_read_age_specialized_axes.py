@@ -37,6 +37,7 @@ from lcm import (
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
 
@@ -147,28 +148,30 @@ def _build_model() -> Model:
 
     """
     saver = Regime(
-        regime_transitions={
-            "saver": MarkovTransition(_probability_of_staying_put),
-            "account": ValueDependentTransition(
-                probability=MarkovTransition(_probability_of_opening_the_account),
-                gate=_account_value_clears_the_floor,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="annuity",
-                            projection={"principal": _principal_from_balance},
+        regime_transitions=until_exit(
+            2,
+            law={
+                "saver": MarkovTransition(_probability_of_staying_put),
+                "account": ValueDependentTransition(
+                    probability=MarkovTransition(_probability_of_opening_the_account),
+                    gate=_account_value_clears_the_floor,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="annuity",
+                                projection={"principal": _principal_from_balance},
+                            )
                         )
-                    )
-                },
-            ),
-        },
-        active=lambda age: age < 2,
+                    },
+                ),
+            },
+            exits=("account",),
+        ),
         state_transitions={"balance": {"account": _entry_balance}},
         functions={"utility": _saver_utility},
     )
     account = Regime(
         regime_transitions=None,
-        active=lambda age: (age >= 1) & (age < 3),
         states={
             "balance": AgeSpecializedGrid(
                 build=_balance_grid, signature=_contribution_cap
@@ -178,7 +181,6 @@ def _build_model() -> Model:
     )
     annuity = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_utility},
     )

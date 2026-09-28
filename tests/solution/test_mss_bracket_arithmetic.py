@@ -35,6 +35,7 @@ from lcm.solvers import DCEGM, GridSearch, MSSEnvelope
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 requires_exact_kernel = pytest.mark.requires_exact_affine_kernel(
     reason=EXACT_KERNEL_SKIP_REASON
@@ -263,10 +264,6 @@ def death_prob(*, wealth: ContinuousState, age: int, final_age_alive: float) -> 
     return 1.0 - stay_prob(wealth=wealth, age=age, final_age_alive=final_age_alive)
 
 
-def _active(age: int) -> bool:
-    return age < 40 + (N_PERIODS - 1) * 10
-
-
 def _params() -> dict:
     return {
         "discount_factor": 0.95,
@@ -281,11 +278,14 @@ def _asset_row_model(*, arithmetic: ComparisonArithmetic | None) -> Model:
     is_dcegm = arithmetic is not None
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working_life = regime_type(
-        regime_transitions={
-            "working_life": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "working_life": MarkovTransition(stay_prob),
+                "dead": MarkovTransition(death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={

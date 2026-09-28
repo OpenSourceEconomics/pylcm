@@ -28,6 +28,7 @@ import pandas as pd
 
 from lcm import (
     AgeGrid,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     Model,
@@ -36,6 +37,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -102,8 +104,9 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     live = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1, law=Choose(_next_regime, targets=("live", "last")), exits=("last",)
+        ),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -111,7 +114,6 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     )
     last = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={

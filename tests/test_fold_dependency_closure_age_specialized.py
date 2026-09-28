@@ -16,6 +16,7 @@ import pytest
 
 from lcm import (
     AgeSpecializedFunction,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -30,6 +31,7 @@ from lcm.typing import (
     UserFunction,
 )
 from tests.collective_fixtures import AGES, FOLDED_SHOCK, ShockRegimeId, Work
+from tests.test_models.schedules import until_exit
 
 # The two-node liquid state whose law of motion does the offending read.
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=5.0, n_points=2)
@@ -73,8 +75,11 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
 
     """
     shocked = Regime(
-        regime_transitions=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(_next_regime, targets=("shocked", "shocked_terminal")),
+            exits=("shocked_terminal",),
+        ),
         states={"wealth": WEALTH_GRID, "wage_shock": FOLDED_SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility, "net_wage": net_wage},
@@ -82,7 +87,6 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
     )
     shocked_terminal = Regime(
         regime_transitions=None,
-        active=lambda age: age >= 1,
         states={"wealth": WEALTH_GRID},
         functions={"utility": _terminal_utility},
     )

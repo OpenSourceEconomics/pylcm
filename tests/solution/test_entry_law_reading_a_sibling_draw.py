@@ -30,6 +30,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 # Symmetric nodes on `(0, 1, 2)`, so the draw has mean one whatever weights the
 # discretization assigns them.
@@ -87,8 +88,9 @@ def model(request: pytest.FixtureRequest) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                ),
                 state_transitions={"income": {"target": income_law}},
                 functions=functions,
             ),
@@ -147,8 +149,9 @@ def test_an_unread_runtime_process_does_not_block_a_fixed_draw() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                ),
                 states={"noise": _RUNTIME_NOISE},
                 state_transitions={"wealth": {"target": _wealth_from_fixed_draw}},
                 functions={"utility": _utility_reading_the_noise},
@@ -215,8 +218,9 @@ def test_a_dependent_entry_is_contracted_as_a_value_not_averaged_as_a_lottery() 
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22, law={"target": MarkovTransition(_to_target)}, exits=("target",)
+                ),
                 state_transitions={"income": {"target": _income_between_two_nodes}},
                 functions={"utility": _no_utility},
                 certainty_equivalent=PowerMean(),
@@ -282,8 +286,11 @@ def test_a_draw_conditioned_on_a_sibling_draw_is_rejected() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    regime_transitions={"target": MarkovTransition(_to_target)},
-                    active=lambda age: age < 22,
+                    regime_transitions=until_exit(
+                        22,
+                        law={"target": MarkovTransition(_to_target)},
+                        exits=("target",),
+                    ),
                     state_transitions={"health": {"target": conditioned}},
                     functions={"utility": _no_utility},
                 ),

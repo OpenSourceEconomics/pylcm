@@ -35,6 +35,8 @@ from lcm_examples.mortality import (
     RegimeId,
     dead,
     is_working,
+    retirement_transitions,
+    working_life_transitions,
 )
 from lcm_examples.mortality import retirement as _base_retirement
 from lcm_examples.mortality import working_life as _base_working_life
@@ -166,9 +168,11 @@ def get_model(n_periods: int) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age, la=last_age: age < la
+                regime_transitions=working_life_transitions(last_age=last_age)
             ),
-            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "retirement": retirement.replace(
+                regime_transitions=retirement_transitions(last_age=last_age)
+            ),
             "dead": dead,
         },
         ages=ages,
