@@ -211,8 +211,8 @@ def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
         "alive": {
             "utility": {"disutility_of_work": 0.3},
             "next_wealth": {"interest_rate": 0.05},
-            "next_regime": {"final_age_alive": _FINAL_AGE_ALIVE},
         },
+        "final_age_alive": _FINAL_AGE_ALIVE,
     }
     return model, params
 

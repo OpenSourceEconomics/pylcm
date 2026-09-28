@@ -107,14 +107,16 @@ def _legacy_model() -> Model:
     return Model(
         regimes={
             "working": _regime(
-                regime_transitions=ByAge(
-                    {
-                        AgeRange(stop=65): {
-                            "working": MarkovTransition(stay),
-                            "dead": MarkovTransition(die),
-                            "retirement": MarkovTransition(retire),
-                        }
-                    }
+                regime_transitions=ByAge.until(
+                    65,
+                    law={
+                        "working": MarkovTransition(stay),
+                        "dead": MarkovTransition(die),
+                    },
+                    then={
+                        "dead": MarkovTransition(die),
+                        "retirement": MarkovTransition(retire),
+                    },
                 ),
             ),
             "retirement": _regime(

@@ -172,14 +172,9 @@ def build_params(
             "income_b": {"base_b": base_b},
             "tax_a": {"rate_a": rate_a, "kink_a": kink_a},
             "tax_b": {"rate_b": rate_b, "kink_b": kink_b},
-            "alive": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
-            "dead": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
+            "alive": {"next_liquid": alive_budget},
+            "dead": {"next_liquid": alive_budget},
+            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

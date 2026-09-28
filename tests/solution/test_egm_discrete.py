@@ -20,8 +20,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DiscreteGrid,
     MarkovTransition,
     Model,
@@ -299,13 +297,13 @@ def test_nan_regime_transition_prob_surfaces_as_error():
     model = Model(
         regimes={
             "retirement": dcegm_retirement.replace(
-                regime_transitions=ByAge(
-                    {
-                        AgeRange(stop=last_age): {
-                            "retirement": MarkovTransition(_stay_prob_from_param),
-                            "dead": MarkovTransition(_death_prob_from_param),
-                        }
-                    }
+                regime_transitions=until_exit(
+                    last_age,
+                    law={
+                        "retirement": MarkovTransition(_stay_prob_from_param),
+                        "dead": MarkovTransition(_death_prob_from_param),
+                    },
+                    exits=("dead",),
                 ),
             ),
             "dead": base.dead,

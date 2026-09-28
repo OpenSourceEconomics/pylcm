@@ -250,7 +250,6 @@ def build_params(
     base_a = jnp.array([base_income_lo, base_income_hi])
     base_b = base_a + base_income_shift_b
     budget = {"return_liquid": return_liquid, "income": income}
-    regime_age = {"next_regime": {"final_age_alive": final_age_alive}}
 
     def living(base_income: FloatND) -> dict:
         return {
@@ -258,9 +257,10 @@ def build_params(
             "koopmans_aggregator": {"discount_factor": discount_factor},
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
             "resources": {"base_income": base_income},
-            "alive_a": {"next_liquid": budget, **regime_age},
-            "alive_b": {"next_liquid": budget, **regime_age},
-            "dead": {"next_liquid": budget, **regime_age},
+            "alive_a": {"next_liquid": budget},
+            "alive_b": {"next_liquid": budget},
+            "dead": {"next_liquid": budget},
+            "final_age_alive": final_age_alive,
         }
 
     return {

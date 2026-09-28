@@ -38,10 +38,7 @@ from tests.simulation.initial_conditions._models import (
 from tests.simulation.initial_conditions._oracle import exhaustive_scalar_feasibility
 from tests.test_models.schedules import until_exit
 
-_CONSTRAINT_PARAMS = {
-    "discount_factor": 0.95,
-    "working_life": {"next_regime": {"final_age_alive": 1}},
-}
+_CONSTRAINT_PARAMS = {"discount_factor": 0.95, "final_age_alive": 1}
 
 
 def _constraint_model() -> Model:
@@ -323,10 +320,8 @@ def test_runtime_supplied_grid_points_are_used() -> None:
         },
         params={
             "discount_factor": 0.95,
-            "working_life": {
-                "wealth": {"points": jnp.linspace(0.3, 10, 15)},
-                "next_regime": {"final_age_alive": 1},
-            },
+            "working_life": {"wealth": {"points": jnp.linspace(0.3, 10, 15)}},
+            "final_age_alive": 1,
         },
     )
 
@@ -338,10 +333,7 @@ def test_inputs_are_not_mutated() -> None:
     model = _constraint_model()
     initial = _mixed_population(model)
     before = {name: np.asarray(value).copy() for name, value in initial.items()}
-    params = {
-        "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": 0.95, "final_age_alive": 1}
     params_before = repr(params)
 
     model.initial_conditions_feasibility(initial_conditions=initial, params=params)

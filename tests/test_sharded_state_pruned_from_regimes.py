@@ -113,8 +113,10 @@ def _entry_kind(wealth: FloatND) -> FloatND:
 
 def _working(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "regime_transitions": ByAge(
-            {AgeRange(stop=2): Choose(_retire_at_one, targets=("retired", "working"))}
+        "regime_transitions": ByAge.until(
+            2,
+            law=Choose(_retire_at_one, targets=("working",)),
+            then=Choose(_retire_at_one, targets=("retired",)),
         ),
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},

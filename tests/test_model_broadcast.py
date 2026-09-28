@@ -15,8 +15,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -31,6 +29,7 @@ from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -74,7 +73,7 @@ def _retired_transition() -> dict[str, MarkovTransition]:
 
 def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": ByAge({AgeRange(stop=2): _work_transition()}),
+        "regime_transitions": until_exit(2, law=_work_transition(), exits=("dead",)),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -86,7 +85,7 @@ def _work_regime(**overrides: Any) -> UserRegime:
 
 def _retired_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": ByAge({AgeRange(stop=2): _retired_transition()}),
+        "regime_transitions": until_exit(2, law=_retired_transition(), exits=("dead",)),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},

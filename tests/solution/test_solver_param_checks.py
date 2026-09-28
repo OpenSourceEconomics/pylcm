@@ -36,14 +36,9 @@ _PARAMS = {
         "utility": {"crra": 2.0},
         "koopmans_aggregator": {"discount_factor": 0.95},
         "resources": {"base_income": 2.0},
-        "alive": {
-            "next_liquid": {"return_liquid": 0.03, "income": 1.0},
-            "next_regime": {"final_age_alive": 3.0},
-        },
-        "dead": {
-            "next_liquid": {"return_liquid": 0.03, "income": 1.0},
-            "next_regime": {"final_age_alive": 3.0},
-        },
+        "alive": {"next_liquid": {"return_liquid": 0.03, "income": 1.0}},
+        "dead": {"next_liquid": {"return_liquid": 0.03, "income": 1.0}},
+        "final_age_alive": 3.0,
     },
     "dead": {"utility": {"crra": 2.0}},
 }

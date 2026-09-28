@@ -44,8 +44,6 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
-    AgeRange,
-    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Phased,
@@ -68,6 +66,7 @@ from lcm.typing import (
 )
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
+from tests.test_models.schedules import until_exit
 
 _BETA = 0.95
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
@@ -126,24 +125,24 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
 
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
-        regime_transitions=ByAge(
-            {
-                AgeRange(stop=2): {
-                    "src": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_stay),
-                        gate=_repeat_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="src_fallback",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            )
-                        },
-                    ),
-                    "src_exit": MarkovTransition(_prob_exit_boundary),
-                }
-            }
+        regime_transitions=until_exit(
+            2,
+            law={
+                "src": ValueDependentTransition(
+                    probability=MarkovTransition(_prob_stay),
+                    gate=_repeat_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="src_fallback",
+                                projection={"wage": _identity_wage},
+                            ),
+                        )
+                    },
+                ),
+                "src_exit": MarkovTransition(_prob_exit_boundary),
+            },
+            exits=("src_exit",),
         ),
         states={
             "wage": _WAGE,

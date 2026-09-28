@@ -221,8 +221,7 @@ def _captured_widths(
         params={
             "working": {
                 "koopmans_aggregator": {"discount_factor": 0.95},
-                "working": {"next_regime": {"final_age_alive": 50.0}},
-                "dead": {"next_regime": {"final_age_alive": 50.0}},
+                "final_age_alive": 50.0,
             },
             "dead": {},
         },

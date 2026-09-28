@@ -152,12 +152,9 @@ def build_params(
             "alive": {
                 "next_liquid": alive_budget,
                 "next_wage": {"wage_persistence": wage_persistence},
-                "next_regime": {"final_age_alive": final_age_alive},
             },
-            "dead": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
+            "dead": {"next_liquid": alive_budget},
+            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

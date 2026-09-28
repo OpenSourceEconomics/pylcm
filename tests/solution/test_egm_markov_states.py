@@ -25,8 +25,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     Choose,
     DiscreteGrid,
     IrregSpacedGrid,
@@ -334,13 +332,13 @@ def _cross_grid_markov_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     early = regime_type(
-        regime_transitions=ByAge(
-            {
-                AgeRange(stop=40 + (N_PERIODS - 1) * 10): {
-                    "late": MarkovTransition(to_live_prob),
-                    "dead": MarkovTransition(to_dead_prob),
-                }
-            }
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "late": MarkovTransition(to_live_prob),
+                "dead": MarkovTransition(to_dead_prob),
+            },
+            exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health3)},
@@ -375,13 +373,13 @@ def _cross_grid_markov_model(solver: str) -> Model:
         ),
     )
     late = regime_type(
-        regime_transitions=ByAge(
-            {
-                AgeRange(stop=40 + (N_PERIODS - 1) * 10): {
-                    "late": MarkovTransition(to_live_prob),
-                    "dead": MarkovTransition(to_dead_prob),
-                }
-            }
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "late": MarkovTransition(to_live_prob),
+                "dead": MarkovTransition(to_dead_prob),
+            },
+            exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},

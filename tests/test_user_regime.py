@@ -419,10 +419,7 @@ def test_regime_with_fixed_states_only():
     )
     V = model.solve(
         log_level="debug",
-        params={
-            "discount_factor": 0.95,
-            "working_life": {"next_regime": {"final_age_alive": final_age}},
-        },
+        params={"discount_factor": 0.95, "final_age_alive": final_age},
     ).values
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]

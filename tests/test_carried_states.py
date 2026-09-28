@@ -278,12 +278,10 @@ def _build_handover_model() -> Model:
     hand-over on the crossing.
     """
     working = UserRegime(
-        regime_transitions=ByAge(
-            {
-                AgeRange(stop=64): Choose(
-                    _next_regime_from_working, targets=("working", "retired")
-                )
-            }
+        regime_transitions=ByAge.until(
+            64,
+            law=Choose(_next_regime_from_working, targets=("working",)),
+            then=Choose(_next_regime_from_working, targets=("retired",)),
         ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -306,7 +304,7 @@ def _build_handover_model() -> Model:
         regime_transitions=ByAge(
             {
                 AgeRange(start=64, stop=66): Choose(
-                    _next_regime_from_retired, targets=("retired", "dead")
+                    _next_regime_from_retired, targets=("dead",)
                 )
             }
         ),

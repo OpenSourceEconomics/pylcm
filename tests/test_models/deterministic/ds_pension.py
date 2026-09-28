@@ -467,15 +467,14 @@ def get_params(
                 "next_liquid": {
                     "retirement_income": retirement_income,
                     "return_liquid": return_liquid,
-                },
-                "next_regime": {"final_age_alive": final_age_alive},
+                }
             },
             "dead": {
                 "next_liquid": {
                     "retirement_income": retirement_income,
                     "return_liquid": return_liquid,
-                },
-                "next_regime": {"final_age_alive": final_age_alive},
+                }
             },
+            "final_age_alive": final_age_alive,
         },
     }

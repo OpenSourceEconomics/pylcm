@@ -624,13 +624,8 @@ def build_params(
         **oop_params,
         **derived_income_params,
         **surcharge_params,
-        "alive": {
-            "next_liquid": alive_budget,
-            "next_regime": {"final_age_alive": final_age_alive},
-        },
-        "dead": {
-            "next_liquid": alive_budget,
-            "next_regime": {"final_age_alive": final_age_alive},
-        },
+        "alive": {"next_liquid": alive_budget},
+        "dead": {"next_liquid": alive_budget},
+        "final_age_alive": final_age_alive,
     }
     return {"alive": alive, "dead": {"utility": {"crra": crra}}}

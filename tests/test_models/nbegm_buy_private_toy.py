@@ -87,14 +87,9 @@ def build_params(
             "utility": {"crra": crra},
             "koopmans_aggregator": {"discount_factor": discount_factor},
             "resources": {"premium": premium},
-            "alive": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
-            "dead": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
+            "alive": {"next_liquid": alive_budget},
+            "dead": {"next_liquid": alive_budget},
+            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

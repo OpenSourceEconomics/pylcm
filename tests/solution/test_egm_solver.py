@@ -28,8 +28,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -45,6 +43,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 _CRRA = 2.0
 _DISCOUNT_FACTOR = 0.95
@@ -132,13 +131,13 @@ def _model(
             "wealth": {"saving": next_wealth, "done": next_wealth},
         },
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions=ByAge(
-            {
-                AgeRange(stop=last_age): {
-                    "saving": MarkovTransition(prob_continue),
-                    "done": MarkovTransition(prob_stop),
-                }
-            }
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "saving": MarkovTransition(prob_continue),
+                "done": MarkovTransition(prob_stop),
+            },
+            exits=("done",),
         ),
         functions=functions,
         solver=solver,

@@ -310,10 +310,7 @@ def test_stochastic_zero_arg_weight_adds_discounted_expected_bonus() -> None:
     `[0.5, 0.5]` weights — at every state grid point.
     """
     discount_factor = 0.95
-    params = {
-        "discount_factor": discount_factor,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": discount_factor, "final_age_alive": 1}
 
     def next_draw_5050() -> FloatND:
         return jnp.array([0.5, 0.5])
@@ -344,10 +341,7 @@ def test_stochastic_weight_on_continuous_state_varies_continuation_by_wealth() -
     `discount_factor * P(good)(wealth)` at each wealth grid point.
     """
     discount_factor = 0.95
-    params = {
-        "discount_factor": discount_factor,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": discount_factor, "final_age_alive": 1}
 
     def next_draw_wealth_dependent(wealth: ContinuousState) -> FloatND:
         p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
@@ -383,10 +377,7 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
     not touch the fused shock integration, so the solved value function matches
     an unsplayed solve at every state grid point.
     """
-    params = {
-        "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": 0.95, "final_age_alive": 1}
 
     def next_draw_5050() -> FloatND:
         return jnp.array([0.5, 0.5])

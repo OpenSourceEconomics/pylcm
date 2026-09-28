@@ -205,18 +205,16 @@ def test_custom_ces_aggregator_differs_from_default():
 
     params_default = {
         "discount_factor": 0.95,
-        "working_life": {
-            "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-        },
+        "working_life": {"utility": {"disutility_of_work": 0.5}},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
     params_ces = {
         "working_life": {
             "koopmans_aggregator": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
         "dead": {},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
 
     V_default = model_default.solve(log_level="debug", params=params_default).values
@@ -309,18 +307,16 @@ def test_terminal_regime_value_unchanged_by_W():
 
     params_default = {
         "discount_factor": 0.95,
-        "working_life": {
-            "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-        },
+        "working_life": {"utility": {"disutility_of_work": 0.5}},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
     params_ces = {
         "working_life": {
             "koopmans_aggregator": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
         "dead": {},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
 
     V_default = model_default.solve(log_level="debug", params=params_default).values
@@ -362,11 +358,9 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
     model = _make_model(with_pref_type=True)
 
     params = {
-        "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
-        "working_life": {
-            "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-        },
+        "discount_factor_by_type": jnp.array([0.7, 0.85, 0.99]),
+        "working_life": {"utility": {"disutility_of_work": 0.5}},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
     V = model.solve(log_level="debug", params=params).values
 
@@ -521,9 +515,9 @@ def test_h_consumes_discrete_action():
             "working_life": {
                 "koopmans_aggregator": {"discount_factor": 0.95, "bonus": 0.1},
                 "utility": {"disutility_of_work": 0.5},
-                "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },
             "dead": {},
+            "final_age_alive": FINAL_AGE_ALIVE,
         },
     ).values
     baseline = (
@@ -532,10 +526,8 @@ def test_h_consumes_discrete_action():
             log_level="debug",
             params={
                 "discount_factor": 0.95,
-                "working_life": {
-                    "utility": {"disutility_of_work": 0.5},
-                    "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-                },
+                "working_life": {"utility": {"disutility_of_work": 0.5}},
+                "final_age_alive": FINAL_AGE_ALIVE,
             },
         )
         .values
@@ -568,11 +560,9 @@ def test_h_consumes_discrete_state():
     V = model.solve(
         log_level="debug",
         params={
-            "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
-            "working_life": {
-                "utility": {"disutility_of_work": 0.5},
-                "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-            },
+            "discount_factor_by_type": jnp.array([0.7, 0.85, 0.99]),
+            "working_life": {"utility": {"disutility_of_work": 0.5}},
+            "final_age_alive": FINAL_AGE_ALIVE,
         },
     ).values
     non_terminal = [p for p in V if p <= FINAL_AGE_ALIVE]
@@ -613,12 +603,12 @@ def test_h_consumes_flat_param_state_action_and_dag_output():
     V = model.solve(
         log_level="debug",
         params={
-            "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
+            "discount_factor_by_type": jnp.array([0.7, 0.85, 0.99]),
             "working_life": {
                 "koopmans_aggregator": {"ies": 0.5},
                 "utility": {"disutility_of_work": 0.5},
-                "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },
+            "final_age_alive": FINAL_AGE_ALIVE,
         },
     ).values
     for period in V:

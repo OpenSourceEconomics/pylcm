@@ -82,6 +82,7 @@ from lcm.typing import (
 )
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -1571,24 +1572,24 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
     regime's declared transition targets).
     """
     src = Regime(
-        regime_transitions=ByAge(
-            {
-                AgeRange(stop=2): {
-                    "src": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_stay),
-                        gate=_repeat_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="src_fallback",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            )
-                        },
-                    ),
-                    "src_exit": MarkovTransition(_prob_exit_boundary),
-                }
-            }
+        regime_transitions=until_exit(
+            2,
+            law={
+                "src": ValueDependentTransition(
+                    probability=MarkovTransition(_prob_stay),
+                    gate=_repeat_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="src_fallback",
+                                projection={"wage": _identity_wage},
+                            ),
+                        )
+                    },
+                ),
+                "src_exit": MarkovTransition(_prob_exit_boundary),
+            },
+            exits=("src_exit",),
         ),
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},

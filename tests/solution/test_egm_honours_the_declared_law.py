@@ -16,7 +16,7 @@ two solvers are handed the identical `Regime` and must agree.
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, AgeRange, ByAge, LinSpacedGrid, MarkovTransition, Model
+from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
@@ -37,6 +37,7 @@ from tests.solution.test_egm_solver import (
     terminal_utility,
     utility,
 )
+from tests.test_models.schedules import until_exit
 
 _FIXED_COST = 0.5
 
@@ -64,13 +65,13 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": law},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions=ByAge(
-            {
-                AgeRange(stop=last_age): {
-                    "saving": MarkovTransition(prob_continue),
-                    "done": MarkovTransition(prob_stop),
-                }
-            }
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "saving": MarkovTransition(prob_continue),
+                "done": MarkovTransition(prob_stop),
+            },
+            exits=("done",),
         ),
         functions={"utility": utility, "savings": savings},
         solver=solver,

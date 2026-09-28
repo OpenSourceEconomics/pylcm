@@ -21,8 +21,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -39,6 +37,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -149,12 +148,10 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     last_age = ages.exact_values[-1]
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     retirement = regime_type(
-        regime_transitions=ByAge(
-            {
-                AgeRange(stop=last_age): Choose(
-                    next_regime_from_retirement, targets=("dead", "retirement")
-                )
-            }
+        regime_transitions=until_exit(
+            last_age,
+            law=Choose(next_regime_from_retirement, targets=("dead", "retirement")),
+            exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},

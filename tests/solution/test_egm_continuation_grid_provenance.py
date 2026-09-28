@@ -35,9 +35,7 @@ import yaml
 
 from lcm import (
     AgeGrid,
-    AgeRange,
     AgeSpecializedGrid,
-    ByAge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -54,6 +52,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models.deterministic.ds_pension import get_model, get_params
+from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 5
 _RETIREMENT_PERIOD = 3
@@ -190,13 +189,13 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         states={"wealth": wealth_grid},
         state_transitions={"wealth": {"alive": next_wealth, "gone": next_wealth}},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions=ByAge(
-            {
-                AgeRange(stop=3): {
-                    "alive": MarkovTransition(prob_survive),
-                    "gone": MarkovTransition(prob_gone),
-                }
-            }
+        regime_transitions=until_exit(
+            3,
+            law={
+                "alive": MarkovTransition(prob_survive),
+                "gone": MarkovTransition(prob_gone),
+            },
+            exits=("gone",),
         ),
         functions={"utility": utility, "resources": resources, "savings": savings},
         solver=solver,

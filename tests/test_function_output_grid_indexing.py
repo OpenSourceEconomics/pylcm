@@ -17,8 +17,6 @@ import pytest
 from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     Choose,
     DiscreteGrid,
     LinearAggregator,
@@ -237,8 +235,8 @@ def test_function_output_indexed_by_derived_categorical_raises():
             state_transitions={"spousal_income": fixed_transition("spousal_income")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             derived_categoricals={"is_married": DiscreteGrid(category_class=IsMarried)},
-            regime_transitions=ByAge(
-                {AgeRange(stop=2): Choose(_next_regime, targets=("dead", "alive"))}
+            regime_transitions=until_exit(
+                2, law=Choose(_next_regime, targets=("dead", "alive")), exits=("dead",)
             ),
         )
 
@@ -279,8 +277,8 @@ def test_function_output_indexed_by_discrete_action_raises():
                 "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5),
                 "labor_supply": DiscreteGrid(category_class=WorkChoice),
             },
-            regime_transitions=ByAge(
-                {AgeRange(stop=2): Choose(_next_regime, targets=("dead", "alive"))}
+            regime_transitions=until_exit(
+                2, law=Choose(_next_regime, targets=("dead", "alive")), exits=("dead",)
             ),
         )
 
@@ -311,8 +309,8 @@ def test_constraint_indexing_function_output_by_state_raises():
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             constraints={"feasibility": _constraint_indexing_function_output},
-            regime_transitions=ByAge(
-                {AgeRange(stop=2): Choose(_next_regime, targets=("dead", "alive"))}
+            regime_transitions=until_exit(
+                2, law=Choose(_next_regime, targets=("dead", "alive")), exits=("dead",)
             ),
         )
 
@@ -385,7 +383,7 @@ def test_phased_function_solve_variant_unsafe_indexing_raises():
             states={"pref_type": DiscreteGrid(category_class=PrefType)},
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-            regime_transitions=ByAge(
-                {AgeRange(stop=2): Choose(_next_regime, targets=("dead", "alive"))}
+            regime_transitions=until_exit(
+                2, law=Choose(_next_regime, targets=("dead", "alive")), exits=("dead",)
             ),
         )
