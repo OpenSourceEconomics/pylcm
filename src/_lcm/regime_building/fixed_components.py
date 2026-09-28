@@ -29,7 +29,12 @@ from _lcm.typing import RegimeNamesToIds
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime
-from lcm.transition import AgeSpecializedFunction, MarkovTransition, fixed_transition
+from lcm.transition import (
+    AgeSpecializedFunction,
+    JointTransition,
+    MarkovTransition,
+    fixed_transition,
+)
 from lcm.typing import (
     DiscreteState,
     FloatND,
@@ -203,16 +208,9 @@ def factor_fixed_components(
     # Renaming must keep the original insertion slot. Canonical edge lowering
     # uses declaration order for lottery axes; pop-and-append permutes a mixed
     # annotated/unannotated Cartesian reduction even after its sizes are restored.
-    model_laws = {
-        f"{name}_rest" if name in splits else name: (
-            _lower_law(
-                law=law, name=name, split=splits[name], code_by_parts=parts[name]
-            )
-            if name in splits
-            else _lower_next_output_reads(node=law, next_outputs=next_outputs)
-        )
-        for name, law in state_transitions.items()
-    }
+    model_laws = _lower_state_laws(
+        laws=state_transitions, splits=splits, parts=parts, next_outputs=next_outputs
+    )
     for name, split in splits.items():
         if name in model_states:
             del model_states[name]
@@ -222,16 +220,12 @@ def factor_fixed_components(
     new_regimes: dict[str, Regime] = {}
     for regime_name, regime in regimes.items():
         regime_states = dict(regime.states)
-        laws: dict[str, object] = {
-            f"{name}_rest" if name in splits else name: (
-                _lower_law(
-                    law=law, name=name, split=splits[name], code_by_parts=parts[name]
-                )
-                if name in splits
-                else _lower_next_output_reads(node=law, next_outputs=next_outputs)
-            )
-            for name, law in regime.state_transitions.items()
-        }
+        laws = _lower_state_laws(
+            laws=regime.state_transitions,
+            splits=splits,
+            parts=parts,
+            next_outputs=next_outputs,
+        )
         regime_functions = {
             name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
             for name, func in regime.functions.items()
@@ -251,6 +245,9 @@ def factor_fixed_components(
             states=regime_states,
             state_transitions=laws,
             functions=regime_functions,
+            joint_transitions=_lower_next_output_reads(
+                node=regime.joint_transitions, next_outputs=next_outputs
+            ),
         )
     return (
         MappingProxyType(new_regimes),
@@ -267,7 +264,36 @@ def factor_fixed_components(
     )
 
 
-def _lower_next_output_reads(
+def _lower_state_laws(
+    *,
+    laws: Mapping[str, object],
+    splits: Mapping[str, FixedComponentSplit],
+    parts: Mapping[str, np.ndarray],
+    next_outputs: Mapping[str, Callable[..., DiscreteState]],
+) -> dict[str, object]:
+    """Normalize the original graph before decomposing any annotated producer.
+
+    Both the restricted law and its original-lottery descriptor must inherit
+    the same normalized callable. Annotation determines storage, not whether
+    a transition is allowed to consume an original next-state output.
+    """
+    lowered: dict[str, object] = {}
+    for name, law in laws.items():
+        normalized = _lower_next_output_reads(node=law, next_outputs=next_outputs)
+        lowered[f"{name}_rest" if name in splits else name] = (
+            _lower_law(
+                law=normalized,
+                name=name,
+                split=splits[name],
+                code_by_parts=parts[name],
+            )
+            if name in splits
+            else normalized
+        )
+    return lowered
+
+
+def _lower_next_output_reads(  # noqa: PLR0911 — one return per declaration kind
     *, node: object, next_outputs: Mapping[str, Callable[..., DiscreteState]]
 ) -> object:
     """Substitute original next-state reads with their deterministic decode DAG.
@@ -295,6 +321,17 @@ def _lower_next_output_reads(
         return dataclasses.replace(
             node,
             func=_lower_next_output_reads(node=node.func, next_outputs=next_outputs),
+        )
+    if isinstance(node, JointTransition):
+        # Only output laws may consume already-resolved physical next outputs.
+        # Support and probability declarations keep their existing contracts;
+        # do not legalize a stochastic conditional probability here.
+        return dataclasses.replace(
+            node,
+            outputs={
+                name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
+                for name, func in node.outputs.items()
+            },
         )
     if isinstance(node, AgeSpecializedFunction):
         return dataclasses.replace(
