@@ -2197,9 +2197,14 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     if isinstance(value, type):
         return _is_closed_direct_type(value)
 
-    if not isinstance(value, functools.partial) and not _has_exact_type(
-        value=value,
-        candidates=(tuple, list, frozenset, set, dict, _MAPPING_PROXY_TYPE),
+    engine_callable = _is_engine_callable_dataclass(value)
+    if (
+        not engine_callable
+        and not isinstance(value, functools.partial)
+        and not _has_exact_type(
+            value=value,
+            candidates=(tuple, list, frozenset, set, dict, _MAPPING_PROXY_TYPE),
+        )
     ):
         return False
 
@@ -2209,6 +2214,15 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         return False
     active.add(identity)
     try:
+        if engine_callable:
+            # The class is pylcm's, so its `__call__` is sealed by the pylcm
+            # version; what varies per instance is its fields.
+            return all(
+                _is_closed_terminal_reference(
+                    value=getattr(value, field.name), _active=active
+                )
+                for field in dataclasses.fields(cast("Any", value))
+            )
         if isinstance(value, functools.partial):
             return _is_closed_terminal_reference(
                 value=value.func, _active=active
@@ -2229,6 +2243,16 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         )
     finally:
         active.remove(identity)
+
+
+def _is_engine_callable_dataclass(value: object) -> bool:
+    """Whether `value` is a callable dataclass instance of a shipped pylcm class."""
+    value_type = type(value)
+    return (
+        dataclasses.is_dataclass(value_type)
+        and callable(value)
+        and _is_shipped_pylcm_module_name(value_type.__module__)
+    )
 
 
 def _is_closed_direct_type(value: type) -> bool:

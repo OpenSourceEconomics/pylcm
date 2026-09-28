@@ -455,8 +455,4 @@ def test_age_specialized_runtime_points_grid_is_rejected() -> None:
         state_transitions={"wealth": _next_wealth},
     )
     with pytest.raises(RegimeInitializationError, match="supplied at"):
-        _normalized(
-            regimes={"work": alive, "dead": _dead()},
-            ages=_ages(),
-            coverage={"work": ()},
-        )
+        _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())

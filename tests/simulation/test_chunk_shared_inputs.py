@@ -19,14 +19,15 @@ from tests.simulation.test_population_allocation_budget import (
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
 
-def test_complete_spaces_are_call_local_across_subject_chunks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _space_completions(
+    *, monkeypatch: pytest.MonkeyPatch, subject_width: int
+) -> tuple[int, ...]:
+    """Count each regime's state-action space completions in one simulate call."""
     model = get_model(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
-        execution_config=ExecutionConfig(axis_widths={"subject": 3}),
+        execution_config=ExecutionConfig(axis_widths={"subject": subject_width}),
     )
     params = get_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")
@@ -37,21 +38,36 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
         counts[id(self)] = counts.get(id(self), 0) + 1
         return original(self, **kwargs)
 
-    monkeypatch.setattr(SolutionPhase, "state_action_space", observe)
-    result = model.simulate(
-        params=params,
-        solution=solution,
-        initial_conditions={
-            "wealth": jnp.linspace(1, 3, 7),
-            "age": jnp.full(7, 18.0),
-            "regime_id": jnp.full(7, RegimeId.working_life, dtype=jnp.int32),
-        },
-        seed=17,
-        log_level="off",
-    )
-    assert result.n_subjects == 7
+    with monkeypatch.context() as patch:
+        patch.setattr(SolutionPhase, "state_action_space", observe)
+        result = model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "wealth": jnp.linspace(1, 3, _N_SUBJECTS),
+                "age": jnp.full(_N_SUBJECTS, 18.0),
+                "regime_id": jnp.full(
+                    _N_SUBJECTS, RegimeId.working_life, dtype=jnp.int32
+                ),
+            },
+            seed=17,
+            log_level="off",
+        )
+    assert result.n_subjects == _N_SUBJECTS
     assert len(counts) == len(model._regimes)
-    assert tuple(counts.values()) == (1,) * len(model._regimes)
+    return tuple(sorted(counts.values()))
+
+
+_N_SUBJECTS = 7
+
+
+def test_complete_spaces_are_call_local_across_subject_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three subject chunks complete each space as often as a single chunk does."""
+    assert _space_completions(
+        monkeypatch=monkeypatch, subject_width=3
+    ) == _space_completions(monkeypatch=monkeypatch, subject_width=_N_SUBJECTS)
 
 
 @pytest.mark.parametrize("scalar", [False, True])

@@ -84,7 +84,7 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
-from lcm.transition import MarkovTransition
+from lcm.transition import ByAge, Choose, MarkovTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, UserFunction
 
 # Shrink threshold of the node-resolution continuity spot check. Within one
@@ -1494,12 +1494,41 @@ def _transition_variants(
     """Unpack a `state_transitions` entry into labeled callables.
 
     Handles bare callables, `Phased` containers (solve variant),
-    `MarkovTransition` wrappers (unwrapped to the weight function), and
-    per-target dicts (one entry per target regime).
+    `MarkovTransition` and `Choose` wrappers (unwrapped to their function),
+    per-target dicts (one entry per target regime), and `ByAge` schedules
+    (every law the schedule may select). A callable lowered from a schedule
+    reads the model period to pick its case, so it is unpacked into the laws
+    the user wrote (`__lcm_sources__`), which are what can jump in a state.
     """
+    return [
+        (label, source)
+        for label, func in _declared_transition_variants(value=value)
+        for source in _declared_sources(func)
+    ]
+
+
+def _declared_sources(func: UserFunction) -> tuple[UserFunction, ...]:
+    """The user-written laws behind a lowered callable, or `func` itself."""
+    sources = getattr(func, "__lcm_sources__", None)
+    if not sources:
+        return (func,)
+    return tuple(leaf for source in sources for leaf in _declared_sources(source))
+
+
+def _declared_transition_variants(
+    *,
+    value: object,
+) -> list[tuple[str, UserFunction]]:
+    """Unpack a transition declaration into labeled callables, sources unexpanded."""
+    if isinstance(value, ByAge):
+        return [
+            variant
+            for law in value.laws
+            for variant in _declared_transition_variants(value=law)
+        ]
     if isinstance(value, Phased):
         value = value.solve
-    if isinstance(value, MarkovTransition):
+    if isinstance(value, MarkovTransition | Choose):
         return [("", cast("UserFunction", value.func))]
     if isinstance(value, Mapping):
         variants: list[tuple[str, UserFunction]] = []

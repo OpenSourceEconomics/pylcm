@@ -1115,9 +1115,12 @@ def _decomposed_transition_side(
     Returns:
         The same transition with every `ValueDependentTransition` cell replaced
         by the selection probability it declares, wrapped in a
-        `MarkovTransition` where the declaration gave a bare callable. Anything
-        that is not a per-target mapping is returned unchanged.
+        `MarkovTransition` where the declaration gave a bare callable. An age
+        schedule has each of its laws taken apart. Anything else that is not a
+        per-target mapping is returned unchanged.
     """
+    if isinstance(transition, ByAge):
+        return transition.with_mapped_laws(func=decompose_transition)
     if not isinstance(transition, Mapping):
         return cast(
             "UserFunction | MarkovTransition | Phased | ByAge | None",

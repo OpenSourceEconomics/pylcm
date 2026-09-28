@@ -132,7 +132,9 @@ def test_a_layout_replay_validates_every_recorded_compiled_sharding(tmp_path):
     )
     print("COMPARED", sum("compiled" in label for label in compared))
     """
-    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "14"
+    # One output plus fourteen inputs: the states, action, age and period, the
+    # continuation value, and the nine parameters the period's functions read.
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "15"
 
 
 def test_a_mismatched_recorded_output_sharding_is_refused_naming_both_values(tmp_path):

@@ -2470,24 +2470,29 @@ def test_mutated_metadata_identity_types_fail_before_simulation(
 
 
 def test_a_core_reading_next_period_target_values_declares_each_access() -> None:
-    """A period's program declares one target-value access per reachable target."""
+    """A period's program declares one target-value access per declared target.
+
+    The law names both `active` and `retired`, so both are reachable targets;
+    that `_enter_retirement` is zero at this age is a value, not a declaration.
+    """
     model = _model(solver=TargetValueSolver())
     program = cast(
         "Any", model._regimes["active"].solution.period_kernels[0]
     ).core_programs()["values"]
-    assert program.requirements.value_reads == (
+    assert program.requirements.value_reads == tuple(
         ValueRead(
             target=ValueArtifactAddress(
-                kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="active"
+                kind=ValueArtifactKind.REGIME_VALUE, period=1, regime=target
             ),
             source=ValueConsumerAddress(
                 source_period=0,
                 source_regime="active",
                 core_key="values",
                 channel=ValueInputChannel.NEXT_REGIME_VALUE,
-                path=("active",),
+                path=(target,),
             ),
-        ),
+        )
+        for target in ("active", "retired")
     )
 
 

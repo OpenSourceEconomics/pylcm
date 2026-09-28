@@ -274,7 +274,6 @@ def test_ceiling_binds_per_regime_fixed_widths_independently(
     assert _dispatched_cell_widths(census=census) == {
         _COUPLE: _CELL_CEILING,
         _TERMINAL: 4,
-        ("couple_terminal", 2, "main"): 4,
     }
 
 

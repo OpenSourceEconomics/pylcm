@@ -223,8 +223,9 @@ def test_nbegm_matches_grid_search_on_a_breakpoint_aligned_grid() -> None:
     )
 
     params = _smooth_params(asset_limit=None)
-    for target in ("alive", "dead"):
-        params["alive"][target]["next_regime"]["final_age_alive"] = 1.0
+    # With two periods the alive regime's only law is its exit into `dead`.
+    del params["alive"]["alive"]["next_regime"]
+    params["alive"]["dead"]["next_regime"] = {"final_age_alive": 1.0}
 
     nbegm_value = np.asarray(
         nbegm.solve(params=params, log_level="off").values[0]["alive"]
