@@ -142,12 +142,14 @@ def _regime_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
             "stored_sharding=jax.sharding.SingleDeviceSharding("
             "memory.subject_devices[0]), devices=(memory.subject_devices[0],))"
         ),
-        "transition compiler reservation must govern admission": "plan_workspace(",
+        "transition compiler reservation must govern admission": (
+            "memory.producers.admit_producer("
+        ),
         "largest transition residency must be charged": (
             "resident_bytes=max(external.values())"
         ),
         "only admitted transition producer may dispatch": (
-            "jax.block_until_ready(plan.compiled(**placed))"
+            "jax.block_until_ready(executable(**placed))"
         ),
     }
     for message, expression in required_producer.items():
@@ -252,20 +254,20 @@ def test_regime_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_evaluate_admitted_transition_producer",
-            "        resident_bytes=max(external.values()),\n    )\n    return jax.block_until_ready(plan.compiled(**placed))",
-            "        resident_bytes=0,\n    )\n    return jax.block_until_ready(plan.compiled(**placed))",
+            "        resident_bytes=max(external.values()),\n    )\n    return jax.block_until_ready(executable(**placed))",
+            "        resident_bytes=0,\n    )\n    return jax.block_until_ready(executable(**placed))",
             "largest transition residency must be charged",
         ),
         (
             "_evaluate_admitted_transition_producer",
-            "        devices=(memory.subject_devices[0],),\n    )\n    compiler = _TransitionLawCompiler(\n        function=function,",
-            "        devices=(jax.devices()[0],),\n    )\n    compiler = _TransitionLawCompiler(\n        function=function,",
+            "        devices=(memory.subject_devices[0],),\n    )\n    executable = memory.producers.admit_producer(\n        function=function,",
+            "        devices=(jax.devices()[0],),\n    )\n    executable = memory.producers.admit_producer(\n        function=function,",
             "transition output must use first selected subject device",
         ),
         (
             "_evaluate_admitted_transition_producer",
-            "return jax.block_until_ready(plan.compiled(**placed))",
-            "return plan.compiled(**placed)",
+            "return jax.block_until_ready(executable(**placed))",
+            "return executable(**placed)",
             "only admitted transition producer may dispatch",
         ),
         (

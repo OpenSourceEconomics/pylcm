@@ -478,8 +478,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_host:subject_output_cache_identity_omitted": (
         "src/_lcm/simulation/host_operations.py",
-        'layout_key=("simulation_host_operation", subject_outputs),',
-        'layout_key=("simulation_host_operation", False),',
+        'layout_key=("simulation_host_operation", subject_outputs, output_sharding),',
+        'layout_key=("simulation_host_operation", False, output_sharding),',
     ),
     "simulation_caller:initialized_state_ownership_omitted": (
         "src/_lcm/simulation/simulate.py",

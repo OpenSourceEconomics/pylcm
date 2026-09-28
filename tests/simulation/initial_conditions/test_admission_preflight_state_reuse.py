@@ -268,11 +268,22 @@ def test_mutable_canonical_wrapper_is_evaluated_again(
         summary.close()
 
 
-def test_budgeted_preflight_keeps_profiled_checks_without_reuse(
+def test_budgeted_preflight_admits_each_check_and_traces_the_law_once(
     *,
     evaluations: list[Callable[..., Any]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The new reuse route cannot bypass profiled budgeted validation operations."""
+    """Every budgeted check is admitted; its executable is traced only once."""
+    admissions: list[Callable[..., Any]] = []
+    admit = ProfiledSimulationOperations.admit_producer
+
+    def admit_and_record(self: ProfiledSimulationOperations, **kwargs: Any) -> Any:
+        admissions.append(kwargs["function"])
+        return admit(self, **kwargs)
+
+    monkeypatch.setattr(
+        ProfiledSimulationOperations, "admit_producer", admit_and_record
+    )
     arguments = _arguments()
     devices = (jax.devices()[0],)
     memory = SimulationMemory(
@@ -291,7 +302,7 @@ def test_budgeted_preflight_keeps_profiled_checks_without_reuse(
     try:
         checks._validate_state_transition_single(**arguments, summary=summary)
         checks._validate_state_transition_single(**arguments, summary=summary)
-        assert len(evaluations) == 2
+        assert (len(admissions), len(evaluations)) == (2, 1)
         assert not summary.state_probabilities
         assert summary.valid()
     finally:
