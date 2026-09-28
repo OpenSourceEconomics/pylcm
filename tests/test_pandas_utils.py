@@ -167,7 +167,7 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         return 0.0
 
     a = UserRegime(
-        regime_transitions=_next_regime,
+        regime_transitions=Choose(_next_regime, targets=("dead",)),
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},

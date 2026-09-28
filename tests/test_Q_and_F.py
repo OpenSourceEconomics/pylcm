@@ -33,11 +33,14 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     Choose,
     LinearAggregator,
     LinearExpectation,
     PowerMean,
 )
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -1018,15 +1021,16 @@ def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
 def _model_with_alive_active_at_every_age(
     certainty_equivalent: CertaintyEquivalent,
 ) -> Model:
-    """A two-regime model whose non-terminal regime outlives all of its targets.
+    """A two-regime model whose non-terminal regime is declared at every age.
 
-    `alive` is active at every age, including the last, where no regime is left
-    to carry its continuation. It emits unit mass in every period, so nothing
-    but the missing target distinguishes it from a well-formed model.
+    `alive` is declared at every age, including the last, where no regime is
+    left to carry its continuation.
     """
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        regime_transitions=lambda: _MassRegimeId.dead,
+        regime_transitions=ByAge(
+            {AgeRange(stop=3): Choose(lambda: _MassRegimeId.dead, targets=("dead",))}
+        ),
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -1048,26 +1052,19 @@ def _model_with_alive_active_at_every_age(
 @pytest.mark.parametrize(
     "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
 )
-def test_solve_poisons_a_non_terminal_regime_with_no_reachable_target(
-    *, certainty_equivalent: CertaintyEquivalent, x64_enabled: None
+def test_a_non_terminal_regime_declared_at_the_last_age_is_refused(
+    certainty_equivalent: CertaintyEquivalent,
 ):
-    """The period where a non-terminal regime has no target left solves to NaN.
+    """A non-terminal regime has no continuation at the last age, so building fails.
 
-    Emitting unit mass toward regimes that are all inactive next period leaves
-    the continuation carrying no mass at all — the same defect as a transition
-    that drops mass, arrived at through the topology rather than through the
-    probabilities. Aggregating nothing would return the utility-only Bellman
-    value: finite, plausible, and an answer to a model that cannot be solved.
+    Solving such a regime would aggregate no continuation mass at the last age
+    and return the utility-only Bellman value: finite, plausible, and an answer
+    to a model that cannot be solved.
     """
-    alive_params: dict[str, Any] = {"discount_factor": 0.95}
-    if not isinstance(certainty_equivalent, LinearExpectation):
-        alive_params["certainty_equivalent"] = {"risk_aversion": 2.0}
-    model = _model_with_alive_active_at_every_age(certainty_equivalent)
-    period_to_regime_to_V_arr = model.solve(
-        params={"alive": alive_params}, log_level="off"
-    )
-    V_arr = period_to_regime_to_V_arr.values[model.n_periods - 1]["alive"]
-    assert bool(jnp.all(jnp.isnan(V_arr)))
+    with pytest.raises(
+        (RegimeInitializationError, ModelInitializationError), match="last age"
+    ):
+        _model_with_alive_active_at_every_age(certainty_equivalent)
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

@@ -27,6 +27,7 @@ from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
+    ByAge,
     ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
@@ -217,15 +218,17 @@ def make_alive_dead_model(
         liquid_state: {"alive": liquid_law, "dead": liquid_law},
         **(dict(extra_state_transitions) if extra_state_transitions else {}),
     }
-    alive_transition = (
-        dict(survival_transition)
+    # Default survival is deterministic: stay alive until the age before
+    # `final_age`, then die, one declared target per age.
+    alive_transitions = (
+        until_exit(final_age, law=dict(survival_transition), exits=("dead",))
         if survival_transition is not None
-        else {
-            "alive": MarkovTransition(prob_stay_alive),
-            "dead": MarkovTransition(prob_die),
-        }
+        else ByAge.until(
+            final_age,
+            law={"alive": MarkovTransition(prob_stay_alive)},
+            then={"dead": MarkovTransition(prob_die)},
+        )
     )
-    alive_transitions = until_exit(final_age, law=alive_transition, exits=("dead",))
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
     # argument types the narrowing is expressed in.
