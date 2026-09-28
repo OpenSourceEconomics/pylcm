@@ -12,7 +12,7 @@ import dataclasses
 import inspect
 import operator
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, cast, no_type_check
 
@@ -2255,6 +2255,10 @@ def _get_compute_CE(
             co_map_state_names=co_map_state_names,
             n_stakeholders=n_stakeholders,
             gated_continuation=gated_continuations.get(target_regime_name),
+            restore_original_layout=(
+                certainty_equivalent is None
+                or type(certainty_equivalent) is LinearExpectation
+            ),
         )
         for target_regime_name in period_targets
     }
@@ -2494,15 +2498,44 @@ class _ComputeCE:
             # such a state onto the referenced regime's grid — it needs the state's
             # value, not an index — so a coordinate the continuation still names is
             # passed rather than dropped with the axis.
+            # Restore the full original slot sequence before any interpolation
+            # arithmetic. Repeating restricted integer coordinates preserves
+            # each node's local state/law meaning without reading another fixed
+            # group. Copying floating-point results after interpolation can
+            # change its fusion/vectorization relative to the original model.
+            if continuation.original_node_axes:
+                next_states = dict(next_states)
+                for axis, indices in continuation.original_node_axes:
+                    name = continuation.lottery_axis_names[axis]
+                    nodes = next_states[name]
+                    next_states[name] = jax.lax.concatenate(
+                        tuple(
+                            jax.lax.slice_in_dim(nodes, index, index + 1, axis=0)
+                            for index in indices
+                        ),
+                        dimension=0,
+                    )
+            next_values = next_regime_to_V_arr[target_regime_name]
+            fixed_slice_names = frozenset(
+                name for _, name in continuation.fixed_value_axes
+            )
+            # Fixed components select one value surface, not one value per
+            # lottery node. Slice them before mapping the nodes so the reader
+            # sees the same rest-axis lookup as the original categorical grid.
+            # Axes already removed by the caller's device co-map are absent.
+            for axis, name in reversed(continuation.fixed_value_axes):
+                next_values = jax.lax.dynamic_index_in_dim(
+                    next_values, next_states[name], axis=axis, keepdims=False
+                )
             interpolator_coordinates = {
                 name: val
                 for name, val in next_states.items()
-                if name not in self.co_map_next_names
+                if name not in self.co_map_next_names | fixed_slice_names
                 or name in continuation.co_mapped_landing_names
             }
             next_V_at_stochastic_states_arr = continuation.next_V(
                 **interpolator_coordinates,
-                next_V_arr=next_regime_to_V_arr[target_regime_name],
+                next_V_arr=next_values,
                 **extra_kw,
             )
 
@@ -2528,6 +2561,22 @@ class _ComputeCE:
             )
 
             if self.reduces_per_target:
+                # A pure lookup has no floating-point interpolation arithmetic.
+                # Restore its original slots here with static slices rather than
+                # an indexed gather that can scalarize the ordinary reduction.
+                for axis, indices in continuation.original_value_axes:
+                    next_V_at_stochastic_states_arr = jax.lax.concatenate(
+                        tuple(
+                            jax.lax.slice_in_dim(
+                                next_V_at_stochastic_states_arr,
+                                index,
+                                index + 1,
+                                axis=axis,
+                            )
+                            for index in indices
+                        ),
+                        dimension=axis,
+                    )
                 next_V_expected_arr = _expected_continuation_over_nodes(
                     values=next_V_at_stochastic_states_arr,
                     weights=joint_next_stochastic_states_weights,
@@ -2658,6 +2707,21 @@ class _TargetContinuation:
 
     has_lottery_axes: bool
     """Whether the target draws anything, i.e. whether `next_V` has lottery axes."""
+
+    fixed_value_axes: tuple[tuple[int, str], ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Fixed axes selected before node mapping, in the received array layout."""
+
+    original_node_axes: tuple[tuple[int, tuple[int, ...]], ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Original-slot node coordinates when the reader performs arithmetic."""
+
+    original_value_axes: tuple[tuple[int, tuple[int, ...]], ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Original-slot value indices for pure lookup, in lottery-axis order."""
 
     lottery_axis_names: tuple[TransitionFunctionName, ...] = ()
     """Stochastic `next_<state>` names, in the order their axes appear."""
@@ -2999,6 +3063,7 @@ def _build_target_continuation(
     co_map_state_names: tuple[StateName, ...],
     n_stakeholders: int | None,
     gated_continuation: GatedContinuationSpec | None = None,
+    restore_original_layout: bool = False,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -3046,6 +3111,50 @@ def _build_target_continuation(
     # their node counts at every state-action point -- to state a single number.
     node_variables = lottery_variables
 
+    original_layouts = {
+        name: layout
+        for name in lottery_variables
+        if restore_original_layout
+        and (
+            layout := transition_plans[target_regime_name]
+            .lotteries[name]
+            .original_layout
+        )
+        is not None
+    }
+    fixed_names = {
+        f"{layout.state_name}_fixed" for layout in original_layouts.values()
+    } - set(co_map_state_names)
+    received_state_names = tuple(
+        name
+        for name in v_interpolation_info.state_names
+        if name not in co_map_state_names
+    )
+    fixed_value_axes = tuple(
+        (axis, f"next_{name}")
+        for axis, name in enumerate(received_state_names)
+        if name in fixed_names
+    )
+    co_map_state_names = (
+        *co_map_state_names,
+        *(name for name in received_state_names if name in fixed_names),
+    )
+
+    # Keep the original slot shape at the first floating-point operation.
+    # A continuous/process entry or a gate does arithmetic inside the mapped
+    # reader; an ordinary discrete lookup does not. This is a static property of
+    # the target reader, not of probabilities, values, hardware or test inputs.
+    reader_does_arithmetic = bool(
+        v_interpolation_info.continuous_states
+        or basis_variables
+        or gated_continuation is not None
+    )
+    original_axes = tuple(
+        (axis, original_layouts[name].rest_of_code)
+        for axis, name in enumerate(lottery_variables)
+        if name in original_layouts
+    )
+
     V_arr_name = "next_V_arr"
     next_V_interpolator = get_V_interpolator(
         v_interpolation_info=v_interpolation_info,
@@ -3061,8 +3170,23 @@ def _build_target_continuation(
     # is resolved inside the node axes rather than once ahead of them. Which
     # consumer resolves it depends on what the law is: a law feeding a coordinate
     # is resolved by the interpolator, a declared entry by its basis weights.
+    # Full original marginals enter the UNCHANGED scaled product, so zero slots
+    # receive their native shifts, not dummy padding. The restricted law still
+    # owns simulation draws and stored support; no probability is reconstructed
+    # or normalized here (even signed zeros come from the original callable).
+    weight_functions = functions
+    if original_layouts:
+        weight_functions = MappingProxyType(
+            dict(functions)
+            | {
+                transition_plans[target_regime_name].lotteries[name].weight_name: (
+                    layout.probabilities
+                )
+                for name, layout in original_layouts.items()
+            }
+        )
     lottery_weights = get_next_stochastic_weights_function(
-        functions=functions,
+        functions=weight_functions,
         transitions=bundle,
         transition_plans=transition_plans,
         regime_name=target_regime_name,
@@ -3163,6 +3287,9 @@ def _build_target_continuation(
             regime_name=target_regime_name, variables=lottery_variables
         ),
         lottery_axis_names=lottery_variables,
+        fixed_value_axes=fixed_value_axes,
+        original_node_axes=original_axes if reader_does_arithmetic else (),
+        original_value_axes=() if reader_does_arithmetic else original_axes,
         next_V=productmap(
             func=mapped_interpolator,
             variables=node_variables,

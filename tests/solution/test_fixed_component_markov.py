@@ -6,7 +6,7 @@ of the model in which `kind` is its own identity-law state, and carry the state 
 group axis and a within-group axis instead of one axis over every code.
 """
 
-import re
+import importlib
 from typing import Literal, cast
 
 import jax
@@ -36,11 +36,11 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    IntND,
     ScalarFloat,
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_distributed import _compiled_solve_kernel_hlo
 
 
 @categorical(ordered=False)
@@ -221,19 +221,29 @@ def test_fixed_component_rejects_unequal_groups():
         _model(factored=True, fixed_component=(0, 0, 0, 1))
 
 
-def _gather_shapes(model: Model) -> set[str]:
-    hlo = _compiled_solve_kernel_hlo(model=model, regime_name="alive", period=0)
-    return set(re.findall(r"= (\w+\[[\d,]*\])[^\n]*? gather\(", hlo))
+def test_fixed_component_preserves_original_lottery_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Linear expectation retains every original code slot, including zero weights."""
+    module = importlib.import_module("_lcm.regime_building.Q_and_F")
+    original = module.zero_safe_average
+    observed: set[tuple[int, ...]] = set()
 
+    def record_support(
+        *,
+        a: FloatND,
+        weights: FloatND,
+        shifts: IntND | None,
+        axis: int | None = None,
+    ) -> FloatND:
+        observed.add(weights.shape)
+        return original(a=a, weights=weights, shifts=shifts, axis=axis)
 
-def test_fixed_component_lowers_the_hand_split_gathers():
-    """The optimized kernel reads next-period values one group at a time.
-
-    Every gather of the hand-split kernel, including the continuation read whose
-    group axis is a size-1 slice, appears in the kernel of the annotated model.
-    """
-    split = _gather_shapes(_model(factored=False))
-    assert split <= _gather_shapes(_model(factored=True))
+    monkeypatch.setattr(module, "zero_safe_average", record_support)
+    _model(factored=True, enable_jit=False).solve(
+        params={"discount_factor": 0.95}, log_level="off"
+    )
+    assert observed == {(4,)}
 
 
 def test_fixed_component_is_shardable_like_the_hand_split_model():

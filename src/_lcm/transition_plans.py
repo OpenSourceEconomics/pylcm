@@ -10,11 +10,13 @@ TargetTransitionPlan is the sole representation consumed by solve, simulation,
 validation, diagnostics, and solver-specific continuation machinery.
 """
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
 
 from _lcm.typing import RegimeName, TransitionFunctionName
+from lcm.typing import FloatND
 
 
 class SupportOrigin(Enum):
@@ -90,6 +92,22 @@ class LotteryValue:
 
 
 @dataclass(frozen=True)
+class OriginalLotteryLayout:
+    """Original code slots of a factored lottery, before any probability product.
+
+    The probability callable belongs to this exact target and phase. At lowering
+    it is the declared law; in a transition plan its parameter names are bound
+    in the same namespace as the restricted law. No closure is inspected to
+    recover either the law or the verified code bijection.
+    """
+
+    state_name: str
+    rest_of_code: tuple[int, ...]
+    fixed_of_code: tuple[int, ...]
+    probabilities: Callable[..., FloatND]
+
+
+@dataclass(frozen=True)
 class TransitionLotteryInfo:
     """One finite stochastic realization mechanism on a target edge."""
 
@@ -106,6 +124,10 @@ class TransitionLotteryInfo:
     weight_name: str
     support_provider_name: str | None = None
     node_annotation: str | None = None
+    original_layout: OriginalLotteryLayout | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """Full original marginal for linear expectations; absent on ordinary laws."""
 
 
 @dataclass(frozen=True)
