@@ -405,9 +405,9 @@ def test_continuation_targets_are_not_derived_from_law_bundle_keys() -> None:
 def test_active_periods_are_computed_at_a_single_call_site() -> None:
     """`AgeGrid.get_periods_where` is combined with `Regime.active` exactly once.
 
-    `compute_active_periods_by_regime` is that single canonical evaluation
-    point; a second call site would let two subsystems compute active
-    periods independently and risk disagreement (e.g. Fraction vs.
+    `compute_active_periods_by_regime` in the schedules module is that single
+    canonical evaluation point; a second call site would let two subsystems
+    compute active periods independently and risk disagreement (e.g. Fraction vs.
     float32-rounded ages).
     """
     src_root = Path(__file__).parents[2] / "src"
@@ -418,4 +418,4 @@ def test_active_periods_are_computed_at_a_single_call_site() -> None:
         if "get_periods_where(" in line and ".active" in line
     ]
 
-    assert hits == [src_root / "_lcm" / "regime_building" / "processing.py"]
+    assert hits == [src_root / "_lcm" / "regime_building" / "schedules.py"]

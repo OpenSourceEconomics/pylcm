@@ -4,8 +4,8 @@
 built against. `process_regimes` then compiles each regime's two phase
 namespaces — grids, transition plans, constraint routes, and the `Q_and_F`,
 `max_Q_over_a` and next-state closures each period needs.
-`compute_active_periods_by_regime` is the single definition of when a regime is
-active that both reachability and this build read.
+Coverage — when each regime is solved — comes from
+`_lcm.regime_building.schedules`, which both reachability and this build read.
 """
 
 import functools
@@ -275,27 +275,6 @@ from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 type _TransitionBundles = dict[
     RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
 ]
-
-
-def compute_active_periods_by_regime(
-    *,
-    ages: AgeGrid,
-    user_regimes: Mapping[RegimeName, object],
-) -> MappingProxyType[RegimeName, tuple[int, ...]]:
-    """Evaluate every regime's `active` predicate exactly once.
-
-    The single canonical activity schedule for the model: every other
-    subsystem that needs to know which periods a regime is active in
-    (reachability, age specialization, broadcast pruning, model-input
-    validation) consumes this mapping instead of re-evaluating
-    `Regime.active` or calling `AgeGrid.get_periods_where` itself.
-    """
-    return MappingProxyType(
-        {
-            regime_name: tuple(ages.get_periods_where(regime.active))  # ty: ignore[unresolved-attribute]
-            for regime_name, regime in user_regimes.items()
-        }
-    )
 
 
 @dataclass(frozen=True, kw_only=True)

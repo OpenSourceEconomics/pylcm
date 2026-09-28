@@ -99,6 +99,27 @@ def declaration_view(transition: object) -> object:
     return _plain_law(law=transition, code_by_name=None)
 
 
+def compute_active_periods_by_regime(
+    *,
+    ages: AgeGrid,
+    user_regimes: Mapping[RegimeName, object],
+) -> MappingProxyType[RegimeName, tuple[int, ...]]:
+    """Evaluate every regime's `active` predicate exactly once.
+
+    The single evaluation point for models without dated transitions: every
+    subsystem that needs to know which periods a regime is active in
+    (reachability, age specialization, broadcast pruning, model-input
+    validation) consumes this mapping instead of re-evaluating
+    `Regime.active` or calling `AgeGrid.get_periods_where` itself.
+    """
+    return MappingProxyType(
+        {
+            regime_name: tuple(ages.get_periods_where(regime.active))  # ty: ignore[unresolved-attribute]
+            for regime_name, regime in user_regimes.items()
+        }
+    )
+
+
 def resolve_regime_schedules(
     *,
     user_regimes: Mapping[RegimeName, Any],
@@ -111,13 +132,11 @@ def resolve_regime_schedules(
         for regime in user_regimes.values()
     )
     if not dated:
-        coverage = {
-            name: tuple(ages.get_periods_where(regime.active))
-            for name, regime in user_regimes.items()
-        }
         return RegimeSchedules(
             dated=False,
-            coverage_by_regime=MappingProxyType(coverage),
+            coverage_by_regime=compute_active_periods_by_regime(
+                ages=ages, user_regimes=user_regimes
+            ),
             support_by_phase=MappingProxyType({}),
             transitions=MappingProxyType(
                 {

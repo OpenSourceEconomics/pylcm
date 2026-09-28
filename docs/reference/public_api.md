@@ -56,6 +56,9 @@ and the correctness of destinations require page-specific documentation and test
 | --------------------------------------------------------------------- | ---------------------------------- |
 | [`lcm.MarkovTransition`](transitions.md#api-state-transitions)        | Stochastic transition wrapper      |
 | [`lcm.JointTransition`](transitions.md#api-joint-transitions)         | Shared-draw joint law              |
+| [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)            | Laws by exact age                  |
+| [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)         | Half-open age interval             |
+| [`lcm.Choose`](transitions.md#api-dated-regime-transitions)           | Deterministic regime choice        |
 | [`lcm.fixed_transition`](transitions.md#api-state-transitions)        | Identity law                       |
 | [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization) | Age-varying function               |
 | [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)     | Age-varying grid                   |

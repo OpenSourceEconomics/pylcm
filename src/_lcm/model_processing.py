@@ -43,9 +43,9 @@ from _lcm.regime_building.phases import (
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
     Regime,
-    compute_active_periods_by_regime,
     process_regimes,
 )
+from _lcm.regime_building.schedules import compute_active_periods_by_regime
 from _lcm.simulation.policy_programs import declare_finite_replay_programs
 from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped

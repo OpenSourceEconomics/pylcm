@@ -21,9 +21,9 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import (
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
-    compute_active_periods_by_regime,
     prepare_model_structure,
 )
+from _lcm.regime_building.schedules import compute_active_periods_by_regime
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt

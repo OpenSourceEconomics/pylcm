@@ -27,7 +27,7 @@ from _lcm.regime_building.broadcast import (
     merge_model_slots,
 )
 from _lcm.regime_building.phases import normalize_regime_phases
-from _lcm.regime_building.processing import compute_active_periods_by_regime
+from _lcm.regime_building.schedules import compute_active_periods_by_regime
 from lcm import (
     AgeGrid,
     DiscreteGrid,

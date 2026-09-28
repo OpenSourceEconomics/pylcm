@@ -42,6 +42,26 @@ accepts a bare probability callable, which its decomposed engine view wraps. See
 mapping when some regimes cannot follow the source; do not encode structural
 impossibility only as a zero probability in an all-regime vector.
 
+(api-dated-regime-transitions)=
+
+### Dated regime transitions
+
+These forms also declare the ages at which a regime is solved:
+
+- a regime name, e.g. `"retirement"`: a deterministic move to that regime;
+- `Choose(func, targets=(...))`: deterministic, and `func` returns the global code of
+  one of `targets`;
+- `MarkovTransition(func, targets=(...))`: a probability vector over all regimes that is
+  nonzero only on `targets`;
+- `ByAge({selector: law, ...}, default=...)` and
+  `ByAge.until(boundary, law=..., then=..., start=...)`: one of the laws above, or a
+  per-target mapping, per exact grid age. Selectors are ages, tuples, integer `range`s,
+  or `AgeRange(start=..., stop=...)` half-open intervals.
+
+A plain law covers every non-final age; a `ByAge` covers exactly the ages it selects. A
+model that uses any of these forms rejects `active`, bare callables and vector laws
+without `targets`. See [Dated regime graphs](../user_guide/dated_regime_graph.md).
+
 (api-joint-transitions)=
 
 ## Joint transitions
