@@ -80,7 +80,10 @@ def _model(*, hand_written: bool = False) -> Model:
         state_transitions={"liquid": {"alive": next_liquid, "dead": next_liquid}},
         constraints={"borrowing_limit": borrowing_limit},
         regime_transitions=until_exit(
-            2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+            2,
+            law=Choose(func=next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+            stays=("alive",),
         ),
         functions={
             "utility": utility,

@@ -196,6 +196,7 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
                 "gone": MarkovTransition(func=prob_gone),
             },
             exits=("gone",),
+            stays=("alive",),
         ),
         functions={"utility": utility, "resources": resources, "savings": savings},
         solver=solver,

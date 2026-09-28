@@ -138,6 +138,7 @@ def _model(*, solver, n_consumption=14):
                 "gone": MarkovTransition(func=prob_gone),
             },
             exits=("gone",),
+            stays=("alive",),
         ),
         functions={"utility": utility, "savings": savings},
         solver=solver,

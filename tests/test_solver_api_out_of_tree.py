@@ -200,11 +200,73 @@ class WealthSolver(Solver):
         )
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class TerminalPublisher(Solver):
+    """Solves a terminal regime to zero and publishes a parent's continuation.
+
+    A parent reading its own continuation key demands it from every regime it
+    transitions into, so the terminal regime it dies into publishes the parent
+    solver's continuation template: the payload a period with no future reads.
+    """
+
+    parent: Solver
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        spec = self.parent.build_period_kernels(context=context).continuation_spec
+        if spec is None:
+            raise TypeError("The terminal publisher's parent publishes nothing.")
+        template = spec.template
+
+        def terminal_value(*, wealth: Float1D) -> tuple[Float1D, object]:
+            return jnp.zeros_like(wealth), template
+
+        program = CoreProgram(
+            name="main",
+            function=terminal_value,
+            argument_builder=_wealth_arguments,
+            requirements=CoreExecutionRequirements(),
+            output_roles=(
+                OutputRole.VALUE,
+                jax.tree.map(
+                    lambda leaf: StateAxesLeading(
+                        state_names=(), shape=tuple(jnp.shape(leaf))
+                    ),
+                    template,
+                ),
+            ),
+            disposition=CoreExecutionDisposition.DENSE,
+            disposition_reason="one_row_per_state_node",
+        )
+        kernels = {
+            period: _GraphKernel(
+                programs=MappingProxyType({"main": program}),
+                continuation_key=spec.artifact_key,
+            )
+            for period in context.regimes_to_active_periods[context.regime_name]
+        }
+        return SolutionKernels(
+            period_kernels=MappingProxyType(kernels),
+            continuation_spec=spec,
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
+        )
+
+
 def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
     # A regime that dies into the terminal one leaves the last period to it, so
     # a simulated subject always has somewhere to go. A self-looping regime is
     # its own target at every one of `_N_PERIODS` acting ages, which takes one
-    # more age for it to die into the terminal regime at the end.
+    # more age for it to die into the terminal regime at the end, which then
+    # publishes the continuation the self-looping solver reads.
     transition = (
         ByAge.until(
             stop_age_exclusive=_N_PERIODS,
@@ -228,6 +290,9 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
                 regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
+                **(
+                    {"solver": TerminalPublisher(parent=solver)} if self_looping else {}
+                ),
             ),
         },
         ages=AgeGrid(start=0, stop=last_age, step="Y"),

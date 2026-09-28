@@ -138,6 +138,7 @@ def _model(
                 "done": MarkovTransition(func=prob_stop),
             },
             exits=("done",),
+            stays=("saving",),
         ),
         functions=functions,
         solver=solver,

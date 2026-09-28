@@ -38,7 +38,7 @@ from lcm import (
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import _decomposed_transition_side
 from lcm.transition import MarkovTransition
-from lcm.typing import BoolND, FloatND, ScalarInt
+from lcm.typing import BoolND, FloatND, ScalarInt, UserFunction
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
@@ -172,9 +172,10 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
     """
     regimes = _new_vocabulary_regimes()
     married = regimes["married"]
+    (law,) = cast("ByAge", married.regime_transitions).laws
     regimes["married"] = married.replace(
-        regime_transitions=Phased(
-            solve=married.regime_transitions, simulate=married.regime_transitions
+        regime_transitions=ByAge(
+            cases={AgeRange(stop=1): Phased(solve=law, simulate=law)}
         )
     )
 
@@ -661,3 +662,18 @@ def test_decomposed_transition_of_an_age_schedule_satisfies_its_annotation():
     hint = inspect.get_annotations(_decomposed_transition_side)["return"]
 
     assert is_bearable(_decomposed_transition_side(schedule), hint)
+
+
+def test_decomposed_transition_of_an_age_schedule_is_its_engine_view():
+    """A deterministic dated regime decomposes to one engine routing function."""
+    regime = Regime(
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=2,
+            law=Choose(func=lambda: 0, targets=("alive", "dead")),
+            then="dead",
+        ),
+        states={"wage": _WAGE_3},
+        functions={"utility": _u_zero},
+    )
+
+    assert is_bearable(regime.decomposed_transition, UserFunction)

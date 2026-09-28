@@ -57,6 +57,7 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
+from tests.test_solver_api_out_of_tree import TerminalPublisher
 
 _N_PERIODS = 3
 _WEALTH = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
@@ -274,11 +275,12 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
                 regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
+                solver=TerminalPublisher(parent=solver_class()),
             )
         },
         ages=AgeGrid(start=0, stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "early"},
+        initial_regimes={0: _ACTING_REGIMES},
     )
 
 

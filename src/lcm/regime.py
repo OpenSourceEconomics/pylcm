@@ -609,11 +609,16 @@ class Regime:
         second belongs to `gated_edges`; what stays here is the selection
         probability, in the per-target cell the canonical pipeline reads. A
         bare probability callable is wrapped, because that cell's grammar takes
-        a `MarkovTransition`.
+        a `MarkovTransition`. A declaration the engine cannot read directly (a
+        `ByAge` schedule, a regime name, a `Choose`) is read through its
+        period-independent `declaration_view` first.
 
         Deterministic and idempotent, like the other two views.
         """
-        return decompose_transition(self.regime_transitions)
+        transition = self.regime_transitions
+        if uses_declaration_vocabulary(transition):
+            transition = declaration_view(transition)
+        return decompose_transition(transition)
 
     def _lower_collective_utility(self) -> None:
         """Derive stakeholder metadata from `functions["utility"]`."""
