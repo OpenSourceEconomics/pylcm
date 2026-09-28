@@ -4305,6 +4305,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     if spec.terminal:
         compute_regime_transition_probs = None
         per_subject_route = None
+        realized_validation_probs = None
         if collective:
             Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
                 n_periods=ages.n_periods,
@@ -4342,6 +4343,26 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
                 or core.next_regime_cells is not None
                 else MappingProxyType({})
             ),
+        )
+        realized_validation_probs = (
+            None
+            if spec.simulation.regime_transition == spec.solution.regime_transition
+            else build_regime_transition_probs_functions(
+                functions=simulate_functions,
+                compute_regime_transition_probs=core.next_regime_func,
+                grids=simulate_grids,
+                regime_names_to_ids=regime_names_to_ids,
+                flat_param_names=flat_param_names,
+                is_stochastic=spec.simulation.stochastic_regime_transition,
+                enable_jit=enable_jit,
+                phase="solve",
+                next_regime_cells=(
+                    core.next_regime_cells
+                    if core.next_regime_func is not None
+                    or core.next_regime_cells is not None
+                    else MappingProxyType({})
+                ),
+            )
         )
         per_subject_route = build_per_subject_regime_transition_probs(
             functions=simulate_functions,
@@ -4708,6 +4729,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         reachability=simulation_reachability,
         transition_plans=core.transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
+        validation_regime_transition_probs=realized_validation_probs,
         # A source standing at `period` reads the edges folding at `period + 1`,
         # the same selection the period's Q_and_F was built from, so the channel
         # names exactly the regimes that period's readers interpolate.

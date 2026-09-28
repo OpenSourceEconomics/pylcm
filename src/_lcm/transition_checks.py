@@ -57,7 +57,13 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.transition_plans import LotteryLifetime
-from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
+from _lcm.typing import (
+    FlatParams,
+    FlatRegimeParams,
+    RegimeName,
+    RegimeTransitionFunction,
+    StateOrActionName,
+)
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.ages import AgeGrid
@@ -452,31 +458,46 @@ def validate_regime_transitions_all_periods(
 
     for period in range(ages.n_periods - 1):
         for regime_name, regime in regimes.items():
-            if period not in regime.active_periods:
-                continue
             if regime.terminal:
                 continue
-
-            try:
-                _validate_regime_transition_single(
-                    regimes=regimes,
-                    regime_params=flat_params[regime_name],
-                    active_regimes_next_period=(
-                        regime.solution.reachability.targets(
-                            period=period, source=regime_name
-                        )
-                    ),
-                    regime_name=regime_name,
-                    period=period,
-                    ages=ages,
-                    summary=summary,
-                    process_grid_resolver=process_grid_resolver,
-                    memory=memory,
+            # Solved periods check the solve law against its own targets;
+            # visited periods of a `Phased` regime also check the realized law.
+            laws = []
+            if period in regime.active_periods:
+                laws.append(
+                    (
+                        regime.solution.validation_regime_transition_probs,
+                        regime.solution.reachability,
+                    )
                 )
-            except InvalidRegimeTransitionProbabilitiesError as error:
-                if summary is not None:
-                    raise _SerialValidationRequired from error
-                raise_or_warn(logger=logger, error=error)
+            realized = regime.simulation.validation_regime_transition_probs
+            simulation_reachability = regime.simulation.reachability
+            if (
+                realized is not None
+                and regime_name
+                in simulation_reachability.active_regimes_by_period[period]
+            ):
+                laws.append((realized, simulation_reachability))
+            for law, reachability in laws:
+                try:
+                    _validate_regime_transition_single(
+                        regimes=regimes,
+                        regime_params=flat_params[regime_name],
+                        active_regimes_next_period=reachability.targets(
+                            period=period, source=regime_name
+                        ),
+                        regime_name=regime_name,
+                        period=period,
+                        ages=ages,
+                        summary=summary,
+                        process_grid_resolver=process_grid_resolver,
+                        memory=memory,
+                        law=law,
+                    )
+                except InvalidRegimeTransitionProbabilitiesError as error:
+                    if summary is not None:
+                        raise _SerialValidationRequired from error
+                    raise_or_warn(logger=logger, error=error)
 
 
 def _validate_regime_transition_single(
@@ -490,6 +511,7 @@ def _validate_regime_transition_single(
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
+    law: RegimeTransitionFunction | None = None,
 ) -> None:
     """Validate regime transition probabilities for a single regime and period.
 
@@ -499,7 +521,9 @@ def _validate_regime_transition_single(
     """
     regime = regimes[regime_name]
     # Non-None guaranteed: only called for non-terminal regimes
-    regime_transition_func = regime.solution.validation_regime_transition_probs
+    regime_transition_func = (
+        regime.solution.validation_regime_transition_probs if law is None else law
+    )
 
     state_action_space = (
         regime.solution.state_action_space(

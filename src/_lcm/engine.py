@@ -1071,6 +1071,14 @@ class SimulationPhase:
     from `functions` (e.g. `additional_targets`) must reject targets that depend
     on these names."""
 
+    validation_regime_transition_probs: RegimeTransitionFunction | None = None
+    """Grid-evaluable realized regime law, or `None` where it is the solve law.
+
+    Present only for a nonterminal regime whose `Phased` regime transition
+    realizes a different law than the one the solve phase reads; the
+    regime-selection checker evaluates it on every visited period.
+    """
+
     egm_policy_read: EGMPolicyRead | NNBEGMPolicyRead | None = None
     """Off-grid read of the published EGM simulation policy, or `None`.
 

@@ -928,6 +928,17 @@ def _partial_fixed_params_into_regimes(
                 if simulation.compute_regime_transition_probs is not None
                 else None
             ),
+            validation_regime_transition_probs=(
+                functools.partial(
+                    simulation.validation_regime_transition_probs,
+                    **_filter_kwargs_for_func(
+                        func=simulation.validation_regime_transition_probs,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if simulation.validation_regime_transition_probs is not None
+                else None
+            ),
         )
 
         result[regime_name] = dataclasses.replace(

@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "a832a9fe4e90ccec0f5dbde201e36eed2b7c1ad9c3f1985999baf3b5c9561c50",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "213637b13a7276e87d63813e9311795297d3b65101d194cc06bb9d0abf08e503",
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -398,7 +398,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "a69ea643eba0d6b98ea9b4e0fc5f036a721e79f5703ea9fbc7a21a6a02841b9a",
-    PROCESSING_SOURCE: "14f1bd308818585ee3f943b8ac690e98cc2282889f4aeafe55675b2b4575d4c6",
+    PROCESSING_SOURCE: "fb7f4d6b0cd8df81e232d798a197ad78f38067f2be7bf59e420cf020b5b95852",
     GRID_SEARCH_SOURCE: "a56619a7d0e5a60fc2b4bd4e1bc75131dc0525ea4b22b9acad41082497bee8ed",
     CORE_PROGRAM_SOURCE: "6b96b777960bfdbf6aad394a5c635bebea976a4f6461c24ebe36f80699736924",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -414,7 +414,7 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "4f628c5f1be6ed7db690b7f91bcc0232e8059fe9ea6f74cdbbac05948a1bcea6",
+    ENGINE_SOURCE: "63405dc657ecccdc51f61b4798c730c2dce4f2777c99083f5a35243f323b3ffe",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
     SIMULATION_SOURCE: "6c301eb224d39594a2bee9992b0ea8483556c34cfd6512d86a191498b26b9045",
     SIMULATION_TRANSITIONS_SOURCE: "50e2b900efa1054ec02cc5b356ac6a98eccbc79ad45ac56df2bf696855bfdd4e",
@@ -447,7 +447,7 @@ _SOURCE_SEALS = {
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
     PANDAS_UTILS_SOURCE: "bc174d387fdb4b33d882e351e1cfab8b1f5ee67fd20217439c3fe49fe54e1537",
-    MODEL_PROCESSING_SOURCE: "0a842e0c9e0aa81ad66a7afc4834898c23a4b60cfe15730f10ecece9d1b8cd24",
+    MODEL_PROCESSING_SOURCE: "dee0000a4420c9e955e6390b27ca36beec369f8516884302c36269010aab7b4b",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
@@ -3234,7 +3234,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         ENGINE_SOURCE: (
-            "885fe695a8980aac7587dc0752a4753ba65f52cd5d3c84b74a784485874cf28f",
+            "25fd6c3f83029ea6ad556350fffa70b6439d784d49038e9cbc56f5a70a06c9fc",
             {},
         ),
     }
@@ -6282,7 +6282,7 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
 # Runtime tests establish numerical support, budget refusal and ownership lifetimes.
 _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
     "src/_lcm/engine.py": (
-        "885fe695a8980aac7587dc0752a4753ba65f52cd5d3c84b74a784485874cf28f",
+        "25fd6c3f83029ea6ad556350fffa70b6439d784d49038e9cbc56f5a70a06c9fc",
         {
             "SolutionPhase.resolve_process_grids": "a55dc3105166d3a9ab413e6abaf302335fdf8eb7bffc5fe3ff7157ab27ac5b55",
             "SolutionPhase.state_action_space": "40ce37d189b00879e93e4aacb8352dee685c0db751601379e4bbd7adecbed85a",
@@ -6390,13 +6390,13 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/transition_checks.py": (
-        "c98fb2c6646af32528243c67d874dd6b592c83721af4f37b3a6f7560b1a175cf",
+        "5b2382d489beb7524400f38749b24c69eee273f733fdb8b295f998df491f015d",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
             "_validate_transition_sequence": "e0dfef9bad2eaad6f33ad7729841c6d813913c85cb3c5977ad3650292be4f98a",
-            "validate_regime_transitions_all_periods": "4583a44841b14ea258837441c5bb634426677eca86d5aa879b855c0824f77884",
-            "_validate_regime_transition_single": "34c743e38c8ddf24912b35651e4248fba727bd8bcb3b98ffe974266b77af6891",
+            "validate_regime_transitions_all_periods": "82894f1f07ba854d8d816358299f34e3def87fa7d36019edc019e1f8ffd6c740",
+            "_validate_regime_transition_single": "2f4c7ecebce92eab3efac7fc85a23d4dac49e3fc99e862f9fd2ada91f706ba08",
             "_evaluate_regime_probability_law": "c16f5612edb533d8f89d75d0c90fa903d723b4b4235dcc40b0a3e31dc3aecd42",
             "_regime_probability_law": "0af1c02dca10a6d00a10e67342b51996fb23a078886097a363a12935f7c0ab39",
             "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
