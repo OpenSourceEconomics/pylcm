@@ -1103,7 +1103,9 @@ def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
     model = Model(
         regimes=regimes,
         ages=AgeGrid(start=0, stop=last_period, step="Y"),
-        regime_id_class=_ConsumerRegimeId,
+        regime_id_class=_ConsumerRegimeId
+        if kind == "probability"
+        else _NextOutputRegimeId,
     )
     assert _next_output_parameter_leaves(value=model.get_params_template()) == []
     s = np.repeat(np.arange(4, dtype=np.int32), 4)
