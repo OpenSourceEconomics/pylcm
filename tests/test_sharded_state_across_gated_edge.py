@@ -99,12 +99,9 @@ class _Level:
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=3)
 _CONSUMPTION = LinSpacedGrid(start=0.5, stop=2.0, n_points=3)
 
-_PARAMS = {
-    "solo": {"koopmans_aggregator": {"discount_factor": _BETA}},
-    "pair": {"koopmans_aggregator": {"discount_factor": _BETA}},
-    "mate": {"koopmans_aggregator": {"discount_factor": _BETA}},
-    "dead": {},
-}
+# Model-level, so the ungated control — which never reaches `solo` — needs no
+# parameters for it.
+_PARAMS = {"discount_factor": _BETA}
 
 _INITIAL_CONDITIONS = {
     "age": jnp.zeros(4),
@@ -143,6 +140,11 @@ def _none_before_age_two(age: FloatND) -> FloatND:
 
 def _half_before_age_two(age: FloatND) -> FloatND:
     return jnp.where(age < 2.0, 0.5, 0.0)
+
+
+def _half_from_age_one(age: FloatND) -> FloatND:
+    """Die with the half of the pair's mass that has no pair to stay in at age 2."""
+    return jnp.where(age < 1.0, 0.0, 0.5)
 
 
 def _gate_open_above_the_middle(wealth: ContinuousState) -> BoolND:
@@ -235,7 +237,7 @@ def build_model(
             law={
                 "pair": MarkovTransition(func=_half_before_age_two),
                 "mate": leaving,
-                "dead": MarkovTransition(func=_none_before_age_two),
+                "dead": MarkovTransition(func=_half_from_age_one),
             },
             exits=("mate", "dead"),
         ),
