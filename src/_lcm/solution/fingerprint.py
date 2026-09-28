@@ -61,6 +61,7 @@ from lcm.solver_api import (
     PersistencePolicy,
     SolverIdentity,
 )
+from lcm.transition import AgeRange
 
 # beartype compiles every guard it writes under this synthetic filename.
 _BEARTYPE_BODY_FILENAME_PREFIX = "<@beartype("
@@ -2173,7 +2174,7 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         value=value, candidates=_TRUSTED_TERMINAL_OBJECT_TYPES
     ) or isinstance(value, CertaintyEquivalent):
         return True
-    if isinstance(value, Fraction | Enum | DiscreteGrid | Phased):
+    if isinstance(value, Fraction | Enum | DiscreteGrid | Phased | AgeRange):
         return True
     if isinstance(value, Array | np.dtype):
         return True

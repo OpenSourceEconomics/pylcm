@@ -42,6 +42,7 @@ from lcm.transition import (
     _freeze_selector,
     _select_periods,
 )
+from lcm.typing import Period
 
 type PhaseKey = str
 _PHASES: tuple[PhaseKey, PhaseKey] = ("solution", "simulation")
@@ -274,10 +275,35 @@ def _fail_if_unknown_entry_regimes(
 
 # keyword-only-exempt: primary-argument=func
 def _with_signature(
-    func: Callable[..., Any], *, names: tuple[str, ...]
+    func: Callable[..., Any],
+    *,
+    names: tuple[str, ...],
+    sources: tuple[Callable[..., Any], ...],
 ) -> Callable[..., Any]:
-    """Expose exactly `names` as keyword-only arguments to the DAG machinery."""
-    func.__signature__ = _signature(names=names)  # ty: ignore[unresolved-attribute]
+    """Expose `names` as keyword-only arguments annotated as in `sources`.
+
+    The DAG machinery requires one annotation per argument name across a
+    model, so each argument keeps the annotation of the law that reads it, and
+    `period` is annotated as the period context argument.
+    """
+    annotations: dict[str, Any] = {"period": Period}
+    for source in sources:
+        for name, parameter in inspect.signature(source).parameters.items():
+            if parameter.annotation is not inspect.Parameter.empty:
+                annotations.setdefault(name, parameter.annotation)
+    func.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
+        [
+            inspect.Parameter(
+                name,
+                inspect.Parameter.KEYWORD_ONLY,
+                annotation=annotations.get(name, inspect.Parameter.empty),
+            )
+            for name in names
+        ]
+    )
+    func.__annotations__ = {
+        name: annotations[name] for name in names if name in annotations
+    }
     return func
 
 
@@ -308,7 +334,7 @@ def _indicator(
         selected = selector(**{name: kwargs[name] for name in names})
         return jnp.asarray(selected == code, dtype=float)
 
-    return _with_signature(indicator, names=names)
+    return _with_signature(indicator, names=names, sources=(selector,))
 
 
 def _period_masked(
@@ -321,7 +347,7 @@ def _period_masked(
         selected = jnp.isin(kwargs["period"], jnp.asarray(periods))
         return jnp.where(selected, value, jnp.zeros_like(value))
 
-    return _with_signature(period_masked, names=_with_period(names))
+    return _with_signature(period_masked, names=_with_period(names), sources=(cell,))
 
 
 def _period_dispatch(
@@ -344,7 +370,7 @@ def _period_dispatch(
         return result
 
     names = tuple(sorted({name for names in case_names for name in names}))
-    return _with_signature(period_dispatch, names=_with_period(names))
+    return _with_signature(period_dispatch, names=_with_period(names), sources=cases)
 
 
 def _with_period(names: tuple[str, ...]) -> tuple[str, ...]:
@@ -598,7 +624,7 @@ def _period_sum(parts: tuple[Callable[..., Any], ...]) -> Callable[..., Any]:
         return sum(values[1:], values[0])
 
     names = tuple(sorted({name for names in part_names for name in names}))
-    return _with_signature(period_sum, names=_with_period(names))
+    return _with_signature(period_sum, names=_with_period(names), sources=parts)
 
 
 def _masked_cell(*, cell: object, periods: tuple[int, ...]) -> object:

@@ -317,6 +317,9 @@ class PreparedModelStructure:
     active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
     """Periods in which each regime is locally active."""
 
+    support_is_declared: bool = False
+    """Whether every regime transition declares its per-period support."""
+
 
 def prepare_model_structure(
     *,
@@ -373,6 +376,7 @@ def prepare_model_structure(
         grid_schedule=age_normalization.grid_schedule,
         reachability=reachability,
         active_periods_by_regime=active_periods_by_regime,
+        support_is_declared=support_by_phase is not None,
     )
 
 
@@ -473,6 +477,7 @@ def process_regimes(
         all_regime_names=all_regime_names,
         solution_reachability=reachability.solution,
         simulation_reachability=reachability.simulation,
+        support_is_declared=prepared_structure.support_is_declared,
     )
     solve_nested_transitions = {
         regime_name: _extract_phase_transitions(phase_slice=spec.solution)

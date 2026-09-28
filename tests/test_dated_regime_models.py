@@ -25,7 +25,7 @@ from lcm.exceptions import (
     ModelInitializationError,
 )
 from lcm.regime import Regime
-from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
+from lcm.typing import BoolND, DiscreteState, FloatND, Period, ScalarInt
 
 AGES = AgeGrid(start=25, stop=75, step="10Y")
 
@@ -347,3 +347,104 @@ def test_invalid_regime_selection_raises_at_every_log_level(
     )
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve(params={"discount_factor": 0.95}, log_level=log_level)
+
+
+def _certain() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def test_shared_state_law_may_name_targets_outside_the_declared_support() -> None:
+    """Support comes from the transition; extra per-target state laws go unused."""
+    shared_wealth_law = {
+        "working": lambda wealth: wealth,
+        "retirement": lambda wealth: wealth,
+    }
+    retirement = Regime(
+        transition=ByAge(
+            {AgeRange(start=65, stop=75): {"dead": MarkovTransition(_certain)}}
+        ),
+        states={
+            "health": DiscreteGrid(category_class=Health),
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+        },
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": shared_wealth_law,
+        },
+        functions={"utility": _utility},
+    )
+    model = _dated_model(retirement=retirement)
+    assert model.reachability.solution.targets_by_period[4] == {"retirement": ("dead",)}
+
+
+def _is_healthy(health: DiscreteState) -> BoolND:
+    return health == Health.good
+
+
+def _stay_if_healthy(is_healthy: BoolND) -> FloatND:
+    return jnp.where(is_healthy, 0.9, 0.7)
+
+
+def _die_if_frail(is_healthy: BoolND) -> FloatND:
+    return 1 - _stay_if_healthy(is_healthy)
+
+
+def test_scheduled_cells_keep_the_annotations_of_the_laws_they_wrap() -> None:
+    """A period-masked cell reading an annotated DAG output builds and solves."""
+    working = Regime(
+        transition=ByAge.until(
+            65,
+            law={
+                "working": MarkovTransition(_stay_if_healthy),
+                "dead": MarkovTransition(_die_if_frail),
+            },
+            then="retirement",
+        ),
+        states={
+            "health": DiscreteGrid(category_class=Health),
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+        },
+        state_transitions={
+            "health": fixed_transition("health"),
+            "wealth": lambda wealth: wealth,
+        },
+        functions={"utility": _utility, "is_healthy": _is_healthy},
+    )
+    params = {"discount_factor": 0.95}
+    values = _dated_model(working=working).solve(params=params, log_level="off")
+    expected = _dated_model().solve(params=params, log_level="off")
+    np.testing.assert_array_equal(
+        values.values[0]["working"], expected.values[0]["working"]
+    )
+
+
+def test_user_regimes_keep_the_dated_declaration() -> None:
+    """A model publishes each regime's transition exactly as declared."""
+    declared = ByAge({AgeRange(start=65, stop=75): "dead"})
+    model = _dated_model(retirement=_regime(transition=declared))
+    assert model.user_regimes["retirement"].transition is declared
+
+
+_EARLY_STAGES = (AgeRange(start=25, stop=55),)
+
+
+def _stay_by_stage(health: DiscreteState) -> FloatND:
+    stage = _EARLY_STAGES[0]
+    return _stay(health) * (stage.start is not None)
+
+
+def test_laws_may_read_age_ranges_from_module_constants() -> None:
+    """An `AgeRange` held in a module constant is part of the model identity."""
+    working = _regime(
+        transition=ByAge.until(
+            65,
+            law={
+                "working": MarkovTransition(_stay_by_stage),
+                "dead": MarkovTransition(_die),
+            },
+            then="retirement",
+        )
+    )
+    assert _dated_model(working=working).reachability.nodes == (
+        _dated_model().reachability.nodes
+    )
