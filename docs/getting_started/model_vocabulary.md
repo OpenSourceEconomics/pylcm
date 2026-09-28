@@ -9,7 +9,7 @@ regime describes one decision problem:
 
 | Economic object                          | pylcm declaration   | Example                               |
 | ---------------------------------------- | ------------------- | ------------------------------------- |
-| Predetermined information                | `states`            | wealth, health, employment status     |
+| Predetermined information                | `states`            | wealth, health, marital status        |
 | Choices made now                         | `actions`           | consumption, work, next durable stock |
 | Flow payoffs and intermediate quantities | `functions`         | utility, resources, taxes             |
 | Feasible choices                         | `constraints`       | borrowing or time constraints         |
