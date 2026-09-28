@@ -71,7 +71,7 @@ def _counterfactual_model(*, renamed: bool) -> Model:
         },
         ages=AgeGrid(start=39, stop=42, step="Y"),
         regime_id_class=_RenamedRegimeId,
-        initial_regimes={39: "student"},
+        initial_regimes={(39, 40): "student"},
     )
 
 
