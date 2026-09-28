@@ -42,6 +42,9 @@ class ResolvedExecution:
     )
     """Widths that override the model-wide ones, by regime name then axis name."""
 
+    axis_width_ceilings: MappingProxyType[str, int] = MappingProxyType({})
+    """Widest block the planner may compile each named axis at; empty means none."""
+
     device_memory_bytes: int | None
     """Effective per-device workspace budget every phase admits against, or `None`.
 
@@ -254,6 +257,7 @@ def resolve_execution_config(
         sharded_states=frozenset(config.sharded_states),
         axis_widths=model_wide_widths,
         axis_widths_by_regime=widths_by_regime,
+        axis_width_ceilings=MappingProxyType(dict(config.axis_width_ceilings)),
         device_memory_bytes=_effective_device_memory_bytes(
             requested_bytes=config.device_memory_bytes,
             headroom_fraction=config.device_memory_headroom_fraction,
@@ -374,6 +378,7 @@ def fail_if_axis_widths_name_undeclared_axes(
     *,
     axis_widths: Mapping[str, AxisWidth],
     program_collections: tuple[Iterable[CoreProgram], ...],
+    label: str = "axis_widths",
 ) -> None:
     """Reject an axis width for a name none of the model's programs declares.
 
@@ -387,6 +392,8 @@ def fail_if_axis_widths_name_undeclared_axes(
         axis_widths: The widths the user declared, by axis name.
         program_collections: One collection of core programs per phase whose
             axes the widths may name.
+        label: The `ExecutionConfig` field the declaration came from, named in
+            the error a rejected axis raises.
 
     Raises:
         ExecutionPlanningError: A width names an axis no program declares.
@@ -403,7 +410,7 @@ def fail_if_axis_widths_name_undeclared_axes(
     for name in axis_widths:
         if name not in declared:
             msg = (
-                f"ExecutionConfig.axis_widths names {name!r}, which no core program "
+                f"ExecutionConfig.{label} names {name!r}, which no core program "
                 f"declares; declared axes are {sorted(declared)!r}."
             )
             raise ExecutionPlanningError(msg)

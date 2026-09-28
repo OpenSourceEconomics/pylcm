@@ -345,6 +345,7 @@ class _ChunkProfiler:
         choices = workspace_width_candidates(
             axes=axes,
             fixed_widths=self.runtime.execution.axis_widths,
+            width_ceilings=self.runtime.execution.axis_width_ceilings,
             budget_bytes=self.runtime.execution.device_memory_bytes,
         )
         best = None
@@ -467,7 +468,10 @@ def _independent_outer_candidates(
 
 
 def _independent_anchor_widths(
-    *, axes: tuple[ReducedAxis | TiledOutputAxis, ...], configured: Mapping[str, int]
+    *,
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    configured: Mapping[str, int],
+    ceilings: Mapping[str, int],
 ) -> tuple[Mapping[str, int], ...]:
     """Generate two maps and retain pins absent from a scalar anchor's axes.
 
@@ -481,7 +485,10 @@ def _independent_anchor_widths(
             dict(configured)
             | dict(
                 workspace_width_candidates(
-                    axes=axes, fixed_widths=pins, budget_bytes=None
+                    axes=axes,
+                    fixed_widths=pins,
+                    width_ceilings=ceilings,
+                    budget_bytes=None,
                 )[0]
             )
         )
@@ -516,7 +523,11 @@ def _plan_independent_chunks(
     anchor = candidates[0]
     largest = candidates[-1]
     axes = _common_axes(regimes=profiler.regimes, n_subjects=anchor)
-    choices = _independent_anchor_widths(axes=axes, configured=configured)
+    choices = _independent_anchor_widths(
+        axes=axes,
+        configured=configured,
+        ceilings=profiler.runtime.execution.axis_width_ceilings,
+    )
     attempts: list[ChunkCandidateReceipt] = []
     selected = _profile_independent_candidate(
         profiler=profiler, n_subjects=largest, widths=choices[0], attempts=attempts

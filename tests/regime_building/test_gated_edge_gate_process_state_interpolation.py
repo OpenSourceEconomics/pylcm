@@ -272,7 +272,7 @@ def _build_solve_and_simulate(*, n_subjects: int, seed: int):
     )
     flat_params = _flat_params()
     _bi_result = solve(
-        model_fingerprint="test_gated_edge_gate_process_state_interpolation",
+        program_fingerprint="test_gated_edge_gate_process_state_interpolation",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
