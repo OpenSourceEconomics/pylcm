@@ -229,14 +229,13 @@ def lower_demanded_transitions(
     simulate side over its visited periods (H), falling back to S for a regime
     that is solved but never visited. A case selected only at undemanded ages
     contributes no cell, no argument and no parameter. A regime without
-    demanded periods keeps its lowering over every available period: it is
-    never executed, and `create_params_template` gives it no parameters.
+    demanded periods keeps its first available law unchanged, so it stays
+    inspectable without a period-dispatched union; it is never executed, gets
+    no transition program and no parameters.
     """
     lowered = dict(schedules.transitions)
     for name, law_by_period in schedules.law_by_period_by_regime.items():
-        solve_periods = schedules.coverage_by_regime[name]
-        if not solve_periods:
-            continue
+        solve_periods = schedules.coverage_by_regime[name] or (min(law_by_period),)
         visited = tuple(sorted(p for p, n in schedules.visited_nodes if n == name))
         lowered[name] = _lower(
             law_by_period=law_by_period,
