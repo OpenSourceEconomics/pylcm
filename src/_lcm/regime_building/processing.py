@@ -3446,7 +3446,7 @@ def _build_solution_phase(  # noqa: PLR0915
         # and simulation never enters it.
         solver_kernels = SolutionKernels(
             period_kernels=MappingProxyType({}),
-            replay_route=DeclaredReplay.UNSUPPORTED,
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
         )
     else:
         solver.validate_build(context=context)
