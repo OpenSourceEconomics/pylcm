@@ -240,6 +240,7 @@ def _same_grid_markov_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=MarkovRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -410,6 +411,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
         regimes={"early": early, "late": late, "dead": dead},
         ages=_ages(),
         regime_id_class=CrossGridRegimeId,
+        initial_regimes={40: "early"},
     )
 
 
@@ -536,6 +538,7 @@ def _joint_process_markov_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=MarkovRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -661,6 +664,7 @@ def _point_mass_floor_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=MarkovRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 

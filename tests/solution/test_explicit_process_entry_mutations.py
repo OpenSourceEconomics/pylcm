@@ -84,6 +84,7 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
     got = source_value(model)

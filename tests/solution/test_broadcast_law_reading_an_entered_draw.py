@@ -89,6 +89,7 @@ def _build(state_transitions) -> Model:
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

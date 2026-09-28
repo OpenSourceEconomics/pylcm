@@ -513,6 +513,7 @@ def _model(
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=execution_config,
+        initial_regimes={18: "working_life"},
     )
 
 

@@ -135,6 +135,7 @@ def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, stop=41, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={40: "alive"},
     )
 
 

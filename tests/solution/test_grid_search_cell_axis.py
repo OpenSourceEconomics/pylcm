@@ -100,6 +100,7 @@ def _model(*, kind: str, width: int) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": width}),
+        initial_regimes={0: "acting"},
     )
 
 
@@ -211,6 +212,7 @@ def _collision_model() -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
+        initial_regimes={0: "acting"},
     )
 
 
@@ -268,6 +270,7 @@ def test_trivial_state_product_does_not_declare_a_cell_axis(
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "acting"},
     )
     program = core_program_graph(
         kernel=model._regimes["acting"].solution.period_kernels[0]

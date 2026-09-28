@@ -95,6 +95,7 @@ def _entered_process_model(*, fixed_params: dict, enable_jit: bool = False) -> M
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 
@@ -190,6 +191,7 @@ def test_a_broadcast_that_binds_a_law_still_reaches_a_function() -> None:
         regime_id_class=RegimeId,
         fixed_params=dict(_LAW),
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
@@ -247,6 +249,7 @@ def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
         regime_id_class=RegimeId,
         fixed_params={"mu": 0.0, "sigma": 1.0},
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
@@ -288,6 +291,7 @@ def test_a_coarse_regime_transition_pins_the_same_law() -> None:
         regime_id_class=RegimeId,
         fixed_params=dict(_LAW),
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
@@ -353,6 +357,7 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
         regime_id_class=RegimeId,
         fixed_params=dict(_LAW),
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values

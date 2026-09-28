@@ -396,6 +396,7 @@ def _build_partial_coverage_model(
         regimes={"work": work, "retire": retire, "dead": dead_regime},
         regime_id_class=_PartialCoverageRegimeId,
         ages=AgeGrid(start=0, stop=3, step="Y"),
+        initial_regimes={0: "work"},
     )
     params = {
         "discount_factor": 0.9,
@@ -935,6 +936,7 @@ def _model_emitting_total_regime_mass(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_MassRegimeId,
+        initial_regimes={0: "alive"},
     )
 
 

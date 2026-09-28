@@ -61,6 +61,7 @@ def _closed_form_model() -> Model:
         },
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 
@@ -209,6 +210,7 @@ def _skill_model() -> Model:
         regimes={"retirement": alive, "dead": bequest_dead},
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 
@@ -289,6 +291,7 @@ def test_phase_variant_utility_keeps_the_grid_consumption_path():
         regimes={"retirement": alive, "dead": bequest_dead},
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
     params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
 

@@ -132,6 +132,7 @@ def _get_model(*, sigma_low: float, sigma_high: float, n_periods: int = 5) -> Mo
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={20: "alive"},
     )
 
 
@@ -291,6 +292,7 @@ def _ar1_model(*, sigma_low: float, sigma_high: float) -> Model:
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=70, step="10Y"),
         fixed_params={"final_age_alive": 60},
+        initial_regimes={20: "alive"},
     )
 
 
@@ -376,6 +378,7 @@ def _get_switching_model(*, sigma_low: float, sigma_high: float) -> Model:
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=60, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={20: "alive"},
     )
 
 
@@ -461,6 +464,7 @@ def _model_with_income(income_proc) -> Model:
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=40, step="10Y"),
         fixed_params={"final_age_alive": 21},
+        initial_regimes={20: "alive"},
     )
 
 
@@ -632,6 +636,7 @@ def test_model_level_conditioning_state_survives_pruning():
         fixed_params={"final_age_alive": 50},
         states={"uncertainty": DiscreteGrid(category_class=Uncertainty)},
         state_transitions={"uncertainty": MarkovTransition(func=next_uncertainty)},
+        initial_regimes={20: "alive"},
     )
     assert (
         "uncertainty" not in model.pruned_variables["alive"]
@@ -669,6 +674,7 @@ def test_conditioning_only_state_is_not_reported_unused():
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=60, step="10Y"),
         fixed_params={"final_age_alive": 50},
+        initial_regimes={20: "alive"},
     )
     assert model is not None
 
@@ -861,6 +867,7 @@ def test_cross_regime_regime_local_conditioner_builds_and_solves():
         regime_id_class=Phase,
         ages=AgeGrid(start=20, stop=70, step="10Y"),
         fixed_params={},
+        initial_regimes={20: "young"},
     )
     V = model.solve(params=_cross_params(), log_level="debug").values
     for leaf in _value_arrays(V):
@@ -899,6 +906,7 @@ def test_cross_regime_model_level_conditioner_survives_pruning():
         state_transitions={
             "uncertainty": MarkovTransition(func=next_uncertainty_phase_age)
         },
+        initial_regimes={20: "young"},
     )
     assert "uncertainty" not in model.pruned_variables["young"]  # source: reaches old
     assert "uncertainty" not in model.pruned_variables["old"]  # carries the process
@@ -941,6 +949,7 @@ def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state():
         regime_id_class=Phase,
         ages=AgeGrid(start=20, stop=70, step="10Y"),
         fixed_params={},
+        initial_regimes={20: "young"},
     )
     result = model.simulate(
         params=_cross_params(),
@@ -1005,6 +1014,7 @@ def test_conditioned_process_the_source_lacks_is_rejected():
             regime_id_class=Phase,
             ages=AgeGrid(start=20, stop=70, step="10Y"),
             fixed_params={},
+            initial_regimes={20: "young"},
         )
 
 
@@ -1045,6 +1055,7 @@ def test_conditioned_process_may_be_entered_with_an_explicit_law():
         regime_id_class=Phase,
         ages=AgeGrid(start=20, stop=70, step="10Y"),
         fixed_params={},
+        initial_regimes={20: "young"},
     )
     V = model.solve(params=_cross_params(), log_level="debug").values
     for leaf in _value_arrays(V):

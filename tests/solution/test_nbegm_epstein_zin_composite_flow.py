@@ -129,6 +129,7 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
             step="5Y",
         ),
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={20: "alive"},
     )
 
 

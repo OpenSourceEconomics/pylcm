@@ -166,6 +166,7 @@ def _model(
         regimes={"saving": saving, "done": done},
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "saving"},
     )
 
 

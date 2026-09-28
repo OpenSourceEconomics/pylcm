@@ -108,6 +108,7 @@ def _build_model(*, enable_jit: bool = True) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={0: "acting"},
     )
 
 

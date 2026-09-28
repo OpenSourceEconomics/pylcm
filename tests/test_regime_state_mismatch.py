@@ -143,6 +143,7 @@ def test_discrete_state_different_categories_across_regimes():
             regimes={"working_life": working, "retirement": retired, "dead": dead},
             ages=AgeGrid(start=0, stop=4, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={0: "working_life"},
         )
 
 
@@ -198,6 +199,7 @@ def test_deterministic_target_only_state() -> None:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "alive"},
     )
 
     params = {"discount_factor": 0.95}
@@ -294,6 +296,7 @@ def test_stochastic_target_only_state() -> None:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "alive"},
     )
 
     params = {"discount_factor": 0.95}
@@ -378,6 +381,7 @@ def test_per_target_dict_transitions():
         regimes={"working_life": working, "retirement": retired, "dead": dead},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "working_life"},
     )
 
     params = {"discount_factor": 0.95}
@@ -464,6 +468,7 @@ def test_outer_phased_per_target_dict_spans_grids():
         regimes={"working_life": working, "retirement": retired, "dead": dead},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "working_life"},
     )
     model.solve(log_level="off", params={"discount_factor": 0.95})
 
@@ -530,6 +535,7 @@ def test_discrete_state_same_count_different_names():
             regimes={"work": work, "retire": retire, "dead": dead},
             ages=AgeGrid(start=0, stop=3, step="Y"),
             regime_id_class=_RegimeId,
+            initial_regimes={0: "work"},
         )
 
 
@@ -574,6 +580,7 @@ def test_mixed_ordered_flags_raises():
             regimes={"a": a, "b": b, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=_RegimeId,
+            initial_regimes={0: "a"},
         )
 
 
@@ -618,6 +625,7 @@ def test_both_ordered_same_categories_passes():
         regimes={"a": a, "b": b, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "a"},
     )
 
 
@@ -787,6 +795,7 @@ def test_incomplete_per_target_reachable_target():
             regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
             ages=AgeGrid(start=0, stop=4, step="Y"),
             regime_id_class=_RegimeId,
+            initial_regimes={0: "regime_b"},
         )
 
 
@@ -871,6 +880,7 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
         regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "regime_a"},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
@@ -1001,5 +1011,6 @@ def test_incomplete_per_target_unreachable_target() -> None:
         },
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "regime_a"},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})

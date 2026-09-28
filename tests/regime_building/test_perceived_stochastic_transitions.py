@@ -98,6 +98,7 @@ def _model(law: Any) -> Model:
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="perceived vs true stochastic law",
+        initial_regimes={0: "live"},
     )
 
 
@@ -231,6 +232,7 @@ def test_markov_and_process_states_coexist():
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="Markov law and process state in one regime",
+        initial_regimes={0: "live"},
     )
     shock_params = {"shock": {"mu": 0.0, "sigma": 1.0}}
     params = {
@@ -299,6 +301,7 @@ def test_continuation_helper_resolves_from_the_solve_phase():
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="phase-varying helper under a bare stochastic law",
+        initial_regimes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="debug")
     df = (

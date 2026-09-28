@@ -76,6 +76,7 @@ _MODEL = Model(
     },
     ages=AgeGrid(start=0, stop=3, step="Y"),
     regime_id_class=_RegimeId,
+    initial_regimes={0: "alive"},
 )
 _PARAMS = {"discount_factor": 0.95}
 

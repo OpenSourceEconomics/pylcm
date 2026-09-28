@@ -261,6 +261,7 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         regimes={"src": src, "src_exit": src_exit, "annuity": annuity},
         ages=_AGES,
         regime_id_class=AgeSpecializedRegimeId,
+        initial_regimes={0: "src"},
     )
 
 
@@ -348,6 +349,7 @@ def _build_model(
         },
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "src"},
     )
 
 

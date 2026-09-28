@@ -70,6 +70,7 @@ def _simulate_with_bequest(bequest: float):
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {

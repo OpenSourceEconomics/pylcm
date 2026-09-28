@@ -263,6 +263,7 @@ def _build_model(
         },
         ages=_AGES,
         regime_id_class=_RegimeId,
+        initial_regimes={0: "single_f"},
     )
 
 

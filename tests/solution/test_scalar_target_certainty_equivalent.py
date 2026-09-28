@@ -76,6 +76,7 @@ def _solve_with_geometric_certainty_equivalent():
         regimes={"alive": alive, "low": low, "high": high},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {

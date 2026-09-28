@@ -95,6 +95,7 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 
@@ -189,6 +190,7 @@ def test_signed_cells_that_cancel_across_targets_are_refused_by_validation() -> 
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeIdWithSignedTargets,
+        initial_regimes={20: "source"},
     )
 
     with pytest.raises(

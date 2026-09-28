@@ -281,6 +281,7 @@ def _two_target_model() -> Model:
         },
         regime_id_class=_BranchRegimeId,
         ages=AgeGrid(start=0, stop=2, step="Y"),
+        initial_regimes={0: "stay"},
     )
 
 

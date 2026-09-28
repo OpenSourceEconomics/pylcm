@@ -71,6 +71,7 @@ def _reordered_actions_model() -> Model:
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working_life"},
     )
 
 
@@ -101,6 +102,7 @@ def _rewaged_model() -> Model:
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working_life"},
     )
 
 
@@ -124,6 +126,7 @@ def _fixed_discount_model(*, discount_factor: float) -> Model:
         ages=AgeGrid(start=START_AGE, stop=START_AGE + _N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"discount_factor": discount_factor},
+        initial_regimes={18: "working_life"},
     )
 
 

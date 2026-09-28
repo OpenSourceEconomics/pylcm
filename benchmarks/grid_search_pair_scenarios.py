@@ -343,5 +343,6 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
         },
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "working"},
     )
     return model, {"discount_factor": 0.95}

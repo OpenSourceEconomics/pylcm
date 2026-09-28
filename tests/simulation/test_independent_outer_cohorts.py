@@ -88,6 +88,7 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
             axis_widths={} if width is None else {"subject": width},
             device_memory_bytes=2**30,
         ),
+        initial_regimes={0: "working"},
     )
 
 

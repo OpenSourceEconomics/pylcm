@@ -87,6 +87,7 @@ def _model(solver: EGM | GridSearch) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=False,
+        initial_regimes={0: "source"},
     )
 
 

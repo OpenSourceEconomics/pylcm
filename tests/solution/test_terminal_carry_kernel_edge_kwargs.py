@@ -102,6 +102,7 @@ def test_gated_edge_source_solves_beside_an_endogenous_grid_regime():
         regimes=_make_mixed_regimes(),
         ages=AGES,
         regime_id_class=MixedRegimeId,
+        initial_regimes={0: "mover"},
     )
     solution = model.solve(
         params={"discount_factor": DISCOUNT_FACTOR}, log_level="debug"
@@ -123,6 +124,7 @@ def test_gated_edge_source_solves_on_its_own():
         regimes=_make_gated_regimes(),
         ages=AGES,
         regime_id_class=GatedRegimeId,
+        initial_regimes={0: "mover"},
     )
     solution = model.solve(
         params={"discount_factor": DISCOUNT_FACTOR}, log_level="debug"

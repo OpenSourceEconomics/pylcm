@@ -129,6 +129,7 @@ def _build_model(*, with_bystander: bool) -> Model:
         regimes=regimes,
         ages=AGES,
         regime_id_class=RegimeIdWithBystander if with_bystander else RegimeId,
+        initial_regimes={40: "source"},
     )
 
 

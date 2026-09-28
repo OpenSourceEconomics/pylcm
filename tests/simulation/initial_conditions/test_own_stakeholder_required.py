@@ -90,6 +90,7 @@ def dissolution_model_and_solution():
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
+        initial_regimes={0: "married"},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     return model, solution
@@ -106,6 +107,7 @@ def consent_model_and_solution():
         regimes=_make_consent_regimes(),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
+        initial_regimes={0: "single_f"},
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off")
     return model, solution
@@ -304,6 +306,7 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
         regimes=_make_unreachable_role_routing_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=UnreachableRoleRoutingRegimeId,
+        initial_regimes={0: "alone"},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     result = model.simulate(
@@ -394,6 +397,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
         regimes={"prelude": prelude, **_shift_dissolution_one_age()},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=ReachableRoleRoutingRegimeId,
+        initial_regimes={0: "prelude"},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     with pytest.raises(InvalidInitialConditionsError, match="prelude"):

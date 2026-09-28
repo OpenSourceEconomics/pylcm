@@ -106,6 +106,7 @@ def _make_clashing_model() -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -152,6 +153,7 @@ def test_safe_pattern_does_not_raise():
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -187,6 +189,7 @@ def test_array_valued_producer_indexed_by_state_does_not_raise():
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -358,6 +361,7 @@ def test_phased_function_in_functions_does_not_crash_validation():
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 

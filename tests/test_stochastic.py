@@ -152,6 +152,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={40: "working_life"},
     )
 
     model_stochastic = Model(
@@ -162,6 +163,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={40: "working_life"},
     )
 
     # Use survival_probs=1.0 for all but the last period so no subject dies early.
@@ -291,6 +293,7 @@ def _make_minimal_stochastic_model(
         execution_config=ExecutionConfig(
             axis_widths={"cell": draw_batch_size} if draw_batch_size else {}
         ),
+        initial_regimes={0: "working_life"},
     )
 
 

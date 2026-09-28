@@ -136,6 +136,7 @@ def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="slot-locality of phase resolution",
+        initial_regimes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="off")
     return (

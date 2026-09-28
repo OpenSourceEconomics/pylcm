@@ -161,6 +161,7 @@ def _model(
         ages=AgeGrid(start=40, stop=70, step="10Y"),
         regime_id_class=DiagnosisRegimes,
         execution_config=ExecutionConfig(devices=(0,)),
+        initial_regimes={40: "parent"},
     )
 
 

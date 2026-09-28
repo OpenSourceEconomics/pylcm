@@ -72,4 +72,5 @@ def get_model() -> Model:
         },
         ages=AgeGrid(start=25, stop=75, step="10Y"),
         regime_id_class=RegimeId,
+        initial_regimes={25: "working_life"},
     )

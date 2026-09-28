@@ -113,6 +113,7 @@ def _model(wealth_grid):
         ages=_AGES,
         regime_id_class=RegimeId,
         fixed_params={"last": _N - 2},
+        initial_regimes={20: "alive"},
     )
 
 
@@ -510,6 +511,7 @@ def test_age_specialized_grid_on_never_solved_regime_is_rejected():
             ages=_AGES,
             regime_id_class=RegimeId,
             fixed_params={"last": _N - 2},
+            initial_regimes={20: "alive"},
         )
 
 

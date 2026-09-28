@@ -71,6 +71,7 @@ def _build_model(
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         execution_config=config,
+        initial_regimes={40: "retirement"},
     )
 
 
@@ -159,6 +160,7 @@ def _build_with_model_level_sharded_pruned() -> Model:
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 
@@ -178,6 +180,7 @@ def _build_with_model_level_sharded_used() -> Model:
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 
@@ -198,6 +201,7 @@ def _build_with_regime_level_sharded_terminal() -> Model:
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         execution_config=ExecutionConfig(sharded_states=("kind",)),
+        initial_regimes={40: "retirement"},
     )
 
 
@@ -622,6 +626,7 @@ def _three_regime_model_with_brute_worker(retirement_transition) -> Model:
         },
         ages=ages,
         regime_id_class=base.RegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -704,6 +709,7 @@ def test_non_dcegm_non_terminal_target_raises():
             },
             ages=ages,
             regime_id_class=base.RegimeId,
+            initial_regimes={40: "working_life"},
         )
 
 

@@ -76,6 +76,7 @@ def _make_model(*, n_periods=3, extra_fixed_params=None):
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -241,6 +242,7 @@ def _make_markov_model(*, fixed_params: UserParams | None = None) -> Model:
         ages=AgeGrid(start=60, stop=62, step="Y"),
         regime_id_class=MarkovRegimeId,
         fixed_params=fixed_params or {},
+        initial_regimes={60: "alive"},
     )
 
 
@@ -359,6 +361,7 @@ def test_series_fixed_param_with_derived_categoricals():
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"group_bonus": group_bonus},
+        initial_regimes={0: "alive"},
     )
     result = model.simulate(
         params={"discount_factor": 0.95},
@@ -396,6 +399,7 @@ def test_model_broadcast_merges_into_regimes():
         derived_categoricals={
             "wealth_group": DiscreteGrid(category_class=_WealthGroup)
         },
+        initial_regimes={0: "alive"},
     )
     assert isinstance(
         model.user_regimes["alive"].derived_categoricals["wealth_group"], DiscreteGrid
@@ -431,6 +435,7 @@ def test_model_broadcast_same_name_at_both_levels_raises():
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
             derived_categoricals={"wealth_group": wg_grid},
+            initial_regimes={0: "alive"},
         )
 
 
@@ -466,6 +471,7 @@ def test_model_broadcast_conflicting_grids_raise():
             derived_categoricals={
                 "wealth_group": DiscreteGrid(category_class=_WealthGroup)
             },
+            initial_regimes={0: "alive"},
         )
 
 
@@ -504,6 +510,7 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         derived_categoricals={"shared": DiscreteGrid(category_class=_Shared)},
+        initial_regimes={0: "alive"},
     )
     assert "group_a" in model.user_regimes["alive"].derived_categoricals
     assert "shared" in model.user_regimes["alive"].derived_categoricals

@@ -148,6 +148,7 @@ def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_bu
             regimes=_make_singleton_target_dissolution_gate_regimes(),
             ages=GATE_AGES,
             regime_id_class=GateRegimeId,
+            initial_regimes={0: "source"},
         )
 
 

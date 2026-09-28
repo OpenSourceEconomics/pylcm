@@ -105,6 +105,7 @@ def _simulated(new_stock=_new_stock):
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="transition-dependent target",
+        initial_regimes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="debug")
     return model.simulate(

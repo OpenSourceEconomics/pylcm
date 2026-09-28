@@ -286,6 +286,7 @@ def _survival_prob_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=SavingsStageRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -354,6 +355,7 @@ def _markov_health_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=SavingsStageRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -431,6 +433,7 @@ def _passive_skill_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=SavingsStageRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -511,6 +514,7 @@ def _build_model_with_survival_cells(*, stay, die) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=SavingsStageRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 

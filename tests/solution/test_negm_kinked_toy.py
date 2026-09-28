@@ -155,6 +155,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=AgeGrid(start=20, stop=30, step="5Y"),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
+        initial_regimes={20: "alive"},
     )
 
 
@@ -243,6 +244,7 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=AgeGrid(start=20, stop=30, step="5Y"),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
+        initial_regimes={20: "alive"},
     )
 
 

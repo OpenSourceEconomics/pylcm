@@ -192,7 +192,12 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
 
 def _solve(regimes):
     """Solve the dissolution miniature built from `regimes`."""
-    model = Model(regimes=regimes, ages=_AGES, regime_id_class=RegimeId)
+    model = Model(
+        regimes=regimes,
+        ages=_AGES,
+        regime_id_class=RegimeId,
+        initial_regimes={0: "married"},
+    )
     return model.solve(params=_PARAMS, log_level="off").values
 
 

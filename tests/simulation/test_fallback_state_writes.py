@@ -231,6 +231,7 @@ def _simulate_three_households():
         regimes=_make_regimes(carrying_fallback=True),
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "married"},
     )
     params = {"discount_factor": _BETA}
     solution = model.solve(params=params, log_level="off")

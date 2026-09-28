@@ -14,6 +14,7 @@ import pytest
 from _lcm.solution import period_capture, period_replay
 from lcm import Model
 from tests.test_models import nbegm_ride_along_toy as toy
+from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_models.nbegm_common import RegimeId
 
 
@@ -31,6 +32,7 @@ def eager_capture(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         regime_id_class=RegimeId,
         fixed_params=dict(base.fixed_params),
         enable_jit=False,
+        initial_regimes=initial_regimes_of(model=base),
     )
     eager.solve(params=toy.build_params(), log_level="off")
     return tmp_path / "alive@1"

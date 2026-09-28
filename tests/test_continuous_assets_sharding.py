@@ -45,6 +45,7 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
+from tests.test_models.initial_regimes import initial_regimes_of
 
 
 @categorical(ordered=False)
@@ -148,6 +149,7 @@ def _model(
             },
             device_memory_bytes=budget,
         ),
+        initial_regimes={0: "r0"},
     )
 
 
@@ -736,6 +738,7 @@ def _renamed_public_model(*, original: Model) -> Model:
             axis_widths={"action_product": 3, "cell": 9, "subject": 432},
             device_memory_bytes=2**30,
         ),
+        initial_regimes=initial_regimes_of(model=original),
     )
 
 

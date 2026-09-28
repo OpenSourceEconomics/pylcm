@@ -133,6 +133,7 @@ def _build_model(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 
@@ -364,6 +365,7 @@ def test_the_entry_law_decides_the_action() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=_ThreeRegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     got = _source_value(
         model=model,
@@ -471,6 +473,7 @@ def _build_explicit_entry_model(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 

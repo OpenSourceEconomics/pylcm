@@ -35,6 +35,7 @@ from tests.ci.simulation_timings import (
     UNSTABLE_HOST_MARKER,
     TimingMeasurement,
 )
+from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_models.processes import (
     MultiRegimeId,
     get_multi_regime_model,
@@ -191,6 +192,7 @@ def test_cold_simulate_call_compiles() -> None:
         regime_id_class=MultiRegimeId,
         ages=base.ages,
         fixed_params=dict(base.fixed_params),
+        initial_regimes=initial_regimes_of(model=base),
     )
     params = get_multi_regime_params("normal")
     solution = model.solve(params=params, log_level="off")

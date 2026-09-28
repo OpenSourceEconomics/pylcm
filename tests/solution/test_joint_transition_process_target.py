@@ -107,6 +107,7 @@ def _model(*, support: tuple[float, float]) -> Model:
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=63, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={60: "working"},
     )
 
 

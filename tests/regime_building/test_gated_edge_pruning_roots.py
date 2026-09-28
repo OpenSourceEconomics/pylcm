@@ -149,6 +149,7 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
         regime_id_class=GatedRegimeId,
         states={"bonus": _BONUS_GRID},
         state_transitions={"bonus": fixed_transition("bonus")},
+        initial_regimes={0: "worker"},
     )
 
 
@@ -200,6 +201,7 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
         },
         ages=AGES,
         regime_id_class=GatedRegimeId,
+        initial_regimes={0: "worker"},
     )
 
 

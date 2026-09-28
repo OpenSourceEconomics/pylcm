@@ -92,6 +92,7 @@ def _build_model() -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
 

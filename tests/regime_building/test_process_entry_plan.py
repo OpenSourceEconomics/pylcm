@@ -64,6 +64,7 @@ def _model_with_process_action(*, enable_jit: bool) -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 

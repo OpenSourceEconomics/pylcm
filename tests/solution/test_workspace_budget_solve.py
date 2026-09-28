@@ -79,6 +79,7 @@ def _model(
         execution_config=replace(
             execution_config, axis_widths={"cell": 1, **execution_config.axis_widths}
         ),
+        initial_regimes={18: "working_life"},
     )
 
 

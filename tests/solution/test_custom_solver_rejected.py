@@ -160,6 +160,7 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         regimes={"saving": saving_regime, "done": done_regime},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "saving"},
     )
 
 

@@ -242,6 +242,7 @@ def _axis_width_case(
         execution_config=ExecutionConfig(
             device_memory_bytes=budget, axis_widths=axis_widths
         ),
+        initial_regimes={0: "alive"},
     )
     params = {
         "alive": {

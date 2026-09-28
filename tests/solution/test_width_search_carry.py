@@ -84,6 +84,7 @@ def _model(*, carry: bool, budget_bytes: int) -> Model:
             device_memory_bytes=budget_bytes,
             width_search=WidthSearchPolicy(carry_across_periods=carry),
         ),
+        initial_regimes={0: "acting"},
     )
 
 

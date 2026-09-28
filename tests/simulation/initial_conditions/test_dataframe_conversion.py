@@ -425,6 +425,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         },
         ages=AgeGrid(start=50, stop=52, step="Y"),
         regime_id_class=_Rid,
+        initial_regimes={50: "with_status"},
     )
 
     df = pd.DataFrame(
@@ -498,6 +499,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         regimes={"earner": earner, "retiree": retiree, "dead": dead},
         ages=AgeGrid(start=50, stop=52, step="Y"),
         regime_id_class=_Rid,
+        initial_regimes={50: "earner"},
     )
 
     df = pd.DataFrame(

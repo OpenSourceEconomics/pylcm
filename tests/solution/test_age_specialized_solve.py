@@ -87,6 +87,7 @@ def _make_model(policy_bonus: UserFunction) -> Model:
         regimes={"working_life": working_life, "dead": dead},
         ages=AgeGrid(start=25, stop=75, step="10Y"),
         regime_id_class=RegimeId,
+        initial_regimes={25: "working_life"},
     )
 
 
@@ -121,6 +122,7 @@ def _make_next_state_model(policy_bonus: UserFunction) -> Model:
         regimes={"working_life": working_life, "dead": dead},
         ages=AgeGrid(start=25, stop=75, step="10Y"),
         regime_id_class=RegimeId,
+        initial_regimes={25: "working_life"},
     )
 
 
@@ -267,6 +269,7 @@ def _f1_make_model(boost: UserFunction) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=AgeGrid(start=25, stop=55, step="10Y"),
         regime_id_class=RegimeId,
+        initial_regimes={35: "working_life"},
     )
 
 
@@ -352,6 +355,7 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
         regimes={"working_life": working_life, "dead": dead},
         ages=AgeGrid(start=25, stop=75, step="10Y"),
         regime_id_class=RegimeId,
+        initial_regimes={25: "working_life", 35: "working_life", 45: "working_life"},
     )
 
 

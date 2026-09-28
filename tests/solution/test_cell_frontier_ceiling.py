@@ -129,6 +129,7 @@ def _model(
             axis_width_ceilings=axis_width_ceilings,
             device_memory_bytes=device_memory_bytes,
         ),
+        initial_regimes={18: "working_life"},
     )
 
 

@@ -623,6 +623,7 @@ def _model(
         states={"type1": DiscreteGrid(category_class=_Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
+        initial_regimes={0: "alive"},
     )
 
 

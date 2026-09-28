@@ -38,6 +38,7 @@ def _model() -> Model:
         },
         ages=AgeGrid(start=18, stop=20, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working_life"},
     )
 
 
@@ -58,6 +59,7 @@ def test_model_constructor_rejects_population_keyword(population: int | None) ->
             ages=AgeGrid(start=18, stop=20, step="Y"),
             regime_id_class=RegimeId,
             n_subjects=population,  # ty: ignore[unknown-argument]
+            initial_regimes={18: "working_life"},
         )
 
 

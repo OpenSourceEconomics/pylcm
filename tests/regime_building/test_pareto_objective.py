@@ -132,6 +132,7 @@ def _build_model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "couple"},
     )
 
 
@@ -457,6 +458,7 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
         },
         ages=_AGES,
         regime_id_class=ThreeRegimeId,
+        initial_regimes={0: "household"},
     )
     solution = model.solve(params=_three_params(), log_level="debug").values
     by_name = dict(zip(order, np.asarray(solution[0]["household"]), strict=True))
@@ -545,6 +547,7 @@ def _build_carried_power_model() -> Model:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "couple"},
     )
 
 
@@ -611,6 +614,7 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "couple"},
     )
 
     solution = model.solve(params=_params(), log_level="debug").values

@@ -114,6 +114,7 @@ def _make_model(*, gate) -> Model:
         },
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={40: "source"},
     )
 
 

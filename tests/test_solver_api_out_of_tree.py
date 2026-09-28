@@ -231,6 +231,7 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
         },
         ages=AgeGrid(start=0, stop=last_age, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -695,6 +696,7 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
         },
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -767,6 +769,7 @@ def _choice_model(*, solver: Solver) -> Model:
         },
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 

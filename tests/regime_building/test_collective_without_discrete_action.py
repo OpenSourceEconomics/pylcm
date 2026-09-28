@@ -110,6 +110,7 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
+        initial_regimes={0: "couple"},
     )
 
     solution = model.solve(params=_params(), log_level="debug").values
@@ -162,6 +163,7 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
+        initial_regimes={0: "couple"},
     )
 
     solution = model.solve(params=_params(), log_level="debug").values

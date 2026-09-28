@@ -83,6 +83,7 @@ def model() -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -151,6 +152,7 @@ def model_with_a_renamed_constraint() -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 

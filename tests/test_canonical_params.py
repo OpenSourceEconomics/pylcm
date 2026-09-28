@@ -109,6 +109,7 @@ def _build_model(work: UserRegime) -> Model:
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "work"},
     )
 
 
@@ -182,6 +183,7 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
         regimes={"work": work, "retired": _retired_regime(), "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "work"},
     )
     params = {
         "work": {

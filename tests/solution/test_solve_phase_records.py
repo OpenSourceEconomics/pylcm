@@ -105,6 +105,7 @@ def get_model(*, budget_bytes: int | None = None) -> Model:
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes),
+        initial_regimes={0: "acting"},
     )
 
 

@@ -19,6 +19,7 @@ from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
 )
+from tests.test_models.initial_regimes import initial_regimes_of
 
 
 @categorical(ordered=False)
@@ -64,6 +65,7 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
+        initial_regimes={0: "alive"},
     )
     params = {"discount_factor": 0.0}
     solution = model.solve(params=params, log_level="off")
@@ -188,6 +190,7 @@ def test_profiled_public_chunks_need_no_additional_core_compilation(
         execution_config=ExecutionConfig(
             axis_widths={"subject": 2}, device_memory_bytes=2**32
         ),
+        initial_regimes=initial_regimes_of(model=base),
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = model.solve(params=params, log_level="off")

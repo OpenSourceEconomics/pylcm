@@ -198,6 +198,7 @@ def _model(
             if sharded
             else ()
         ),
+        initial_regimes={0: ("alive", "dead")},
     )
 
 
@@ -360,6 +361,7 @@ def test_fixed_component_lowering_covers_declarations_and_terminal(
         regime_id_class=_RegimeId,
         states=model_states,
         state_transitions=model_laws,
+        initial_regimes={0: "alive"},
     )
     assert {"kind_health_rest", "kind_health_fixed"} <= model.user_regimes[
         "alive"
@@ -445,6 +447,7 @@ def test_fixed_component_rejects_an_occupied_model_state_name():
             },
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=_RegimeId,
+            initial_regimes={0: "alive"},
         )
 
 
@@ -561,6 +564,7 @@ def test_fixed_component_transition_parameters_keep_their_public_names(
         fixed_params=named_params if fixed else {},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "alive"},
     )
     params = {"discount_factor": 0.5} | ({} if fixed else named_params)
     panel = (
@@ -657,6 +661,7 @@ def test_two_fixed_components_cross_adjacent_carriers_and_terminal(
         execution_config=ExecutionConfig(
             sharded_states=("kind_health_fixed",) if sharded else ()
         ),
+        initial_regimes={0: "first"},
     )
     first = np.repeat(np.arange(4), 4)
     other = np.tile(np.arange(4), 4)
@@ -736,6 +741,7 @@ def test_fixed_component_rejects_incoherent_handoff_laws(*, reset: bool) -> None
             },
             ages=AgeGrid(start=0, stop=3, step="Y"),
             regime_id_class=_CarrierRegimeId,
+            initial_regimes={0: "first"},
         )
 
 
@@ -773,6 +779,7 @@ def test_fixed_component_generated_names_do_not_shadow_regime_slots(
             },
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=_RegimeId,
+            initial_regimes={0: "alive"},
         )
 
 
@@ -820,6 +827,7 @@ def test_fixed_component_rejects_cross_state_identity_at_model_level() -> None:
             },
             ages=AgeGrid(start=0, stop=3, step="Y"),
             regime_id_class=_RegimeId,
+            initial_regimes={0: "alive"},
         )
 
 
@@ -849,6 +857,7 @@ def test_fixed_component_eager_sharding_with_a_state_absent_terminal() -> None:
         regime_id_class=_RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(sharded_states=("kind_health_fixed",)),
+        initial_regimes={0: "alive"},
     )
     panel = (
         model.simulate(

@@ -28,6 +28,7 @@ from lcm.regime import Regime
 from lcm.typing import BoolND, DiscreteState, FloatND, Period, ScalarInt
 
 AGES = AgeGrid(start=25, stop=75, step="10Y")
+ROOTS: dict[object, str] = {25: "working"}
 
 
 @categorical(ordered=True)
@@ -91,7 +92,12 @@ def _dated_model(**overrides: Regime) -> Model:
         ),
         "dead": DEAD,
     }
-    return Model(regimes=regimes | overrides, ages=AGES, regime_id_class=RegimeId)
+    return Model(
+        regimes=regimes | overrides,
+        ages=AGES,
+        regime_id_class=RegimeId,
+        initial_regimes=ROOTS,
+    )
 
 
 def _legacy_model() -> Model:
@@ -132,28 +138,40 @@ def _legacy_model() -> Model:
         },
         ages=AGES,
         regime_id_class=RegimeId,
+        initial_regimes=ROOTS,
     )
 
 
 def test_dated_model_values_equal_the_hand_masked_legacy_model() -> None:
-    """A schedule solves to exactly the values of its hand-written masked law."""
+    """A schedule solves to exactly the values of its hand-written masked law.
+
+    The masked law also names death as a zero-mass target of the exit at 55, so
+    only it demands the dead problem at 65.
+    """
     params = {"discount_factor": 0.95}
     dated = _dated_model().solve(params=params, log_level="off").values
     legacy = _legacy_model().solve(params=params, log_level="off").values
-    for period, by_regime in legacy.items():
+    legacy_keys = {(p, r) for p, by_regime in legacy.items() for r in by_regime}
+    dated_keys = {(p, r) for p, by_regime in dated.items() for r in by_regime}
+    assert legacy_keys - dated_keys == {(4, "dead")}
+    for period, by_regime in dated.items():
         for regime, values in by_regime.items():
-            np.testing.assert_array_equal(dated[period][regime], values)
+            np.testing.assert_array_equal(legacy[period][regime], values)
 
 
-def test_dated_model_covers_exactly_the_scheduled_ages() -> None:
-    """Coverage is read off the schedules; terminal regimes cover every age."""
+def test_dated_model_solves_exactly_the_problems_demanded_from_its_root() -> None:
+    """Schedules say where a law is available; the root decides what is solved.
+
+    From working at 25, death is first reached at 35. The exit at 55 leads only
+    to retirement, so nobody is dead at 65 and death is next reached at 75.
+    """
     reachability = _dated_model().reachability.solution
     assert reachability.active_regimes_by_period == (
+        frozenset({"working"}),
         frozenset({"working", "dead"}),
         frozenset({"working", "dead"}),
         frozenset({"working", "dead"}),
-        frozenset({"working", "dead"}),
-        frozenset({"retirement", "dead"}),
+        frozenset({"retirement"}),
         frozenset({"dead"}),
     )
 
@@ -242,12 +260,12 @@ def _model_with_entries(initial_regimes: Any) -> Model:
     )
 
 
-def test_reachability_nodes_are_the_exact_covered_age_regime_pairs() -> None:
-    """Every declared problem appears once, keyed by its exact grid age."""
+def test_reachability_nodes_are_the_exact_demanded_age_regime_pairs() -> None:
+    """Every demanded problem appears once, keyed by its exact grid age."""
     expected = frozenset(
         {(age, "working") for age in (25, 35, 45, 55)}
         | {(65, "retirement")}
-        | {(age, "dead") for age in (25, 35, 45, 55, 65, 75)}
+        | {(age, "dead") for age in (35, 45, 55, 75)}
     )
     assert _dated_model().reachability.nodes == expected
 
@@ -301,20 +319,28 @@ def test_simulation_input_outside_the_entry_permissions_raises() -> None:
         )
 
 
-def test_entry_permissions_leave_solved_values_unchanged() -> None:
-    """Permissions are entry metadata, not a change to the economic problem."""
+_ALREADY_VISITED_ROOTS = {25: "working", 65: "retirement"}
+
+
+def test_a_root_already_visited_leaves_solved_values_unchanged() -> None:
+    """Admitting a start the base root already reaches changes no solved value."""
     params = {"discount_factor": 0.95}
-    narrow = _model_with_entries({}).solve(params=params, log_level="off").values
-    wide = _dated_model().solve(params=params, log_level="off").values
-    for period, by_regime in wide.items():
+    wide = (
+        _model_with_entries(_ALREADY_VISITED_ROOTS)
+        .solve(params=params, log_level="off")
+        .values
+    )
+    base = _dated_model().solve(params=params, log_level="off").values
+    assert {p: set(r) for p, r in wide.items()} == {p: set(r) for p, r in base.items()}
+    for period, by_regime in base.items():
         for regime, values in by_regime.items():
-            np.testing.assert_array_equal(narrow[period][regime], values)
+            np.testing.assert_array_equal(wide[period][regime], values)
 
 
-def test_entry_permissions_leave_the_model_identity_unchanged() -> None:
-    """Solutions stay compatible across models differing only in permissions."""
+def test_a_root_already_visited_leaves_the_model_identity_unchanged() -> None:
+    """Models that differ only in an already-visited start share their identity."""
     assert (
-        _model_with_entries({})._model_structure_fingerprint
+        _model_with_entries(_ALREADY_VISITED_ROOTS)._model_structure_fingerprint
         == _dated_model()._model_structure_fingerprint
     )
 

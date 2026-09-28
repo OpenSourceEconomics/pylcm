@@ -95,6 +95,7 @@ def _model(*, live_functions, state_transitions, constraints) -> Model:
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="constraint phase-invariance",
+        initial_regimes={0: "live"},
     )
 
 

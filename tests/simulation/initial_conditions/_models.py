@@ -81,6 +81,7 @@ def make_minimal_model() -> Model:
         regimes={"active": alive, "terminal": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={0: "active"},
     )
 
 
@@ -132,6 +133,7 @@ def make_constraint_model(wealth_grid) -> Model:
         regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -194,6 +196,7 @@ def make_constrained_asymmetric_model() -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -250,6 +253,7 @@ def make_asymmetric_state_model() -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive", 1: "alive", 2: "dead"},
     )
 
 
@@ -311,6 +315,7 @@ def make_state_only_constraint_model(
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
+        initial_regimes={0: "alive", 1: "alive", 2: "dead"},
     )
 
 
@@ -368,6 +373,7 @@ def make_period_constraint_model() -> Model:
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"alive": {"affordable": {"floor": 0.5}}},
+        initial_regimes={0: "alive", 1: "alive", 2: "alive"},
     )
 
 
@@ -420,6 +426,7 @@ def make_joint_constraint_model() -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive", 1: "alive"},
     )
 
 
@@ -499,4 +506,5 @@ def make_heterogeneous_health_model() -> Model:
         regimes={"pre65": pre65, "post65": post65, "dead": dead},
         ages=AgeGrid(start=50, stop=80, step="10Y"),
         regime_id_class=HetRegimeId,
+        initial_regimes={50: "pre65", 70: "post65"},
     )

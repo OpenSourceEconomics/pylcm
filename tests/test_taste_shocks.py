@@ -223,4 +223,5 @@ def test_taste_shocks_without_discrete_action_raises():
             regimes={"alive": no_discrete_action, "done": taste_shocks_toy.done},
             ages=taste_shocks_toy.AgeGrid(start=40, stop=41, step="Y"),
             regime_id_class=taste_shocks_toy.ToyRegimeId,
+            initial_regimes={40: "alive"},
         )

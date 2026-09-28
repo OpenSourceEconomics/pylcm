@@ -99,6 +99,7 @@ def _bonus_model(constraints: dict | None = None) -> Model:
         regimes={"retirement": alive, "dead": bequest_dead},
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

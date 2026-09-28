@@ -243,6 +243,7 @@ def get_model(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={0: "working"},
     )
 
 

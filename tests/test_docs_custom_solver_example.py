@@ -117,6 +117,7 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
         },
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
 

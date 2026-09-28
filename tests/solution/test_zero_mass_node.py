@@ -89,6 +89,7 @@ def model() -> Model:
         },
         ages=AgeGrid(start=25, stop=26, step="1Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={25: "alive"},
     )
 
 

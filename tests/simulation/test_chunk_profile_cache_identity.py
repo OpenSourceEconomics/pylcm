@@ -77,6 +77,7 @@ def _budgeted_model(*, device_memory_bytes: int = 2**32) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
+        initial_regimes={0: "alive"},
     )
 
 

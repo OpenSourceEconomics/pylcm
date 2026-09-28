@@ -441,6 +441,7 @@ def build_model(  # noqa: C901
             ages=ages,
             regime_id_class=HousingFuesRegimeId,
             execution_config=execution_config,
+            initial_regimes={20: "working"},
         )
 
     inner_solver = DCEGM(
@@ -513,6 +514,7 @@ def build_model(  # noqa: C901
         ages=ages,
         regime_id_class=HousingFuesRegimeId,
         execution_config=execution_config,
+        initial_regimes={20: "working"},
     )
 
 

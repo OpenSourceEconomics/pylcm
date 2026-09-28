@@ -255,6 +255,7 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         ages=_ages(),
         regime_id_class=PassiveAssetRowRegimeId,
         execution_config=config,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -468,6 +469,7 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         ages=_ages(),
         regime_id_class=PassiveAssetRowRegimeId,
         fixed_params=fixed_params,
+        initial_regimes={40: "working_life"},
     )
 
 

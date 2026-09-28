@@ -1186,6 +1186,7 @@ def _build_model(
         execution_config=ExecutionConfig(
             axis_widths={} if subject_width is None else {"subject": subject_width}
         ),
+        initial_regimes={0: "acting"},
     )
 
 
@@ -1257,6 +1258,7 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
         execution_config=ExecutionConfig(
             axis_widths={} if subject_width is None else {"subject": subject_width}
         ),
+        initial_regimes={0: "left"},
     )
 
 
@@ -1733,6 +1735,7 @@ def _build_runtime_action_model(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
+        initial_regimes={0: "acting"},
     )
 
 
@@ -2073,6 +2076,7 @@ def _build_zero_weight_fold_model() -> Model:
         regimes={"src": src, "folded": folded, "dead": dead},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=FoldRegimeId,
+        initial_regimes={0: "src"},
     )
 
 

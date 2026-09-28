@@ -124,6 +124,7 @@ def nan_value_model(
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={0: "non_terminal"},
     )
 
 
@@ -156,6 +157,7 @@ def inf_value_model(
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={0: "non_terminal"},
     )
 
 

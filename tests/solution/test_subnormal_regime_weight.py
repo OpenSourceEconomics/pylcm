@@ -136,6 +136,7 @@ def _model(
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

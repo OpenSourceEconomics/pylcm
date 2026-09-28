@@ -249,6 +249,7 @@ def _phased_model(
         states={"health": _HEALTH_GRID, "endowment": _ENDOWMENT_GRID},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "working"},
     )
 
 
@@ -273,6 +274,7 @@ def _regime_level_model(
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "working"},
     )
 
 
@@ -375,6 +377,7 @@ def _couple_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_CoupleRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 
@@ -484,6 +487,7 @@ def _chain_model() -> Model:
         states=_CHAIN_MODEL_STATES,
         ages=_CHAIN_AGES,
         regime_id_class=_ChainRegimeId,
+        initial_regimes={0: "early"},
     )
 
 

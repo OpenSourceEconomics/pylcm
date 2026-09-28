@@ -127,6 +127,7 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
         },
         ages=ages,
         regime_id_class=base.RegimeId,
+        initial_regimes={40: "working_life"},
     )
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
 
@@ -168,6 +169,7 @@ def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
         },
         ages=ages,
         regime_id_class=base.RegimeId,
+        initial_regimes={40: "working_life"},
     )
     dcegm = Model(
         regimes={
@@ -181,6 +183,7 @@ def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
         },
         ages=ages,
         regime_id_class=base.RegimeId,
+        initial_regimes={40: "working_life"},
     )
     return {"brute_force": brute, "dcegm": dcegm}
 

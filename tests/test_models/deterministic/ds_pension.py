@@ -400,6 +400,7 @@ def get_model(
         regime_id_class=RegimeId,
         koopmans_aggregator=koopmans_aggregator,
         enable_jit=enable_jit,
+        initial_regimes={0: "working"},
     )
 
 

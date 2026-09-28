@@ -322,6 +322,7 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         ages=_ages(),
         regime_id_class=CrossRegimeId,
         fixed_params=fixed_params,
+        initial_regimes={40: "young"},
     )
 
 

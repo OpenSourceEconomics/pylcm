@@ -148,6 +148,7 @@ def _build_model(*, enable_jit: bool) -> Model:
         },
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={0: "source"},
     )
 
 

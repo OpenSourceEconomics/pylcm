@@ -125,6 +125,7 @@ def _build_pension_model(*, pension_as_pair: bool) -> Model:
         regimes={"working": working, "dead": _DEAD},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=RegimeId,
+        initial_regimes={60: "working"},
     )
 
 
@@ -221,6 +222,7 @@ def test_simulate_compiled_runtime_carries_carried_state() -> None:
         regimes={"working": _build_pension_regime(), "dead": _DEAD},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=RegimeId,
+        initial_regimes={60: "working"},
     )
     params = cast("dict[str, Any]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
@@ -321,6 +323,7 @@ def _build_handover_model() -> Model:
         regimes={"working": working, "retired": retired, "dead": _DEAD3},
         ages=AgeGrid(start=60, stop=66, step="2Y"),
         regime_id_class=_ThreeRegimeId,
+        initial_regimes={60: "working"},
     )
 
 
@@ -389,6 +392,7 @@ def test_additional_targets_read_carried_value() -> None:
         regimes={"working": regime, "dead": _DEAD},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=RegimeId,
+        initial_regimes={60: "working"},
     )
     params = cast("dict[str, Any]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
@@ -433,6 +437,7 @@ def test_initial_feasibility_checks_seeded_carried_value() -> None:
         regimes={"working": regime, "dead": _DEAD},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=RegimeId,
+        initial_regimes={60: "working"},
     )
     params = cast("dict[str, Any]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
@@ -493,6 +498,7 @@ def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
             regimes={"working": working, "dead": _DEAD},
             ages=AgeGrid(start=60, stop=64, step="2Y"),
             regime_id_class=RegimeId,
+            initial_regimes={60: "working"},
         )
 
 

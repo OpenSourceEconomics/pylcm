@@ -150,6 +150,7 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
         },
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
     params = get_retirement_only_params(
         n_periods=n_periods, discount_factor=discount_factor
@@ -274,6 +275,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
         regimes={"retirement": retirement, "dead": dead},
         ages=ages,
         regime_id_class=_InterestRegimeId,
+        initial_regimes={40: "retirement"},
     )
     params = {
         "discount_factor": 0.95,
@@ -358,6 +360,7 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
         },
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
     params = get_retirement_only_params(
         n_periods=n_periods, discount_factor=discount_factor

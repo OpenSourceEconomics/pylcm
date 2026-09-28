@@ -177,6 +177,7 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         regimes={"a": a, "dead": dead},
         ages=AgeGrid(start=25, stop=75, step="10Y"),
         regime_id_class=_RId,
+        initial_regimes={25: "a"},
     )
     ages = m.ages.exact_values
     sr = pd.Series(range(len(ages)), index=pd.Index(ages, name="age"), dtype=float)
@@ -1112,6 +1113,7 @@ def test_convert_series_per_target_transition() -> None:
         regimes={"working": working, "retired": retired},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RId,
+        initial_regimes={0: "working"},
     )
 
     index = pd.MultiIndex.from_tuples(
@@ -1223,6 +1225,7 @@ def test_convert_series_structured_derived_categoricals() -> None:
         regimes={"regime_a": regime_a, "regime_b": regime_b},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RId,
+        initial_regimes={0: "regime_a"},
     )
 
     # "derived" has 2 outcomes in regime_a (_ChoiceA: x,y) and 3 in
@@ -1278,6 +1281,7 @@ def test_convert_series_runtime_grid_param() -> None:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RId,
+        initial_regimes={0: "alive"},
     )
 
     sr = pd.Series([1.0, 2.0, 5.0, 10.0])
@@ -1409,6 +1413,7 @@ def test_convert_series_cross_grid_transition() -> None:
         regimes={"pre65": pre65, "post65": post65},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RId,
+        initial_regimes={0: "pre65"},
     )
 
     # Cross-grid transition probs: 3 source states → 2 target states

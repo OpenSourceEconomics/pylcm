@@ -328,6 +328,7 @@ def _asset_row_model(*, arithmetic: ComparisonArithmetic | None) -> Model:
         regimes={"working_life": working_life, "dead": dead},
         ages=AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y"),
         regime_id_class=AssetRowRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 

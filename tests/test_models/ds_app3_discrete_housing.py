@@ -567,6 +567,7 @@ def build_model(
             regimes={"working": working, "dead": dead},
             ages=ages,
             regime_id_class=DiscreteHousingRegimeId,
+            initial_regimes={0: "working"},
         )
 
     working = ConsumptionSavingsRegime(
@@ -613,6 +614,7 @@ def build_model(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=DiscreteHousingRegimeId,
+        initial_regimes={0: "working"},
     )
 
 

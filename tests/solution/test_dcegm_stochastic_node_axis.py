@@ -88,6 +88,7 @@ def _model(width: int | None = None) -> Model:
         ages=ages,
         regime_id_class=ProcessRegimeId,
         execution_config=config,
+        initial_regimes={40: "alive"},
     )
 
 

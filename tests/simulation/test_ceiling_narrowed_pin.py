@@ -40,6 +40,7 @@ def _toy_model(*, execution: ExecutionConfig) -> Model:
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution,
+        initial_regimes={18: "working_life"},
     )
 
 

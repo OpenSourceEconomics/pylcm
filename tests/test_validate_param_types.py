@@ -67,6 +67,7 @@ def _make_model() -> Model:
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=25, stop=30, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={25: "working"},
     )
 
 

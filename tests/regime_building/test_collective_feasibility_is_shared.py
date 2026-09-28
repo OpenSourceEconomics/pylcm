@@ -139,6 +139,7 @@ def _make_model() -> Model:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "couple"},
     )
 
 

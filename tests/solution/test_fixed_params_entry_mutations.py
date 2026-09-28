@@ -120,6 +120,7 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
         regime_id_class=RegimeId,
         fixed_params={"target": {"shock": {"mu": 0.0, "sigma": 1.0}}},
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
     np.testing.assert_allclose(
         source_value(model=model, params={"discount_factor": 1.0}),

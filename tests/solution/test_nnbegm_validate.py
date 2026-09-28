@@ -169,6 +169,7 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=25, step="5Y"),
         fixed_params={"means_test": 5.0, "medical_expense": 1.0},
+        initial_regimes={20: "alive"},
     )
 
 

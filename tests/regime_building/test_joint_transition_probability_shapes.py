@@ -106,6 +106,7 @@ def _build_model(*, probabilities) -> Model:
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=RegimeId,
+        initial_regimes={60: "working"},
     )
 
 

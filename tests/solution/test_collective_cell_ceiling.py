@@ -38,6 +38,7 @@ def _model(*, n_wage: int = _N_WAGE, **execution: Any) -> tuple[Model, Any]:
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         execution_config=ExecutionConfig(**execution),
+        initial_regimes={0: "couple"},
     )
     return model, params
 

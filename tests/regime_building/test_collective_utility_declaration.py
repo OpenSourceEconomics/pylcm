@@ -135,6 +135,7 @@ def test_a_none_body_may_still_arrive_from_the_model_level():
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         functions={"utility_f": _u_f},
+        initial_regimes={0: "couple"},
     )
 
     assert model.user_regimes["couple"].decomposed_functions["utility_f"] is _u_f
@@ -160,6 +161,7 @@ def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
             regimes={"couple": couple, "couple_terminal": terminal},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={0: "couple"},
         )
 
 
@@ -220,6 +222,7 @@ def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
         regimes={"couple": couple, "couple_terminal": terminal},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "couple"},
     )
 
     solved = model.solve(

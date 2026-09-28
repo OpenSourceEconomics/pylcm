@@ -87,6 +87,7 @@ def _model(*, devices: tuple[int, ...]) -> Model:
             sharded_states=("kind",),
             axis_widths={"subject": 16},
         ),
+        initial_regimes={0: "working"},
     )
 
 

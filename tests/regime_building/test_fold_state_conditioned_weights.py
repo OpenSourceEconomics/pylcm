@@ -137,6 +137,7 @@ def _conditioned_model() -> Model:
         regimes={"period0": period0, "terminal": terminal},
         ages=AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "period0"},
     )
 
 
@@ -164,6 +165,7 @@ def _unconditioned_model(*, sigma: float) -> Model:
         regimes={"period0": period0, "terminal": terminal},
         ages=AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "period0"},
     )
 
 
@@ -351,6 +353,7 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
             regimes={"entry": entry, "folding": folding, "done": done},
             ages=_THREE_AGES,
             regime_id_class=ThreeRegimeId,
+            initial_regimes={0: "entry"},
         )
 
 
@@ -452,6 +455,7 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         },
         ages=_THREE_AGES,
         regime_id_class=SplitRegimeId,
+        initial_regimes={0: "entry"},
     )
 
     assert set(model.user_regimes) == {"entry", "folding", "sideways", "done"}
@@ -563,6 +567,7 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         },
         ages=_THREE_AGES,
         regime_id_class=PhasedSplitRegimeId,
+        initial_regimes={0: "safe_entry"},
     )
 
     assert set(model.user_regimes) == {

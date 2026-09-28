@@ -75,6 +75,7 @@ def _build_model(*, config: ExecutionConfig, consumption_stop: float = 3.0) -> M
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=config,
+        initial_regimes={18: "working_life"},
     )
 
 

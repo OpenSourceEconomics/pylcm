@@ -127,6 +127,7 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
         ages=AgeGrid(exact_values=(0, 1)),
         regime_id_class=RegimeId,
         description="phase closure of a collective regime's flow sub-DAG",
+        initial_regimes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="off")
     return (

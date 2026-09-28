@@ -81,6 +81,7 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
     params: UserParams = {
         "source": {

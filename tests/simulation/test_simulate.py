@@ -156,6 +156,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
             regimes={"working_life": updated_working_life, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
+            initial_regimes={18: "working_life"},
         )
         period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
         return period_to_regime_to_V_arr, params, model

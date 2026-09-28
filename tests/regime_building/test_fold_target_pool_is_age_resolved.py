@@ -153,6 +153,7 @@ def _build_model() -> Model:
         regimes={"worker": worker, "dead": dead},
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "worker"},
     )
 
 

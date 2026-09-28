@@ -332,6 +332,7 @@ def _phase_variant_savings_model(n_periods: int) -> Model:
         regimes={"retirement": retirement, "dead": dcegm_variants.dead},
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

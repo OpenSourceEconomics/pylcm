@@ -92,6 +92,7 @@ def _grid_search_model() -> Model:
         },
         ages=AgeGrid(start=START_AGE, stop=START_AGE + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={START_AGE: "working_life"},
     )
 
 

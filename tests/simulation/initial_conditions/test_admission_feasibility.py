@@ -119,6 +119,7 @@ def _inputs(
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
+        initial_regimes={0: "alive"},
     )
     params = {
         "alive": {

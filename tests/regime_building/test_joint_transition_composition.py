@@ -118,6 +118,7 @@ def _helper_model() -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_OneTargetRegimeId,
         enable_jit=False,
+        initial_regimes={0: "source"},
     )
 
 
@@ -209,6 +210,7 @@ def test_nontransition_consumers_cannot_read_a_joint_node(
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=_OneTargetRegimeId,
             enable_jit=False,
+            initial_regimes={0: "source"},
         )
 
 
@@ -249,6 +251,7 @@ def test_joint_probabilities_cannot_read_a_joint_node() -> None:
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=_OneTargetRegimeId,
             enable_jit=False,
+            initial_regimes={0: "source"},
         )
 
 
@@ -314,6 +317,7 @@ def test_joint_node_is_scoped_to_its_declared_target() -> None:
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=_TwoTargetRegimeId,
             enable_jit=False,
+            initial_regimes={0: "source"},
         )
 
 
@@ -409,6 +413,7 @@ def test_joint_support_cannot_read_runtime_transition_values(
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=_OneTargetRegimeId,
             enable_jit=False,
+            initial_regimes={0: "source"},
         )
 
 
@@ -450,6 +455,7 @@ def test_joint_probabilities_cannot_read_a_next_output() -> None:
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=_OneTargetRegimeId,
             enable_jit=False,
+            initial_regimes={0: "source"},
         )
 
 
@@ -501,6 +507,7 @@ def test_callable_phased_support_keeps_one_static_schema() -> None:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_OneTargetRegimeId,
         enable_jit=False,
+        initial_regimes={0: "source"},
     )
 
     with pytest.raises(

@@ -100,6 +100,7 @@ def _simulate(law: Any) -> pd.DataFrame:
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="mixed stochasticity probe",
+        initial_regimes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="debug")
     return (

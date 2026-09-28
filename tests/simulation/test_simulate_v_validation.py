@@ -129,6 +129,7 @@ def _nan_producing_model() -> Model:
         regimes={"work": work, "dead": dead},
         ages=AgeGrid(start=40, stop=60, step="10Y"),
         regime_id_class=OffNodeRegimeId,
+        initial_regimes={40: "work"},
     )
 
 
@@ -209,6 +210,7 @@ def _two_offender_model() -> Model:
         },
         ages=AgeGrid(start=40, stop=60, step="10Y"),
         regime_id_class=TwoOffenderRegimeId,
+        initial_regimes={40: "work"},
     )
 
 

@@ -94,6 +94,7 @@ def _make_three_type_model(
         regimes={"working": working, "retired": retired},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_ThreeTypeRegimeId,
+        initial_regimes={0: "working"},
         enable_jit=enable_jit,
         states={"type1": DiscreteGrid(category_class=_Type)},
         state_transitions={"type1": fixed_transition("type1")},

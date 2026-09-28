@@ -226,6 +226,7 @@ def _make_correct_distributed_model(
                 ),
             ),
         ),
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -396,6 +397,7 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
             sharded_states=("type1",) if distributed else ()
         ),
         state_transitions={"type1": fixed_transition("type1")},
+        initial_regimes={0: "working"},
     )
 
 
@@ -470,6 +472,7 @@ def _make_wrong_distributed_model() -> Model:
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
         },
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -913,6 +916,7 @@ def _make_two_source_distributed_model() -> Model:
         states={"type1": DiscreteGrid(category_class=Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -1352,6 +1356,7 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
         },
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -1463,6 +1468,7 @@ def test_execution_config_cannot_shard_an_action():
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=RegimeId,
             execution_config=ExecutionConfig(sharded_states=("choice",)),
+            initial_regimes={0: "alive"},
         )
 
 
@@ -1565,6 +1571,7 @@ def _make_two_source_partially_distributed_model() -> Model:
         states={"type1": DiscreteGrid(category_class=Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
+        initial_regimes={0: "working_life"},
     )
 
 

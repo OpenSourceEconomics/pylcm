@@ -274,6 +274,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         regimes={"active": active, "terminal": terminal},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={25: "active"},
     )
     params: dict = {"discount_factor": 0.95}
     return model, params
@@ -334,6 +335,7 @@ def test_regime_transition_validation_passes_period_as_int32():
         regimes={"active": active, "terminal": terminal},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={25: "active"},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
@@ -481,6 +483,7 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=_SoloTermRegimeId,
         enable_jit=False,
+        initial_regimes={20: "solo"},
     )
     flat_params = model._process_params({"discount_factor": 1.0})
     logger = get_logger(log_level="debug")

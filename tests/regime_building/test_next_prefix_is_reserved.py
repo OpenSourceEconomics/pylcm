@@ -85,6 +85,7 @@ def _build(
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 
@@ -171,6 +172,7 @@ def test_a_constraint_may_not_read_a_targets_draw() -> None:
             },
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={20: "source"},
         )
 
 
@@ -243,6 +245,7 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
     V = model.solve(
@@ -361,6 +364,7 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
             },
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={20: "source"},
         )
 
 
@@ -402,4 +406,5 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
             },
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={20: "source"},
         )

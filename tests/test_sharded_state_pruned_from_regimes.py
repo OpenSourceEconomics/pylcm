@@ -161,6 +161,7 @@ def _build(
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(sharded_states=sharded, **config),
         states={"kind": DiscreteGrid(category_class=_Kind)},
+        initial_regimes={0: "working"},
     )
 
 
@@ -196,6 +197,7 @@ def mirror_model(*, devices: tuple[int, ...], sharded: tuple[str, ...]) -> Model
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),
+        initial_regimes={0: "working"},
     )
 
 
@@ -231,6 +233,7 @@ def build_pruned_continuous_sharded_state() -> Model:
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=(0,), sharded_states=("assets",)),
+        initial_regimes={0: "working"},
     )
 
 

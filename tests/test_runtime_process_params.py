@@ -84,6 +84,7 @@ def _make_model(*, fixed_params=None):
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params or {},
+        initial_regimes={0: "alive"},
     )
 
 

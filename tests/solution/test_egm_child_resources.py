@@ -305,6 +305,7 @@ def _get_model(variant: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=ages,
         regime_id_class=BonusRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 

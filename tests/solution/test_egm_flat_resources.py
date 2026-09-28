@@ -153,6 +153,7 @@ def _get_means_tested_model(variant: str) -> Model:
         regimes={"retirement": regime, "dead": dead},
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 
@@ -199,6 +200,7 @@ def _get_corner_model() -> Model:
         regimes={"retirement": regime, "dead": dead},
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

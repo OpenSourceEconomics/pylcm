@@ -104,6 +104,7 @@ def model(request: pytest.FixtureRequest) -> Model:
         },
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 
@@ -172,6 +173,7 @@ def test_an_unread_runtime_process_does_not_block_a_fixed_draw() -> None:
         },
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
     V = model.solve(
@@ -239,6 +241,7 @@ def test_a_dependent_entry_is_contracted_as_a_value_not_averaged_as_a_lottery() 
         },
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
     risk_aversion = 3.0
@@ -311,4 +314,5 @@ def test_a_draw_conditioned_on_a_sibling_draw_is_rejected() -> None:
             },
             ages=_AGES,
             regime_id_class=RegimeId,
+            initial_regimes={20: "source"},
         )

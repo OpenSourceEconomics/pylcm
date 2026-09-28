@@ -23,6 +23,7 @@ from _lcm.execution.hlo_fusions import UnrecognisedHloError
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig, Model
 from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
+from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_models.processes import (
     MultiRegimeId,
     get_multi_regime_model,
@@ -41,6 +42,7 @@ def _model_with(config: ExecutionConfig) -> Model:
         regime_id_class=MultiRegimeId,
         fixed_params=dict(base.fixed_params),
         execution_config=config,
+        initial_regimes=initial_regimes_of(model=base),
     )
 
 

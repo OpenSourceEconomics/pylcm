@@ -133,6 +133,7 @@ def get_model(
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution_config,
+        initial_regimes={18: "working_life"},
     )
 
 

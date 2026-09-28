@@ -196,6 +196,7 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
         regimes={"retirement": alive, "dead": dead_regime},
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
@@ -216,6 +217,7 @@ def _model_from_alive(*, alive, dead_states=None) -> Model:
         regimes={"retirement": alive, "dead": dead_regime},
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

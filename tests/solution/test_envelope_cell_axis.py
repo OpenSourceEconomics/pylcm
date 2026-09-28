@@ -68,6 +68,7 @@ def _model(
         execution_config=ExecutionConfig(
             axis_widths=widths, device_memory_bytes=device_memory_bytes
         ),
+        initial_regimes={30: "retirement"},
     )
 
 

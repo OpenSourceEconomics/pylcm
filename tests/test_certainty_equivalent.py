@@ -316,6 +316,7 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, stop=41, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={40: "alive"},
     )
 
 
@@ -560,6 +561,7 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
             regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=40, stop=41, step="Y"),
             regime_id_class=_RegimeId,
+            initial_regimes={40: "alive"},
         )
 
 
@@ -631,6 +633,7 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, stop=41, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={40: "alive"},
     )
 
     with pytest.raises(RegimeInitializationError, match="single power"):
@@ -715,6 +718,7 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, stop=41, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={40: "alive"},
     )
     template = model.get_params_template()
     assert template["alive"]["certainty_equivalent"] == {"risk_aversion": "float"}
@@ -789,6 +793,7 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, stop=41, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={40: "alive"},
     )
 
     with pytest.raises(RegimeInitializationError, match="positive"):
@@ -871,6 +876,7 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
             regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=40, stop=41, step="Y"),
             regime_id_class=_RegimeId,
+            initial_regimes={40: "alive"},
         )
 
 
@@ -1832,6 +1838,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={25: "alive"},
     )
 
 
@@ -1898,6 +1905,7 @@ def _make_mixed_target_model(scale: float) -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={25: "alive"},
     )
 
 

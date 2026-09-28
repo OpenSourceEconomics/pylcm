@@ -95,6 +95,7 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=True,
+        initial_regimes={0: "acting"},
     )
 
     acting_context = next(
@@ -179,6 +180,7 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=True,
+        initial_regimes={0: "acting"},
     )
 
     kernel = model._regimes["acting"].solution.period_kernels[0]

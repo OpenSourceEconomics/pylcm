@@ -127,6 +127,7 @@ def _solve_coarse_into_process_only_target(
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {
@@ -214,6 +215,7 @@ def _solve_with_entry_law(level: float):
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {
@@ -320,6 +322,7 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, stop=41, step="Y"),
         regime_id_class=_TinyRegimeId,
+        initial_regimes={40: "alive"},
     )
     params = {
         "alive": {

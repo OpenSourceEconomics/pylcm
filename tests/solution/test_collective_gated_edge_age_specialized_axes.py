@@ -319,6 +319,7 @@ def _build_gate_ref_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_GateRefRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 
@@ -435,6 +436,7 @@ def _build_dissolution_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_DissolutionRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 

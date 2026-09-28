@@ -64,6 +64,7 @@ def _make_model(*, wealth_grid=None):
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -174,6 +175,7 @@ def _make_action_grid_model(*, consumption_grid: IrregSpacedGrid) -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -285,6 +287,7 @@ def _make_action_grid_model_with_stateful_dead(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 

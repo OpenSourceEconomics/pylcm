@@ -256,6 +256,7 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={20: "alive"},
     )
 
     V = model.solve(

@@ -237,6 +237,7 @@ def _build_model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=toy.RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 

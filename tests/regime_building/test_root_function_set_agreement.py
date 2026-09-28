@@ -193,6 +193,7 @@ def _record_root_calls(
         regime_id_class=RegimeId,
         states={"bonus": _BONUS_GRID},
         state_transitions={"bonus": fixed_transition("bonus")},
+        initial_regimes={0: "couple"},
     )
     return recorded
 

@@ -106,6 +106,7 @@ def _inputs(
         regime_id_class=_ThreeRegimeId if two_regimes else _LifecycleRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
+        initial_regimes={0: ("alive", "other") if two_regimes else "alive"},
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.9}}, "done": {}}
     if two_regimes:

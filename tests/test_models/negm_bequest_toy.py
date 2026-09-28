@@ -220,6 +220,7 @@ def build_negm_model() -> Model:
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": FINAL_AGE_ALIVE},
+        initial_regimes={20: "alive"},
     )
 
 
@@ -293,4 +294,5 @@ def build_brute_model() -> Model:
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": FINAL_AGE_ALIVE},
+        initial_regimes={20: "alive"},
     )

@@ -274,6 +274,7 @@ def _build_model(
             axis_widths={} if subject_width is None else {"subject": subject_width},
             device_memory_bytes=budget,
         ),
+        initial_regimes={0: "working"},
     )
 
 

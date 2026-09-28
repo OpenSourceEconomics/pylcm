@@ -224,6 +224,7 @@ def _make_model(
         },
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={40: "source"},
     )
 
 

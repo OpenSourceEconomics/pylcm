@@ -59,6 +59,7 @@ def _build_model(*, enable_jit: bool) -> Model:
         ages=AgeGrid(start=18, stop=20, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={18: "working"},
     )
 
 

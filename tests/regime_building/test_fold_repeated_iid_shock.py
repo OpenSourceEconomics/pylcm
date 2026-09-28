@@ -100,6 +100,7 @@ def _build_model(*, fold: bool) -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 

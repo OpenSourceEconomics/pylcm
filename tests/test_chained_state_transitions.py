@@ -84,6 +84,7 @@ def _build_model() -> Model:
         regimes={"active": _active, "dead": _dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "active"},
     )
 
 
@@ -227,6 +228,7 @@ def _f2_build_model() -> Model:
         regimes={"live": live, "last": last},
         ages=AgeGrid(start=25, stop=27, step="1Y"),
         regime_id_class=_RegimeIdF2,
+        initial_regimes={25: "live"},
     )
 
 

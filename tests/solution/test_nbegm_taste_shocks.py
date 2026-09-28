@@ -128,6 +128,7 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
             regimes={"alive": alive, "dead": dead},
             regime_id_class=RegimeId,
             ages=AgeGrid(start=20, stop=25, step="5Y"),
+            initial_regimes={20: "alive"},
         )
 
 
@@ -189,4 +190,5 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
             regime_id_class=RegimeId,
             ages=AgeGrid(start=20, stop=25, step="5Y"),
             fixed_params={"final_age_alive": 20},
+            initial_regimes={20: "alive"},
         )

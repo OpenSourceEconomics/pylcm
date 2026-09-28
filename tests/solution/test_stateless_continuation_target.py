@@ -87,6 +87,7 @@ def _solve_with_bequest(bequest: float):
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {
@@ -180,6 +181,7 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
         regimes={"alive": alive, "gone": gone, "limbo": limbo},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=_ThreeRegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {
@@ -245,6 +247,7 @@ def _solve_with_process_only_target(level: float):
         regimes={"alive": alive, "gone": retired},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {

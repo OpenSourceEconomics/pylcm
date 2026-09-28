@@ -84,6 +84,7 @@ def _model_with_outer_node_named(*, outer_node: str) -> Model:
         regime_id_class=toy.RegimeId,
         ages=AgeGrid(start=20, stop=20 + (toy.N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
+        initial_regimes={20: "alive"},
     )
 
 

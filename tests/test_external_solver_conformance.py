@@ -431,6 +431,7 @@ def _model(
         },
         ages=AgeGrid(start=0, stop=_N_PERIODS, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "active"},
     )
 
 

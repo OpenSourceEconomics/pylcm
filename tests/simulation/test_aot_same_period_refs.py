@@ -262,6 +262,7 @@ def _make_participation_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=ParticipationRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 

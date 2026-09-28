@@ -278,6 +278,7 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
         },
         ages=AgeGrid(start=0, stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "early"},
     )
 
 

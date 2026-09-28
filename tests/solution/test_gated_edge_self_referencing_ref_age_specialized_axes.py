@@ -222,6 +222,7 @@ def _build_model(*, reference_regime: str) -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "saver"},
     )
 
 

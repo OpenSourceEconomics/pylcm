@@ -347,6 +347,7 @@ def test_stochastic_marriage_offer_matches_public_model_api():
         regimes=_make_offer_regimes(),
         ages=ages,
         regime_id_class=OfferRegimeId,
+        initial_regimes={0: "single_f"},
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off").values
     np.testing.assert_allclose(
@@ -441,6 +442,7 @@ def test_job_offer_gates_feasible_actions_and_solves():
         regimes=_make_job_offer_regimes(),
         ages=ages,
         regime_id_class=JobRegimeId,
+        initial_regimes={0: "job"},
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off").values
     np.testing.assert_allclose(

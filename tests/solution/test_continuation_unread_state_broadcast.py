@@ -205,6 +205,7 @@ def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
                 else {}
             )
         ),
+        initial_regimes={0: "alive"},
     )
     params: UserParams = {
         "discount_factor": 0.95,

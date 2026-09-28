@@ -17,6 +17,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import ExecutionConfig, Model
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_models.processes import (
     MultiRegimeId,
     get_multi_regime_model,
@@ -49,6 +50,7 @@ def _simulate_df(
             if subject_batch_size == 0
             else {"subject": subject_batch_size}
         ),
+        initial_regimes=initial_regimes_of(model=base),
     )
     params = get_multi_regime_params("normal")
     result = model.simulate(
@@ -143,6 +145,7 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
         ages=base.ages,
         fixed_params=dict(base.fixed_params),
         execution_config=ExecutionConfig(axis_widths={"subject": 2}),
+        initial_regimes=initial_regimes_of(model=base),
     )
     params = get_multi_regime_params("normal")
     result = model.simulate(

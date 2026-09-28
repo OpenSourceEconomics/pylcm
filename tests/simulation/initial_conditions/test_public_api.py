@@ -427,6 +427,7 @@ def _sealed_model() -> Model:
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=18, stop=20, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working"},
     )
 
 
@@ -512,6 +513,7 @@ def _age_specialized_model() -> Model:
         regimes={"working_life": working_life, "dead": dead},
         ages=AgeGrid(start=25, stop=75, step="10Y"),
         regime_id_class=RegimeId,
+        initial_regimes={25: "working_life", 35: "working_life"},
     )
 
 
@@ -575,6 +577,7 @@ def test_collective_start_without_roles_is_rejected_like_simulate(method: str) -
         regimes=make_dissolution_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
+        initial_regimes={0: "married"},
     )
     initial = _collective_population_without_roles(model)
 

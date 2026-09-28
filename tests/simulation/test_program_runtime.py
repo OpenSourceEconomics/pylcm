@@ -43,6 +43,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
+from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_models.processes import MultiRegimeId
 
 
@@ -96,6 +97,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
         states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         execution_config=ExecutionConfig(axis_widths={"subject": 1}),
+        initial_regimes={0: "alive"},
     )
     params: UserParams = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     frame = model.simulate(
@@ -123,6 +125,7 @@ def test_simulate_dispatches_the_declared_program_body(
         ages=model.ages,
         regime_id_class=MultiRegimeId,
         fixed_params=model.fixed_params,
+        initial_regimes=initial_regimes_of(model=model),
     )
     solution = model.solve(params=params, log_level="off")
     body_ids = {

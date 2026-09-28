@@ -170,4 +170,5 @@ def build_model(
         regime_id_class=smooth.RegimeId,
         ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={20: "alive"},
     )

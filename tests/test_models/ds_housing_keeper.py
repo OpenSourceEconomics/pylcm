@@ -327,6 +327,7 @@ def build_model(variant: Literal["dcegm", "brute"] = "dcegm") -> Model:
         regimes={"keeper": build_working_regime(variant), "dead": dead},
         ages=_ages(),
         regime_id_class=HousingKeeperRegimeId,
+        initial_regimes={40: "keeper"},
     )
 
 

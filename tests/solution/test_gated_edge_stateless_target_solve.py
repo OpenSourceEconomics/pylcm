@@ -103,6 +103,7 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={0: "src"},
     )
 
 

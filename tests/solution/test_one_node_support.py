@@ -94,6 +94,7 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
     V = model.solve(
@@ -131,6 +132,7 @@ def _model_entering_at(enter_law) -> Model:
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

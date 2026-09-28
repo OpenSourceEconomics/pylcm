@@ -875,6 +875,7 @@ def test_full_ekl_topology_via_public_model_api():
         regimes=_make_full_topology_regimes(),
         ages=ages,
         regime_id_class=EKLRegimeId,
+        initial_regimes={0: "single_f"},
     )
     solution = model.solve(
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},

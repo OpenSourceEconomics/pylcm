@@ -145,6 +145,7 @@ def _model(alive: Regime) -> Model:
         regime_id_class=toy.RegimeId,
         ages=AgeGrid(start=20, stop=20 + (toy.N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": toy.FINAL_AGE_ALIVE},
+        initial_regimes={20: "alive"},
     )
 
 

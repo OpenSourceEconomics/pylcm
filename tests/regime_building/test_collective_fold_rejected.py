@@ -60,6 +60,7 @@ def test_collective_regime_declaring_a_folded_state_is_rejected(
             regimes=make_folding_collective_regimes(),
             ages=AGES,
             regime_id_class=CoupleRegimeId,
+            initial_regimes={0: "couple"},
         )
 
 
@@ -76,6 +77,7 @@ def test_the_fold_refusal_reads_as_a_limit_rather_than_as_pending_work() -> None
             regimes=make_folding_collective_regimes(),
             ages=AGES,
             regime_id_class=CoupleRegimeId,
+            initial_regimes={0: "couple"},
         )
 
     assert "defer" not in str(excinfo.value).lower()
@@ -94,6 +96,7 @@ def test_collective_fold_under_a_participation_constraint_is_rejected() -> None:
             regimes=_folding_collective_regimes_with_participation(),
             ages=AGES,
             regime_id_class=CoupleRegimeId,
+            initial_regimes={0: "couple"},
         )
 
 

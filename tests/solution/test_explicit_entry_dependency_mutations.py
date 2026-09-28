@@ -136,6 +136,7 @@ def test_explicit_entry_feeds_another_explicit_entry(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -188,6 +189,7 @@ def test_explicit_entry_feeds_stochastic_weight_law(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -247,6 +249,7 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {

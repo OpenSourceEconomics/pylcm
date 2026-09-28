@@ -89,6 +89,7 @@ def _build(*, functions, next_wealth) -> Model:
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 
@@ -153,6 +154,7 @@ def _build_reading_a_runtime_draw() -> Model:
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

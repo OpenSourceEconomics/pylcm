@@ -151,6 +151,7 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
+        initial_regimes={0: "couple"},
     )
     return model, _couple_params()
 
@@ -206,6 +207,7 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
+        initial_regimes={0: "couple"},
     )
     return model, _couple_params()
 
@@ -247,6 +249,7 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
         regimes={"shocked": shocked, "shocked_terminal": shocked_terminal},
         ages=AGES,
         regime_id_class=ShockRegimeId,
+        initial_regimes={0: "shocked"},
     )
     params: ParamsDict = {
         "shocked": {"koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR}},

@@ -56,6 +56,7 @@ def _two_period_bequest_model() -> Model:
         },
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

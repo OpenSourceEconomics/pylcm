@@ -52,6 +52,7 @@ def multi_regime(
             regime_id_class=MultiRegimeId,
             fixed_params=model.fixed_params,
             execution_config=execution_config or ExecutionConfig(),
+            initial_regimes=_initial_regimes_of(model=model),
         )
     return (
         model,
@@ -78,6 +79,7 @@ def dissolution(
             regime_id_class=DissolutionRegimeId,
             fixed_params=model.fixed_params,
             execution_config=execution_config or ExecutionConfig(),
+            initial_regimes=_initial_regimes_of(model=model),
         )
     initial_conditions = {
         "wage": jnp.array([1.0, 2.0, 3.0]),
@@ -96,3 +98,11 @@ WITNESSES: Mapping[
     "dissolution": dissolution,
     "multi_regime": multi_regime,
 }
+
+
+def _initial_regimes_of(*, model: Model) -> dict[object, tuple[str, ...]]:
+    """Return the `initial_regimes` mapping admitting exactly `model`'s starts."""
+    names_by_age: dict[object, list[str]] = {}
+    for age, name in sorted(model.initial_nodes, key=repr):
+        names_by_age.setdefault(age, []).append(name)
+    return {age: tuple(names) for age, names in names_by_age.items()}

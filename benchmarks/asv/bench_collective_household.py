@@ -369,6 +369,7 @@ def _make_reference_chain(*, depth):
             regimes=regimes,
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=regime_id_class,
+            initial_regimes={0: tuple(link_names)},
         ),
         params,
     )

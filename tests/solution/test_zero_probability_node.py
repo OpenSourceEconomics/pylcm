@@ -99,6 +99,7 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

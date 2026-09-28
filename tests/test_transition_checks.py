@@ -103,6 +103,7 @@ def _model_with_state_probs(next_health_func) -> Model:
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -263,6 +264,7 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
             regimes={"alive": alive, "terminal": terminal},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=_LocalRegimeId,
+            initial_regimes={0: "alive"},
         )
 
 
@@ -338,6 +340,7 @@ def test_per_target_dict_validates_each_entry() -> None:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegId,
+        initial_regimes={0: "alive"},
     )
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
         model.solve(log_level="debug", params={"discount_factor": 0.95})
@@ -414,6 +417,7 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "alive"},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
@@ -451,6 +455,7 @@ def _model_with_fixed_param_health_probs() -> Model:
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
+        initial_regimes={0: "alive"},
     )
 
 
@@ -518,6 +523,7 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
+        initial_regimes={0: "alive"},
     )
 
 
@@ -577,6 +583,7 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.6},
+        initial_regimes={0: "alive"},
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError):

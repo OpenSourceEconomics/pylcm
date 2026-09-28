@@ -147,6 +147,7 @@ def _model(
         },
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={60: "working"},
     )
 
 

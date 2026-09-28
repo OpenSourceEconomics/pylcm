@@ -142,6 +142,7 @@ def get_retirement_only_model(
         },
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 
@@ -181,6 +182,7 @@ def get_full_model(
         },
         ages=ages,
         regime_id_class=base.RegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 

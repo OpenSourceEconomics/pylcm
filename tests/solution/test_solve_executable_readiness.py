@@ -42,6 +42,7 @@ from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_pending_solve_work import _is_ready
 from tests.solution import test_donation_solve as counter_fixture
+from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_solver_api_out_of_tree import _WEALTH
 from tests.test_solver_api_out_of_tree import RegimeId as CounterRegimeId
 
@@ -211,6 +212,7 @@ def _model(*, budget: int | None) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=budget),
+        initial_regimes={0: "working"},
     )
 
 
@@ -294,6 +296,7 @@ def test_budgeted_real_donor_and_template_fallback_leave_no_stale_witness(
         ages=base.ages,
         regime_id_class=CounterRegimeId,
         execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=_BUDGET),
+        initial_regimes=initial_regimes_of(model=base),
     )
     call = jax.stages.Compiled.__call__
     bind = backward_induction._cores_with_transfer_cache

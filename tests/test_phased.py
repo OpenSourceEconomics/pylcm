@@ -471,6 +471,7 @@ def _build_phased_law_model(*, phased_law: bool) -> Model:
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={60: "working"},
     )
 
 
@@ -564,6 +565,7 @@ def test_phased_law_params_template_unions_both_variants() -> None:
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={60: "working"},
     )
     template = model.get_params_template()
     assert "belief_drift" in template["working"]["next_wealth"]
@@ -599,6 +601,7 @@ def _build_wrong_beliefs_model() -> Model:
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={60: "working"},
     )
 
 
@@ -864,6 +867,7 @@ def _build_phased_transition_model(*, phased_transition: bool) -> Model:
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={60: "working"},
     )
 
 
@@ -954,6 +958,7 @@ def test_regime_draw_reads_carried_value() -> None:
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={60: "working"},
     )
     params = _solve_params(model)
     result = model.simulate(
@@ -1026,6 +1031,7 @@ def test_model_builds_when_a_transition_reads_a_phased_function():
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "working"},
     )
 
     assert model.get_params_template()["working"]["adjustment"] == {

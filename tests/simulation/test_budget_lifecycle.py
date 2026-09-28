@@ -70,6 +70,7 @@ def _stateful_target_model() -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
+        initial_regimes={0: "alive"},
     )
 
 

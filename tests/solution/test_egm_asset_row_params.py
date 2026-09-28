@@ -256,6 +256,7 @@ def _resources_param_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=AssetRowRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -398,6 +399,7 @@ def _smoothstep_intermediate_model(*, solver: str, rate_is_fixed: bool) -> Model
         ages=_ages(),
         regime_id_class=AssetRowRegimeId,
         fixed_params=fixed_params,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -544,6 +546,7 @@ def _imputed_pension_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=AssetRowRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -619,6 +622,7 @@ def _decreasing_resources_model() -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=AssetRowRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 

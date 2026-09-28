@@ -256,6 +256,7 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=2**28),
+        initial_regimes={0: "alive"},
     )
     for mu, expected in ((0.0, [0.0, 0.0]), (2.0, [1.0, 2.5]), (0.0, [0.0, 0.0])):
         result = model.simulate(

@@ -40,6 +40,7 @@ def _numeric_retirement_model(n_periods: int) -> Model:
         regimes={"retirement": numeric_regime, "dead": dead},
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

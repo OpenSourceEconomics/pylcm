@@ -77,6 +77,7 @@ def test_regime_name_does_not_contain_separator():
             regimes={f"work{QNAME_DELIMITER}test": working, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
+            initial_regimes={0: "work__test"},
         )
 
 
@@ -416,6 +417,7 @@ def test_regime_with_fixed_states_only():
         regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=FixedRegimeId,
+        initial_regimes={0: "working_life"},
     )
     V = model.solve(
         log_level="debug",

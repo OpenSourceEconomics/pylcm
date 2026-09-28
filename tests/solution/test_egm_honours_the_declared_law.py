@@ -98,6 +98,7 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         regimes={"saving": saving, "done": done},
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "saving"},
     )
 
 

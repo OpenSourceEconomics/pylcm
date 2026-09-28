@@ -105,6 +105,7 @@ def _build_model(*, fold: bool) -> Model:
         regimes={"start": start, "bonus": bonus, "terminal": terminal},
         ages=AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "start"},
     )
 
 

@@ -89,6 +89,7 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
         regime_id_class=egm_toy.RegimeId,
         ages=AgeGrid(start=0, stop=3, step="Y"),
         fixed_params={"last_age": 3.0},
+        initial_regimes={0: "saving"},
     )
     law_params = {"return_liquid": 0.03, "retirement_income": 0.0}
     params = {

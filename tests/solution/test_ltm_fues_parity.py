@@ -70,6 +70,7 @@ def _retirement_only_model(*, envelope, n_periods):
         },
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 
@@ -88,6 +89,7 @@ def _full_model(*, envelope, n_periods):
         },
         ages=ages,
         regime_id_class=base.RegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -172,6 +174,7 @@ def test_ltm_publishes_neg_inf_for_all_infeasible_combo_like_fues():
             },
             ages=ages,
             regime_id_class=base.RegimeId,
+            initial_regimes={40: "working_life"},
         )
 
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)

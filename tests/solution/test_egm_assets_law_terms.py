@@ -317,6 +317,7 @@ def _health_insurance_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -396,6 +397,7 @@ def _means_test_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -507,6 +509,7 @@ def _per_target_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": bequest},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -593,6 +596,7 @@ def _phased_law_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -675,6 +679,7 @@ def _chained_law_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 

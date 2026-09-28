@@ -210,6 +210,7 @@ def _make_reverse_alphabetical_collective_model() -> Model:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 
@@ -242,6 +243,7 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
         regimes={"working": working, "retired": retired},
         ages=AGES,
         regime_id_class=SoloRegimeId,
+        initial_regimes={0: "working"},
     )
 
 
@@ -281,6 +283,7 @@ def _make_collective_model_with_colliding_state() -> Model:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 
@@ -343,6 +346,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         },
         ages=AGES,
         regime_id_class=MixedRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 

@@ -262,6 +262,7 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=ProcessRegimeId,
+        initial_regimes={40: "alive"},
     )
 
 

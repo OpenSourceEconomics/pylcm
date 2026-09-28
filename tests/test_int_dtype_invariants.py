@@ -241,6 +241,7 @@ def test_simulate_accepts_int64_regime_initial_condition_and_round_trips() -> No
         },
         ages=AgeGrid(start=18, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working_life"},
     )
     params = get_params(n_periods=n_periods)
 

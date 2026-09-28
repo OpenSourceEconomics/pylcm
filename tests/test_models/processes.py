@@ -133,6 +133,7 @@ def get_model(
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={0: "alive"},
     )
 
 
@@ -231,6 +232,7 @@ def get_multi_regime_model(
             "work_final_age": work_final_age,
             "retire_final_age": retire_final_age,
         },
+        initial_regimes={0: "work"},
     )
 
 

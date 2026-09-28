@@ -195,6 +195,7 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         ages=AgeGrid(start=START_AGE, stop=FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -672,6 +673,7 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
+        initial_regimes={0: "alive"},
     )
     discount_factor = pd.Series(
         [0.99, 0.90, 0.80], index=pd.Index([0.0, 1.0, 2.0], name="age")
@@ -725,6 +727,7 @@ def _solve_with_aggregator_slot(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
+        initial_regimes={0: "alive"},
     )
     template = dict(model.get_params_template()["alive"]["koopmans_aggregator"])
     params = {

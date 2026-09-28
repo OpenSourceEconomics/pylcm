@@ -101,6 +101,7 @@ def _build_model(*, entry_value: float, enable_jit: bool) -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 
@@ -215,6 +216,7 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -267,6 +269,7 @@ def test_a_linear_payoff_entry_interpolates_to_its_own_value(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
     got = _source_value(model=model, params=_PARAMS)
@@ -315,6 +318,7 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -373,6 +377,7 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -434,6 +439,7 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -505,6 +511,7 @@ def test_the_entry_representation_decides_the_action() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=_ThreeRegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {

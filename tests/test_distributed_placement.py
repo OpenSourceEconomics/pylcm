@@ -508,6 +508,7 @@ def _make_three_type_model(
             ),
             devices=devices,
         ),
+        initial_regimes={0: "working"},
     )
 
 
@@ -1014,6 +1015,7 @@ def _make_two_mesh_model() -> Model:
         states={"type1": DiscreteGrid(category_class=_Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
+        initial_regimes={0: "alpha"},
     )
 
 
@@ -1201,6 +1203,7 @@ def _make_two_block_model(*, distributed: bool) -> Model:
         execution_config=ExecutionConfig(
             sharded_states=("type1",) if distributed else ()
         ),
+        initial_regimes={0: "first"},
     )
 
 
@@ -1830,4 +1833,5 @@ def _uniform_placement_model(
             devices=selected,
             sharded_states=("kind",) if sharded else (),
         ),
+        initial_regimes={0: "alive"},
     )

@@ -153,6 +153,7 @@ def _build_model(*, helper_name: str, override) -> Model:
             step=f"{_AGE_STEP}Y",
         ),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
+        initial_regimes={20: "alive"},
     )
 
 

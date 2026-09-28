@@ -282,6 +282,7 @@ def test_model_with_bad_arg_raises_project_exception() -> None:
             ages=AgeGrid(start=25, stop=75, step="Y"),
             regimes="not a mapping",  # ty: ignore[invalid-argument-type]
             regime_id_class=int,
+            initial_regimes={25: "n"},
         )
 
 

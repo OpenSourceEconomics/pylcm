@@ -268,6 +268,7 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
             regime_id_class=n_nbegm_toy.RegimeId,
             ages=AgeGrid(start=20, stop=25, step="5Y"),
             fixed_params={"final_age_alive": 20},
+            initial_regimes={20: "alive"},
         )
 
 

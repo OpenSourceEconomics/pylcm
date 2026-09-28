@@ -127,6 +127,7 @@ def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
         regime_id_class=RegimeId,
         states=model_states,
         state_transitions=model_laws,
+        initial_regimes={0: "working"},
     )
 
 

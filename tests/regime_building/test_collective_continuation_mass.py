@@ -239,6 +239,7 @@ def _build_model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 

@@ -241,6 +241,7 @@ def build_model(
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "working"},
         execution_config=ExecutionConfig(
             devices=devices, sharded_states=sharded, **config
         ),

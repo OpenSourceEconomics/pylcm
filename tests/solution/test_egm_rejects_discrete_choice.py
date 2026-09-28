@@ -92,4 +92,5 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
             regimes={"saving": saving, "done": done},
             ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={0: "saving"},
         )

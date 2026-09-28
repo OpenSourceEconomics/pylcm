@@ -118,6 +118,7 @@ def get_model(*, execution_config: ExecutionConfig | None = None) -> Model:
         execution_config=ExecutionConfig()
         if execution_config is None
         else execution_config,
+        initial_regimes={40: "alive"},
     )
 
 

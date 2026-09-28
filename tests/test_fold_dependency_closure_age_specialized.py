@@ -94,6 +94,7 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
         regimes={"shocked": shocked, "shocked_terminal": shocked_terminal},
         ages=AGES,
         regime_id_class=ShockRegimeId,
+        initial_regimes={0: "shocked"},
     )
 
 

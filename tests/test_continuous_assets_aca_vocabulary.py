@@ -171,6 +171,7 @@ def _model(
             axis_widths={"action_product": widths[0], "cell": widths[1], "subject": 32},
             device_memory_bytes=budget,
         ),
+        initial_regimes={0: "working"},
     )
 
 
