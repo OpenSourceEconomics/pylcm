@@ -1,17 +1,20 @@
-"""Lower dated regime declarations into coverage, support and period-indexed laws.
+"""Lower age-indexed regime declarations into demand, support and engine laws.
 
-A regime's `regime_transitions` declares where it is solved and where it may go. This
-module is the single place that reads it for that purpose:
+A regime's `regime_transitions` declares where a local problem is available and
+where it may go. This module is the single place that reads it for that purpose:
 
-- `regime_transitions=None` is terminal and covered at every age;
+- `regime_transitions=None` is terminal and available at every age;
 - a plain nonterminal law — a regime name, a `Choose`, a vector
-  `MarkovTransition` with `targets`, or a per-target mapping — covers every
-  non-final age;
-- a `ByAge` schedule covers the non-final ages its cases select. A law it
-  selects at the last age is available but unused: no continuation exists there.
+  `MarkovTransition` with `targets`, or a per-target mapping — is available at
+  every non-final age;
+- a `ByAge` schedule is available at the non-final ages its cases select. A law
+  it selects at the last age is unused: no continuation exists there.
 
-Coverage and support come only from these declarations. A bare callable or a
-vector `MarkovTransition` without `targets` names no support and is rejected.
+Availability alone solves nothing. `resolve_demand` expands the declared starts
+into the pairs a subject can visit and the pairs whose values those problems
+read; that set is the coverage every later stage reads. Support comes only
+from the declarations. A bare callable or a vector `MarkovTransition` without
+`targets` names no support and is rejected.
 
 The engine downstream reads one law per regime and phase. A schedule whose
 covered periods select different laws is lowered into one equivalent law whose
@@ -22,6 +25,7 @@ shared across cases are reused unchanged, so no per-age closure is created.
 
 import dataclasses
 import inspect
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -52,7 +56,8 @@ class RegimeSchedules:
     """Coverage and per-period support of every regime, from its declaration."""
 
     coverage_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
-    """Periods at which each regime is solved."""
+    """Periods at which each regime is solved: its available periods until
+    `resolve_demand` restricts them to the demanded ones."""
 
     support_by_phase: MappingProxyType[
         PhaseKey, MappingProxyType[RegimeName, MappingProxyType[int, tuple[str, ...]]]
@@ -61,6 +66,25 @@ class RegimeSchedules:
 
     transitions: MappingProxyType[RegimeName, object]
     """Each regime's transition in the engine's period-independent vocabulary."""
+
+    value_reads_by_phase: MappingProxyType[
+        PhaseKey, MappingProxyType[RegimeName, MappingProxyType[int, tuple[str, ...]]]
+    ] = MappingProxyType({})
+    """Per phase, per source regime, the regimes whose next-age value a gated
+    edge reads at each period: gate references, plus the solve fallbacks in
+    the solution phase."""
+
+    landings_by_regime: MappingProxyType[
+        RegimeName, MappingProxyType[int, tuple[str, ...]]
+    ] = MappingProxyType({})
+    """Per source regime, the simulate fallbacks a gated edge may land a row in
+    at the next age, at each period."""
+
+    nodes: frozenset[tuple[int, RegimeName]] = frozenset()
+    """The `(period, regime)` pairs whose value is required (S)."""
+
+    visited_nodes: frozenset[tuple[int, RegimeName]] = frozenset()
+    """The `(period, regime)` pairs a subject can physically visit (H)."""
 
 
 def uses_declaration_vocabulary(transition: object) -> bool:
@@ -110,6 +134,10 @@ def resolve_regime_schedules(
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = {phase: {} for phase in _PHASES}
     transitions: dict[RegimeName, object] = {}
+    value_reads: dict[
+        PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
+    ] = {phase: {} for phase in _PHASES}
+    landings: dict[RegimeName, MappingProxyType[int, tuple[str, ...]]] = {}
     for name, regime in user_regimes.items():
         transition = regime.regime_transitions
         if transition is None:
@@ -145,6 +173,21 @@ def resolve_regime_schedules(
                 }
             )
         solve_side, simulate_side = side_by_phase.values()
+        value_reads["solution"][name] = MappingProxyType(
+            {
+                period: (*_gate_references(law), *_fallbacks(law=law, side="solve"))
+                for period, law in solve_side.items()
+            }
+        )
+        value_reads["simulation"][name] = MappingProxyType(
+            {period: _gate_references(law) for period, law in simulate_side.items()}
+        )
+        landings[name] = MappingProxyType(
+            {
+                period: _fallbacks(law=law, side="simulate")
+                for period, law in simulate_side.items()
+            }
+        )
         # A schedule without phase variation lowers to one shared engine law.
         solve_law = _lower_side(
             law_by_period=solve_side, code_by_name=regime_names_to_ids
@@ -159,28 +202,175 @@ def resolve_regime_schedules(
                 ),
             )
         )
-    _fail_if_a_target_is_uncovered(
-        support_by_phase=support, coverage_by_regime=coverage, ages=ages
-    )
     return RegimeSchedules(
         coverage_by_regime=MappingProxyType(coverage),
         support_by_phase=MappingProxyType(
             {phase: MappingProxyType(by_regime) for phase, by_regime in support.items()}
         ),
         transitions=MappingProxyType(transitions),
+        value_reads_by_phase=MappingProxyType(
+            {
+                phase: MappingProxyType(by_regime)
+                for phase, by_regime in value_reads.items()
+            }
+        ),
+        landings_by_regime=MappingProxyType(landings),
     )
 
 
-def coverage_nodes(
+def resolve_demand(
     *,
-    coverage_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    schedules: RegimeSchedules,
+    initial_nodes: frozenset[tuple[object, RegimeName]],
+    same_period_refs_by_regime: Mapping[RegimeName, tuple[RegimeName, ...]],
+    terminal_regimes: frozenset[RegimeName],
     ages: AgeGrid,
-) -> frozenset[tuple[object, RegimeName]]:
-    """The exact `(age, regime)` pair of every covered problem."""
-    return frozenset(
-        (ages.exact_values[period], name)
-        for name, periods in coverage_by_regime.items()
-        for period in periods
+) -> RegimeSchedules:
+    """Restrict `schedules` to the problems the starts require.
+
+    Two roles are expanded to a fixed point from the starts:
+
+    - a physical visit (H) requires the pair's value, its realized successors
+      and gated landings as visits, and the values the realized routing reads;
+    - a value (S) requires the values its backward problem reads: perceived
+      continuation targets, gate references, solve fallbacks and same-period
+      references. Realized routes out of a value-only pair are not followed.
+
+    Every required pair must be an available problem: a terminal regime, or a
+    nonterminal one with a law at a non-final age. The returned schedules
+    cover exactly S; solution support is kept for S and simulation support for
+    H.
+
+    Raises:
+        ModelInitializationError: If a start or a required read names a pair
+            where no problem is available.
+
+    """
+    period_by_age: dict[object, int] = {
+        age: period for period, age in enumerate(ages.exact_values)
+    }
+    available = {
+        name: frozenset(periods)
+        for name, periods in schedules.coverage_by_regime.items()
+    }
+    work: deque[tuple[bool, int, RegimeName, str]] = deque(
+        (True, period_by_age[age], name, "`initial_regimes`")
+        for age, name in sorted(initial_nodes, key=repr)
+    )
+    visited: set[tuple[int, RegimeName]] = set()
+    valued: set[tuple[int, RegimeName]] = set()
+    support = schedules.support_by_phase
+    value_reads = schedules.value_reads_by_phase
+    while work:
+        physical, period, name, requester = work.popleft()
+        done = visited if physical else valued
+        if (period, name) in done:
+            continue
+        if name not in terminal_regimes and period not in available[name]:
+            raise ModelInitializationError(
+                _unavailable_message(
+                    requester=requester, name=name, period=period, ages=ages
+                )
+            )
+        done.add((period, name))
+        here = f"the transition out of ({ages.exact_values[period]}, '{name}')"
+        if physical:
+            work.append((False, period, name, requester))
+            work.extend(
+                (True, period + 1, target, here)
+                for target in (
+                    *support["simulation"].get(name, {}).get(period, ()),
+                    *schedules.landings_by_regime.get(name, {}).get(period, ()),
+                )
+            )
+            reads = value_reads["simulation"].get(name, {}).get(period, ())
+        else:
+            reads = (
+                *support["solution"].get(name, {}).get(period, ()),
+                *value_reads["solution"].get(name, {}).get(period, ()),
+            )
+            work.extend(
+                (
+                    False,
+                    period,
+                    reference,
+                    (
+                        f"a same-period reference of ({ages.exact_values[period]}, "
+                        f"'{name}')"
+                    ),
+                )
+                for reference in same_period_refs_by_regime.get(name, ())
+            )
+        work.extend((False, period + 1, target, here) for target in reads)
+
+    def _restricted(
+        *,
+        by_regime: Mapping[RegimeName, Mapping[int, tuple[str, ...]]],
+        keep: set[tuple[int, RegimeName]],
+    ) -> MappingProxyType[RegimeName, MappingProxyType[int, tuple[str, ...]]]:
+        return MappingProxyType(
+            {
+                name: MappingProxyType(
+                    {p: t for p, t in by_period.items() if (p, name) in keep}
+                )
+                for name, by_period in by_regime.items()
+            }
+        )
+
+    return dataclasses.replace(
+        schedules,
+        coverage_by_regime=MappingProxyType(
+            {
+                name: tuple(sorted(p for p, n in valued if n == name))
+                for name in schedules.coverage_by_regime
+            }
+        ),
+        support_by_phase=MappingProxyType(
+            {
+                "solution": _restricted(by_regime=support["solution"], keep=valued),
+                "simulation": _restricted(
+                    by_regime=support["simulation"], keep=visited
+                ),
+            }
+        ),
+        nodes=frozenset(valued),
+        visited_nodes=frozenset(visited),
+    )
+
+
+def _unavailable_message(
+    *, requester: str, name: RegimeName, period: int, ages: AgeGrid
+) -> str:
+    age = ages.exact_values[period]
+    reason = (
+        "which is nonterminal at the last age: no next age exists"
+        if period == ages.n_periods - 1
+        else f"where '{name}' supplies no law"
+    )
+    return f"{requester} requires '{name}' at age {age}, {reason}."
+
+
+def _gate_references(law: object) -> tuple[str, ...]:
+    """The regimes whose value the gates of a per-target mapping read."""
+    if not isinstance(law, Mapping):
+        return ()
+    return tuple(
+        reference.regime
+        for cell in law.values()
+        if isinstance(cell, ValueDependentTransition)
+        for reference in cell.gate_references.values()
+    )
+
+
+def _fallbacks(*, law: object, side: str) -> tuple[str, ...]:
+    """The gate-closed regimes of a per-target mapping, for one phase side."""
+    if not isinstance(law, Mapping):
+        return ()
+    return tuple(
+        getattr(route, f"{side}_fallback").regime
+        for cell in law.values()
+        if isinstance(cell, ValueDependentTransition)
+        for route in cell.routes.values()
     )
 
 
@@ -227,27 +417,6 @@ def resolve_initial_nodes(
             (ages.exact_values[period], name) for period in periods for name in names
         }
     return frozenset(permitted)
-
-
-def fail_if_initial_nodes_are_not_problems(
-    *,
-    initial_nodes: frozenset[tuple[object, RegimeName]],
-    coverage_by_regime: Mapping[RegimeName, tuple[int, ...]],
-    ages: AgeGrid,
-) -> None:
-    """Reject a start where no local problem is available.
-
-    A start needs a local problem at its own age: a terminal regime anywhere, a
-    nonterminal regime only where a law is available and a next age exists.
-    """
-    covered = coverage_nodes(coverage_by_regime=coverage_by_regime, ages=ages)
-    missing = sorted(initial_nodes - covered, key=repr)
-    if missing:
-        raise ModelInitializationError(
-            f"`initial_regimes` admits a start at {missing}, where no problem is "
-            "available: the regime supplies no law there, or it is nonterminal at "
-            "the last age."
-        )
 
 
 def _entry_names(value: object) -> tuple[str, ...]:
@@ -732,30 +901,3 @@ def _fail_if_support_is_undeclared(*, user_regimes: Mapping[RegimeName, Any]) ->
                     )
     if errors:
         raise ModelInitializationError("\n".join(errors))
-
-
-def _fail_if_a_target_is_uncovered(
-    *,
-    support_by_phase: Mapping[
-        PhaseKey, Mapping[RegimeName, Mapping[int, tuple[str, ...]]]
-    ],
-    coverage_by_regime: Mapping[RegimeName, tuple[int, ...]],
-    ages: AgeGrid,
-) -> None:
-    """Every declared target must be solved at the next age."""
-    errors = []
-    covered = {name: frozenset(periods) for name, periods in coverage_by_regime.items()}
-    for phase, by_regime in support_by_phase.items():
-        for source, by_period in by_regime.items():
-            for period, targets in by_period.items():
-                errors.extend(
-                    f"'{target}' is not declared at age "
-                    f"{ages.exact_values[period + 1]}, the next age after "
-                    f"({ages.exact_values[period]}, '{source}'), which "
-                    f"declares it as a target ({phase}). Extend '{target}''s "
-                    "schedule or remove the target from this case."
-                    for target in targets
-                    if period + 1 not in covered[target]
-                )
-    if errors:
-        raise ModelInitializationError("\n".join(sorted(set(errors))))

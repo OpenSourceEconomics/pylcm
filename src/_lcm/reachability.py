@@ -151,7 +151,12 @@ class ModelReachability:
     solution: PhaseReachability
     simulation: PhaseReachability
     nodes: frozenset[tuple[object, RegimeName]] = frozenset()
-    """Exact `(age, regime)` pairs of every declared problem."""
+    """Exact `(age, regime)` pairs of every solved problem: each pair the
+    declared starts can visit, and each pair whose value a solved problem reads."""
+
+    visited_nodes: frozenset[tuple[object, RegimeName]] = frozenset()
+    """Exact `(age, regime)` pairs a subject starting at a declared start can
+    physically visit; a subset of `nodes`."""
 
     def for_phase(self, phase: PhaseName) -> PhaseReachability:
         """Select one phase without reconstructing anything."""
@@ -284,11 +289,14 @@ def build_model_reachability(
         str, Mapping[RegimeName, Mapping[int, Collection[RegimeName]]]
     ],
     terminal_regimes: Collection[RegimeName] = (),
+    visited_periods_by_regime: Mapping[RegimeName, Collection[int]] | None = None,
 ) -> ModelReachability:
     """Build solve and simulate graphs from the declared per-period support.
 
     `active_periods_by_regime` must be the single canonical coverage mapping
-    computed once at model preparation from the declarations.
+    computed once at model preparation from the declarations. The simulate
+    graph is active only where a subject can be: `visited_periods_by_regime`,
+    which defaults to the coverage.
     """
     return ModelReachability(
         solution=build_phase_reachability(
@@ -299,7 +307,11 @@ def build_model_reachability(
         ),
         simulation=build_phase_reachability(
             n_periods=n_periods,
-            active_periods_by_regime=active_periods_by_regime,
+            active_periods_by_regime=(
+                active_periods_by_regime
+                if visited_periods_by_regime is None
+                else visited_periods_by_regime
+            ),
             support_by_period=support_by_phase["simulation"],
             terminal_regimes=terminal_regimes,
         ),

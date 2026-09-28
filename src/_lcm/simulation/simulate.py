@@ -771,10 +771,14 @@ def _simulate_subject_chunk(
         new_subject_regime_ids = subject_regime_ids
         new_own_stakeholder = own_stakeholder
 
+        # Only pairs a subject can occupy are simulated; a pair solved only
+        # for its value holds no subject.
         active_regimes = {
             regime_name: regime
             for regime_name, regime in regimes.items()
             if period in regime.active_periods
+            and regime_name
+            in regime.simulation.reachability.active_regimes_by_period[period]
         }
 
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))

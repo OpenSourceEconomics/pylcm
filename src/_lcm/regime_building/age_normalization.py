@@ -928,7 +928,11 @@ def normalize_age_specialization(
 
     for regime_name, user_regime in user_regimes.items():
         spec = phased_specs[regime_name]
-        if not _regime_has_markers(user_regime):
+        # A regime solved at no age has no age to resolve its markers at.
+        if (
+            not _regime_has_markers(user_regime)
+            or not active_periods_by_regime[regime_name]
+        ):
             representative[regime_name] = user_regime
             rewritten_specs[regime_name] = spec
             continue

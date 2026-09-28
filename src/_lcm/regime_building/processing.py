@@ -305,11 +305,14 @@ def prepare_model_structure(
     support_by_phase: Mapping[
         str, Mapping[RegimeName, Mapping[int, tuple[RegimeName, ...]]]
     ],
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
 
     `active_periods_by_regime` and `support_by_phase` are the coverage and the
-    per-period targets resolved once from the declarations by the caller.
+    per-period targets resolved once from the declarations by the caller;
+    `visited_periods_by_regime` are the periods a subject can occupy, where the
+    simulate graph is active.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes)
     age_normalization = normalize_age_specialization(
@@ -329,6 +332,7 @@ def prepare_model_structure(
                 for regime_name, regime in user_regimes.items()
                 if regime.terminal
             },
+            visited_periods_by_regime=visited_periods_by_regime,
         )
     except ValueError as error:
         raise ModelInitializationError(str(error)) from error
@@ -2072,30 +2076,48 @@ def _fail_if_same_period_refs_invalid(
                     f"{target_regime.stakeholders}."
                 )
                 raise ModelInitializationError(msg)
-            expected_states = set(
-                regime_to_v_interpolation_info[ref.regime].state_names
-            )
-            if set(ref.projection) != expected_states:
-                msg = (
-                    f"{prefix}the projection must supply exactly one coordinate "
-                    "function per state of the reference regime "
-                    f"({sorted(expected_states)}); got "
-                    f"{sorted(ref.projection)}."
+            # A reader solved at no age never reads its reference, so neither
+            # the projection nor the reference's periods are required.
+            if regimes_to_active_periods[regime_name]:
+                _fail_if_same_period_ref_unreadable(
+                    prefix=prefix,
+                    ref=ref,
+                    reader_periods=regimes_to_active_periods[regime_name],
+                    reference_periods=regimes_to_active_periods[ref.regime],
+                    reference_states=regime_to_v_interpolation_info[
+                        ref.regime
+                    ].state_names,
                 )
-                raise ModelInitializationError(msg)
-            missing_periods = sorted(
-                set(regimes_to_active_periods[regime_name])
-                - set(regimes_to_active_periods[ref.regime])
-            )
-            if missing_periods:
-                msg = (
-                    f"{prefix}the reference regime must be solved in every "
-                    "period the declaring regime is solved, but it is not "
-                    "solved in period(s) "
-                    f"{missing_periods}. A same-period reference V that was "
-                    "never solved cannot be read."
-                )
-                raise ModelInitializationError(msg)
+
+
+def _fail_if_same_period_ref_unreadable(
+    *,
+    prefix: str,
+    ref: ProjectedRegimeValue,
+    reader_periods: tuple[int, ...],
+    reference_periods: tuple[int, ...],
+    reference_states: Collection[str],
+) -> None:
+    """Reject a projection or a reference schedule the reader cannot read."""
+    expected_states = set(reference_states)
+    if set(ref.projection) != expected_states:
+        msg = (
+            f"{prefix}the projection must supply exactly one coordinate "
+            "function per state of the reference regime "
+            f"({sorted(expected_states)}); got "
+            f"{sorted(ref.projection)}."
+        )
+        raise ModelInitializationError(msg)
+    missing_periods = sorted(set(reader_periods) - set(reference_periods))
+    if missing_periods:
+        msg = (
+            f"{prefix}the reference regime must be solved in every "
+            "period the declaring regime is solved, but it is not "
+            "solved in period(s) "
+            f"{missing_periods}. A same-period reference V that was "
+            "never solved cannot be read."
+        )
+        raise ModelInitializationError(msg)
 
 
 def _fail_if_gated_edges_invalid(

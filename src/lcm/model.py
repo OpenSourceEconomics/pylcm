@@ -80,8 +80,7 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.regime_building.schedules import (
-    coverage_nodes,
-    fail_if_initial_nodes_are_not_problems,
+    resolve_demand,
     resolve_initial_nodes,
     resolve_regime_schedules,
 )
@@ -614,11 +613,11 @@ class Model:
         # executables, so they reuse the verdicts instead of re-reading the HLO.
         self._gather_checks: GatherChecks = {}
 
-        # The single canonical coverage schedule, read once here from the raw
-        # regimes and threaded through pruning, validation, and model-structure
-        # preparation below. It comes from each `regime_transitions`
-        # declaration, whose laws are lowered to the engine's period-independent
-        # vocabulary.
+        # The declared starts, then each regime's available laws and support,
+        # read once from the raw `regime_transitions` and lowered to the
+        # engine's period-independent vocabulary. The single canonical coverage
+        # schedule threaded through pruning, validation and model-structure
+        # preparation is the solve demand of the starts, resolved below.
         initial_nodes = resolve_initial_nodes(
             initial_regimes=initial_regimes, regime_names=tuple(regimes), ages=ages
         )
@@ -637,7 +636,6 @@ class Model:
             name: regime.replace(regime_transitions=schedules.transitions[name])
             for name, regime in regimes.items()
         }
-        active_periods_by_regime = schedules.coverage_by_regime
 
         model_slots = {
             "functions": functions,
@@ -651,6 +649,22 @@ class Model:
             user_regimes=regimes,
             model_slots=model_slots,
         )
+        # Solve demand: the problems the declared starts require, physically or
+        # through a value read. Same-period references are read off the merged
+        # regimes, so model-level constraints contribute theirs.
+        schedules = resolve_demand(
+            schedules=schedules,
+            initial_nodes=initial_nodes,
+            same_period_refs_by_regime={
+                name: tuple(ref.regime for ref in regime.same_period_refs.values())
+                for name, regime in merged_regimes.items()
+            },
+            terminal_regimes=frozenset(
+                name for name, regime in regimes.items() if regime.terminal
+            ),
+            ages=ages,
+        )
+        active_periods_by_regime = schedules.coverage_by_regime
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
             user_regimes=merged_regimes,
             broadcast_variables=broadcast_variables,
@@ -724,11 +738,20 @@ class Model:
             ages=self.ages,
             active_periods_by_regime=active_periods_by_regime,
             support_by_phase=schedules.support_by_phase,
+            visited_periods_by_regime={
+                name: tuple(sorted(p for p, n in schedules.visited_nodes if n == name))
+                for name in active_periods_by_regime
+            },
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
-            nodes=coverage_nodes(
-                coverage_by_regime=active_periods_by_regime, ages=self.ages
+            nodes=frozenset(
+                (self.ages.exact_values[period], name)
+                for period, name in schedules.nodes
+            ),
+            visited_nodes=frozenset(
+                (self.ages.exact_values[period], name)
+                for period, name in schedules.visited_nodes
             ),
         )
         # Public regimes keep each transition as declared; the engine copy
@@ -738,11 +761,6 @@ class Model:
                 name: regime.replace(regime_transitions=declared_transitions[name])
                 for name, regime in self._engine_user_regimes.items()
             }
-        )
-        fail_if_initial_nodes_are_not_problems(
-            initial_nodes=initial_nodes,
-            coverage_by_regime=active_periods_by_regime,
-            ages=self.ages,
         )
         self.initial_nodes = initial_nodes
         self._regimes, self._params_template = build_regimes_and_template(
