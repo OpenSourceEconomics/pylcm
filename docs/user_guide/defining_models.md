@@ -22,16 +22,19 @@ model = Model(
     regimes=regimes,  # dict mapping names to Regime instances
     ages=ages,  # AgeGrid defining the lifecycle timeline
     regime_id_class=RegimeId,  # @categorical dataclass mapping names to ScalarInt indices
+    initial_regimes={25: "working"},  # admissible starting age-regime pairs
     enable_jit=True,  # controls JAX compilation (default: True)
     fixed_params={},  # optional params baked in at init time
     description="",  # optional description string
 )
 ```
 
-All arguments are keyword-only. The three required arguments are `regimes`, `ages`, and
-`regime_id_class`. The finalized regimes are stored as `model.user_regimes` (plain
-`Regime` instances in user vocabulary); the processed canonical form is the
-engine-internal `model._regimes`.
+All arguments are keyword-only. The four required arguments are `regimes`, `ages`,
+`regime_id_class` and `initial_regimes`. `initial_regimes` maps age selectors to regime
+names and declares the admissible starting problems; there is no default. The solved
+problems are derived from these roots, see [Age-indexed regimes](dated_regime_graph.md).
+The finalized regimes are stored as `model.user_regimes` (plain `Regime` instances in
+user vocabulary); the processed canonical form is the engine-internal `model._regimes`.
 
 ## Model-Level Regime Slots
 
@@ -45,6 +48,7 @@ model = Model(
     regimes={"working": working, "retired": retired, "dead": dead},
     ages=ages,
     regime_id_class=RegimeId,
+    initial_regimes=initial_regimes,
     functions={"taxes": taxes, "net_income": net_income},
     constraints={"budget": budget_constraint},
     states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=50)},
@@ -247,6 +251,7 @@ model = Model(
     regimes={"working": working, "retired": retired},
     ages=AgeGrid(start=25, stop=75, step="Y"),
     regime_id_class=RegimeId,
+    initial_regimes={25: "working"},
 )
 ```
 

@@ -106,6 +106,7 @@ Model(
     },
     ages=AgeGrid(start=25, stop=75, step="Y"),  # Required: lifecycle age grid
     regime_id_class=RegimeId,  # Required: dataclass mapping names to indices
+    initial_regimes={25: "working"},  # Required: admissible starting age-regime pairs
     description="Optional description",
     enable_jit=True,  # Control JAX compilation (default: True)
 )
@@ -149,6 +150,16 @@ model's actual core programs declare.
 
 **Model Requirements:**
 
+- `initial_regimes` is required and has no default: a mapping from age selectors (exact
+  age, tuple, `range`, `AgeRange(start=..., stop=...)`) to one regime name or a nonempty
+  sequence of names. Its Cartesian pairs are the admissible roots, published as
+  `model.initial_nodes`. Solved problems are derived from these roots (physical
+  successors plus value reads), not from transition schedules; `ByAge` selects laws
+  only. Terminality is exactly `regime_transitions is None`.
+- Declarations are keyword-only: `ByAge(cases=..., default=...)`,
+  `ByAge.until(stop_age_exclusive=..., law=..., then=..., start_age_inclusive=...)`
+  (`then` at the last source age below the stop), `AgeRange(start=..., stop=...)`,
+  `Choose(func=..., targets=...)`, `MarkovTransition(func=..., targets=...)`.
 - Must have at least one terminal regime and one non-terminal regime
 - `regime_id_class` must be a dataclass with fields matching regime names (use
   `@categorical`)

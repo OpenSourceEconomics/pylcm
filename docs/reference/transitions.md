@@ -44,9 +44,9 @@ impossibility only as a zero probability in an all-regime vector.
 
 (api-dated-regime-transitions)=
 
-### Dated regime transitions
+### Age-indexed regime transitions
 
-These forms also declare the ages at which a regime is solved:
+These forms declare which law a regime uses at each age:
 
 - a regime name, e.g. `"retirement"`: a deterministic move to that regime;
 - `Choose(func=func, targets=(...))`: deterministic, and `func` returns the global code
@@ -54,14 +54,17 @@ These forms also declare the ages at which a regime is solved:
 - `MarkovTransition(func=func, targets=(...))`: a probability vector over all regimes
   that is nonzero only on `targets`;
 - `ByAge(cases={selector: law, ...}, default=...)` and
-  `ByAge.until(stop_age_exclusive=boundary, law=..., then=..., start_age_inclusive=...)`:
-  one of the laws above, or a per-target mapping, per exact grid age. Selectors are
-  ages, tuples, integer `range`s, or `AgeRange(start=..., stop=...)` half-open
-  intervals.
+  `ByAge.until(stop_age_exclusive=..., law=..., then=..., start_age_inclusive=...)`: one
+  of the laws above, or a per-target mapping, per exact grid age. Selectors are ages,
+  tuples, integer `range`s, or `AgeRange(start=..., stop=...)` half-open intervals.
+  `ByAge.until` uses `law` at source ages in `[start_age_inclusive, stop_age_exclusive)`
+  except the last one, which uses `then`.
 
-A plain law covers every non-final age; a `ByAge` covers exactly the ages it selects. A
+A plain law is available at every age; a `ByAge` is available exactly at the ages it
+selects, or at every age with a `default`. Availability does not mark a problem as
+solved: the solved problems are derived from the model's required `initial_regimes`. A
 model that uses any of these forms rejects `active`, bare callables and vector laws
-without `targets`. See [Dated regime graphs](../user_guide/dated_regime_graph.md).
+without `targets`. See [Age-indexed regimes](../user_guide/dated_regime_graph.md).
 
 (api-joint-transitions)=
 

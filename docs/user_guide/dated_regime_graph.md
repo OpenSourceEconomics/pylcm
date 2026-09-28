@@ -1,236 +1,307 @@
 (dated-regime-graph)=
 
-# Declare when a regime's transition law applies
+# Age-indexed regimes: starting problems, laws and demand
 
-```{important}
-This page documents the proposed v3 interface. The new schedule/support declarations
-and membership views require the upstream implementation; they are not available
-in unchanged PR #474. Code snippets are declaration fragments whose economic
-functions, grids and regime registry come from the surrounding model.
-```
+A regime is a local economic problem. Its age-indexed instances are that problem at
+particular ages, identified by **age–regime pairs**. A model declares two different
+things:
 
-A regime is a local economic problem. Its dated instances are that same problem at
-particular ages. Define the ages of a nonterminal regime through its transition schedule
-instead of keeping an `active` predicate consistent with a separate law. pylcm checks
-that every declared destination exists next period. It never removes an invalid target
-to make a probability row fit.
+- **which problems a history may start in**, through the required `initial_regimes`;
+- **which law governs each regime at each age**, through `regime_transitions`.
 
-All declared problems are solved, including values that a caller wants to compare but a
-simulation never visits. Simulation entry does not select the solve domain.
+The engine derives every problem it has to solve from the first declaration and the
+laws. A transition law never makes a problem solved just by being present.
 
-## Terminality is unchanged
+Code blocks marked *fragment* are declaration fragments whose economic functions, grids
+and regime registry come from the surrounding model; the complete example below runs as
+written.
 
-```python
-dead = Regime(regime_transitions=None, functions={"utility": bequest})
-```
+## Explicit, required starting problems
 
-`regime_transitions=None` means the regime is terminal. Its payoff is available at every
-model age, and a history entering it ends after evaluating that payoff. Terminal is not
-a synonym for last age.
+`Model(..., initial_regimes=...)` is a required keyword-only argument. There is no
+default: omitting it, passing `None`, or passing a bare regime name raises. Its elements
+are the **admissible roots**: the age–regime pairs where a solved problem may be started
+and where simulation may admit a history.
 
 ```python
-transition = "dead"
+import jax.numpy as jnp
+
+from lcm import AgeGrid, AgeRange, ByAge, LinSpacedGrid, Model, Regime, categorical
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+
+
+@categorical(ordered=False)
+class RegimeId:
+    working: ScalarInt
+    retired: ScalarInt
+    dead: ScalarInt
+
+
+def utility(consumption: ContinuousAction) -> FloatND:
+    return jnp.log(consumption)
+
+
+def bequest(wealth: ContinuousState) -> FloatND:
+    return jnp.log(wealth)
+
+
+def next_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+) -> ContinuousState:
+    return (1 + interest_rate) * (wealth - consumption)
+
+
+def budget(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+    return consumption <= wealth
+
+
+wealth_grid = LinSpacedGrid(start=1, stop=100, n_points=20)
+consumption_grid = LinSpacedGrid(start=0.5, stop=100, n_points=40)
+
+working = Regime(
+    regime_transitions=ByAge.until(
+        stop_age_exclusive=63, law="working", then="retired"
+    ),
+    states={"wealth": wealth_grid},
+    state_transitions={"wealth": next_wealth},
+    actions={"consumption": consumption_grid},
+    constraints={"budget": budget},
+    functions={"utility": utility},
+)
+retired = Regime(
+    regime_transitions="dead",
+    states={"wealth": wealth_grid},
+    state_transitions={"wealth": next_wealth},
+    actions={"consumption": consumption_grid},
+    constraints={"budget": budget},
+    functions={"utility": utility},
+)
+dead = Regime(
+    regime_transitions=None,
+    states={"wealth": wealth_grid},
+    functions={"utility": bequest},
+)
+
+model = Model(
+    regimes={"working": working, "retired": retired, "dead": dead},
+    ages=AgeGrid(start=60, stop=65, step="Y"),
+    regime_id_class=RegimeId,
+    initial_regimes={60: "working"},
+)
+model.initial_nodes  # frozenset({(60, "working")})
 ```
 
-This is a **nonterminal** law: take the current decision, evolve the states, then enter
-the dead regime at the next age. Replacing it with `None` removes continuation and
-changes the model. There is no new terminal flag or terminal schedule. Do not put `None`
-inside any transition wrapper, including a schedule's default or exit.
+`model.initial_nodes` is the normalized, immutable set of roots. It carries no
+probabilities or population counts. A caller who only solves still declares the problems
+it wants values for and simply never calls `simulate`.
 
-Deleting an old terminal activity restriction may add terminal values at earlier ages.
-It does not add transitions from living regimes to them. Review that output key change
-explicitly; terminal primitives must be defined where evaluated. A one-period model
-consisting only of terminal problems is a valid special case.
-
-## A stage exit without a second switch parameter
+Declare roots for the problems a history is intended to start in, not for every
+intermediate value. Continuations and value references are followed automatically. A
+model whose intended starts span several ages says so — a **late root** is an ordinary
+rule:
 
 ```python
-from lcm import ByAge
+late_model = Model(
+    regimes={"working": working, "retired": retired, "dead": dead},
+    ages=AgeGrid(start=60, stop=65, step="Y"),
+    regime_id_class=RegimeId,
+    initial_regimes={
+        60: "working",
+        AgeRange(start=63, stop=65): "retired",
+    },
+)
+# initial_nodes: (60, "working"), (63, "retired"), (64, "retired")
+```
 
-transition = ByAge.until(
-    stop_age_exclusive=62,
-    law=work_transition,
-    then="early_retirement",
+## Mapping broadcast grammar
+
+`initial_regimes` is a mapping from an age selector to a regime selection:
+
+- **age selector** — an exact grid age, a tuple of exact ages, a Python `range`, or an
+  `AgeRange(start=..., stop=...)`;
+- **regime selection** — one regime name, or a nonempty sequence of names. A string
+  names one regime; it is never iterated as characters.
+
+Each rule contributes the Cartesian product of its selected grid ages and names; rules
+are unioned, and duplicate pairs are harmless. A tuple of ages is a set of exact
+coordinates, not an interval. `AgeRange` is half-open and selects existing grid points.
+`range` selects its integer coordinates, not fractional ages between them.
+
+Model construction rejects an empty mapping, an empty selection, an unknown regime name,
+a malformed selector, and an explicit age that is not on the grid (it is never rounded
+onto the clock). A root must also be a valid problem: a nonterminal root at the last
+grid age, or a root at an age where its regime has no law, raises.
+
+## Laws select behavior; demand selects what is solved
+
+A plain nonterminal law supplies the same law whenever its regime is queried at any age.
+`ByAge` supplies the law its case selects at an age, or none. Neither creates a solved
+node by being present.
+
+The solved nodes are derived from **demand**: starting from each root at its own age,
+the engine follows every declared physical successor and every declared value read, and
+solves exactly the age–regime problems they require. A regime whose law exists at an age
+but that nothing demands there is not solved there. Changing the roots can therefore
+change the set of solved problems; it never changes the value of a problem that stays in
+the set.
+
+`ByAge(cases={}, default=law)` is an explicit fallback **law**, filling every unmatched
+grid age including the last. It is not a default set of roots. A law at the last age is
+only checked for validity if a nonterminal problem is actually required there.
+
+## Keyword-only age selectors and exact boundaries
+
+All declaration constructors take keyword arguments only:
+`ByAge(cases=..., default=...)`, `AgeRange(start=..., stop=...)`,
+`Choose(func=..., targets=...)`, `MarkovTransition(func=..., targets=...)`, and
+
+```python
+# signature of the classmethod ByAge.until
+def until(
+    *,
+    stop_age_exclusive: UserAge | float,
+    law: object,
+    then: object,
+    start_age_inclusive: UserAge | float | None = None,
+) -> ByAge: ...
+```
+
+Both bounds refer to **source ages**. The helper supplies laws for source grid ages in
+`[start_age_inclusive, stop_age_exclusive)`. It selects `law` at the earlier of those
+sources and **`then` at the last source grid point below `stop_age_exclusive`**, so the
+exit lands at `stop_age_exclusive`, the next grid age. It supplies no law at the stop
+age itself or outside the interval.
+
+```python
+# fragment
+regime_transitions = ByAge.until(
     start_age_inclusive=25,
+    stop_age_exclusive=62,
+    law=work_law,
+    then="early_retirement",
 )
 ```
 
-Here 62 is the **destination age of the exit**. The work regime covers sources from 25
-up to, but not including, 62. Its ordinary law applies before the last of those sources;
-the exit applies at the grid predecessor of 62. On an annual grid that is age 61, on a
-quarterly grid 61.75. It declares no work problem at 62. The early-retirement regime
-must have coverage there.
+This does **not** run `work_law` at every source age below 62: the last source uses
+`then`.
 
-No `AGE - 1` arithmetic or new age-type API is needed. Resolution uses the existing
-`AgeGrid.exact_values`. Boundary and start must be grid points. Changing time units
-still requires appropriate economic recalibration; the schedule does not annualize or
-rescale probabilities and flows for you.
+| Clock near the boundary                         | Last source using `law` | Source using `then` | Destination age of that exit | Source law at 62 from this helper |
+| ----------------------------------------------- | ----------------------: | ------------------: | ---------------------------: | --------------------------------- |
+| Annual                                          |                      60 |                  61 |                           62 | Absent                            |
+| Quarterly                                       |                    61.5 |               61.75 |                           62 | Absent                            |
+| Irregular, with final local points 60, 61.5, 62 |                      60 |                61.5 |                           62 | Absent                            |
+
+The stop, and an explicit start, must be exact grid ages with the start before the stop.
+An omitted `start_age_inclusive` selects the first clock age; that is a law convenience,
+not a root. `then` is a complete nonterminal law and may name a terminal destination,
+but it is never `None`. No `age - 1` arithmetic is involved: resolution uses exact grid
+positions. A changed time grid still needs its probabilities, payoffs and discounting
+recalibrated; selector resolution does not do that.
 
 For a general partition:
 
 ```python
-from lcm import AgeRange, ByAge
-
-transition = ByAge(
+# fragment
+regime_transitions = ByAge(
     cases={
         AgeRange(start=25, stop=60): before_60,
         AgeRange(start=60, stop=65): from_60_to_65,
-    }
+    },
 )
 ```
 
-`AgeRange` is half-open and selects existing grid points. Scalars/tuples select exact
-coordinates; Python `range` literally selects integers, not fractional dates between
-birthdays. Case overlap, off-grid explicit points and empty cases raise. `default=law`
-fills remaining non-final source positions; no default leaves them undeclared. A plain
-nonterminal law similarly broadcasts to non-final positions. An explicit nonterminal law
-at the last age is an error, not automatic termination.
-
-A self-loop at the last non-final source still needs an explicit exit: otherwise it
-would target a living problem with no final-age law. Numeric survival zero is not a
-declaration that this structural edge is absent.
-
-Inspect a schedule without executing economic functions:
+`AgeRange.start` is inclusive and `AgeRange.stop` is exclusive; ordinary `AgeRange`
+bounds need not be grid points. Overlapping cases, off-grid explicit ages and empty
+cases raise. Inspect a schedule without executing economic functions:
 
 ```python
-selected = transition.resolve(ages).at(60)
+# fragment
+regime_transitions.resolve(ages=ages).at(age=60)
 ```
 
-## Keep ordinary transition forms
+The ordinary forms are: a regime name for a fixed move; `Choose(func=..., targets=...)`
+returning the global regime code; `MarkovTransition(func=..., targets=...)` returning
+the full registered probability vector, zero outside `targets`; and a per-target mapping
+of `MarkovTransition(func=...)` cells. Every selected law must carry unit probability
+mass; a runtime-zero probability is still a structural edge.
 
-A fixed target is a string. A state/action-dependent deterministic selector is:
+## Terminality
+
+A regime is terminal exactly when `regime_transitions is None`:
 
 ```python
-from lcm import Choose
-
-transition = Choose(func=choose_regime, targets=("working", "retired"))
+# fragment
+dead = Regime(regime_transitions=None, functions={"utility": bequest})
 ```
 
-The function returns the existing global regime code, not an index into `targets`. It
-keeps the deterministic execution path and adds no categorical draw.
-
-A full probability vector retains its current output layout:
+A terminal template is available at every age but evaluated only where demanded. A
+string transition into it, `regime_transitions="dead"`, is **nonterminal**: the source
+decides, evolves its states, and enters `dead` at the next age. `None` is not allowed
+inside `ByAge`, its `default` or `then`, or a `Phased` transition. A required
+nonterminal problem at the last grid age is an error even if its survival probability
+would be zero. A terminal root is valid, including a one-period model made only of
+terminal roots:
 
 ```python
-from lcm import MarkovTransition
-
-transition = MarkovTransition(
-    func=regime_probabilities,
-    targets=("working", "retired", "dead"),
+terminal_roots = Model(
+    regimes={"working": working, "retired": retired, "dead": dead},
+    ages=AgeGrid(start=60, stop=65, step="Y"),
+    regime_id_class=RegimeId,
+    initial_regimes={AgeRange(start=60, stop=66): "dead"},
 )
 ```
 
-The vector still has one cell per model regime in existing ID order. All cells outside
-declared support must be exactly zero. Targets remain structural possibilities even when
-their current probability is zero.
+## Physical versus value-only dependencies
 
-Per-target functions keep their current wrappers:
+Demand has two roles:
+
+- **physical** — a history can be in that problem: roots and the realized successors of
+  physically reached problems;
+- **value-only** — some required program reads that problem's value: perceived
+  continuations, attempted targets and gate references of a `ValueDependentTransition`,
+  and same-period outside options.
+
+A value-only problem is solved together with its own continuation and references, but
+its simulation-only successors are not followed, and it does not become a root. A
+declared local outside option is the typical case:
 
 ```python
-transition = {
-    "working": MarkovTransition(func=p_work),
-    "retired": MarkovTransition(func=p_retire),
-    "dead": MarkovTransition(func=p_die),
+# fragment
+constraints = {
+    "participation_f": ValueDependentConstraint(
+        predicate=participation_f,
+        references={
+            "V_single_f_ref": ProjectedRegimeValue(
+                regime="single_f",
+                projection={"wage": identity_wage},
+            )
+        },
+    ),
 }
 ```
 
-Mapping keys declare support; each function returns one probability. Keep these
-wrappers, including for a constant probability. This migration does not add literal
-numeric cells or bare probability callables to the ordinary mapping form. A one-target
-Markov mapping remains stochastic; use a string to declare a fixed deterministic route.
-Existing `ValueDependentTransition` cells retain their probability convenience, gates,
-references and stakeholder routes.
+With the couple as the only root, `single_f` is solved at every age where the couple's
+constraint reads it, although no history starts there. Do not add it to
+`initial_regimes` to make the value appear; roots never stand in for prerequisites the
+engine infers. See [Collective regimes](../examples/collective_regimes.md) for the full
+model.
 
-Every selected law must be complete, with unit probability mass. Regime-selection checks
-are not disabled by log verbosity. Two targets sharing a function are not necessarily
-invalid (both may be 0.5); actual rows are checked, not callable identity. State/joint
-transitions retain their existing validation as well.
+## Empirical admission
 
-## Optional entry permissions, ordinary solution access
+A simulated row is admitted only if its starting age–regime pair is in
+`model.initial_nodes`. Solving a value at a pair does not authorize starts there: a
+model whose only roots are living regimes rejects initial conditions in `dead` at every
+age, including ages where `dead` is solved as a continuation. The roots are
+admissibility, not weights; the population recipe owns the distribution and any
+age/regime correlation. An explicit counterfactual root also authorizes simulation to
+start there.
 
-Most calls need no extra entry declaration:
+## Parameters and identity
 
-```python
-model = Model(ages=ages, regimes=regimes, regime_id_class=RegimeId)
-```
-
-The following are optional arguments to that constructor:
-
-```python
-initial_regimes = {25: ("single", "couple")}  # only those two pairs
-initial_regimes = "single"  # all covered ages of single
-initial_regimes = {}  # no external entries; solve unchanged
-```
-
-A bare name/sequence selects the named regimes' covered nodes. Explicit mapping rules
-form Cartesian pairs and union across rules; each pair must be covered. Entry overlap is
-harmless set union, unlike ambiguous overlapping law cases. Each real simulation row is
-checked pairwise before padding and user-law calls. State, role, categorical, shape and
-feasibility checks still apply independently.
-
-Use two immutable membership views:
-
-```python
-model.reachability.nodes  # every declared (age, regime) problem
-model.initial_nodes  # admissible external entry pairs
-```
-
-Keep existing phase reachability queries and period-indexed solution access:
-
-```python
-model.reachability.solution.targets(period=0, source="working")
-solution[period][regime_name]
-```
-
-These target queries retain their existing direct/attempted-target meaning; gate-closed
-landings are routes, not extra cells in the selection lottery. A missing solution cell
-raises using existing error behavior. There is no second graph API, new result wrapper
-or required cached history set.
-
-An entry restriction never deletes a counterfactual value. A population recipe still
-owns the distribution and any age/regime correlation; permissions are not weights and
-must not renormalize the recipe. The shared drawer checks `initial_nodes` instead of
-calling `.active`. Model-dependent draw grids can be constructed later.
-
-## Preserve phases and value dependencies
-
-Keep `Phased`'s existing economic meaning and put it inside age cases:
-
-```python
-from lcm import Phased
-
-transition = ByAge.until(
-    stop_age_exclusive=100,
-    law=Phased(solve=perceived_mortality, simulate=realized_mortality),
-    then="dead",
-    start_age_inclusive=66,
-)
-```
-
-Existing form/support/gate compatibility rules remain; both sides declare the same
-direct support. Do not wrap separate schedules inside the two sides of `Phased`. Carried
-states, current utility and continuation beliefs are not reinterpreted.
-
-A local same-period outside-option read orders local problems. A gate on a transition is
-instead a requirement of that **source edge**, evaluated at the next-age landing point.
-If a schedule removes the gate at an age, its edge fold and references are not needed
-there. Reciprocal marriage/divorce edges must not become a false local same-period
-cycle.
-
-## Parameters, solvers and reuse
-
-Schedules add no parameter-tree case level. Requirements are unioned over all selected
-cases/phases at existing paths. Reusing a path shares a parameter; incompatible
-schemas/namespace roles raise. Use distinct names or existing period-indexed arrays for
-different values. Late-only arguments and states survive pruning. State-law keys alone
-never declare regime edges.
-
-A schedule normalizes before ordinary solver validation. Wrapping an unchanged supported
-law does not itself make a solver unsupported. Genuine unsupported variation raises
-explicitly; it must not silently narrow actions or swap solvers. GridSearch is the first
-acceptance target for this migration.
-
-Reuse identical numerical functions across cases. Different destination grids may still
-need different continuation programs. Measure model build, backend compile and warm
-runtime; neither fewer Python lines nor more visible node metadata proves a speedup. See
-[the migration guide](migrating_dated_regimes.md).
+Roots add no parameter level and do not affect parameter paths, regime IDs, the full
+regime-vector axis, period indexing or period-keyed solution access
+(`solution[period][regime_name]`). Schedules add no case level to the parameter tree:
+requirements are unioned over all selected cases and phases at existing paths, and
+incompatible uses of one path raise. `Model.reachability` reports the derived problems;
+reading a problem outside the derived set raises rather than returning a filled value.
+See [the migration guide](migrating_dated_regimes.md).
