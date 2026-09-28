@@ -598,6 +598,7 @@ class Regime:
         UserFunction
         | MarkovTransition
         | Phased
+        | ByAge
         | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
         | None
     ):
@@ -1070,6 +1071,7 @@ def decompose_transition(
     UserFunction
     | MarkovTransition
     | Phased
+    | ByAge
     | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
     | None
 ):
@@ -1099,6 +1101,7 @@ def _decomposed_transition_side(
     UserFunction
     | MarkovTransition
     | Phased
+    | ByAge
     | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
     | None
 ):
@@ -1106,8 +1109,8 @@ def _decomposed_transition_side(
 
     Args:
         transition: One phase's regime transition — a per-target mapping, a
-            coarse callable or `MarkovTransition`, or `None` for a terminal
-            regime.
+            coarse callable or `MarkovTransition`, an age schedule, or `None`
+            for a terminal regime.
 
     Returns:
         The same transition with every `ValueDependentTransition` cell replaced
@@ -1117,7 +1120,7 @@ def _decomposed_transition_side(
     """
     if not isinstance(transition, Mapping):
         return cast(
-            "UserFunction | MarkovTransition | Phased | None",
+            "UserFunction | MarkovTransition | Phased | ByAge | None",
             transition,
         )
     if not any(

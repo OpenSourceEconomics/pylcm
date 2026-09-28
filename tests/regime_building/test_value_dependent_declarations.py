@@ -9,16 +9,19 @@ written this way solves to the numbers the same model written the long way
 solves to.
 """
 
+import inspect
 from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from beartype.door import is_bearable
 
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     Model,
@@ -32,6 +35,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.regime import _decomposed_transition_side
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -639,3 +643,13 @@ def test_a_derived_slot_cannot_be_replaced(slot):
 
     with pytest.raises(RegimeInitializationError, match=slot):
         regime.replace(**{slot: None})
+
+
+def test_decomposed_transition_of_an_age_schedule_satisfies_its_annotation():
+    """A dated schedule passes through decomposition as a declared return type."""
+    schedule = ByAge.until(
+        2, law=Choose(lambda: 0, targets=("a",)), then=Choose(lambda: 1, targets=("b",))
+    )
+    hint = inspect.get_annotations(_decomposed_transition_side)["return"]
+
+    assert is_bearable(_decomposed_transition_side(schedule), hint)

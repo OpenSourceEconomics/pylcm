@@ -21,8 +21,9 @@ def _get_func_indexing_params(
     class with a `__call__`, such as a built-in Koopmans aggregator — is
     inspected through that `__call__`, where its body lives.
 
-    A law lowered from an age schedule carries the laws it wraps; those are
-    inspected instead, and each law reading the array must index it alike.
+    A law lowered from an age schedule carries the laws it wraps, also when
+    it is itself wrapped (a `MarkovTransition`); those laws are inspected
+    instead, and each law reading the array must index it alike.
 
     Args:
         func: The function to inspect.
@@ -37,7 +38,7 @@ def _get_func_indexing_params(
         ValueError: If computed indices are used instead of bare names.
 
     """
-    sources = getattr(func, "__lcm_sources__", None)
+    sources = getattr(inspect.unwrap(func), "__lcm_sources__", None)
     if sources is not None:
         return _indexing_params_of_sources(
             sources=sources, array_param_name=array_param_name
