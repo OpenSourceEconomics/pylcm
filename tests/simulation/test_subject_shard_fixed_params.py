@@ -85,6 +85,7 @@ _SCRIPT = textwrap.dedent(
         "discount_factor": supplied["discount_factor"],
         "working_life": {
             "utility": supplied["working_life"]["utility"],
+            "next_regime": {"final_age_alive": final_age_alive},
         },
     }
     ids = tuple(device.id for device in jax.devices()[:n_devices])
