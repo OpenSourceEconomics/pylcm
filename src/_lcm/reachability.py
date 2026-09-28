@@ -151,6 +151,8 @@ class ModelReachability:
 
     solution: PhaseReachability
     simulation: PhaseReachability
+    nodes: frozenset[tuple[object, RegimeName]] = frozenset()
+    """Exact `(age, regime)` pairs of every declared problem."""
 
     def for_phase(self, phase: PhaseName) -> PhaseReachability:
         """Select one phase without reconstructing anything."""

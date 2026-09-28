@@ -23,7 +23,7 @@ shared across cases are reused unchanged, so no per-age closure is created.
 
 import dataclasses
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -33,9 +33,15 @@ import jax.numpy as jnp
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
 from lcm.collective import ValueDependentTransition
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import ByAge, Choose, MarkovTransition
+from lcm.transition import (
+    ByAge,
+    Choose,
+    MarkovTransition,
+    _freeze_selector,
+    _select_periods,
+)
 
 type PhaseKey = str
 _PHASES: tuple[PhaseKey, PhaseKey] = ("solution", "simulation")
@@ -172,6 +178,98 @@ def resolve_regime_schedules(
         ),
         transitions=MappingProxyType(transitions),
     )
+
+
+def coverage_nodes(
+    *,
+    coverage_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    ages: AgeGrid,
+) -> frozenset[tuple[object, RegimeName]]:
+    """The exact `(age, regime)` pair of every covered problem."""
+    return frozenset(
+        (ages.exact_values[period], name)
+        for name, periods in coverage_by_regime.items()
+        for period in periods
+    )
+
+
+def resolve_initial_nodes(
+    *,
+    initial_regimes: object,
+    coverage_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    ages: AgeGrid,
+) -> frozenset[tuple[object, RegimeName]]:
+    """Normalize `Model(initial_regimes=...)` to exact permitted entry pairs.
+
+    - `None` ⇒ every covered pair;
+    - a regime name or sequence of names ⇒ every covered age of those regimes;
+    - a mapping from age selector to names ⇒ the Cartesian pairs of each rule,
+      united across rules; every pair must be covered.
+    """
+    covered = coverage_nodes(coverage_by_regime=coverage_by_regime, ages=ages)
+    if initial_regimes is None:
+        return covered
+    if not isinstance(initial_regimes, Mapping):
+        names = _entry_names(initial_regimes)
+        _fail_if_unknown_entry_regimes(
+            names=names, coverage_by_regime=coverage_by_regime
+        )
+        return frozenset(pair for pair in covered if pair[1] in names)
+    period_by_age: dict[object, int] = {
+        age: period for period, age in enumerate(ages.exact_values)
+    }
+    permitted: set[tuple[object, RegimeName]] = set()
+    for selector, value in initial_regimes.items():
+        names = _entry_names(value)
+        _fail_if_unknown_entry_regimes(
+            names=names, coverage_by_regime=coverage_by_regime
+        )
+        try:
+            periods = _select_periods(
+                selector=_freeze_selector(selector),
+                ages=ages,
+                period_by_age=period_by_age,
+            )
+        except RegimeInitializationError as error:
+            raise ModelInitializationError(str(error)) from error
+        if not periods:
+            raise ModelInitializationError(
+                f"The `initial_regimes` selector {selector!r} selects no age of "
+                "the model."
+            )
+        pairs = {
+            (ages.exact_values[period], name) for period in periods for name in names
+        }
+        uncovered = sorted(pairs - covered, key=repr)
+        if uncovered:
+            raise ModelInitializationError(
+                f"`initial_regimes` permits entry at {uncovered}, where no problem "
+                "is declared. Entry is only possible where a regime is solved."
+            )
+        permitted |= pairs
+    return frozenset(permitted)
+
+
+def _entry_names(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, Sequence) and all(isinstance(name, str) for name in value):
+        return tuple(value)
+    raise ModelInitializationError(
+        "`initial_regimes` names regimes by a name or a sequence of names; got "
+        f"{value!r}."
+    )
+
+
+def _fail_if_unknown_entry_regimes(
+    *, names: tuple[str, ...], coverage_by_regime: Mapping[RegimeName, object]
+) -> None:
+    unknown = sorted(set(names) - set(coverage_by_regime))
+    if unknown:
+        raise ModelInitializationError(
+            f"`initial_regimes` names unknown regime(s) {unknown}; regimes are "
+            f"{sorted(coverage_by_regime)}."
+        )
 
 
 # keyword-only-exempt: primary-argument=func

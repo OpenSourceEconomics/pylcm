@@ -18,7 +18,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
 from lcm.regime import Regime
 from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
 
@@ -196,3 +196,112 @@ def test_choose_routes_to_the_returned_regime_code() -> None:
     )
     targets = model.reachability.solution.targets_by_period[3]
     assert targets["working"] == ("dead", "retirement")
+
+
+def _model_with_entries(initial_regimes: Any) -> Model:
+    return Model(
+        regimes={
+            "working": _regime(
+                transition=ByAge.until(
+                    65,
+                    law={
+                        "working": MarkovTransition(_stay),
+                        "dead": MarkovTransition(_die),
+                    },
+                    then="retirement",
+                )
+            ),
+            "retirement": _regime(
+                transition=ByAge({AgeRange(start=65, stop=75): "dead"})
+            ),
+            "dead": DEAD,
+        },
+        ages=AGES,
+        regime_id_class=RegimeId,
+        initial_regimes=initial_regimes,
+    )
+
+
+def test_reachability_nodes_are_the_exact_covered_age_regime_pairs() -> None:
+    """Every declared problem appears once, keyed by its exact grid age."""
+    expected = frozenset(
+        {(age, "working") for age in (25, 35, 45, 55)}
+        | {(65, "retirement")}
+        | {(age, "dead") for age in (25, 35, 45, 55, 65, 75)}
+    )
+    assert _dated_model().reachability.nodes == expected
+
+
+@pytest.mark.parametrize(
+    ("initial_regimes", "expected"),
+    [
+        ({}, frozenset()),
+        ("retirement", frozenset({(65, "retirement")})),
+        (
+            {25: "working", AgeRange(start=65, stop=75): ("retirement", "dead")},
+            frozenset({(25, "working"), (65, "retirement"), (65, "dead")}),
+        ),
+        (
+            {25: "working", (25, 35): "working"},
+            frozenset({(25, "working"), (35, "working")}),
+        ),
+    ],
+    ids=["empty", "bare-name", "rules", "overlapping-rules-union"],
+)
+def test_initial_nodes_are_the_permitted_covered_pairs(
+    *, initial_regimes: Any, expected: frozenset
+) -> None:
+    """Entry rules select exact covered pairs and union across rules."""
+    assert _model_with_entries(initial_regimes).initial_nodes == expected
+
+
+def test_initial_nodes_default_to_every_covered_pair() -> None:
+    """Without `initial_regimes`, every declared problem admits external entry."""
+    model = _dated_model()
+    assert model.initial_nodes == model.reachability.nodes
+
+
+@pytest.mark.parametrize(
+    "initial_regimes",
+    [{25: "retirement"}, "unknown", {61: "working"}, {AgeRange(start=80): "dead"}],
+    ids=["uncovered-pair", "unknown-regime", "off-grid-age", "empty-selector"],
+)
+def test_initial_regimes_rejects_pairs_that_are_not_declared_problems(
+    initial_regimes: Any,
+) -> None:
+    """Entry rules name covered pairs; nothing is filtered away."""
+    with pytest.raises(ModelInitializationError):
+        _model_with_entries(initial_regimes)
+
+
+def test_simulation_input_outside_the_entry_permissions_raises() -> None:
+    """A covered pair that is not a permitted entry is rejected before evaluation."""
+    model = _model_with_entries({25: "working"})
+    with pytest.raises(InvalidInitialConditionsError, match="retirement"):
+        model.validate_initial_conditions(
+            initial_conditions={
+                "regime_id": jnp.array([RegimeId.working, RegimeId.retirement]),
+                "age": jnp.array([25.0, 65.0]),
+                "health": jnp.array([Health.good, Health.good]),
+                "wealth": jnp.array([10.0, 10.0]),
+            },
+            params={"discount_factor": 0.95},
+        )
+
+
+def test_entry_permissions_leave_solved_values_unchanged() -> None:
+    """Permissions are entry metadata, not a change to the economic problem."""
+    params = {"discount_factor": 0.95}
+    narrow = _model_with_entries({}).solve(params=params, log_level="off").values
+    wide = _dated_model().solve(params=params, log_level="off").values
+    for period, by_regime in wide.items():
+        for regime, values in by_regime.items():
+            np.testing.assert_array_equal(narrow[period][regime], values)
+
+
+def test_entry_permissions_leave_the_model_identity_unchanged() -> None:
+    """Solutions stay compatible across models differing only in permissions."""
+    assert (
+        _model_with_entries({})._model_structure_fingerprint
+        == _dated_model()._model_structure_fingerprint
+    )

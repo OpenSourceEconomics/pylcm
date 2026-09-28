@@ -6,7 +6,7 @@ import operator
 import threading
 import uuid
 from collections import OrderedDict
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, cast, runtime_checkable
@@ -79,7 +79,11 @@ from _lcm.regime_building.processing import (
     Regime,
     prepare_model_structure,
 )
-from _lcm.regime_building.schedules import resolve_regime_schedules
+from _lcm.regime_building.schedules import (
+    coverage_nodes,
+    resolve_initial_nodes,
+    resolve_regime_schedules,
+)
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
@@ -182,6 +186,7 @@ from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
     ExecutionPlanningError,
+    InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     ModelInitializationError,
@@ -515,6 +520,10 @@ class Model:
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+        initial_regimes: str
+        | Sequence[str]
+        | Mapping[object, str | Sequence[str]]
+        | None = None,
     ) -> None:
         """Initialize the Model.
 
@@ -528,6 +537,13 @@ class Model:
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
+            initial_regimes: Where subjects may enter a simulation, as exact
+                `(age, regime)` pairs published in `self.initial_nodes`. `None`
+                permits every declared problem; a regime name or sequence of
+                names permits their covered ages; a mapping from age selector
+                (as in `ByAge`) to names permits those pairs, united across
+                rules. Every permitted pair must be a declared problem. Entry
+                permissions never change the solved problem.
             fixed_params: Parameters that can be fixed at model initialization.
             derived_categoricals: Categorical grids for DAG function outputs
                 not in states/actions. Broadcast to all regimes (merged with
@@ -703,7 +719,17 @@ class Model:
             active_periods_by_regime=active_periods_by_regime,
             support_by_phase=schedules.support_by_phase if schedules.dated else None,
         )
-        self.reachability = prepared_structure.reachability
+        self.reachability = dataclasses.replace(
+            prepared_structure.reachability,
+            nodes=coverage_nodes(
+                coverage_by_regime=active_periods_by_regime, ages=self.ages
+            ),
+        )
+        self.initial_nodes = resolve_initial_nodes(
+            initial_regimes=initial_regimes,
+            coverage_by_regime=active_periods_by_regime,
+            ages=self.ages,
+        )
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
             user_regimes=self.user_regimes,
@@ -2571,6 +2597,9 @@ class Model:
                     regimes=self._regimes,
                     array_writer=entry_allocations,
                 )
+                self._fail_if_entry_is_not_permitted(
+                    initial_conditions=initial_conditions
+                )
                 if entry_allocations is not None:
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
                 # Validate canonical device-aligned inputs before automatic
@@ -2893,7 +2922,48 @@ class Model:
         canonical = canonicalize_initial_conditions(
             initial_conditions=initial_conditions, regimes=self._regimes
         )
+        self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         return canonical, flat_params
+
+    def _fail_if_entry_is_not_permitted(
+        self, *, initial_conditions: InitialConditions
+    ) -> None:
+        """Reject subjects starting at a covered pair outside `initial_nodes`.
+
+        Pairs with an unknown regime code or an off-grid age are left to the
+        simulation input validator, which reports them in its own terms.
+        """
+        if self.initial_nodes == self.reachability.nodes:
+            return
+        ids_to_names = {
+            int(code): name for name, code in self.regime_names_to_ids.items()
+        }
+        age_by_float = {float(age): age for age in self.ages.exact_values}
+        pairs = {
+            (age_by_float[age], ids_to_names[code])
+            for code, age in zip(
+                np.asarray(initial_conditions["regime_id"]).tolist(),
+                np.asarray(initial_conditions["age"], dtype=np.float64).tolist(),
+                strict=True,
+            )
+            if code in ids_to_names and age in age_by_float
+        }
+        refused = sorted(
+            (
+                pair
+                for pair in pairs - self.initial_nodes
+                if pair in self.reachability.nodes
+            ),
+            key=repr,
+        )
+        if refused:
+            details = "\n".join(
+                f"  regime '{name}' at age {age}" for age, name in refused
+            )
+            raise InvalidInitialConditionsError(
+                "Subjects start where `initial_regimes` does not permit entry:\n"
+                f"{details}"
+            )
 
     def _resolve_compile_batch_size(
         self,
