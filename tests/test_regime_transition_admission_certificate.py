@@ -218,8 +218,8 @@ def test_regime_transition_admission_contract_is_complete() -> None:
         ),
         (
             "validate_regime_transitions_all_periods",
-            "                    process_grid_resolver=process_grid_resolver,\n                    memory=memory,",
-            "                    process_grid_resolver=process_grid_resolver,\n                    memory=None,",
+            "                        process_grid_resolver=process_grid_resolver,\n                        memory=memory,",
+            "                        process_grid_resolver=process_grid_resolver,\n                        memory=None,",
             "period sweep must forward memory to each regime law",
         ),
         (
