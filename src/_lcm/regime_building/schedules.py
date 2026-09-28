@@ -29,7 +29,7 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, no_type_check
 
 import jax.numpy as jnp
 
@@ -525,7 +525,7 @@ def _with_signature(
         for name, parameter in inspect.signature(source).parameters.items():
             if parameter.annotation is not inspect.Parameter.empty:
                 annotations.setdefault(name, parameter.annotation)
-    func.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
+    signature = inspect.Signature(
         [
             inspect.Parameter(
                 name,
@@ -535,54 +535,110 @@ def _with_signature(
             for name in names
         ]
     )
-    func.__annotations__ = {
-        name: annotations[name] for name in names if name in annotations
-    }
-    func.__lcm_sources__ = sources  # ty: ignore[unresolved-attribute]
+    # The laws are frozen callable instances, so the attributes go through
+    # `object.__setattr__`.
+    object.__setattr__(func, "__signature__", signature)
+    object.__setattr__(
+        func,
+        "__annotations__",
+        {name: annotations[name] for name in names if name in annotations},
+    )
+    object.__setattr__(func, "__lcm_sources__", sources)
+    if not hasattr(func, "__name__"):
+        name = type(func).__name__.lstrip("_").lower()
+        object.__setattr__(func, "__name__", name)
+        object.__setattr__(func, "__qualname__", name)
     return func
+
+
+# The lowered laws below are frozen callable instances rather than nested
+# functions: the beartype claw memoizes every function it decorates for the rest
+# of the process, so a function defined per model build would pin that model's
+# laws, and everything they close over, after the model is dropped.
 
 
 def _constant(value: float) -> Callable[..., Any]:
     """A law that returns one fixed value and reads nothing."""
-
-    def constant() -> Any:  # noqa: ANN401
-        return jnp.asarray(value)
-
-    return constant
+    return _Constant(value=value)
 
 
 def _one_hot(vector: tuple[float, ...]) -> Callable[..., Any]:
     """A constant probability vector."""
+    return _Constant(value=vector)
 
-    def one_hot() -> Any:  # noqa: ANN401
-        return jnp.asarray(vector)
 
-    return one_hot
+@dataclass(frozen=True, eq=False)
+class _Constant:
+    """Return `value` as an array; read nothing."""
+
+    value: float | tuple[float, ...]
+    """The fixed value or probability vector."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "__signature__", inspect.Signature())
+        object.__setattr__(self, "__annotations__", {})
+        object.__setattr__(self, "__name__", "constant")
+
+    @no_type_check
+    def __call__(self) -> Any:  # noqa: ANN401
+        return jnp.asarray(self.value)
 
 
 def _indicator(
     *, selector: Callable[..., Any], code: int, names: tuple[str, ...]
 ) -> Callable[..., Any]:
     """Probability one where a deterministic selector returns `code`."""
+    return _with_signature(
+        _Indicator(selector=selector, code=code, names=names),
+        names=names,
+        sources=(selector,),
+    )
 
-    def indicator(**kwargs: Any) -> Any:  # noqa: ANN401
-        selected = selector(**{name: kwargs[name] for name in names})
-        return jnp.asarray(selected == code, dtype=float)
 
-    return _with_signature(indicator, names=names, sources=(selector,))
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _Indicator:
+    """Probability one where `selector` returns `code`, zero elsewhere."""
+
+    selector: Callable[..., Any]
+    """The deterministic regime selector."""
+    code: int
+    """The regime code whose selection has probability one."""
+    names: tuple[str, ...]
+    """The arguments `selector` reads."""
+
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        selected = self.selector(**{name: kwargs[name] for name in self.names})
+        return jnp.asarray(selected == self.code, dtype=float)
 
 
 def _period_masked(
     *, cell: Callable[..., Any], periods: tuple[int, ...], names: tuple[str, ...]
 ) -> Callable[..., Any]:
     """A probability cell that is exactly zero outside `periods`."""
+    return _with_signature(
+        _PeriodMasked(cell=cell, periods=periods, names=names),
+        names=_with_period(names),
+        sources=(cell,),
+    )
 
-    def period_masked(**kwargs: Any) -> Any:  # noqa: ANN401
-        value = cell(**{name: kwargs[name] for name in names})
-        selected = jnp.isin(kwargs["period"], jnp.asarray(periods))
+
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _PeriodMasked:
+    """`cell` at `periods`, exactly zero at every other period."""
+
+    cell: Callable[..., Any]
+    """The probability cell."""
+    periods: tuple[int, ...]
+    """The periods at which the cell applies."""
+    names: tuple[str, ...]
+    """The arguments `cell` reads."""
+
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        value = self.cell(**{name: kwargs[name] for name in self.names})
+        selected = jnp.isin(kwargs["period"], jnp.asarray(self.periods))
         return jnp.where(selected, value, jnp.zeros_like(value))
-
-    return _with_signature(period_masked, names=_with_period(names), sources=(cell,))
 
 
 def _period_dispatch(
@@ -592,20 +648,38 @@ def _period_dispatch(
     case_by_period: tuple[int, ...],
 ) -> Callable[..., Any]:
     """Evaluate the case callable selected for the current period."""
+    names = tuple(sorted({name for names in case_names for name in names}))
+    return _with_signature(
+        _PeriodDispatch(
+            cases=cases, case_names=case_names, case_by_period=case_by_period
+        ),
+        names=_with_period(names),
+        sources=cases,
+    )
 
-    def period_dispatch(**kwargs: Any) -> Any:  # noqa: ANN401
+
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _PeriodDispatch:
+    """Evaluate the case `case_by_period` selects for the current period."""
+
+    cases: tuple[Callable[..., Any], ...]
+    """The case callables."""
+    case_names: tuple[tuple[str, ...], ...]
+    """The arguments each case reads."""
+    case_by_period: tuple[int, ...]
+    """The position in `cases` selected at each period."""
+
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
         values = [
             jnp.asarray(case(**{name: kwargs[name] for name in names}))
-            for case, names in zip(cases, case_names, strict=True)
+            for case, names in zip(self.cases, self.case_names, strict=True)
         ]
-        index = jnp.asarray(case_by_period)[kwargs["period"]]
+        index = jnp.asarray(self.case_by_period)[kwargs["period"]]
         result = values[-1]
         for position in range(len(values) - 2, -1, -1):
             result = jnp.where(index == position, values[position], result)
         return result
-
-    names = tuple(sorted({name for names in case_names for name in names}))
-    return _with_signature(period_dispatch, names=_with_period(names), sources=cases)
 
 
 def _with_period(names: tuple[str, ...]) -> tuple[str, ...]:
@@ -850,16 +924,30 @@ def _masked(*, cell: Any, periods: tuple[int, ...]) -> Callable[..., Any]:  # no
 def _period_sum(parts: tuple[Callable[..., Any], ...]) -> Callable[..., Any]:
     """Sum of period-masked cells whose periods never overlap."""
     part_names = tuple(_argument_names(part) for part in parts)
+    names = tuple(sorted({name for names in part_names for name in names}))
+    return _with_signature(
+        _PeriodSum(parts=parts, part_names=part_names),
+        names=_with_period(names),
+        sources=parts,
+    )
 
-    def period_sum(**kwargs: Any) -> Any:  # noqa: ANN401
+
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _PeriodSum:
+    """Sum of `parts`, each called with the arguments it reads."""
+
+    parts: tuple[Callable[..., Any], ...]
+    """The period-masked cells."""
+    part_names: tuple[tuple[str, ...], ...]
+    """The arguments each part reads."""
+
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
         values = [
             part(**{name: kwargs[name] for name in names})
-            for part, names in zip(parts, part_names, strict=True)
+            for part, names in zip(self.parts, self.part_names, strict=True)
         ]
         return sum(values[1:], values[0])
-
-    names = tuple(sorted({name for names in part_names for name in names}))
-    return _with_signature(period_sum, names=_with_period(names), sources=parts)
 
 
 def _masked_cell(*, cell: object, periods: tuple[int, ...]) -> object:

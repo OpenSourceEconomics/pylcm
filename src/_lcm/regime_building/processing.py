@@ -18,7 +18,15 @@ from dataclasses import replace as dataclass_replace
 from itertools import product
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    cast,
+    no_type_check,
+    runtime_checkable,
+)
 
 import jax
 import numpy as np
@@ -221,7 +229,6 @@ from _lcm.typing import (
     EGMCarryProducer,
     FlatParams,
     FunctionName,
-    MappingLeaf,
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
@@ -229,7 +236,6 @@ from _lcm.typing import (
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
-    SequenceLeaf,
     StateName,
     StateOrActionName,
     TransitionFunction,
@@ -270,7 +276,7 @@ from lcm.solvers import (
     UniformObservedFixedCost,
 )
 from lcm.transition import JointTransition, MarkovTransition
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
+from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
     RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
@@ -7311,6 +7317,32 @@ def _wrap_regime_transition_probs(
     return wrapped
 
 
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _OneHotRegimeTransition:
+    """A deterministic regime selector's code as a one-hot probability vector.
+
+    A frozen callable instance rather than a nested function: the beartype claw
+    memoizes every function it decorates, so a function defined per model build
+    would pin that build's selector after the model is dropped.
+    """
+
+    func: TransitionFunction
+    """The deterministic selector, returning a regime code."""
+    n_regimes: int
+    """The number of regimes, the length of the one-hot vector."""
+
+    def __post_init__(self) -> None:
+        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
+            value = getattr(self.func, name, None)
+            if value is not None:
+                object.__setattr__(self, name, value)
+        object.__setattr__(self, "__wrapped__", self.func)
+
+    @no_type_check
+    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
+        return jax.nn.one_hot(self.func(*args, **kwargs), self.n_regimes)
+
+
 def _wrap_deterministic_regime_transition(
     *,
     func: TransitionFunction,
@@ -7330,19 +7362,12 @@ def _wrap_deterministic_regime_transition(
         A wrapped function that returns a one-hot probability array.
 
     """
-    n_regimes = len(regime_names_to_ids)
-
     # Preserve original annotations but update return type
     annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
 
-    @with_signature(args=annotations, return_annotation="FloatND")
-    @functools.wraps(func)
-    def wrapped(
-        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-    ) -> FloatND:
-        regime_idx = func(*args, **kwargs)
-        return jax.nn.one_hot(regime_idx, n_regimes)
+    wrapped = with_signature(args=annotations, return_annotation="FloatND")(
+        _OneHotRegimeTransition(func=func, n_regimes=len(regime_names_to_ids))
+    )
 
     # Pin `__annotations__` on the final wrapper: `concatenate_functions`
     # reads `__annotations__` (not `__signature__`) to reconcile the DAG, and
