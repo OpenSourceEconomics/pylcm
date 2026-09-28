@@ -493,7 +493,7 @@ def test_age_specialized_grid_on_never_solved_regime_is_rejected():
         build=lambda _age: LinSpacedGrid(start=0.5, stop=25.0, n_points=15),
         signature=lambda _age: 0,
     )
-    with pytest.raises(ModelInitializationError, match="covers no age"):
+    with pytest.raises(ModelInitializationError, match="no age of the model"):
         Model(
             regimes={
                 "alive": _alive_regime(

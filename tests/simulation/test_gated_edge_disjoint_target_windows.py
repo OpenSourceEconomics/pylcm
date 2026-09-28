@@ -110,15 +110,16 @@ def _decision_regime(*, regime_transitions: ByAge) -> Regime:
 
 def _build_model(*, enable_jit: bool) -> Model:
     wealth_grid = WEALTH_GRID
+    far_edge = _edge(probability=p_far, fallback_regime="far_fallback")
     source = _decision_regime(
         regime_transitions=ByAge(
             cases={
                 AgeRange(stop=1): {
                     "near": _edge(probability=p_near, fallback_regime="source"),
-                    "far": _edge(probability=p_far, fallback_regime="far_fallback"),
+                    "far": far_edge,
                 },
                 AgeRange(start=1, stop=2): {
-                    "far": _edge(probability=p_far, fallback_regime="far_fallback"),
+                    "far": far_edge,
                 },
             }
         ),

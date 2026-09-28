@@ -250,10 +250,16 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
 
     def _prob_vector(*, age: float, hazard: float) -> FloatND:
         dead = jnp.clip(hazard * age, 0.0, 1.0)
-        return jnp.stack([jnp.zeros_like(dead), 1.0 - dead, dead])
+        return jnp.stack([1.0 - dead, dead])
 
     work = _work_regime(
-        regime_transitions=MarkovTransition(func=_prob_vector),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=2): MarkovTransition(
+                    func=_prob_vector, targets=("retired", "dead")
+                )
+            }
+        ),
         state_transitions={"wealth": _next_wealth},
     )
     model = _build_model(work)

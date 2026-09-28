@@ -105,7 +105,7 @@ def _carried_retired() -> UserRegime:
         regime_transitions=ByAge(
             cases={
                 AgeRange(start=62, stop=64): Choose(
-                    func=_from_retired, targets=("retired", "dead")
+                    func=_from_retired, targets=("dead",)
                 )
             }
         ),
@@ -126,7 +126,7 @@ def _ordinary_retired() -> UserRegime:
         regime_transitions=ByAge(
             cases={
                 AgeRange(start=62, stop=64): Choose(
-                    func=_from_retired, targets=("retired", "dead")
+                    func=_from_retired, targets=("dead",)
                 )
             }
         ),

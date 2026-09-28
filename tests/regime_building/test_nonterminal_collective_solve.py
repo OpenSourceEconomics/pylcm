@@ -400,7 +400,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
         regime_transitions=ByAge(
             cases={
                 AgeRange(stop=1): Choose(
-                    func=_next_regime, targets=("couple_terminal",)
+                    func=_next_regime, targets=("single_terminal",)
                 )
             }
         ),

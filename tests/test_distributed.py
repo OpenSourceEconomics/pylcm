@@ -1455,7 +1455,7 @@ def test_execution_config_cannot_shard_an_action():
         actions={
             "choice": DiscreteGrid(category_class=Choice),
         },
-        regime_transitions=lambda: RegimeId.dead,
+        regime_transitions="dead",
     )
     with pytest.raises(ExecutionPlanningError, match="choice"):
         Model(

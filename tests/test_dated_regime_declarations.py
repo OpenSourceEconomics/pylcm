@@ -52,12 +52,13 @@ def test_age_range_selects_quarterly_points_in_half_open_interval() -> None:
     assert schedule.covered_ages == (62, Fraction(249, 4))
 
 
-def test_default_fills_every_remaining_nonfinal_age() -> None:
-    """`default` covers each non-final age no explicit case selects."""
+def test_default_fills_every_remaining_age() -> None:
+    """`default` covers each age no explicit case selects, the final age included."""
     schedule = ByAge(cases={61: "a"}, default="b").resolve(ANNUAL)
     assert [schedule.at(age) for age in schedule.covered_ages] == [
         "b",
         "a",
+        "b",
         "b",
         "b",
         "b",
@@ -111,15 +112,24 @@ def test_resolved_schedule_rejects_an_uncovered_age() -> None:
         {AgeRange(start=63, stop=62): "a"},
         {AgeRange(start=60.1, stop=60.9): "a"},
         {AgeRange(stop=62): "a", 61: "b"},
-        {65: "a"},
-        {AgeRange(start=62): "a"},
     ],
 )
 def test_invalid_selectors_are_rejected_at_resolution(cases) -> None:
-    """Off-grid, boolean, nonfinite, reversed, empty, overlapping and final-age
-    selections raise instead of being rounded, dropped or truncated."""
+    """Off-grid, boolean, nonfinite, reversed, empty and overlapping selections
+    raise instead of being rounded, dropped or truncated."""
     with pytest.raises(RegimeInitializationError):
         ByAge(cases=cases).resolve(ANNUAL)
+
+
+@pytest.mark.parametrize(
+    ("cases", "expected_ages"),
+    [({65: "a"}, (65,)), ({AgeRange(start=62): "a"}, (62, 63, 64, 65))],
+)
+def test_a_law_at_the_final_age_resolves_as_available(
+    *, cases, expected_ages: tuple[int, ...]
+) -> None:
+    """A selection reaching the final age marks a law available there."""
+    assert ByAge(cases=cases).resolve(ANNUAL).covered_ages == expected_ages
 
 
 @pytest.mark.parametrize(

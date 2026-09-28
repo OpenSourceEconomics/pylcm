@@ -983,7 +983,7 @@ def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
     )
     with pytest.raises(
         ModelInitializationError,
-        match=r"single_m_terminal.*active.*\[1\]",
+        match=r"single_m_terminal.*solved.*\[1\]",
     ):
         _fail_if_gated_edge_references_inactive(
             prefix=(

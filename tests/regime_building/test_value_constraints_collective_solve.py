@@ -981,7 +981,7 @@ def test_same_period_ref_requires_reference_covered_in_same_periods():
         )
     )
     ages = AgeGrid(start=0, stop=3, step="Y")
-    with pytest.raises(ModelInitializationError, match="active"):
+    with pytest.raises(ModelInitializationError, match="not solved in period"):
         process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(

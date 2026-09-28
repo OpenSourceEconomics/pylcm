@@ -116,7 +116,9 @@ def _build_model(
 ) -> Model:
     """Build a source whose declared target's only state is `process`."""
     transition = (
-        _target_id if coarse else {"target": MarkovTransition(func=_one_probability)}
+        Choose(func=_target_id, targets=("target",))
+        if coarse
+        else {"target": MarkovTransition(func=_one_probability)}
     )
     return Model(
         regimes={

@@ -58,6 +58,7 @@ from tests.test_models.deterministic.regression import (
     get_params,
     utility,
     working_life,
+    working_life_transitions,
 )
 from tests.test_models.schedules import choose_among, until_exit
 
@@ -65,7 +66,12 @@ from tests.test_models.schedules import choose_among, until_exit
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, stop=4, step="Y")
-    user_regimes = {"working_life": working_life, "dead": dead}
+    user_regimes = {
+        "working_life": working_life.replace(
+            regime_transitions=working_life_transitions(last_age=4)
+        ),
+        "dead": dead,
+    }
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )

@@ -17,12 +17,21 @@ from lcm import LinearAggregator, LinearExpectation
 from lcm.ages import AgeGrid
 from lcm.typing import ContinuousState, ScalarInt
 from tests.conftest import build_prepared_structure, lower_declarations
-from tests.test_models.deterministic.regression import dead, working_life
+from tests.test_models.deterministic.regression import (
+    dead,
+    working_life,
+    working_life_transitions,
+)
 
 
 def test_get_next_state_function_with_solve_target():
     ages = AgeGrid(start=0, stop=4, step="Y")
-    user_regimes = {"working_life": working_life, "dead": dead}
+    user_regimes = {
+        "working_life": working_life.replace(
+            regime_transitions=working_life_transitions(last_age=4)
+        ),
+        "dead": dead,
+    }
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )

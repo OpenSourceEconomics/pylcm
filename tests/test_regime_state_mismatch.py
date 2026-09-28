@@ -558,20 +558,17 @@ def test_mixed_ordered_flags_raises():
         b: ScalarInt
         dead: ScalarInt
 
-    def next_regime() -> ScalarInt:
-        return _RegimeId.dead
-
     a = UserRegime(
         states={"health": DiscreteGrid(category_class=HealthOrdered)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
-        regime_transitions=next_regime,
+        regime_transitions="dead",
     )
     b = UserRegime(
         states={"health": DiscreteGrid(category_class=HealthUnordered)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
-        regime_transitions=next_regime,
+        regime_transitions="dead",
     )
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
 
@@ -603,20 +600,17 @@ def test_both_ordered_same_categories_passes():
         b: ScalarInt
         dead: ScalarInt
 
-    def next_regime() -> ScalarInt:
-        return _RegimeId.dead
-
     a = UserRegime(
         states={"health": DiscreteGrid(category_class=HealthA)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
-        regime_transitions=next_regime,
+        regime_transitions="dead",
     )
     b = UserRegime(
         states={"health": DiscreteGrid(category_class=HealthB)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
-        regime_transitions=next_regime,
+        regime_transitions="dead",
     )
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
 

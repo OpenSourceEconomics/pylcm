@@ -154,7 +154,7 @@ def test_regime_transition_must_be_callable():
 
 
 def test_model_requires_terminal_regime(binary_category_class):
-    """Model must have at least one terminal regime."""
+    """A model without a terminal regime demands a problem at the last age."""
 
     @categorical(ordered=False)
     class RegimeId:
@@ -171,7 +171,7 @@ def test_model_requires_terminal_regime(binary_category_class):
             func=lambda: jnp.array([1.0]), targets=("test",)
         ),
     )
-    with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
+    with pytest.raises(ModelInitializationError, match="nonterminal at the last age"):
         Model(
             regimes={"test": regime},
             ages=AgeGrid(start=0, stop=2, step="Y"),

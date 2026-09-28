@@ -221,7 +221,7 @@ def test_disabling_donation_relowers_every_donating_core(
     Cores that donate nothing either way are lowered under one key in both
     arms; only the donating cores' keys must vanish from the non-donating solve.
     """
-    params = nbegm_ride_along_toy.build_params()
+    params = nbegm_ride_along_toy.build_params(final_age_alive=2.0)
     donating = _keys_of(
         model=_nbegm_model(donate_buffers=True),
         params=params,

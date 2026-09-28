@@ -16,6 +16,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LogNormalIIDProcess,
     MarkovTransition,
     Model,
@@ -56,7 +57,11 @@ def _oracle() -> float:
 @pytest.mark.parametrize("coarse", [False, True])
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit):
-    transition = _target_id if coarse else {"target": MarkovTransition(func=_one)}
+    transition = (
+        Choose(func=_target_id, targets=("target",))
+        if coarse
+        else {"target": MarkovTransition(func=_one)}
+    )
     process = LogNormalIIDProcess(
         n_points=3,
         gauss_hermite=True,
