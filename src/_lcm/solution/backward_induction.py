@@ -4695,10 +4695,16 @@ def _lower_and_compile_wave(
     the GIL, so each lowered program goes to a compile thread pool at once and
     compiles while the next one is being lowered. Executables and their log labels
     land in `compiled` and `labels`, keyed by lowering key.
+
+    A lowering error is raised at once: compiles not yet started are cancelled,
+    running ones are left to finish in the background with their results
+    discarded, and the error carries a note naming the program being lowered.
     """
     n_unique = len(new_lowerings)
-    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures: dict[Future[tuple[Hashable, jax.stages.Compiled]], str] = {}
+    pool = ThreadPoolExecutor(max_workers=n_workers)
+    futures: dict[Future[tuple[Hashable, jax.stages.Compiled]], str] = {}
+    label = "the first program"
+    try:
         for i, (lowering_key, candidate) in enumerate(new_lowerings.items(), 1):
             triple, _ = candidate
             regime_name, period, core_key = triple
@@ -4745,6 +4751,11 @@ def _lower_and_compile_wave(
                 logger=logger,
             )
             futures[future] = label
+    except BaseException as exc:
+        exc.add_note(f"while lowering {label}")
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    with pool:
         for future in as_completed(futures):
             try:
                 lowering_key, comp = future.result()
