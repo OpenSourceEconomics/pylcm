@@ -2970,13 +2970,13 @@ class Model:
     def _fail_if_entry_is_not_permitted(
         self, *, initial_conditions: InitialConditions
     ) -> None:
-        """Reject subjects starting at a covered pair outside `initial_nodes`.
+        """Reject subjects starting at any pair outside `initial_nodes`.
 
-        Pairs with an unknown regime code or an off-grid age are left to the
-        simulation input validator, which reports them in its own terms.
+        A pair the engine solves or visits is still refused unless it is a
+        declared start. Pairs with an unknown regime code or an off-grid age are
+        left to the simulation input validator, which reports them in its own
+        terms.
         """
-        if self.initial_nodes == self.reachability.nodes:
-            return
         ids_to_names = {
             int(code): name for name, code in self.regime_names_to_ids.items()
         }
@@ -2990,22 +2990,15 @@ class Model:
             )
             if code in ids_to_names and age in age_by_float
         }
-        refused = sorted(
-            (
-                pair
-                for pair in pairs - self.initial_nodes
-                if pair in self.reachability.nodes
-            ),
-            key=repr,
-        )
+        refused = sorted(pairs - self.initial_nodes, key=repr)
         if refused:
             details = "\n".join(
                 f"  ({age}, '{name}') is not an admissible entry"
                 for age, name in refused
             )
             raise InvalidInitialConditionsError(
-                "Subjects start at declared nodes that `initial_regimes` does not "
-                f"admit as entries:\n{details}"
+                "Subjects start at (age, regime) pairs that `initial_regimes` does "
+                f"not admit as starts:\n{details}"
             )
 
     def _resolve_compile_batch_size(

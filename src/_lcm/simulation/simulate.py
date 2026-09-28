@@ -110,6 +110,7 @@ from _lcm.simulation.programs import gated_simulation_programs_ready
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
+    site_simulation_key,
     split_simulation_key,
 )
 from _lcm.simulation.replay_inputs import PreparedReplayReader, place_replay_payload
@@ -823,7 +824,7 @@ def _simulate_subject_chunk(
                     age,
                 ),
             )
-            result, new_states, new_subject_regime_ids, new_own_stakeholder, key = (
+            result, new_states, new_subject_regime_ids, new_own_stakeholder, _ = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
                     regime=dispatched_regime,
@@ -862,7 +863,12 @@ def _simulate_subject_chunk(
                             period=period, source=regime_name
                         )
                     ),
-                    key=key,
+                    key=site_simulation_key(
+                        key=key,
+                        period=period,
+                        regime_id=int(regime_names_to_ids[regime_name]),
+                        memory=memory,
+                    ),
                     taste_key=taste_key,
                     taste_address=taste_addresses.get((period, regime_name)),
                     logger=logger,

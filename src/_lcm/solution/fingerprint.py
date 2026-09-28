@@ -634,8 +634,9 @@ def fingerprint_model_structure(
     """Hash the mathematical facts a model fixes at build.
 
     No parameter vector reaches this record: it carries period and regime
-    topology, state and action names, stakeholders, solver and replay
-    identities, artifact descriptors, per-period state axes, the user
+    topology (the solved and the visited periods of every regime, but not the
+    declared starts that produced them), state and action names, stakeholders,
+    solver and replay identities, artifact descriptors, per-period state axes, the user
     declaration's callable semantics, and the regimes' own fixed parameters.
     Concrete grid support and canonical solution parameters belong to
     `fingerprint_model`, which reads them from the parameter vector.
@@ -651,12 +652,19 @@ def fingerprint_model_structure(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-structure", 7),
+        ("pylcm-model-structure", 8),
         tuple(ages.exact_values),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
             name: {
                 "active_periods": regime.active_periods,
+                "visited_periods": tuple(
+                    period
+                    for period, visited in enumerate(
+                        regime.simulation.reachability.active_regimes_by_period
+                    )
+                    if name in visited
+                ),
                 "state_names": regime.solution.state_names,
                 "action_names": regime.solution.action_names,
                 "fold_state_names": regime.fold_state_names,
