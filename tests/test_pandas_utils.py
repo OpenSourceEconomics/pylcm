@@ -2,6 +2,7 @@
 
 import dataclasses
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,6 +19,7 @@ from _lcm.pandas_utils import (
 from _lcm.params.processing import broadcast_to_template
 from lcm import (
     AgeGrid,
+    ByAge,
     Choose,
     DiscreteGrid,
     JointTransition,
@@ -515,12 +517,41 @@ def _regime_array_to_series(*, arr, model):
     return pd.Series([r[1] for r in records], index=index)
 
 
+def _alive_regime_law(model: Model) -> MarkovTransition:
+    """Return the `MarkovTransition` the `alive` regime's schedule selects."""
+    schedule = cast("ByAge", model.user_regimes["alive"].regime_transitions)
+    return cast("MarkovTransition", schedule.laws[0])
+
+
+def test_convert_series_regime_transition_under_a_schedule() -> None:
+    """A Series for a scheduled regime transition's parameter is converted."""
+    model = get_regime_markov_model()
+    arr = _make_regime_probs_array()
+    series = _regime_array_to_series(arr=arr, model=model)
+    internal = broadcast_to_template(
+        params={"alive": {"next_regime": {"probs_array": series}}},
+        template=model._params_template,
+        required=False,
+    )
+    result = convert_series_in_params(
+        flat_params=internal,
+        user_regimes=model.user_regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
+    np.testing.assert_allclose(
+        cast("FloatND", result["alive"]["next_regime__probs_array"]),
+        arr,
+        atol=1e-7,
+    )
+
+
 def test_array_from_series_regime_transition_basic_round_trip():
     """Regime transition probs via array_from_series."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
-    func = model.user_regimes["alive"].get_all_functions()["next_regime"]
+    func = _alive_regime_law(model)
     result = array_from_series(
         sr=series,
         func=func,
@@ -540,7 +571,7 @@ def test_array_from_series_regime_transition_reordered_levels():
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
     series = series.reorder_levels(["next_regime", "health", "age"])
-    func = model.user_regimes["alive"].get_all_functions()["next_regime"]
+    func = _alive_regime_law(model)
     result = array_from_series(
         sr=series,
         func=func,
@@ -560,7 +591,7 @@ def test_array_from_series_regime_transition_wrong_level_names_raises():
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
     series.index = series.index.set_names(["age", "health", "wrong_name"])
-    func = model.user_regimes["alive"].get_all_functions()["next_regime"]
+    func = _alive_regime_law(model)
     with pytest.raises(ValueError, match="level names"):
         array_from_series(
             sr=series,
@@ -581,7 +612,7 @@ def test_array_from_series_regime_transition_invalid_label_raises():
     series = _regime_array_to_series(arr=arr, model=model)
     new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")
     series.index = new_index
-    func = model.user_regimes["alive"].get_all_functions()["next_regime"]
+    func = _alive_regime_law(model)
     with pytest.raises(ValueError, match="Invalid labels"):
         array_from_series(
             sr=series,

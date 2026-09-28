@@ -944,7 +944,7 @@ def _phased_regime_declaration(
     )
 
 
-@pytest.mark.parametrize("slot", ["transition", "state_transitions"])
+@pytest.mark.parametrize("slot", ["regime_transitions", "state_transitions"])
 def test_simulate_truth_of_a_transition_slot_is_not_model_identity(slot: str) -> None:
     """Realized transitions govern the path after the action is chosen; a stored
     solution is priced against the solve-phase laws alone."""

@@ -14,7 +14,7 @@ from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 from beartype import beartype
@@ -500,7 +500,9 @@ class ByAge:
         self._cases: tuple[tuple[object, object], ...] = tuple(
             (_freeze_selector(selector), law) for selector, law in cases.items()
         )
-        self._default = default
+        # Stored as `None` rather than the signature sentinel: a schedule's state
+        # stays plain data that fingerprints and compares by value.
+        self._default = None if default is _MISSING else default
         self._until = _until
 
     @classmethod
@@ -528,6 +530,25 @@ class ByAge:
             cases={}, _until=(stop_age_exclusive, law, then, start_age_inclusive)
         )
 
+    def with_mapped_laws(self, *, func: Callable[[object], object]) -> ByAge:
+        """Return this schedule with every law replaced by `func(law)`.
+
+        The selectors are kept. Returns `self` when `func` leaves every law
+        unchanged, so identity comparisons of declarations stay meaningful.
+        """
+        if all(func(law) is law for law in self.laws):
+            return self
+        if self._until is not None:
+            stop, law, then, start = self._until
+            return ByAge(cases={}, _until=(stop, func(law), func(then), start))
+        cases = cast(
+            "Mapping[AgeSelector, object]",
+            {selector: func(law) for selector, law in self._cases},
+        )
+        if self._default is None:
+            return ByAge(cases=cases)
+        return ByAge(cases=cases, default=func(self._default))
+
     @property
     def laws(self) -> tuple[object, ...]:
         """Every law the schedule may select, in declaration order."""
@@ -535,7 +556,7 @@ class ByAge:
             return (self._until[1], self._until[2])
         return (
             *(law for _, law in self._cases),
-            *(() if self._default is _MISSING else (self._default,)),
+            *(() if self._default is None else (self._default,)),
         )
 
     def resolve(self, ages: AgeGrid) -> ResolvedSchedule:
@@ -564,7 +585,7 @@ class ByAge:
                         f"age(s) {[ages.exact_values[p] for p in overlap]}."
                     )
                 law_by_period.update(dict.fromkeys(periods, law))
-            if self._default is not _MISSING:
+            if self._default is not None:
                 for period in range(ages.n_periods):
                     law_by_period.setdefault(period, self._default)
         return ResolvedSchedule(

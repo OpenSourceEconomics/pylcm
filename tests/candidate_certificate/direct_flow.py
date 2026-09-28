@@ -446,7 +446,7 @@ _SOURCE_SEALS = {
     PARAMS_PROCESSING_SOURCE: "2b2c6c15e99cc7f19be7e94d39921b8e7940f96bfe108b3dbd0bc91b3c1f0afa",
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
-    PANDAS_UTILS_SOURCE: "bc174d387fdb4b33d882e351e1cfab8b1f5ee67fd20217439c3fe49fe54e1537",
+    PANDAS_UTILS_SOURCE: "994c54ba884729a167019f744cdd28a00fb41defcc03a281b377490eb09e3afa",
     MODEL_PROCESSING_SOURCE: "dee0000a4420c9e955e6390b27ca36beec369f8516884302c36269010aab7b4b",
 }
 
@@ -3254,7 +3254,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
     # admitted writer used by ordinary inputs. Recursion keeps that writer and
     # completed leaves stay owned until the complete mapping is published.
     PANDAS_UTILS_SOURCE: (
-        "9ba7e396bcb873930eca11e396aa17d16135c1c64d76ed3ec6d4bd4f7e93db7f",
+        "0055e7d315083b05995c0ab80c5fe9fbaf9ee7879145c316d37288216d054aef",
         {
             "initial_conditions_from_dataframe": "ccdc7238f3c2d036ca14b26ac6b2196fdfc4acd23cbf4978cc791749dd3fa394",
             "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
