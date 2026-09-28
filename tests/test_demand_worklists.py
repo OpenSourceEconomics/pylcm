@@ -141,7 +141,9 @@ def test_solve_returns_values_exactly_at_the_demanded_pairs(
 ) -> None:
     """Every demanded pair has a value array, and no other pair has one."""
     model = _life_model(initial_regimes)
-    values = model.solve(params=_PARAMS, log_level="off").values
+    # A model whose starts reach no nonterminal regime reads no parameter.
+    params = {} if initial_regimes == {45: "dead"} else _PARAMS
+    values = model.solve(params=params, log_level="off").values
     solved = frozenset(
         (model.ages.exact_values[period], name)
         for period, by_regime in values.items()
@@ -429,16 +431,8 @@ def test_an_unreached_regime_with_an_age_specialized_grid_builds_and_solves() ->
     model = _make_outside_option_model(
         later_ceiling=10.0, initial_regimes={2: "single_f_terminal"}
     )
-    params = {
-        "single_f": {"koopmans_aggregator": {"discount_factor": 0.0}},
-        "single_f_terminal": {},
-        "couple": {
-            "koopmans_aggregator": {"discount_factor": 0.0},
-            "participation_f": {"delta_f": 0.0},
-        },
-        "couple_terminal": {},
-    }
-    values = model.solve(params=params, log_level="off").values
+    # Only the terminal root is demanded, so no regime reads a parameter.
+    values = model.solve(params={}, log_level="off").values
     solved = {
         (period, name) for period, by_regime in values.items() for name in by_regime
     }

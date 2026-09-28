@@ -419,7 +419,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "acbeb95f5040abd93c44fab092975e4dd80daf10be8590ff62349d65b32e0f83",
     SIMULATION_TRANSITIONS_SOURCE: "50e2b900efa1054ec02cc5b356ac6a98eccbc79ad45ac56df2bf696855bfdd4e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "64223b8de6b2c60d701cf719ebc90d616f8cdeded6b600df2dc82d9bb5080887",
+    MODEL_SOURCE: "d29796c5e09646ffc8247d38931da230db0c4c2518f2105bb6a4baabf90c84d9",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "efc0f00bfbd54562bc9b6bd9d4ee28a32ac81b34b8bd1b8755d33db696844837",
     PERIOD_REPLAY_SOURCE: "5a9a2d656233a6ec66bc8fa4c364244c9cf29702a0287e5481490ecbed7c2d28",
@@ -443,7 +443,7 @@ _SOURCE_SEALS = {
     PROCESS_AR1_SOURCE: "ea9235cfde4494f962f015fcbf443328b1802f6b97e9afab807c1bf160f59171",
     VARIABLES_SOURCE: "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6",
     PARAMS_REGIME_TEMPLATE_SOURCE: "dfc1aadd93d6c66b772f7f7a40c9178a15f06c6968d07504e635aeed465acf67",
-    PARAMS_PROCESSING_SOURCE: "7406b1a17a7e3ed306790d9939e3fd0c37e14670200b5aceaf48ff31d9f2aa87",
+    PARAMS_PROCESSING_SOURCE: "2b2c6c15e99cc7f19be7e94d39921b8e7940f96bfe108b3dbd0bc91b3c1f0afa",
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
     PANDAS_UTILS_SOURCE: "bc174d387fdb4b33d882e351e1cfab8b1f5ee67fd20217439c3fe49fe54e1537",
@@ -3203,12 +3203,12 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "c2c192b57cd75e682a6d9e0e8076229e32bb2d01f29b19485ea8f23a6c2cd8c6",
+            "265a395cebfe4c6d4a2212f37d6dc9aad0c1a4c45eb3a33ef287a95245dbbbe9",
             {
                 "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-                "Model.__init__": "dc6f76e96b225ed709d043eaf6cfd68b40fdb45cf6235177a8ddb87769e3f48b",
+                "Model.__init__": "434ec58ac4f6cffc76fe7d9ce8ada1138191bcbcdc7f4a28c821eb58713c00e7",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "fd175b26207fc43660db34716ed79a8768cdf5b73b624429714b4adb33074a9d",
                 # Fixed caller owners flow through both private automatic-solve
@@ -3856,12 +3856,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "c2c192b57cd75e682a6d9e0e8076229e32bb2d01f29b19485ea8f23a6c2cd8c6",
+        "265a395cebfe4c6d4a2212f37d6dc9aad0c1a4c45eb3a33ef287a95245dbbbe9",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "dc6f76e96b225ed709d043eaf6cfd68b40fdb45cf6235177a8ddb87769e3f48b",
+            "Model.__init__": "434ec58ac4f6cffc76fe7d9ce8ada1138191bcbcdc7f4a28c821eb58713c00e7",
             "Model.simulate": "fd175b26207fc43660db34716ed79a8768cdf5b73b624429714b4adb33074a9d",
         },
     ),
@@ -4228,12 +4228,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "c2c192b57cd75e682a6d9e0e8076229e32bb2d01f29b19485ea8f23a6c2cd8c6",
+        "265a395cebfe4c6d4a2212f37d6dc9aad0c1a4c45eb3a33ef287a95245dbbbe9",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "dc6f76e96b225ed709d043eaf6cfd68b40fdb45cf6235177a8ddb87769e3f48b",
+            "Model.__init__": "434ec58ac4f6cffc76fe7d9ce8ada1138191bcbcdc7f4a28c821eb58713c00e7",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "ada74ce5f724d2944b187c777fb43717cd574db5f64e992cad2a6c669b9d08fa",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -6423,12 +6423,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "c2c192b57cd75e682a6d9e0e8076229e32bb2d01f29b19485ea8f23a6c2cd8c6",
+        "265a395cebfe4c6d4a2212f37d6dc9aad0c1a4c45eb3a33ef287a95245dbbbe9",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "dc6f76e96b225ed709d043eaf6cfd68b40fdb45cf6235177a8ddb87769e3f48b",
+            "Model.__init__": "434ec58ac4f6cffc76fe7d9ce8ada1138191bcbcdc7f4a28c821eb58713c00e7",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "1244c00c7a0c9e4b4286a39479b9685ef6ec0e9da157f13944b853d1b27c5cf6",
             "Model.solve": "b7447007287a2846e9f8ae2f42f307d6308b98d81b2d38bf7312053aeac4e9bc",

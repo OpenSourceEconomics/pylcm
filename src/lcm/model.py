@@ -80,6 +80,7 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.regime_building.schedules import (
+    lower_demanded_transitions,
     resolve_demand,
     resolve_initial_nodes,
     resolve_regime_schedules,
@@ -621,13 +622,14 @@ class Model:
         initial_nodes = resolve_initial_nodes(
             initial_regimes=initial_regimes, regime_names=tuple(regimes), ages=ages
         )
+        regime_names_to_ids = {
+            name: int(code)
+            for name, code in get_field_names_and_values(regime_id_class).items()
+        }
         schedules = resolve_regime_schedules(
             user_regimes=regimes,
             ages=ages,
-            regime_names_to_ids={
-                name: int(code)
-                for name, code in get_field_names_and_values(regime_id_class).items()
-            },
+            regime_names_to_ids=regime_names_to_ids,
         )
         declared_transitions = {
             name: regime.regime_transitions for name, regime in regimes.items()
@@ -665,6 +667,15 @@ class Model:
             ages=ages,
         )
         active_periods_by_regime = schedules.coverage_by_regime
+        # Lowering reads only the demanded periods, so a case no required
+        # problem selects contributes no argument, parameter or kernel.
+        demanded_transitions = lower_demanded_transitions(
+            schedules=schedules, code_by_name=regime_names_to_ids
+        )
+        merged_regimes = {
+            name: regime.replace(regime_transitions=demanded_transitions[name])
+            for name, regime in merged_regimes.items()
+        }
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
             user_regimes=merged_regimes,
             broadcast_variables=broadcast_variables,

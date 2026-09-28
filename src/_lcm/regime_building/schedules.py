@@ -86,6 +86,11 @@ class RegimeSchedules:
     visited_nodes: frozenset[tuple[int, RegimeName]] = frozenset()
     """The `(period, regime)` pairs a subject can physically visit (H)."""
 
+    law_by_period_by_regime: MappingProxyType[
+        RegimeName, MappingProxyType[int, object]
+    ] = MappingProxyType({})
+    """Per nonterminal regime, the declared law at each available period."""
+
 
 def uses_declaration_vocabulary(transition: object) -> bool:
     """Whether a regime transition has a form the engine cannot read directly."""
@@ -138,6 +143,7 @@ def resolve_regime_schedules(
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = {phase: {} for phase in _PHASES}
     landings: dict[RegimeName, MappingProxyType[int, tuple[str, ...]]] = {}
+    laws: dict[RegimeName, MappingProxyType[int, object]] = {}
     for name, regime in user_regimes.items():
         transition = regime.regime_transitions
         if transition is None:
@@ -188,19 +194,12 @@ def resolve_regime_schedules(
                 for period, law in simulate_side.items()
             }
         )
-        # A schedule without phase variation lowers to one shared engine law.
-        solve_law = _lower_side(
-            law_by_period=solve_side, code_by_name=regime_names_to_ids
-        )
-        transitions[name] = (
-            solve_law
-            if all(law is solve_side[period] for period, law in simulate_side.items())
-            else Phased(
-                solve=solve_law,
-                simulate=_lower_side(
-                    law_by_period=simulate_side, code_by_name=regime_names_to_ids
-                ),
-            )
+        laws[name] = MappingProxyType(law_by_period)
+        transitions[name] = _lower(
+            law_by_period=law_by_period,
+            solve_periods=tuple(law_by_period),
+            simulate_periods=tuple(law_by_period),
+            code_by_name=regime_names_to_ids,
         )
     return RegimeSchedules(
         coverage_by_regime=MappingProxyType(coverage),
@@ -215,6 +214,65 @@ def resolve_regime_schedules(
             }
         ),
         landings_by_regime=MappingProxyType(landings),
+        law_by_period_by_regime=MappingProxyType(laws),
+    )
+
+
+def lower_demanded_transitions(
+    *,
+    schedules: RegimeSchedules,
+    code_by_name: Mapping[str, int],
+) -> MappingProxyType[RegimeName, object]:
+    """Lower each regime's law over the periods demand requires, only.
+
+    The solve side is lowered over the regime's solved periods (S) and the
+    simulate side over its visited periods (H), falling back to S for a regime
+    that is solved but never visited. A case selected only at undemanded ages
+    contributes no cell, no argument and no parameter. A regime without
+    demanded periods keeps its lowering over every available period: it is
+    never executed, and `create_params_template` gives it no parameters.
+    """
+    lowered = dict(schedules.transitions)
+    for name, law_by_period in schedules.law_by_period_by_regime.items():
+        solve_periods = schedules.coverage_by_regime[name]
+        if not solve_periods:
+            continue
+        visited = tuple(sorted(p for p, n in schedules.visited_nodes if n == name))
+        lowered[name] = _lower(
+            law_by_period=law_by_period,
+            solve_periods=solve_periods,
+            simulate_periods=visited or solve_periods,
+            code_by_name=code_by_name,
+        )
+    return MappingProxyType(lowered)
+
+
+def _lower(
+    *,
+    law_by_period: Mapping[int, object],
+    solve_periods: tuple[int, ...],
+    simulate_periods: tuple[int, ...],
+    code_by_name: Mapping[str, int],
+) -> object:
+    """One engine law from the per-period laws at the given periods."""
+    solve_side = {
+        period: _phase_side(law=law_by_period[period], side="solve")
+        for period in solve_periods
+    }
+    simulate_side = {
+        period: _phase_side(law=law_by_period[period], side="simulate")
+        for period in simulate_periods
+    }
+    solve_law = _lower_side(law_by_period=solve_side, code_by_name=code_by_name)
+    # A schedule without phase variation lowers to one shared engine law.
+    if all(
+        law is _phase_side(law=law_by_period[period], side="solve")
+        for period, law in simulate_side.items()
+    ):
+        return solve_law
+    return Phased(
+        solve=solve_law,
+        simulate=_lower_side(law_by_period=simulate_side, code_by_name=code_by_name),
     )
 
 
