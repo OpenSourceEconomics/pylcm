@@ -8,7 +8,7 @@ user-constructor methods (`Model.__init__`, `Model.solve`, `Model.simulate`,
 live in `_lcm.typing`.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from fractions import Fraction
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -78,6 +78,10 @@ type TransitionFunctionName = str
 # Boundary form accepted by `AgeGrid.__init__` for `start`, `stop`, and
 # `exact_values` entries — converted to canonical JAX scalars internally.
 type UserAge = int | Fraction
+
+# Entry permissions accepted by `Model(initial_regimes=...)`: a regime name, a
+# sequence of names, or a mapping from `ByAge`-style age selectors to names.
+type InitialRegimes = str | Sequence[str] | Mapping[object, str | Sequence[str]]
 
 
 # Boundary form accepted by `AgeGrid.__init__` for `step`: a string matching

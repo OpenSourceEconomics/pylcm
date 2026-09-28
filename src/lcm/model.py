@@ -6,7 +6,7 @@ import operator
 import threading
 import uuid
 from collections import OrderedDict
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, cast, runtime_checkable
@@ -228,6 +228,7 @@ from lcm.solver_api import (
 from lcm.solvers import GridSearch
 from lcm.typing import (
     Bool1D,
+    InitialRegimes,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -520,10 +521,7 @@ class Model:
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
-        initial_regimes: str
-        | Sequence[str]
-        | Mapping[object, str | Sequence[str]]
-        | None = None,
+        initial_regimes: InitialRegimes | None = None,
     ) -> None:
         """Initialize the Model.
 
