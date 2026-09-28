@@ -518,7 +518,7 @@ def test_builder_undefined_outside_covered_ages_still_solves():
     the `alive` regime is covered through age 24 and not covered at the terminal age
     25; the builder raises at every uncovered age.
     """
-    inactive_age = 20 + _N - 1  # the terminal (dead) age; alive is inactive here
+    inactive_age = 20 + _N - 1  # the terminal (dead) age; alive is not solved here
 
     def build(age):
         if age >= inactive_age:

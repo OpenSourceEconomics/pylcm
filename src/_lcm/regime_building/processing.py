@@ -2089,9 +2089,9 @@ def _fail_if_same_period_refs_invalid(
             )
             if missing_periods:
                 msg = (
-                    f"{prefix}the reference regime must be active (and hence "
-                    "solved) in every period the declaring regime is active, "
-                    "but it is not active in period(s) "
+                    f"{prefix}the reference regime must be solved in every "
+                    "period the declaring regime is solved, but it is not "
+                    "solved in period(s) "
                     f"{missing_periods}. A same-period reference V that was "
                     "never solved cannot be read."
                 )
@@ -2274,11 +2274,11 @@ def _fail_if_gated_edge_references_inactive(
         )
         if missing_periods:
             msg = (
-                f"{prefix}reference regime '{ref_regime_name}' must be active "
-                "(and hence solved) in every period the edge target "
-                f"'{target_name}' is active AND the source '{source_name}' is "
-                "active one period earlier (so the edge's Wbar is actually "
-                f"consumed); but it is not active in such period(s) "
+                f"{prefix}reference regime '{ref_regime_name}' must be solved "
+                "in every period the edge target "
+                f"'{target_name}' is solved AND the source '{source_name}' is "
+                "solved one period earlier (so the edge's Wbar is actually "
+                f"consumed); but it is not solved in such period(s) "
                 f"{missing_periods}. A gated-edge reference V that was never "
                 "solved cannot be read."
             )
@@ -8058,7 +8058,7 @@ def _fail_if_phase_state_nodes_disagree(
             f"Regime {regime_name!r} resolves per-period state nodes for "
             f"different periods in its two phases: {only_solve} only in solve, "
             f"{only_simulate} only in simulation. Both phases must carry every "
-            "period the regime is active in. This is an internal inconsistency "
+            "period the regime is solved in. This is an internal inconsistency "
             "in how the regime's age-specialized grids were normalized; please "
             "report it."
         )

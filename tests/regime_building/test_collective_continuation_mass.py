@@ -210,7 +210,7 @@ def _build_model(
         household: Stakeholder names of both regimes, or `None` for a
             singleton twin.
         stakeholder: Whose utility a singleton twin carries.
-        source_ends_at_age: First age at which the source regime is inactive.
+        source_ends_at_age: First age at which the source regime is not solved.
 
     Returns:
         The model, ready to solve once its params are supplied.

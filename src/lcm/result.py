@@ -177,7 +177,7 @@ class SimulationResult:
                 with frozen state through every later period the regime is active.
                 - `"first"` (default): keep only each subject's entry row — a dead
                   subject appears once at death, like leaving a panel.
-                - `"all"`: emit every active period (the absorbing representation).
+                - `"all"`: emit every solved period (the absorbing representation).
 
         Returns:
             DataFrame with simulation results.

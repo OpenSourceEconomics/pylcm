@@ -1564,7 +1564,7 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
     back to ITSELF (`gated_edges={"src": ...}`). At period 0 the edge fires
     normally — its target (`src` itself) is active at period 1. At period 1 —
     `src`'s own last active period, the activity boundary — the edge's target
-    (`src` at period 2) does not exist: `src` is not active past age 1. The
+    (`src` at period 2) does not exist: `src` is not solved past age 1. The
     ordinary (ungated) regime transition routes a household past the
     boundary into `src_exit` instead (`_prob_stay` / `_prob_exit_boundary`,
     both keyed off age, sum to 1, and structurally declare BOTH `src` and

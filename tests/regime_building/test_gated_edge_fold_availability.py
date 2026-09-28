@@ -9,7 +9,7 @@ there to READ the folded ``Wbar`` one period earlier. Where it is not, a
 reference regime that was never solved is a boundary no-op; where it is, the
 same absence is a misconfigured edge that would feed the source a stale
 later-period value. The last test pins that qualifier on a live model — a
-repeating self-loop edge whose fallback is inactive in the target's earliest
+repeating self-loop edge whose fallback is not solved in the target's earliest
 period — because without it the rule collapses into the naive "every reference
 must always be solved", which rejects a model that is legal and solves.
 """

@@ -717,7 +717,7 @@ def _select_period_callable[T](
     if period not in by_period:
         msg = (
             f"The gated edge to regime '{target}' has no {what} for period "
-            f"{period}: '{target}' is not active there, so it holds no value "
+            f"{period}: '{target}' is not solved there, so it holds no value "
             f"to fold. Compiled periods are {sorted(by_period)}."
         )
         raise KeyError(msg)
@@ -2766,11 +2766,11 @@ def edge_may_fold_at_period(
         f"Regime {source_name!r}, value-dependent transition into "
         f"{edge.target!r}: the target "
         f"regime '{edge.target}' is solved at period {fold_period}, but the "
-        f"edge's reference regime(s) {missing} are not — a malformed ACTIVE "
+        f"edge's reference regime(s) {missing} are not — a malformed "
         "edge (a fallback or gate reference regime must be solved at the same "
         "period as the target whenever the target itself is, and this period's "
         f"Wbar is read by '{source_name}' at period {fold_period - 1}). "
-        f"Declare the missing reference regime active at period {fold_period}, "
+        f"Extend the missing reference regime's schedule to period {fold_period}, "
         "or drop the reference."
     )
     raise ModelInitializationError(msg)

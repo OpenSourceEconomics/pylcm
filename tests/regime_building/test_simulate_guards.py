@@ -5,7 +5,7 @@ Five boundary conditions on the collective-regimes forward-simulation path
 `_lcm.simulation.simulate`):
 
 - A gated edge whose target is solved at `period + 1` while a declared
-  reference regime (fallback / gate ref) is not: a malformed ACTIVE edge, so
+  reference regime (fallback / gate ref) is not: a malformed edge, so
   `substitute_gated_edge_continuations` raises rather than no-opping, which
   would leave the edge silently ungated.
 - Two legs of one gated edge sharing the same fallback regime: rejected at

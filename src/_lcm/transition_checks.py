@@ -664,7 +664,7 @@ def _validate_regime_transition_probs(
 
     Raises:
         InvalidRegimeTransitionProbabilitiesError: If probabilities are non-finite,
-            outside [0, 1], don't sum to 1, or assign positive probability to inactive
+            outside [0, 1], don't sum to 1, or assign positive probability to unsolved
             regimes.
 
     """
@@ -724,13 +724,13 @@ def _validate_regime_transition_probs(
         if has_mass:
             period_detail = "" if period is None else f" in period {period}"
             raise InvalidRegimeTransitionProbabilitiesError(
-                f"Regime '{r}' is inactive at age {next_age} but has positive "
+                f"Regime '{r}' is not solved at age {next_age} but has positive "
                 f"transition probability from '{regime_name}' between ages {age} and "
                 f"{next_age}{period_detail}. Its mass is not represented in the "
                 f"continuation, so what the remaining targets carry is less than "
                 f"unit mass and the solve returns NaN rather than a value that "
-                f"does not depend on '{r}' at all. Either make '{r}' active at "
-                f"that age or give it probability 0 there."
+                f"does not depend on '{r}' at all. Either extend '{r}''s schedule "
+                f"to that age or give it probability 0 there."
             )
 
 

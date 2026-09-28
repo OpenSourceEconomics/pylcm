@@ -297,11 +297,11 @@ def calculate_next_regime_membership(
             f"Regime '{regime.name}' has no regime to move into at period "
             f"{period + 1}: none of its declared transition targets "
             f"({', '.join(repr(name) for name in sorted(regime_transition_probs))}) "
-            f"is active there, and the regimes that are "
+            f"is solved there, and the regimes that are "
             f"({', '.join(repr(name) for name in sorted(active_regimes_next_period))}) "
             f"are not among them. Subjects simulated in '{regime.name}' at "
-            f"period {period} (age {age}) have nowhere to go. Either widen a "
-            f"target's `active` to cover that period, or keep '{regime.name}' "
+            f"period {period} (age {age}) have nowhere to go. Either extend a "
+            f"target's schedule to cover that period, or keep '{regime.name}' "
             f"from being occupied there."
         )
         raise InvalidRegimeTransitionProbabilitiesError(msg)

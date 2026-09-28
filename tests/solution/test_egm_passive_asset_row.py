@@ -608,7 +608,7 @@ def test_passive_aime_cell_width_leaves_value_function_unchanged(cell_width: int
     reference = _model(solver="dcegm").solve(params=_params(), log_level="debug").values
     tiled = _solve_at_cell_width(cell_width)
     # `working_life` is the asset-row regime whose cells the width tiles;
-    # it is inactive in the terminal period, so exclude that period.
+    # it is not solved in the terminal period, so exclude that period.
     for period in sorted(reference)[:-1]:
         got = _euler_last_flat(np.asarray(tiled[period]["working_life"]))
         want = _euler_last_flat(np.asarray(reference[period]["working_life"]))

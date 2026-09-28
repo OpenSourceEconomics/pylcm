@@ -174,7 +174,7 @@ def budget_constraint_young(
 
 def next_old_stay_prob(*, wealth: ContinuousState, age: int) -> FloatND:
     # At the last decision age `old` must transition into the terminal `dead`
-    # regime only, since `old` is inactive in the next period.
+    # regime only, since `old` is not solved in the next period.
     last_age = 40 + (N_PERIODS - 1) * 10
     return jnp.where(age >= last_age - 10, 0.0, survival_of_wealth(wealth))
 

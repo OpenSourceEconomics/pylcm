@@ -1856,9 +1856,9 @@ def _fail_if_continuation_publisher_returned_none(
     if result.continuation is None and regime_name in continuation_publishers:
         msg = (
             f"Regime '{regime_name}' declares a continuation template but its "
-            f"kernel returned no continuation in active period {period}. A "
+            f"kernel returned no continuation in solved period {period}. A "
             f"continuation-based solver must publish a continuation on every "
-            f"active period."
+            f"period it solves."
         )
         raise RuntimeError(msg)
 

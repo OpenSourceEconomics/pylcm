@@ -1187,7 +1187,7 @@ def _require_declared_regime(
     regime = regimes[regime_name]
     if period not in regime.active_periods:
         msg = (
-            f"Regime {regime_name!r} is inactive in period {period}, so it "
+            f"Regime {regime_name!r} is not solved in period {period}, so it "
             "publishes no kernel there."
         )
         raise ValueError(msg)
