@@ -175,8 +175,11 @@ from lcm.regime import Regime  # noqa: E402
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
+    AgeRange,
     AgeSpecializedFunction,
     AgeSpecializedGrid,
+    ByAge,
+    Choose,
     JointTransition,
     MarkovTransition,
     fixed_transition,
@@ -200,10 +203,13 @@ jax.tree_util.register_pytree_node(
 
 __all__ = [
     "AgeGrid",
+    "AgeRange",
     "AgeSpecializedFunction",
     "AgeSpecializedGrid",
+    "ByAge",
     "CESAggregator",
     "CertaintyEquivalent",
+    "Choose",
     "CollectiveUtility",
     "Condition",
     "ConsumptionSavingsRegime",

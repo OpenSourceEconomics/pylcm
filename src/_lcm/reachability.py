@@ -189,8 +189,14 @@ def build_phase_reachability(
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     candidate_targets_by_source: Mapping[RegimeName, Collection[RegimeName]],
     terminal_regimes: Collection[RegimeName] = (),
+    support_by_period: Mapping[RegimeName, Mapping[int, Collection[RegimeName]]]
+    | None = None,
 ) -> PhaseReachability:
-    """Build one static graph; every retained edge is `CONDITIONAL`."""
+    """Build one static graph; every retained edge is `CONDITIONAL`.
+
+    With `support_by_period`, a candidate is retained at a period only where
+    the source declares it at that period.
+    """
     if n_periods < 1:
         raise ValueError("n_periods must be positive")
 
@@ -236,6 +242,11 @@ def build_phase_reachability(
                     source in terminal
                     or period not in active[source]
                     or period + 1 not in active[target]
+                    or (
+                        support_by_period is not None
+                        and target
+                        not in support_by_period.get(source, {}).get(period, ())
+                    )
                 ):
                     status = EdgeStatus.FALSE
                 else:
@@ -263,12 +274,21 @@ def build_model_reachability(
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     transitions_by_phase: Mapping[PhaseName, Mapping[RegimeName, object]],
     terminal_regimes: Collection[RegimeName] = (),
+    support_by_phase: Mapping[
+        str, Mapping[RegimeName, Mapping[int, Collection[RegimeName]]]
+    ]
+    | None = None,
 ) -> ModelReachability:
     """Build solve and simulate graphs from the same construction-time semantics.
 
-    `active_periods_by_regime` must be the single canonical activity mapping
-    computed once at model preparation (via `AgeGrid.get_periods_where`) —
-    this function does not evaluate `Regime.active` itself.
+    `active_periods_by_regime` must be the single canonical coverage mapping
+    computed once at model preparation — this function evaluates no predicate.
+
+    With `support_by_phase`, each source's retained targets at a period are
+    exactly its declared support there; the caller has already checked that
+    every declared target is covered at the next period, so nothing is dropped.
+    Without it, a transition's candidates are its per-target keys or every
+    regime, retained where the target is active at the next period.
     """
     return ModelReachability(
         solution=_build_phase_from_transitions(
@@ -276,12 +296,16 @@ def build_model_reachability(
             active_periods_by_regime=active_periods_by_regime,
             transitions=transitions_by_phase["solution"],
             terminal_regimes=terminal_regimes,
+            support=None if support_by_phase is None else support_by_phase["solution"],
         ),
         simulation=_build_phase_from_transitions(
             n_periods=n_periods,
             active_periods_by_regime=active_periods_by_regime,
             transitions=transitions_by_phase["simulation"],
             terminal_regimes=terminal_regimes,
+            support=(
+                None if support_by_phase is None else support_by_phase["simulation"]
+            ),
         ),
     )
 
@@ -292,9 +316,23 @@ def _build_phase_from_transitions(
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     transitions: Mapping[RegimeName, object],
     terminal_regimes: Collection[RegimeName],
+    support: Mapping[RegimeName, Mapping[int, Collection[RegimeName]]] | None,
 ) -> PhaseReachability:
     """Build one phase's graph from that phase's declared regime transitions."""
     all_regime_names = frozenset(active_periods_by_regime)
+    if support is not None:
+        return build_phase_reachability(
+            n_periods=n_periods,
+            active_periods_by_regime=active_periods_by_regime,
+            candidate_targets_by_source={
+                source: sorted(
+                    {target for targets in by_period.values() for target in targets}
+                )
+                for source, by_period in support.items()
+            },
+            terminal_regimes=terminal_regimes,
+            support_by_period=support,
+        )
     candidates = {
         source: candidate_targets_from_transition(
             transition=transitions.get(source),

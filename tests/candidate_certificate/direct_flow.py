@@ -398,7 +398,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "a69ea643eba0d6b98ea9b4e0fc5f036a721e79f5703ea9fbc7a21a6a02841b9a",
-    PROCESSING_SOURCE: "6f328dba0894c60c0a7283513eb384a681e2a6b62395a9c8fc03406be47e8cbf",
+    PROCESSING_SOURCE: "25b3825ec9697938c06fefcb26c122334ad91f3eb2619d9dcd8e9bad68705724",
     GRID_SEARCH_SOURCE: "a56619a7d0e5a60fc2b4bd4e1bc75131dc0525ea4b22b9acad41082497bee8ed",
     CORE_PROGRAM_SOURCE: "6b96b777960bfdbf6aad394a5c635bebea976a4f6461c24ebe36f80699736924",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -419,7 +419,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "c9d4a23129e5f9e9f961c8d488a17f0ac9527c86fc328ce7642563d90b05a168",
     SIMULATION_TRANSITIONS_SOURCE: "76ba02db6b40070033d1c6b3fd5769a675ff8c1d27e2bb8b179246c06be8066e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "766c442521c6d156f1202ff0c784edac5018451d047dd43372f089410062500a",
+    MODEL_SOURCE: "107f96a95e57ae45fbe8cf866233879b0ab4ad9cc539e8b40172713c4cbfbe68",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "0b74d02806e8f79954acc9b9a499d2818f9fecc459c7fcea1256c36b8f656244",
     PERIOD_REPLAY_SOURCE: "54a1ae3a0a0ae104512aec40ba140350295255ad6f1ec894c00e0fc44ed554c5",
@@ -447,7 +447,7 @@ _SOURCE_SEALS = {
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
     PANDAS_UTILS_SOURCE: "bc174d387fdb4b33d882e351e1cfab8b1f5ee67fd20217439c3fe49fe54e1537",
-    MODEL_PROCESSING_SOURCE: "5df96c6b1948b1ce0e0e6f0bacc4cf46e48a720be77e9af03d8e473edeb86e99",
+    MODEL_PROCESSING_SOURCE: "a3453aa5b0ff2a08247ed11c0f6c14e1811f33ddfe566d517f33f884f97118d6",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
@@ -3203,12 +3203,12 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "629200f4a57510f38b66a390f615b03f0995155325c02e705f9829660640e6f7",
+            "de3b64370c947ba25ae5a34b97181084af7eeca832f2505f89bfe134c55ad823",
             {
                 "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-                "Model.__init__": "79510fe12453fa4366b1a125e978537320e1cd9b05b01a02ba4bd940194232b1",
+                "Model.__init__": "c6137806415ec4c0337e4299c36b3f9520fee8df2d35dea077a100a074600ed1",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "47622b7918385e16a115f8b1b25c719df6ad4a61e1b5f1324aa641261fd6e364",
                 # Fixed caller owners flow through both private automatic-solve
@@ -3856,12 +3856,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "629200f4a57510f38b66a390f615b03f0995155325c02e705f9829660640e6f7",
+        "de3b64370c947ba25ae5a34b97181084af7eeca832f2505f89bfe134c55ad823",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "79510fe12453fa4366b1a125e978537320e1cd9b05b01a02ba4bd940194232b1",
+            "Model.__init__": "c6137806415ec4c0337e4299c36b3f9520fee8df2d35dea077a100a074600ed1",
             "Model.simulate": "47622b7918385e16a115f8b1b25c719df6ad4a61e1b5f1324aa641261fd6e364",
         },
     ),
@@ -4228,12 +4228,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "629200f4a57510f38b66a390f615b03f0995155325c02e705f9829660640e6f7",
+        "de3b64370c947ba25ae5a34b97181084af7eeca832f2505f89bfe134c55ad823",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "79510fe12453fa4366b1a125e978537320e1cd9b05b01a02ba4bd940194232b1",
+            "Model.__init__": "c6137806415ec4c0337e4299c36b3f9520fee8df2d35dea077a100a074600ed1",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "ada74ce5f724d2944b187c777fb43717cd574db5f64e992cad2a6c669b9d08fa",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4373,7 +4373,7 @@ _FINITE_REPLAY_CONTRACTS = {
         },
     ),
     MODEL_PROCESSING_SOURCE: (
-        "3fb3984f6200ccaad8d7174b3235d1118006a8419d4dec1f154309f7c7bd7ed5",
+        "34cdc23ec971cb45ddc71fca8f3a4d2a0842bf812a96ae4dc3cfafa02933fc35",
         {
             "build_regimes_and_template": "c5610c5e6a4cf80dd9696685653ee05664ec7824ad45a7ec0455b4901ba70312",
         },
@@ -6423,12 +6423,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "629200f4a57510f38b66a390f615b03f0995155325c02e705f9829660640e6f7",
+        "de3b64370c947ba25ae5a34b97181084af7eeca832f2505f89bfe134c55ad823",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "79510fe12453fa4366b1a125e978537320e1cd9b05b01a02ba4bd940194232b1",
+            "Model.__init__": "c6137806415ec4c0337e4299c36b3f9520fee8df2d35dea077a100a074600ed1",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "ff9e176801623ee2a12a19ddcc9332ac767c8fd6faee662d6008c448a441d475",
             "Model.solve": "b7447007287a2846e9f8ae2f42f307d6308b98d81b2d38bf7312053aeac4e9bc",

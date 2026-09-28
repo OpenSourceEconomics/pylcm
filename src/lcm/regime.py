@@ -22,6 +22,7 @@ from _lcm.constraints.processed import ConstraintLike
 from _lcm.gated_edge import GatedEdge
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.regime_building.phases import normalize_regime_phases
+from _lcm.regime_building.schedules import declaration_view, is_dated_declaration
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.typing import ActionName, ActiveFunction, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import (
@@ -43,8 +44,18 @@ from lcm.collective import (
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.transition import AgeSpecializedGrid, JointTransition, MarkovTransition
+from lcm.transition import (
+    AgeSpecializedGrid,
+    ByAge,
+    Choose,
+    JointTransition,
+    MarkovTransition,
+)
 from lcm.typing import UserFunction
+
+
+def _always_active(_age: float) -> bool:
+    return True
 
 
 @beartype(conf=REGIME_CONF)
@@ -72,7 +83,10 @@ class Regime:
     # `UserFunction`/`Phased` inside the per-target dict pass the type check
     # so the validator can reject them with an explanation.
     transition: (
-        UserFunction
+        RegimeName
+        | Choose
+        | ByAge
+        | UserFunction
         | MarkovTransition
         | Phased
         | Mapping[
@@ -84,7 +98,21 @@ class Regime:
     )
     """Regime transition, or `None` for terminal regimes.
 
-    Three forms:
+    Dated forms, which also declare where the regime is solved:
+
+    - regime name ⇒ deterministic move to that regime
+    - `Choose(func, targets=...)` ⇒ deterministic, `func` returns the global
+      regime code of one of `targets`
+    - `MarkovTransition(func, targets=...)` ⇒ stochastic, `func` returns a
+      probability vector over all regimes, nonzero only on `targets`
+    - `ByAge({...})` ⇒ one of the above, or a per-target dict, per selected age
+
+    A plain nonterminal law covers every non-final age; a `ByAge` covers
+    exactly the ages its cases select. Once any regime of a model uses a dated
+    form, no regime may declare `active`, a bare callable or a vector
+    `MarkovTransition` without `targets`.
+
+    Legacy forms:
 
     - bare callable ⇒ deterministic, returns the target regime id
     - `MarkovTransition` ⇒ stochastic, returns a probability vector over all
@@ -113,8 +141,12 @@ class Regime:
     their probabilities may differ.
     """
 
-    active: ActiveFunction = lambda _age: True
-    """Callable that takes age (float) and returns True if regime is active."""
+    active: ActiveFunction = _always_active
+    """Callable that takes age (float) and returns True if regime is active.
+
+    Only for models without dated transitions; a dated model derives coverage
+    from `transition`.
+    """
 
     # `None` masks a model-level entry of the same name.
     states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None] = field(
@@ -457,7 +489,25 @@ class Regime:
         value = ensure_containers_are_immutable(getattr(self, name))
         object.__setattr__(self, name, value)
 
+    @property
+    def declares_active(self) -> bool:
+        """Whether `active` was set rather than left at its default."""
+        return self.active is not _always_active
+
     def __post_init__(self) -> None:
+        transition = self.transition
+        if not is_dated_declaration(transition):
+            self._post_init_engine_view()
+            return
+        # Validate the dated declaration through its period-independent engine
+        # view, then keep the declaration itself for the model to resolve.
+        object.__setattr__(self, "transition", declaration_view(transition))
+        try:
+            self._post_init_engine_view()
+        finally:
+            object.__setattr__(self, "transition", transition)
+
+    def _post_init_engine_view(self) -> None:
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
         # A collective regime's own declaration is validated here (the

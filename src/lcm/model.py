@@ -77,9 +77,9 @@ from _lcm.regime_building.fixed_components import (
 from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
 from _lcm.regime_building.processing import (
     Regime,
-    compute_active_periods_by_regime,
     prepare_model_structure,
 )
+from _lcm.regime_building.schedules import resolve_regime_schedules
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
@@ -599,15 +599,25 @@ class Model:
         # executables, so they reuse the verdicts instead of re-reading the HLO.
         self._gather_checks: GatherChecks = {}
 
-        # The single canonical activity schedule: every regime's `active`
-        # predicate is evaluated exactly once, here, and threaded through
-        # pruning, validation, and model-structure preparation below. Its
-        # `.active` predicate is unaffected by slot merging/finalization, so
-        # the raw `regimes` argument is the correct — and only — evaluation
-        # point.
-        active_periods_by_regime = compute_active_periods_by_regime(
-            ages=ages, user_regimes=regimes
+        # The single canonical coverage schedule, read once here from the raw
+        # regimes and threaded through pruning, validation, and model-structure
+        # preparation below. A dated model takes it from each `transition`
+        # declaration, whose laws are lowered to the engine's period-independent
+        # vocabulary; any other model evaluates each `active` predicate.
+        schedules = resolve_regime_schedules(
+            user_regimes=regimes,
+            ages=ages,
+            regime_names_to_ids={
+                name: int(code)
+                for name, code in get_field_names_and_values(regime_id_class).items()
+            },
         )
+        if schedules.dated:
+            regimes = {
+                name: regime.replace(transition=schedules.transitions[name])
+                for name, regime in regimes.items()
+            }
+        active_periods_by_regime = schedules.coverage_by_regime
 
         model_slots = {
             "functions": functions,
@@ -691,6 +701,7 @@ class Model:
             user_regimes=self.user_regimes,
             ages=self.ages,
             active_periods_by_regime=active_periods_by_regime,
+            support_by_phase=schedules.support_by_phase if schedules.dated else None,
         )
         self.reachability = prepared_structure.reachability
         self._regimes, self._params_template = build_regimes_and_template(

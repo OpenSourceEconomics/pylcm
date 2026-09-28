@@ -243,7 +243,9 @@ def validate_model_inputs(  # noqa: C901
     # whereas the raw marker is not a `Grid` at all and would be dropped from every
     # type-filtered collection of continuous states, rejecting a valid model.
     solver_validation_regimes = _representative_for_validation(
-        user_regimes=user_regimes, ages=ages
+        user_regimes=user_regimes,
+        ages=ages,
+        active_periods_by_regime=active_periods_by_regime,
     )
     solver_validation_phase_specs = normalize_all_regime_phases(
         user_regimes=solver_validation_regimes
@@ -337,6 +339,7 @@ def _representative_for_validation(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     ages: AgeGrid | None,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> Mapping[RegimeName, UserRegime]:
     """Resolve age markers to their representatives, for solver-contract validation.
 
@@ -358,8 +361,10 @@ def _representative_for_validation(
         user_regimes=user_regimes,
         phased_specs=phased_specs,
         ages=ages,
-        active_periods_by_regime=compute_active_periods_by_regime(
-            ages=ages, user_regimes=user_regimes
+        active_periods_by_regime=(
+            compute_active_periods_by_regime(ages=ages, user_regimes=user_regimes)
+            if active_periods_by_regime is None
+            else active_periods_by_regime
         ),
     ).representative_user_regimes
 

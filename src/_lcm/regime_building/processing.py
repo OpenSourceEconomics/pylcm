@@ -323,12 +323,17 @@ def prepare_model_structure(
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     ages: AgeGrid,
     active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]],
+    support_by_phase: Mapping[
+        str, Mapping[RegimeName, Mapping[int, tuple[RegimeName, ...]]]
+    ]
+    | None = None,
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
 
-    `active_periods_by_regime` must be the single canonical activity
-    mapping from `compute_active_periods_by_regime`, computed once by the
-    caller — this function does not evaluate `Regime.active` itself.
+    `active_periods_by_regime` must be the single canonical coverage mapping,
+    computed once by the caller — this function does not evaluate
+    `Regime.active` itself. `support_by_phase` holds the per-period targets a
+    dated model declares; without it, support is read off the transitions.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes)
     age_normalization = normalize_age_specialization(
@@ -353,6 +358,7 @@ def prepare_model_structure(
             n_periods=ages.n_periods,
             active_periods_by_regime=active_periods_by_regime,
             transitions_by_phase=transitions_by_phase,
+            support_by_phase=support_by_phase,
             terminal_regimes={
                 regime_name
                 for regime_name, regime in user_regimes.items()

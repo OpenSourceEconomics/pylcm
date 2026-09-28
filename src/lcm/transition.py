@@ -1,5 +1,6 @@
 """User-facing transition vocabulary: `fixed_transition`, `MarkovTransition`,
-`JointTransition`, `AgeSpecializedFunction`, and `AgeSpecializedGrid`.
+`Choose`, `ByAge`, `AgeRange`, `JointTransition`, `AgeSpecializedFunction`, and
+`AgeSpecializedGrid`.
 
 A thin leaf module with no dependency on `Regime`, the validators, or the
 regime-building code. Keeping the vocabulary here lets the user-facing
@@ -8,8 +9,10 @@ all import it without an import cycle.
 
 """
 
-from collections.abc import Callable, Hashable, Mapping
+import math
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 from types import MappingProxyType
 from typing import Any
 
@@ -20,8 +23,10 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.typing import StateName
+from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import FloatND, UserFunction
+from lcm.phased import Phased
+from lcm.typing import FloatND, UserAge, UserFunction
 
 
 def fixed_transition(state_name: StateName) -> UserFunction:
@@ -85,7 +90,22 @@ class MarkovTransition:
     group only. Every group must have the same number of codes.
     """
 
+    targets: Sequence[str] | None = field(
+        default=None, kw_only=True, metadata={"fingerprint_omit_if_default": True}
+    )
+    """For a regime transition returning the full regime-ID vector: its support.
+
+    Names the regimes the vector may assign positive probability to. Every other
+    entry of the returned vector must be exactly zero. State laws declare none.
+    """
+
     def __post_init__(self) -> None:
+        if self.targets is not None:
+            object.__setattr__(
+                self,
+                "targets",
+                _declared_targets(targets=self.targets, owner="MarkovTransition"),
+            )
         # Copy __wrapped__ and __annotations__ from the wrapped function so
         # that inspect.signature and dags see the original signature. We use
         # object.__setattr__ because the dataclass is frozen.
@@ -95,6 +115,40 @@ class MarkovTransition:
         )
 
     def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
+        return self.func(*args, **kwargs)
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True)
+class Choose:
+    """A deterministic regime transition with declared support.
+
+    `func` returns an existing global regime code — the same integer a bare
+    deterministic transition returns — and `targets` names every regime it may
+    select. It is evaluated on the deterministic route and adds no random draw.
+
+        Regime(transition=Choose(next_regime, targets=("work", "retired")), ...)
+
+    Returning a code outside `targets` is an error; a target that is never
+    selected at runtime remains a declared edge.
+    """
+
+    func: Callable[..., Any]
+    """The selector returning a global regime code."""
+
+    targets: Sequence[str] = field(kw_only=True)
+    """The regimes `func` may select."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "targets", _declared_targets(targets=self.targets, owner="Choose")
+        )
+        object.__setattr__(self, "__wrapped__", self.func)
+        object.__setattr__(
+            self, "__annotations__", getattr(self.func, "__annotations__", {})
+        )
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         return self.func(*args, **kwargs)
 
 
@@ -388,3 +442,269 @@ class AgeSpecializedGrid(_AgeSpecialized):
     signature: Callable[[float], Hashable]
     """Returns a hashable identity of the age's grid; the dedup key, cross-checked
     against the resolved nodes at build time."""
+
+
+@dataclass(frozen=True)
+class AgeRange:
+    """The existing grid ages in the half-open interval `[start, stop)`.
+
+    Either bound may be omitted. The bounds need not be grid points; the
+    selection is always a subset of the model's ages.
+    """
+
+    start: UserAge | float | None = None
+    """Inclusive lower bound, or `None` for the first age."""
+
+    stop: UserAge | float | None = None
+    """Exclusive upper bound, or `None` for beyond the last age."""
+
+
+_MISSING = object()
+
+type AgeSelector = UserAge | float | tuple[UserAge | float, ...] | range | AgeRange
+
+
+class ByAge:
+    """A nonterminal regime transition that depends on the source age.
+
+    Each case maps an age selector to a nonterminal law: a regime name, a
+    `Choose`, a vector `MarkovTransition` with `targets`, a per-target mapping,
+    or a `Phased` of those. The selected ages are the regime's coverage: it is
+    solved there and nowhere else. `default` fills every remaining non-final age.
+
+    Selectors name exact grid coordinates:
+
+    - a scalar or a tuple of scalars selects those ages;
+    - a `range` selects its integers;
+    - an `AgeRange` selects every grid age in `[start, stop)`.
+
+    Cases may not overlap, and a nonterminal law may not cover the last age.
+    `None` — terminality — is only ever the top-level `Regime.transition`.
+    """
+
+    # keyword-only-exempt: primary-argument=cases
+    def __init__(
+        self,
+        cases: Mapping[AgeSelector, object],
+        *,
+        default: object = _MISSING,
+        _until: tuple[object, object, object, object] | None = None,
+    ) -> None:
+        if not cases and default is _MISSING and _until is None:
+            raise RegimeInitializationError("`ByAge` needs at least one case.")
+        for law in (*cases.values(), *(() if default is _MISSING else (default,))):
+            _fail_if_not_a_nonterminal_law(law)
+        self._cases: tuple[tuple[object, object], ...] = tuple(
+            (_freeze_selector(selector), law) for selector, law in cases.items()
+        )
+        self._default = default
+        self._until = _until
+
+    # keyword-only-exempt: primary-argument=boundary
+    @classmethod
+    def until(
+        cls,
+        boundary: UserAge | float,
+        *,
+        law: object,
+        then: object,
+        start: UserAge | float | None = None,
+    ) -> ByAge:
+        """Apply `law` from `start` and `then` on the age just before `boundary`.
+
+        Covers `start <= age < boundary`. On an annual grid a boundary of 62
+        exits at 61; on a quarterly grid at 61.75. Both legs are nonterminal
+        laws — an exit into a terminal regime names that regime.
+        """
+        _fail_if_not_a_nonterminal_law(law)
+        _fail_if_not_a_nonterminal_law(then)
+        return cls({}, _until=(boundary, law, then, start))
+
+    @property
+    def laws(self) -> tuple[object, ...]:
+        """Every law the schedule may select, in declaration order."""
+        if self._until is not None:
+            return (self._until[1], self._until[2])
+        return (
+            *(law for _, law in self._cases),
+            *(() if self._default is _MISSING else (self._default,)),
+        )
+
+    def resolve(self, ages: AgeGrid) -> ResolvedSchedule:
+        """Resolve the selectors against `ages` without evaluating any law."""
+        period_by_age: dict[object, int] = {
+            age: period for period, age in enumerate(ages.exact_values)
+        }
+        last = ages.n_periods - 1
+        if self._until is not None:
+            law_by_period = _resolve_until(
+                until=self._until, ages=ages, period_by_age=period_by_age
+            )
+        else:
+            law_by_period = {}
+            for selector, law in self._cases:
+                periods = _select_periods(
+                    selector=selector, ages=ages, period_by_age=period_by_age
+                )
+                if not periods:
+                    raise RegimeInitializationError(
+                        f"`ByAge` selector {selector!r} selects no age of the model."
+                    )
+                overlap = sorted(set(periods) & set(law_by_period))
+                if overlap:
+                    raise RegimeInitializationError(
+                        f"`ByAge` selector {selector!r} overlaps another case at "
+                        f"age(s) {[ages.exact_values[p] for p in overlap]}."
+                    )
+                law_by_period.update(dict.fromkeys(periods, law))
+            if self._default is not _MISSING:
+                for period in range(last):
+                    law_by_period.setdefault(period, self._default)
+        if last in law_by_period:
+            raise RegimeInitializationError(
+                f"`ByAge` covers the last age {ages.exact_values[last]} with a "
+                "nonterminal law, but no continuation exists there. Declare a "
+                "terminal regime (`transition=None`) for values at the last age."
+            )
+        return ResolvedSchedule(
+            ages=ages,
+            law_by_period=MappingProxyType(dict(sorted(law_by_period.items()))),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResolvedSchedule:
+    """A schedule resolved against one age grid; inspection only."""
+
+    ages: AgeGrid
+    """The grid the schedule was resolved against."""
+
+    law_by_period: MappingProxyType[int, object]
+    """The selected law at each covered period."""
+
+    @property
+    def covered_ages(self) -> tuple[UserAge, ...]:
+        """The exact ages the schedule covers, ascending."""
+        return tuple(self.ages.exact_values[period] for period in self.law_by_period)
+
+    @property
+    def periods(self) -> tuple[int, ...]:
+        """The covered period indices, ascending."""
+        return tuple(self.law_by_period)
+
+    def at(self, age: UserAge | float) -> object:
+        """Return the law selected at `age`; raise `KeyError` if it is uncovered."""
+        for period, exact in enumerate(self.ages.exact_values):
+            if exact == age and period in self.law_by_period:
+                return self.law_by_period[period]
+        raise KeyError(age)
+
+
+def _declared_targets(*, targets: Sequence[str], owner: str) -> tuple[str, ...]:
+    """Validate and freeze a declared regime support."""
+    frozen = tuple(targets)
+    if not frozen:
+        raise RegimeInitializationError(f"`{owner}.targets` must name a regime.")
+    if len(set(frozen)) != len(frozen):
+        raise RegimeInitializationError(
+            f"`{owner}.targets` names a regime more than once: {list(frozen)}."
+        )
+    return frozen
+
+
+def _fail_if_not_a_nonterminal_law(law: object) -> None:
+    """Reject terminality and nested schedules inside a schedule."""
+    sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
+    for side in sides:
+        if side is None:
+            raise RegimeInitializationError(
+                "`None` marks a terminal regime only as the top-level "
+                "`Regime.transition`; a schedule case must be a nonterminal law. "
+                'Name the terminal regime to exit into it, e.g. `then="dead"`.'
+            )
+        if isinstance(side, ByAge):
+            raise RegimeInitializationError(
+                "`ByAge` cannot be nested inside `ByAge` or `Phased`. Put one "
+                "`Phased` inside each `ByAge` case instead."
+            )
+        if isinstance(side, Mapping) and not side:
+            raise RegimeInitializationError(
+                "A per-target transition mapping must name at least one target."
+            )
+
+
+def _freeze_selector(selector: object) -> object:
+    """Freeze a selector and reject values that can never be grid ages."""
+    values = selector if isinstance(selector, tuple | range) else (selector,)
+    if isinstance(selector, AgeRange):
+        values = tuple(v for v in (selector.start, selector.stop) if v is not None)
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, int | float | Fraction):
+            raise RegimeInitializationError(
+                f"Age selector {selector!r} must name numeric ages, not {value!r}."
+            )
+        if isinstance(value, float) and not math.isfinite(value):
+            raise RegimeInitializationError(
+                f"Age selector {selector!r} contains a nonfinite age."
+            )
+    if (
+        isinstance(selector, AgeRange)
+        and selector.start is not None
+        and selector.stop is not None
+        and selector.start >= selector.stop
+    ):
+        raise RegimeInitializationError(
+            f"`AgeRange` start {selector.start} must be below stop {selector.stop}."
+        )
+    return selector
+
+
+def _select_periods(
+    *, selector: object, ages: AgeGrid, period_by_age: Mapping[object, int]
+) -> tuple[int, ...]:
+    """Return the periods an exact selector names; off-grid points raise."""
+    if isinstance(selector, AgeRange):
+        return tuple(
+            period
+            for period, age in enumerate(ages.exact_values)
+            if (selector.start is None or age >= selector.start)
+            and (selector.stop is None or age < selector.stop)
+        )
+    values = selector if isinstance(selector, tuple | range) else (selector,)
+    periods = set()
+    for value in values:
+        if value not in period_by_age:
+            raise RegimeInitializationError(
+                f"Age {value} in selector {selector!r} is not an age of the model; "
+                f"valid ages are {list(ages.exact_values)}."
+            )
+        periods.add(period_by_age[value])
+    return tuple(sorted(periods))
+
+
+def _resolve_until(
+    *,
+    until: tuple[object, object, object, object],
+    ages: AgeGrid,
+    period_by_age: Mapping[object, int],
+) -> dict[int, object]:
+    """Resolve `ByAge.until` into per-period laws."""
+    boundary, law, then, start = until
+    for name, value in (("boundary", boundary), ("start", start)):
+        if value is not None and value not in period_by_age:
+            raise RegimeInitializationError(
+                f"`ByAge.until` {name} {value} is not an age of the model; valid "
+                f"ages are {list(ages.exact_values)}."
+            )
+    stop = period_by_age[boundary]
+    if stop == 0:
+        raise RegimeInitializationError(
+            f"`ByAge.until` boundary {boundary} is the first age and has no "
+            "predecessor on which to exit."
+        )
+    first = 0 if start is None else period_by_age[start]
+    if first >= stop:
+        raise RegimeInitializationError(
+            f"`ByAge.until` start {start} is not before boundary {boundary}."
+        )
+    return dict.fromkeys(range(first, stop - 1), law) | {stop - 1: then}
