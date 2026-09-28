@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from _lcm.regime_building.fixed_components import _restricted_law
+from _lcm.regime_building.next_state import _DiscreteStochasticNextState
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -132,7 +133,7 @@ def _next_regime(age: float) -> ScalarInt:
 def _model(
     *,
     factored: bool,
-    fixed_component: tuple[int, ...] = (0, 0, 1, 1),
+    fixed_component: tuple[int, ...] | None = (0, 0, 1, 1),
     sharded: bool = False,
     law_dependency: Literal["direct", "helper", "chain"] = "direct",
     enable_jit: bool = True,
@@ -844,3 +845,46 @@ def test_fixed_component_constant_law_preserves_single_group_probabilities(
         np.testing.assert_array_equal(
             law(kind_health=jnp.asarray(code)), np.full(4, 0.25)
         )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_fixed_component_simulation_preserves_original_sampling_support(
+    *, monkeypatch: pytest.MonkeyPatch, enable_jit: bool
+) -> None:
+    """Simulation samples original code slots and returns their within-group code."""
+    observed: set[tuple[tuple[int, ...], tuple[int, ...]]] = set()
+    original = _DiscreteStochasticNextState.__call__
+
+    def record_support(
+        self: _DiscreteStochasticNextState, **kwargs: FloatND
+    ) -> DiscreteState:
+        if self.qname == "alive__next_kind_health_rest":
+            observed.add((self.labels.shape, kwargs[f"weight_{self.qname}"].shape))
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(_DiscreteStochasticNextState, "__call__", record_support)
+    panels = []
+    for annotation in (None, (0, 0, 1, 1)):
+        model = _model(factored=True, fixed_component=annotation, enable_jit=enable_jit)
+        params = {"discount_factor": 0.95}
+        result = model.simulate(
+            params=params,
+            solution=model.solve(params=params, log_level="off"),
+            initial_conditions=_initial(factored=True, as_frame=False),
+            seed=1,
+            log_level="off",
+        )
+        frame = result.to_dataframe()
+        frame = frame.loc[frame["regime_name"] == "alive"].sort_values(
+            ["period", "subject_id"]
+        )
+        if annotation is None:
+            codes = frame["kind_health"].cat.codes.to_numpy()
+        else:
+            codes = (
+                2 * frame["kind_health_fixed"].cat.codes.to_numpy()
+                + frame["kind_health_rest"].cat.codes.to_numpy()
+            )
+        panels.append(codes)
+    np.testing.assert_array_equal(panels[0], panels[1])
+    assert observed == {((4,), (4,))}

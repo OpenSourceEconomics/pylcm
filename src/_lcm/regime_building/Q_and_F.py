@@ -3171,8 +3171,8 @@ def _build_target_continuation(
     # consumer resolves it depends on what the law is: a law feeding a coordinate
     # is resolved by the interpolator, a declared entry by its basis weights.
     # Full original marginals enter the UNCHANGED scaled product, so zero slots
-    # receive their native shifts, not dummy padding. The restricted law still
-    # owns simulation draws and stored support; no probability is reconstructed
+    # receive their native shifts, not dummy padding. The restricted law
+    # defines stored support; no probability is reconstructed
     # or normalized here (even signed zeros come from the original callable).
     weight_functions = functions
     if original_layouts:

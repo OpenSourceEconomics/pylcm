@@ -127,7 +127,7 @@ class TransitionLotteryInfo:
     original_layout: OriginalLotteryLayout | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
-    """Full original marginal for linear expectations; absent on ordinary laws."""
+    """Original slots for linear expectations and sampling; absent on ordinary laws."""
 
 
 @dataclass(frozen=True)
