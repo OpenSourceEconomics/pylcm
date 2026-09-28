@@ -17,7 +17,6 @@ must always be solved", which rejects a model that is legal and solves.
 from types import MappingProxyType
 from typing import cast
 
-import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
@@ -29,19 +28,24 @@ from _lcm.regime_building.gated_edges import (
     source_reads_folded_wbar,
 )
 from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
-from _lcm.solution.backward_induction import solve
 from _lcm.typing import ConstraintFunction
-from _lcm.utils.logging import get_logger
+from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, FloatND
+from lcm.typing import BoolND, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building.test_collective_regime_simulate import (
     _make_repeating_self_loop_regimes,
-    _solve_and_process,
 )
 
 _BETA = 0.95
+
+
+@categorical(ordered=False)
+class _SelfLoopRegimeId:
+    src: ScalarInt
+    src_exit: ScalarInt
+    src_fallback: ScalarInt
 
 
 def _gate(V_target: FloatND) -> BoolND:
@@ -168,7 +172,7 @@ def test_repeating_self_loop_solves_with_its_fallback_uncovered_in_the_unread_pe
     """A self-loop edge solves although its fallback is absent where no source reads.
 
     `src` is covered in periods 0 and 1 and gates an edge back to itself, whose
-    fallback `src_fallback` is covered only from period 1 on. Period 0's fold has
+    fallback `src_fallback` is solved only at period 1. Period 0's fold has
     the target (`src`) solved and the fallback not — yet no `src` exists at
     period -1 to read it, so the edge keeps the value it already holds and the
     model solves. Requiring the fallback in every target-covered period would
@@ -181,14 +185,16 @@ def test_repeating_self_loop_solves_with_its_fallback_uncovered_in_the_unread_pe
     `V_0(1) = 1 + beta * 0.1 * 1 = 1.095` off the fallback and
     `V_0(2) = 2 + beta * 2.95 = 4.8025` off the target.
     """
-    ages = AgeGrid(start=0, stop=3, step="Y")
-    regimes_dict = _make_repeating_self_loop_regimes()
-    regimes, _regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+    model = Model(
+        regimes=_make_repeating_self_loop_regimes(),
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=_SelfLoopRegimeId,
+        initial_regimes={0: "src"},
     )
-    # The activity windows that make period 0 the unread one.
+    regimes = model._regimes
+    # The coverage that makes period 0 the unread one.
     assert regimes["src"].active_periods == (0, 1)
-    assert regimes["src_fallback"].active_periods == (1, 2, 3)
+    assert regimes["src_fallback"].active_periods == (1,)
     edge = regimes["src"].gated_edges["src"]
     assert edge.reference_regimes == ("src_fallback",)
     assert (
@@ -198,22 +204,9 @@ def test_repeating_self_loop_solves_with_its_fallback_uncovered_in_the_unread_pe
         is False
     )
 
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "src_exit": MappingProxyType({}),
-            "src_fallback": MappingProxyType({}),
-        }
-    )
-    solution = solve(
-        program_fingerprint="test_gated_edge_fold_availability",
-        flat_params=flat_params,
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="debug"),
-        enable_jit=False,
-    ).value_functions
+    solution = model.solve(
+        params={"src": {"koopmans_aggregator": {"discount_factor": _BETA}}},
+        log_level="off",
+    ).values
 
     aaae(np.asarray(solution[0]["src"]), [1.095, 4.8025], decimal=DECIMAL_PRECISION)
