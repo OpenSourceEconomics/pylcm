@@ -459,7 +459,10 @@ def create_params_template(
     arg_names: set[str] = set()
 
     for name, regime in regimes.items():
-        regime_template = dict(regime.regime_params_template)
+        # A regime no required problem solves reads no parameter.
+        regime_template = (
+            dict(regime.regime_params_template) if regime.active_periods else {}
+        )
         template[name] = regime_template
 
         for key, val in regime_template.items():

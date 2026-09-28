@@ -1460,11 +1460,18 @@ def _attach_gated_edge_folds(
                     target_name
                 ].discrete_states.values()
             )
-            # The periods the edge can ever fold at: those its target holds a
-            # value in. Backward induction folds at the target's own period and
-            # forward simulation at the source's `period + 1`, which is the
-            # same period seen from the consumer's side.
-            fold_periods = canonical_regimes[target_name].active_periods
+            # The periods the edge can ever fold at: those this source lands
+            # in, where its target holds a value. Backward induction folds at
+            # the target's own period and forward simulation at the source's
+            # `period + 1`, which is the same period seen from the consumer's
+            # side. A target solved at other periods for other sources owes
+            # this edge no fold there.
+            source_periods = frozenset(canonical_regimes[source_name].active_periods)
+            fold_periods = tuple(
+                period
+                for period in canonical_regimes[target_name].active_periods
+                if period - 1 in source_periods
+            )
             # The fold takes the target's value array as a RUNTIME argument and
             # needs only its state names, so it groups on the grids its own
             # readers interpolate -- `interpolated_regimes`, which names the
@@ -3234,7 +3241,14 @@ def _build_solution_phase(  # noqa: PLR0915
     # Set by whichever branch below builds the decision kernels, to the key
     # their periods were grouped by; `None` where one closure serves every period.
     decision_group_key: _PeriodGroupKey | None = None
-    if spec.terminal:
+    if not spec.terminal and not regimes_to_active_periods[regime_name]:
+        # A nonterminal regime no required problem solves runs nothing, so it
+        # gets no transition program, kernel or diagnostic.
+        compute_regime_transition_probs = None
+        validation_regime_transition_probs = None
+        Q_and_F_functions = MappingProxyType({})
+        compute_intermediates = MappingProxyType({})
+    elif spec.terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
         if stakeholders is not None:
@@ -4073,7 +4087,7 @@ def _outer_state_domain_by_period(
     return MappingProxyType(domains)
 
 
-def _build_simulation_phase(  # noqa: PLR0912, PLR0915
+def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     *,
     spec: PhasedRegimeSpec,
     user_regime: UserRegime,
@@ -4302,7 +4316,13 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     # collective branch (below) recomputes the household argmax and gathers
     # each stakeholder's own value at it.
     collective = stakeholders is not None
-    if spec.terminal:
+    if not spec.terminal and not regimes_to_active_periods[regime_name]:
+        # A nonterminal regime no required problem solves is never simulated.
+        compute_regime_transition_probs = None
+        per_subject_route = None
+        realized_validation_probs = None
+        Q_and_F_functions = MappingProxyType({})
+    elif spec.terminal:
         compute_regime_transition_probs = None
         per_subject_route = None
         realized_validation_probs = None

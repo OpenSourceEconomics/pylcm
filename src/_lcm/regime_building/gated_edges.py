@@ -2726,7 +2726,9 @@ def edge_may_fold_at_period(
 
     - the target is unsolved ⇒ `False`. The edge does not exist at this period
       (a repeating edge past its target's activity boundary, e.g.), so the
-      caller keeps whatever value it already holds.
+      caller keeps whatever value it already holds. The same holds for an
+      unread period without a compiled fold: the target is solved there only
+      for other sources.
     - the target and every reference are solved ⇒ `True`.
     - the target is solved and a reference is not ⇒ `False` when no source
       reads this period's `Wbar`, and a rejection when one does. An
@@ -2752,6 +2754,10 @@ def edge_may_fold_at_period(
             whose `Wbar` the source reads.
     """
     if edge.target not in solved_regimes:
+        return False
+    if not source_reads_wbar and fold_period not in edge.folds_by_period:
+        # The target is solved here for another start; this source never
+        # stands at `fold_period - 1`, so the edge owes no fold.
         return False
     missing = tuple(
         regime_name
