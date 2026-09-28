@@ -173,7 +173,7 @@ def _make_f2_regimes() -> dict[str, Regime]:
     """Source and target BOTH declare a continuous state named `x` on a
     runtime-points `IrregSpacedGrid`, with DIFFERENT points."""
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_threshold_gate,
@@ -193,7 +193,7 @@ def _make_f2_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": IrregSpacedGrid(n_points=2)},
         functions={"utility": _u_target},
@@ -202,7 +202,7 @@ def _make_f2_regimes() -> dict[str, Regime]:
     # SOURCE's params, so a runtime-points fallback grid would confound this
     # repro with a second (solve-side) namespace question.
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_fallback},
@@ -498,7 +498,7 @@ def _stateless_gate(V_target: FloatND) -> BoolND:
 def _make_f3_regimes() -> dict[str, Regime]:
     """A 3-regime model whose gated target is STATELESS (terminal scrap value)."""
     src = Regime(
-        transition={
+        regime_transitions={
             "stateless_target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_stateless_gate,
@@ -518,12 +518,12 @@ def _make_f3_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     stateless_target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _u_stateless_target},
     )
     stateless_fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _u_stateless_fallback},
     )

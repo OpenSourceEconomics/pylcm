@@ -79,7 +79,7 @@ def _build_negm_model(*, alpha: float, durable_law=None) -> Model:
             "consumption": toy.CONSUMPTION_GRID,
             "illiquid_investment": toy.ILLIQUID_INVESTMENT_GRID,
         },
-        transition=toy.next_regime,
+        regime_transitions=toy.next_regime,
         functions={
             "utility": toy.utility,
             "new_durable": toy.new_durable,
@@ -123,7 +123,7 @@ def _build_brute_model(alpha: float) -> Model:
             "consumption": toy.CONSUMPTION_GRID_BRUTE,
             "new_durable": toy.OUTER_GRID,
         },
-        transition=toy.next_regime,
+        regime_transitions=toy.next_regime,
         functions={
             "utility": toy.utility,
             "serviced_durable": toy.serviced_durable_brute,

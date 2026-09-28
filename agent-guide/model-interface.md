@@ -8,7 +8,7 @@ the key in the `regimes` dict passed to `Model`:
 ```python
 # Non-terminal regime
 Regime(
-    transition=next_regime_func,  # Required: regime transition function (None → terminal)
+    regime_transitions=next_regime_func,  # Required: regime transition function (None → terminal)
     active=lambda age: (
         25 <= age < 65
     ),  # Optional: age-based predicate (default: always True)
@@ -30,16 +30,16 @@ Regime(
     certainty_equivalent=PowerMean(),  # Optional: overrides the model-level one
 )
 
-# Terminal regime (transition=None, no state_transitions)
+# Terminal regime (regime_transitions=None, no state_transitions)
 Regime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": terminal_utility},
     states={"wealth": LinSpacedGrid(...)},
 )
 
 # Target-dependent transitions (keyed by target regime name)
 Regime(
-    transition=next_regime_func,
+    regime_transitions=next_regime_func,
     states={"health": DiscreteGrid(Health)},
     state_transitions={
         "health": {
@@ -53,8 +53,8 @@ Regime(
 
 **Regime Requirements:**
 
-- `transition` is required: the regime transition, or `None` for terminal regimes.
-  `terminal` is a derived property (`self.transition is None`). Three forms:
+- `regime_transitions` is required: the regime transition, or `None` for terminal regimes.
+  `terminal` is a derived property (`self.regime_transitions is None`). Three forms:
   - bare callable ⇒ deterministic, returns the target regime id; every regime is
     reachable
   - `MarkovTransition` ⇒ stochastic, returns a probability vector over all regimes;
@@ -62,7 +62,7 @@ Regime(
   - per-target dict `{target_regime: MarkovTransition(prob_func)}` ⇒ stochastic; each
     cell returns that target's probability and the key set declares the regime's
     reachable targets — omitted regimes are structurally unreachable. Cells must be
-    `MarkovTransition`-wrapped; `transition={}` is rejected (terminality is `None`).
+    `MarkovTransition`-wrapped; `regime_transitions={}` is rejected (terminality is `None`).
     Cell params nest under the target in the template
     (`template[regime][target]["next_regime"]`).
 - `active` is optional; defaults to `lambda _age: True` (always active)
@@ -197,8 +197,8 @@ array. Everything is declared in a slot the regime already has:
 
 ```python
 Regime(
-    transition={
-        "couple": ValueDependentTransition(  # goes in `transition`, keyed by TARGET
+    regime_transitions={
+        "couple": ValueDependentTransition(  # goes in `regime_transitions`, keyed by TARGET
             probability=MarkovTransition(stays_married),
             gate=no_dissolution,  # Boolean predicate on the target's grid
             routes={"f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)},

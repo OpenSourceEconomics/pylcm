@@ -12,7 +12,7 @@ short form an agent needs before editing.
 - `Model`: User-facing class for defining dynamic choice models
 - `Regime` (from `lcm.regime`): User-facing regime definition with utility, constraints,
   functions, actions, states, and state transitions (the `state_transitions` field). The
-  regime transition is set via the `transition` field.
+  regime transition is set via the `regime_transitions` field.
 - `Phased(solve=..., simulate=...)`: phase-specific variants of a regime-slot value
   (functions, states, state transitions, the regime transition). A bare value broadcasts
   to both phases.
@@ -66,7 +66,7 @@ short form an agent needs before editing.
   applies to both phases, `Phased(solve=..., simulate=...)` specifies each phase
   explicitly:
   - `functions` and `state_transitions` accept `Phased` (per-phase implementations /
-    laws of motion); `transition` accepts `Phased` with matching forms (and, for
+    laws of motion); `regime_transitions` accepts `Phased` with matching forms (and, for
     per-target dicts, identical key sets).
   - `states` accept `Phased(solve=callable, simulate=Grid)` — the carried state: derived
     (no grid axis) during backward induction, a genuine seeded-and-evolved state in

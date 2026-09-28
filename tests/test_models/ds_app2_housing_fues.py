@@ -381,7 +381,7 @@ def build_model(  # noqa: C901
 
     housing_grid = DiscreteGrid(category_class=housing_class)
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, fa=final_age: age >= fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
@@ -395,7 +395,7 @@ def build_model(  # noqa: C901
 
     if variant == "brute":
         working = UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=lambda age, ra=retirement_age: age < ra,
             states={
                 "liquid": liquid_grid,
@@ -416,7 +416,7 @@ def build_model(  # noqa: C901
             solver=GridSearch(),
         )
         retired = UserRegime(
-            transition=next_regime_from_retired,
+            regime_transitions=next_regime_from_retired,
             active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
             states={"liquid": liquid_grid, "housing": housing_grid},
             state_transitions={"liquid": next_liquid_brute, "housing": next_housing},
@@ -441,7 +441,7 @@ def build_model(  # noqa: C901
         n_constrained_points=32,
     )
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age, ra=retirement_age: age < ra,
         states={
             "liquid": liquid_grid,
@@ -470,7 +470,7 @@ def build_model(  # noqa: C901
         ),
     )
     retired = ConsumptionSavingsRegime(
-        transition=next_regime_from_retired,
+        regime_transitions=next_regime_from_retired,
         active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={"liquid": next_liquid, "housing": next_housing},

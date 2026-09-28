@@ -83,7 +83,7 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=_initial_age,
                 states={"income": UniformIIDProcess(n_points=5, start=fixed_start)}
                 | ({} if companion is None else {"companion": companion}),
@@ -94,7 +94,9 @@ def _inputs(
                     else _utility_with_companion
                 },
             ),
-            "done": Regime(transition=None, functions={"utility": _terminal_utility}),
+            "done": Regime(
+                regime_transitions=None, functions={"utility": _terminal_utility}
+            ),
         },
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),

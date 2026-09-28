@@ -57,11 +57,11 @@ def _make_model(*, n_periods=3, extra_fixed_params=None):
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age, n=n_periods: age < n - 1,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age, n=n_periods: age >= n - 1,
     )
@@ -340,14 +340,14 @@ def test_series_fixed_param_with_derived_categoricals():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
         derived_categoricals={
             "wealth_group": DiscreteGrid(category_class=_WealthGroup)
         },
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
@@ -378,11 +378,11 @@ def test_model_broadcast_merges_into_regimes():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
@@ -413,12 +413,12 @@ def test_model_broadcast_same_name_at_both_levels_raises():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
         derived_categoricals={"wealth_group": wg_grid},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
@@ -446,12 +446,12 @@ def test_model_broadcast_conflicting_grids_raise():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
         derived_categoricals={"wealth_group": DiscreteGrid(category_class=_OtherGroup)},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
@@ -486,12 +486,12 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
 
     alive = UserRegime(
         functions={"utility": lambda: 0.0},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
         derived_categoricals={"group_a": DiscreteGrid(category_class=_GroupA)},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
         derived_categoricals={"group_b": DiscreteGrid(category_class=_GroupB)},

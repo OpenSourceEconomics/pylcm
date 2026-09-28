@@ -97,7 +97,7 @@ def get_model(
     probability = _transition_probabilities(last_age=last_age)
 
     couple = Regime(
-        transition={
+        regime_transitions={
             "couple": ValueDependentTransition(
                 probability=MarkovTransition(probability["stays_married"]),
                 gate=_no_dissolution,
@@ -152,7 +152,7 @@ def get_model(
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= last_age,
         states={"wealth": couple_wealth},
         actions={"consumption": consumption},
@@ -167,7 +167,7 @@ def get_model(
         constraints={"affordable": _consumption_within_couple_wealth},
     )
     single_f = Regime(
-        transition={
+        regime_transitions={
             "couple": ValueDependentTransition(
                 probability=MarkovTransition(probability["meets_a_partner"]),
                 gate=_mutual_consent,
@@ -221,7 +221,7 @@ def get_model(
     # his declaration of the same target, which is refused because the two
     # disagree on the routes.
     single_m = Regime(
-        transition={
+        regime_transitions={
             "couple": ValueDependentTransition(
                 probability=MarkovTransition(probability["meets_a_partner"]),
                 gate=_mutual_consent,
@@ -446,7 +446,7 @@ def _single_terminal(
 ) -> Regime:
     """Build one single's terminal regime, identical for her and for him."""
     return Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= last_age,
         states={"wealth": wealth},
         actions={"consumption": consumption},

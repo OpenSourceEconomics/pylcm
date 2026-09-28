@@ -108,7 +108,7 @@ def _model(
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "savings": savings,
@@ -123,7 +123,7 @@ def _model(
     )
     done_regime = Regime(
         actions={},
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         active=lambda age: age == 1,
@@ -296,7 +296,7 @@ def _grid_search_model(
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "savings": savings,
@@ -306,7 +306,7 @@ def _grid_search_model(
     )
     done_regime = Regime(
         actions={},
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         active=lambda age: age == 1,
@@ -357,7 +357,7 @@ def _replace_constraints(*, constraints: dict) -> Model:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "savings": savings,
@@ -367,7 +367,7 @@ def _replace_constraints(*, constraints: dict) -> Model:
     )
     done_regime = Regime(
         actions={},
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         active=lambda age: age == 1,

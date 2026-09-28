@@ -417,7 +417,7 @@ def _sealed_model() -> Model:
         return jnp.where(age >= 18, RegimeId.dead, RegimeId.working)
 
     working = UserRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.5, n_points=3)},
@@ -425,7 +425,7 @@ def _sealed_model() -> Model:
         constraints={"feasible": feasible},
         active=lambda age: age < 19,
     )
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=18, stop=20, step="Y"),
@@ -491,7 +491,7 @@ def _age_specialized_model() -> Model:
         return jnp.where(age >= 65, RegimeId.dead, RegimeId.working_life)
 
     working_life = UserRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age: age < 75,
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -505,7 +505,7 @@ def _age_specialized_model() -> Model:
         functions={"utility": utility},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 75,
         functions={"utility": lambda: 0.0},
     )

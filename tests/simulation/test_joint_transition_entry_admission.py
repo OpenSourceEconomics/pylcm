@@ -129,7 +129,7 @@ def _inputs(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain_target)},
+                regime_transitions={"target": MarkovTransition(_certain_target)},
                 active=_active_source,
                 functions={"utility": _utility},
                 joint_transitions={
@@ -147,7 +147,7 @@ def _inputs(
                 },
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_active_target,
                 states={
                     "wealth": LinSpacedGrid(start=0, stop=1, n_points=2),

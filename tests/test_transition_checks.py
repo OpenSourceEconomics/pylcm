@@ -75,7 +75,7 @@ def _utility_terminal(wealth: ContinuousState) -> FloatND:
 
 def _terminal_regime() -> UserRegime:
     return UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility_terminal},
         states={"wealth": WEALTH_GRID},
         active=lambda age: age >= 1,
@@ -92,7 +92,7 @@ def _model_with_state_probs(next_health_func) -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
     )
     return Model(
@@ -242,11 +242,11 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_local_next_regime,
+        regime_transitions=_local_next_regime,
         active=lambda age: age < 1,
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility_terminal},
         states={"wealth": WEALTH_GRID},
         active=lambda age: age >= 1,
@@ -325,11 +325,11 @@ def test_per_target_dict_skips_unreachable_targets() -> None:
             "wealth": next_wealth_passthrough,
             "heir_present": {"unreachable": MarkovTransition(bad_heir_probs)},
         },
-        transition=_to_dead,
+        regime_transitions=_to_dead,
         active=lambda age: age < 1,
     )
     unreachable = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility_with_heir},
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=3),
@@ -339,7 +339,7 @@ def test_per_target_dict_skips_unreachable_targets() -> None:
         active=lambda age: age < 1,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
         active=lambda age: age >= 1,
@@ -392,11 +392,11 @@ def test_per_target_dict_validates_each_entry() -> None:
             "wealth": next_wealth_passthrough,
             "heir_present": {"dead": MarkovTransition(bad_heir_probs)},
         },
-        transition=_to_dead,
+        regime_transitions=_to_dead,
         active=lambda age: age < 1,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility_dead},
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=3),
@@ -474,7 +474,7 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
     )
     model = Model(
@@ -507,7 +507,7 @@ def _model_with_fixed_param_health_probs() -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
     )
     return Model(
@@ -566,11 +566,11 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility_terminal_with_health},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
         active=lambda age: age >= 1,
@@ -628,7 +628,7 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
     )
     model = Model(

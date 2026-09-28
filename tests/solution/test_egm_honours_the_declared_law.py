@@ -64,7 +64,7 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": law},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        transition={
+        regime_transitions={
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
@@ -85,7 +85,7 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         ),
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         active=lambda age, la=last_age: age >= la,

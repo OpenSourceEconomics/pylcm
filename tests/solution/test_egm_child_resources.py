@@ -212,7 +212,7 @@ def _get_model(variant: str) -> Model:
     }
     if variant == "dcegm_bonus":
         working = ConsumptionSavingsRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=active,
             actions=actions,
             states={"wealth": WEALTH_GRID},
@@ -235,7 +235,7 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "brute_bonus":
         working = UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=active,
             actions=actions,
             states={"wealth": WEALTH_GRID},
@@ -249,7 +249,7 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "dcegm_bonus_pension":
         working = ConsumptionSavingsRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=active,
             actions=actions,
             states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},
@@ -275,7 +275,7 @@ def _get_model(variant: str) -> Model:
         )
     else:
         working = UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=active,
             actions=actions,
             states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},

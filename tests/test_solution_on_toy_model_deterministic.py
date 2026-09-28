@@ -88,12 +88,12 @@ alive_deterministic = UserRegime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime,
+    regime_transitions=next_regime,
     active=lambda age: age < 1,  # n_periods=2, so active in period 0
 )
 
 dead = UserRegime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
     active=lambda age: age >= 1,  # n_periods=2, so active in period 1
 )

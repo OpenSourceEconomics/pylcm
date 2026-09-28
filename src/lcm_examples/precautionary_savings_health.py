@@ -98,7 +98,7 @@ def borrowing_constraint(
 _DEFAULT_RETIREMENT_AGE = 24
 
 working_life = Regime(
-    transition=next_regime,
+    regime_transitions=next_regime,
     active=lambda age: age < _DEFAULT_RETIREMENT_AGE,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
@@ -131,7 +131,7 @@ working_life = Regime(
 
 
 retirement = Regime(
-    transition=None,
+    regime_transitions=None,
     active=lambda age: age >= _DEFAULT_RETIREMENT_AGE,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),

@@ -105,7 +105,7 @@ def _projection_model(projection) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "target": ValueDependentTransition(
                         probability=MarkovTransition(_certain_target),
                         gate=_closed_above_one,
@@ -126,13 +126,13 @@ def _projection_model(projection) -> Model:
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"x": _X},
                 functions={"utility": _zero_utility},
             ),
             "fallback": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"x": _X},
                 functions={"utility": _fallback_value},
@@ -273,7 +273,7 @@ def _coupled_model(saving_points) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "pair": ValueDependentTransition(
                         probability=MarkovTransition(_to_pair),
                         gate=_no_dissolution,
@@ -296,7 +296,7 @@ def _coupled_model(saving_points) -> Model:
                 functions={"utility": _u_source},
             ),
             "pair": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"wage": _WAGE},
                 actions={"work": DiscreteGrid(category_class=Work)},
@@ -317,13 +317,13 @@ def _coupled_model(saving_points) -> Model:
                 },
             ),
             "alone_f": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"wage": _WAGE},
                 functions={"utility": _outside_option_f},
             ),
             "alone_m": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"wage": _WAGE},
                 functions={"utility": _outside_option_m},

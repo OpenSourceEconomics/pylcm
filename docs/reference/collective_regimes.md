@@ -17,7 +17,7 @@ a collective model has no extra constructor arguments to learn.
 | `CollectiveUtility`        | `functions={"utility": ...}`                                                      | the regime's stakeholders and their flow utilities  |
 | `ParetoObjective`          | `CollectiveUtility(objective=...)`                                                | how stakeholder action values are scalarized        |
 | `ValueDependentConstraint` | `constraints={"name": ...}`                                                       | a feasibility predicate that may read values        |
-| `ValueDependentTransition` | `transition={"target": ...}`                                                      | a transition into one target, gated on values there |
+| `ValueDependentTransition` | `regime_transitions={"target": ...}`                                              | a transition into one target, gated on values there |
 | `StakeholderRoute`         | `ValueDependentTransition(routes=...)`                                            | where one source stakeholder goes on each branch    |
 | `ProjectedRegimeValue`     | a constraint's `references`, an edge's `gate_references`, or a route's `fallback` | another regime's current-period value, at a mapping |
 
@@ -233,8 +233,8 @@ gate_references: Mapping[str, ProjectedRegimeValue] = field(
 off_grid: Literal["pointwise", "reject"] = "pointwise"
 ```
 
-Declared inside `transition`, keyed by target regime name, so target selection and
-value-dependent routing are one declaration of one semantic transition.
+Declared inside `regime_transitions`, keyed by target regime name, so target selection
+and value-dependent routing are one declaration of one semantic transition.
 
 **The key is always the gate-open target** — the regime a row enters when the gate is
 true. A dissolution edge is therefore keyed by the *continuing* collective regime under
@@ -245,9 +245,9 @@ stays together.
 `probability` accepts either a `MarkovTransition` or, as a convenience specific to
 `ValueDependentTransition`, a bare probability callable. The latter is wrapped in
 `MarkovTransition` in `decomposed_transition`, because that is the grammar the canonical
-per-target cell consumes. An ordinary per-target `transition` cell still requires an
-explicit `MarkovTransition`; a bare callable there is rejected as an unsupported
-deterministic per-target transition.
+per-target cell consumes. An ordinary per-target `regime_transitions` cell still
+requires an explicit `MarkovTransition`; a bare callable there is rejected as an
+unsupported deterministic per-target transition.
 
 `probability` and `gate` are two distinct operations: `probability` selects whether this
 target edge is attempted at all, while `gate` keeps that target or takes the route's
@@ -510,7 +510,7 @@ passed to `Regime(...)` or to `Regime.replace`.
 | `ValueDependentTransition` | `gated_edges[target]`                                    | `decomposed_transition[target]`: the selection `probability`                                                   |
 
 The declaration objects themselves stay where the author wrote them, in `functions`,
-`constraints` and `transition`. The engine reads the decomposed views
+`constraints` and `regime_transitions`. The engine reads the decomposed views
 (`decomposed_functions`, `decomposed_constraints`, `decomposed_transition`) rather than
 the raw slots. Reading either a stored derived field or a decomposed view therefore
 reveals what a declaration produced without creating a second way to declare it.

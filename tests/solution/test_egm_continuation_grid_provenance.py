@@ -188,7 +188,7 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         states={"wealth": wealth_grid},
         state_transitions={"wealth": {"alive": next_wealth, "gone": next_wealth}},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        transition={
+        regime_transitions={
             "alive": MarkovTransition(prob_survive),
             "gone": MarkovTransition(prob_gone),
         },
@@ -209,7 +209,7 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         ),
     )
     gone = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": bequest},
         active=lambda age: age >= 3,

@@ -166,7 +166,7 @@ def _build_model(*, reference_regime: str) -> Model:
         else {"m_balance": _same_balance}
     )
     saver = Regime(
-        transition={
+        regime_transitions={
             "saver": MarkovTransition(_probability_of_staying_put),
             "account": ValueDependentTransition(
                 probability=MarkovTransition(_probability_of_opening),
@@ -191,7 +191,7 @@ def _build_model(*, reference_regime: str) -> Model:
         functions={"utility": _saver_utility},
     )
     account = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={
             "balance": AgeSpecializedGrid(build=_balance_grid, signature=_cap),
@@ -199,7 +199,7 @@ def _build_model(*, reference_regime: str) -> Model:
         functions={"utility": _account_utility},
     )
     mirror = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={
             "m_balance": AgeSpecializedGrid(build=_mirror_grid, signature=_cap),
@@ -207,7 +207,7 @@ def _build_model(*, reference_regime: str) -> Model:
         functions={"utility": _mirror_utility},
     )
     annuity = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_utility},

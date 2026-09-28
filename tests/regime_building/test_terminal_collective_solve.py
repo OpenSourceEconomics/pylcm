@@ -50,7 +50,7 @@ def _utility_m(*, wage: FloatND, work: DiscreteAction) -> FloatND:
 
 def test_terminal_collective_regime_solves_with_stakeholder_axis():
     regime = Regime(
-        transition=None,  # terminal
+        regime_transitions=None,  # terminal
         states={"wage": LinSpacedGrid(start=10.0, stop=40.0, n_points=2)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={

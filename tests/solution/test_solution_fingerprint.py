@@ -926,13 +926,13 @@ def _phased_regime_declaration(
     """Project a regime whose `slot` varies by phase only in its simulate member."""
     phased = Phased(solve=_solve_law, simulate=simulate)
     slots: dict[str, object] = {
-        "transition": _solve_law,
+        "regime_transitions": _solve_law,
         "states": {"wealth": LinSpacedGrid(start=0, stop=1, n_points=3)},
         "state_transitions": {"wealth": _solve_law},
         "functions": {"utility": _terminal_utility},
     }
-    if slot == "transition":
-        slots["transition"] = phased
+    if slot == "regime_transitions":
+        slots["regime_transitions"] = phased
     elif slot == "state_transitions":
         slots["state_transitions"] = {"wealth": phased}
     elif slot == "functions":
@@ -974,7 +974,7 @@ def test_phased_protocol_subclass_fails_closed() -> None:
 
 def test_regime_description_is_not_mathematical_identity() -> None:
     regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _terminal_utility},
         description="first wording",
     )

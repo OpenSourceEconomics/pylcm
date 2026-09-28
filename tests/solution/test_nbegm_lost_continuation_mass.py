@@ -141,7 +141,7 @@ def _build_ez_model(*, solver: OneMarginSolver | GridSearch, lost_mass: bool) ->
             "liquid": {"alive": _ez_next_liquid, "dead": _ez_next_liquid}
         },
         actions={"consumption": _EZ_CONSUMPTION_GRID},
-        transition={
+        regime_transitions={
             "alive": MarkovTransition(_ez_prob_alive),
             "dead": MarkovTransition(_ez_prob_dead),
         },
@@ -164,7 +164,7 @@ def _build_ez_model(*, solver: OneMarginSolver | GridSearch, lost_mass: bool) ->
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age > _EZ_FIRST_AGE,
         states={"liquid": _EZ_LIQUID_GRID},
         functions={"utility": _ez_bequest},
@@ -400,7 +400,7 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
             "wealth": {"saving": egm_toy.next_wealth, "done": egm_toy.next_wealth}
         },
         constraints={},
-        transition=transition,
+        regime_transitions=transition,
         active=lambda age: age < 3.0,
         solver=EGM(savings_grid=LinSpacedGrid(start=0.0, stop=60.0, n_points=40)),
         liquid=LiquidMargin(
@@ -411,7 +411,7 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
         ),
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": egm_toy.terminal_utility},
         active=lambda age: age >= 3.0,

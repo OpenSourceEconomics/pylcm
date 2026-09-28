@@ -147,7 +147,7 @@ def _build_model() -> Model:
 
     """
     saver = Regime(
-        transition={
+        regime_transitions={
             "saver": MarkovTransition(_probability_of_staying_put),
             "account": ValueDependentTransition(
                 probability=MarkovTransition(_probability_of_opening_the_account),
@@ -167,7 +167,7 @@ def _build_model() -> Model:
         functions={"utility": _saver_utility},
     )
     account = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: (age >= 1) & (age < 3),
         states={
             "balance": AgeSpecializedGrid(
@@ -177,7 +177,7 @@ def _build_model() -> Model:
         functions={"utility": _account_utility},
     )
     annuity = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_utility},

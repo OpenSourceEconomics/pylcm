@@ -69,7 +69,7 @@ def _counterfactual_model(*, renamed: bool) -> Model:
     return Model(
         regimes={
             "student": dataclasses.replace(
-                taste_shocks_toy.alive, transition=_enter_absorbed
+                taste_shocks_toy.alive, regime_transitions=_enter_absorbed
             ),
             "absorbed": taste_shocks_toy.done,
         },

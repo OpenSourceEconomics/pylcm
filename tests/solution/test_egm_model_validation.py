@@ -114,7 +114,7 @@ def _model(
         states=states,
         state_transitions=state_transitions,
         constraints={} if constraint is None else {"cap": constraint},
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "savings": post_decision,
@@ -133,7 +133,7 @@ def _model(
     )
     done_regime = Regime(
         actions=done_actions,
-        transition=None,
+        regime_transitions=None,
         states=done_states,
         functions=done_functions,
         active=lambda age: age == 1,

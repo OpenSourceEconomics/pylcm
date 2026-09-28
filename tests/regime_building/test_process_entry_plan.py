@@ -43,12 +43,12 @@ def _model_with_process_action(*, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=lambda age: age < 22,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 actions={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=True, mu=0.5, sigma=1.0

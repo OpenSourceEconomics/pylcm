@@ -578,7 +578,7 @@ def dead_is_active(*, age: int, initial_age: float) -> bool:
 
 
 WORKING_REGIME = Regime(
-    transition={
+    regime_transitions={
         "working": MarkovTransition(working_to_working_probability),
         "retirement": MarkovTransition(working_to_retirement_probability),
         "dead": MarkovTransition(working_to_dead_probability),
@@ -637,7 +637,7 @@ WORKING_REGIME = Regime(
 
 
 RETIREMENT_REGIME = Regime(
-    transition={
+    regime_transitions={
         "retirement": MarkovTransition(retirement_to_retirement_probability),
         "dead": MarkovTransition(retirement_to_dead_probability),
     },
@@ -699,7 +699,7 @@ def dead_utility(discount_type: DiscreteState) -> FloatND:  # noqa: ARG001
 
 
 DEAD_REGIME = Regime(
-    transition=None,
+    regime_transitions=None,
     active=partial(dead_is_active, initial_age=int(ages.values[0])),
     states={
         # Mirrors the living regimes' `discount_type` so the dead value is

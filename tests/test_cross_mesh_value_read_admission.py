@@ -204,7 +204,7 @@ def build_model(
     """
     working = Regime(
         active=lambda age: age < 1,
-        transition={"retired": MarkovTransition(_retire)},
+        regime_transitions={"retired": MarkovTransition(_retire)},
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _WORKING_UTILITY[tuple(working_reads)]},
@@ -212,7 +212,7 @@ def build_model(
     )
     retired = Regime(
         active=lambda age: age >= 1,
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _RETIRED_UTILITY[tuple(retired_reads)]},
     )

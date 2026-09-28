@@ -218,7 +218,7 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         {"principal": _project_principal} if fallback_projects_principal else {}
     )
     src = Regime(
-        transition={
+        regime_transitions={
             "src_exit": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_wage_gate,
@@ -238,13 +238,13 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         functions={"utility": _utility_src},
     )
     src_exit = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
     annuity = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={
             "principal": AgeSpecializedGrid(
@@ -282,7 +282,7 @@ def _build_model(
         gate_ref_projection["career"] = _project_career
 
     src = Regime(
-        transition={
+        regime_transitions={
             "src_exit": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate,
@@ -307,13 +307,13 @@ def _build_model(
         functions={"utility": _utility_src},
     )
     src_exit = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
     fallback = Regime(
-        transition={"fallback_exit": MarkovTransition(_prob_one)},
+        regime_transitions={"fallback_exit": MarkovTransition(_prob_one)},
         active=lambda age: (age >= 1) & (age < 2),
         states={
             "wage": _WAGE,
@@ -324,7 +324,7 @@ def _build_model(
         functions={"utility": _utility_fallback},
     )
     fallback_exit = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},

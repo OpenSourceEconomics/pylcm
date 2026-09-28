@@ -150,7 +150,7 @@ def test_asset_row_regime_does_not_qualify_for_the_policy_read():
     model = _model_from_alive(
         alive=_PORTABLE_DCEGM_RETIREMENT.replace(
             active=lambda age: age < 50,
-            transition=_next_regime_reads_wealth,
+            regime_transitions=_next_regime_reads_wealth,
         )
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None

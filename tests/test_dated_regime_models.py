@@ -55,9 +55,9 @@ def _utility(*, wealth: FloatND, health: DiscreteState) -> FloatND:
     return wealth + health
 
 
-def _regime(*, transition: Any, **kwargs: Any) -> Regime:
+def _regime(*, regime_transitions: Any, **kwargs: Any) -> Regime:
     return Regime(
-        transition=transition,
+        regime_transitions=regime_transitions,
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -71,13 +71,13 @@ def _regime(*, transition: Any, **kwargs: Any) -> Regime:
     )
 
 
-DEAD = Regime(transition=None, functions={"utility": lambda: 0.0})
+DEAD = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
 
 
 def _dated_model(**overrides: Regime) -> Model:
     regimes = {
         "working": _regime(
-            transition=ByAge.until(
+            regime_transitions=ByAge.until(
                 65,
                 law={
                     "working": MarkovTransition(_stay),
@@ -86,7 +86,9 @@ def _dated_model(**overrides: Regime) -> Model:
                 then="retirement",
             )
         ),
-        "retirement": _regime(transition=ByAge({AgeRange(start=65, stop=75): "dead"})),
+        "retirement": _regime(
+            regime_transitions=ByAge({AgeRange(start=65, stop=75): "dead"})
+        ),
         "dead": DEAD,
     }
     return Model(regimes=regimes | overrides, ages=AGES, regime_id_class=RegimeId)
@@ -105,7 +107,7 @@ def _legacy_model() -> Model:
     return Model(
         regimes={
             "working": _regime(
-                transition={
+                regime_transitions={
                     "working": MarkovTransition(stay),
                     "dead": MarkovTransition(die),
                     "retirement": MarkovTransition(retire),
@@ -113,7 +115,7 @@ def _legacy_model() -> Model:
                 active=lambda age: age < 65,
             ),
             "retirement": _regime(
-                transition=lambda: RegimeId.dead,
+                regime_transitions=lambda: RegimeId.dead,
                 active=lambda age: 65 <= age < 75,
             ),
             "dead": DEAD,
@@ -159,11 +161,15 @@ def test_dated_model_edges_are_the_declared_support_at_each_period(
 @pytest.mark.parametrize(
     "override",
     [
-        {"retirement": _regime(transition="dead", active=lambda age: age >= 65)},
-        {"retirement": _regime(transition=lambda: RegimeId.dead)},
         {
             "retirement": _regime(
-                transition=MarkovTransition(lambda: jnp.array([0.0, 0.0, 1.0]))
+                regime_transitions="dead", active=lambda age: age >= 65
+            )
+        },
+        {"retirement": _regime(regime_transitions=lambda: RegimeId.dead)},
+        {
+            "retirement": _regime(
+                regime_transitions=MarkovTransition(lambda: jnp.array([0.0, 0.0, 1.0]))
             )
         },
     ],
@@ -179,7 +185,9 @@ def test_dated_model_rejects_a_target_not_covered_at_the_next_age() -> None:
     """Declared support must be solved at the next age; nothing is dropped."""
     with pytest.raises(ModelInitializationError, match="retirement"):
         _dated_model(
-            retirement=_regime(transition=ByAge({AgeRange(start=55, stop=65): "dead"}))
+            retirement=_regime(
+                regime_transitions=ByAge({AgeRange(start=55, stop=65): "dead"})
+            )
         )
 
 
@@ -191,7 +199,7 @@ def test_choose_routes_to_the_returned_regime_code() -> None:
 
     model = _dated_model(
         working=_regime(
-            transition=ByAge(
+            regime_transitions=ByAge(
                 {
                     AgeRange(stop=55): "working",
                     55: Choose(retire_if_healthy, targets=("retirement", "dead")),
@@ -207,7 +215,7 @@ def _model_with_entries(initial_regimes: Any) -> Model:
     return Model(
         regimes={
             "working": _regime(
-                transition=ByAge.until(
+                regime_transitions=ByAge.until(
                     65,
                     law={
                         "working": MarkovTransition(_stay),
@@ -217,7 +225,7 @@ def _model_with_entries(initial_regimes: Any) -> Model:
                 )
             ),
             "retirement": _regime(
-                transition=ByAge({AgeRange(start=65, stop=75): "dead"})
+                regime_transitions=ByAge({AgeRange(start=65, stop=75): "dead"})
             ),
             "dead": DEAD,
         },
@@ -340,7 +348,7 @@ def test_invalid_regime_selection_raises_at_every_log_level(
     """Regime-selection validity does not depend on verbosity in a dated model."""
     model = _dated_model(
         working=_regime(
-            transition=ByAge(
+            regime_transitions=ByAge(
                 {AgeRange(stop=55): "working", 55: transition},
             )
         )
@@ -360,7 +368,7 @@ def test_shared_state_law_may_name_targets_outside_the_declared_support() -> Non
         "retirement": lambda wealth: wealth,
     }
     retirement = Regime(
-        transition=ByAge(
+        regime_transitions=ByAge(
             {AgeRange(start=65, stop=75): {"dead": MarkovTransition(_certain)}}
         ),
         states={
@@ -392,7 +400,7 @@ def _die_if_frail(is_healthy: BoolND) -> FloatND:
 def test_scheduled_cells_keep_the_annotations_of_the_laws_they_wrap() -> None:
     """A period-masked cell reading an annotated DAG output builds and solves."""
     working = Regime(
-        transition=ByAge.until(
+        regime_transitions=ByAge.until(
             65,
             law={
                 "working": MarkovTransition(_stay_if_healthy),
@@ -421,8 +429,8 @@ def test_scheduled_cells_keep_the_annotations_of_the_laws_they_wrap() -> None:
 def test_user_regimes_keep_the_dated_declaration() -> None:
     """A model publishes each regime's transition exactly as declared."""
     declared = ByAge({AgeRange(start=65, stop=75): "dead"})
-    model = _dated_model(retirement=_regime(transition=declared))
-    assert model.user_regimes["retirement"].transition is declared
+    model = _dated_model(retirement=_regime(regime_transitions=declared))
+    assert model.user_regimes["retirement"].regime_transitions is declared
 
 
 _EARLY_STAGES = (AgeRange(start=25, stop=55),)
@@ -436,7 +444,7 @@ def _stay_by_stage(health: DiscreteState) -> FloatND:
 def test_laws_may_read_age_ranges_from_module_constants() -> None:
     """An `AgeRange` held in a module constant is part of the model identity."""
     working = _regime(
-        transition=ByAge.until(
+        regime_transitions=ByAge.until(
             65,
             law={
                 "working": MarkovTransition(_stay_by_stage),

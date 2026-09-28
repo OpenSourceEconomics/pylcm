@@ -83,7 +83,7 @@ def _terminal_utility() -> FloatND:
 def _build_model(*, enable_jit: bool = True) -> Model:
     """Build the ordinary singleton model used by the production tracer."""
     acting = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -95,7 +95,7 @@ def _build_model(*, enable_jit: bool = True) -> Model:
         constraints={"only_target": _only_target},
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _terminal_utility},
     )

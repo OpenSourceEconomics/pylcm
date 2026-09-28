@@ -106,7 +106,7 @@ def _solve_coarse_into_process_only_target(
     """
     process = _UNIFORM_SHOCK if process is None else process
     alive = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < _LAST_AGE,
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -114,7 +114,7 @@ def _solve_coarse_into_process_only_target(
         functions={"utility": _utility},
     )
     gone = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"shock": process},
         functions={"utility": lambda shock: shock + level},
     )
@@ -183,7 +183,7 @@ def test_a_coarse_transition_into_an_ar1_target_is_refused():
 def _solve_with_entry_law(level: float):
     """The same model, with the parent declaring how the target is entered."""
     alive = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < _LAST_AGE,
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -191,7 +191,7 @@ def _solve_with_entry_law(level: float):
         functions={"utility": _utility},
     )
     gone = Regime(
-        transition=None,
+        regime_transitions=None,
         # Fixed at construction, not passed at runtime: the entry law places a
         # value on this process's own support, and that support has to exist
         # before the source's laws are built.
@@ -291,7 +291,7 @@ def _tiny_next_regime() -> ScalarInt:
 def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
     """Solve a model whose entire continuation sits at the `1e-8` scale."""
     alive = Regime(
-        transition=_tiny_next_regime,
+        regime_transitions=_tiny_next_regime,
         active=lambda age: age < 41,
         states={"wealth": _TINY_WEALTH},
         actions={"consumption": _TINY_CONSUMPTION},
@@ -301,7 +301,7 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
         certainty_equivalent=PowerMean(),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=5.0, n_points=5)},
         functions={"utility": _tiny_terminal_utility},
     )

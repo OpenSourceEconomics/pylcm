@@ -147,7 +147,7 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
     last_age = ages.exact_values[-1]
 
     working = ConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "working": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
         },
@@ -178,7 +178,7 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=12)},
         functions={"utility": bequest},
     )

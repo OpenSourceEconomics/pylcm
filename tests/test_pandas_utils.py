@@ -79,7 +79,7 @@ def test_to_categorical_dtype_ordered():
 def test_build_discrete_grid_lookup_basic():
     regimes = {
         "a": UserRegime(
-            transition=None,
+            regime_transitions=None,
             states={"health": DiscreteGrid(category_class=Health)},
             functions={"utility": lambda: 0.0},
         ),
@@ -92,7 +92,7 @@ def test_build_discrete_grid_lookup_basic():
 def test_build_discrete_grid_lookup_ignores_continuous():
     regimes = {
         "a": UserRegime(
-            transition=None,
+            regime_transitions=None,
             states={
                 "health": DiscreteGrid(category_class=Health),
                 "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
@@ -113,12 +113,12 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
 
     regimes = {
         "a": UserRegime(
-            transition=None,
+            regime_transitions=None,
             states={"health": DiscreteGrid(category_class=Health)},
             functions={"utility": lambda: 0.0},
         ),
         "b": UserRegime(
-            transition=None,
+            regime_transitions=None,
             states={"health": DiscreteGrid(category_class=HealthAlt)},
             functions={"utility": lambda: 0.0},
         ),
@@ -165,12 +165,12 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         return 0.0
 
     a = UserRegime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    dead = UserRegime(transition=None, functions={"utility": _dead_utility})
+    dead = UserRegime(regime_transitions=None, functions={"utility": _dead_utility})
     m = Model(
         regimes={"a": a, "dead": dead},
         ages=AgeGrid(start=25, stop=75, step="10Y"),
@@ -1089,11 +1089,11 @@ def test_convert_series_per_target_transition() -> None:
             "wealth": _next_wealth,
         },
         functions={"utility": _utility},
-        transition=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
+        regime_transitions=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
         active=lambda age: age < 2,
     )
     retired = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
@@ -1192,7 +1192,9 @@ def test_convert_series_structured_derived_categoricals() -> None:
         return wealth
 
     regime_a = UserRegime(
-        transition=lambda age: jnp.where(age >= 1, _RId.regime_b, _RId.regime_a),
+        regime_transitions=lambda age: jnp.where(
+            age >= 1, _RId.regime_b, _RId.regime_a
+        ),
         active=lambda age: age < 1,
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         state_transitions={"wealth": _next_wealth_sc},
@@ -1200,7 +1202,7 @@ def test_convert_series_structured_derived_categoricals() -> None:
         derived_categoricals={"derived": DiscreteGrid(category_class=_ChoiceA)},
     )
     regime_b = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         functions={"utility": func_b, "derived": _derived_b},
         derived_categoricals={"derived": DiscreteGrid(category_class=_ChoiceB)},
@@ -1243,14 +1245,14 @@ def test_convert_series_runtime_grid_param() -> None:
         dead: ScalarInt
 
     alive = UserRegime(
-        transition=lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
+        regime_transitions=lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
         active=lambda age: age < 1,
         states={"wealth": IrregSpacedGrid(n_points=4)},
         state_transitions={"wealth": lambda wealth: wealth},
         functions={"utility": lambda wealth: wealth},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": IrregSpacedGrid(n_points=4)},
         functions={"utility": lambda wealth: wealth},
     )
@@ -1368,11 +1370,11 @@ def test_convert_series_cross_grid_transition() -> None:
             "wealth": lambda wealth: wealth,
         },
         functions={"utility": lambda health, wealth: wealth + health},
-        transition=lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
+        regime_transitions=lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
         active=lambda age: age < 1,
     )
     post65 = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={
             "health": DiscreteGrid(category_class=_HealthPost),
             "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
@@ -1458,7 +1460,7 @@ def _evolve_occupation(occupation: ScalarInt) -> ScalarInt:
 
 def _occupation_pair_regime() -> UserRegime:
     return UserRegime(
-        transition=_next_regime_stub,
+        regime_transitions=_next_regime_stub,
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
             "occupation": Phased(
@@ -1539,7 +1541,9 @@ def _series_joint_next_wealth(
 def test_convert_series_resolves_joint_support_probability_and_output_roles() -> None:
     """Nested joint qnames resolve to the callable that declares each Series param."""
     source = UserRegime(
-        transition={"target": MarkovTransition(_series_joint_target_probability)},
+        regime_transitions={
+            "target": MarkovTransition(_series_joint_target_probability)
+        },
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={
             "target": {
@@ -1553,7 +1557,7 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
         },
     )
     target = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
         functions={"utility": lambda wealth: wealth},
     )
@@ -1609,7 +1613,9 @@ def _series_joint_next_health(
 def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> None:
     """A target-only categorical output resolves its Series axis on that target."""
     source = UserRegime(
-        transition={"target": MarkovTransition(_series_joint_target_probability)},
+        regime_transitions={
+            "target": MarkovTransition(_series_joint_target_probability)
+        },
         states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": lambda health: jnp.asarray(health, dtype=float)},
         joint_transitions={
@@ -1624,7 +1630,7 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
         },
     )
     target = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": lambda health: jnp.asarray(health, dtype=float)},
     )

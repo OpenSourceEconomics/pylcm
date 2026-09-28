@@ -427,7 +427,7 @@ def _per_target_law_errors(
             f"cover reachable target(s) {sorted(missing)} retained in the temporal "
             "graph. Provide a law "
             f"for each, or narrow candidate support by declaring per-target "
-            f"regime transitions (`transition={{target: "
+            f"regime transitions (`regime_transitions={{target: "
             f"MarkovTransition(...)}}`).",
         )
     unknown = named_targets - all_regime_names

@@ -93,7 +93,7 @@ def test_declaring_non_terminal_stakeholders_constructs():
         return 0
 
     regime = Regime(
-        transition=_some_transition,
+        regime_transitions=_some_transition,
         states={"wealth": _WEALTH},
         actions={"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
         state_transitions={"wealth": lambda wealth: wealth},
@@ -113,7 +113,7 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     property of the merged regime and is reported when the model finalizes it.
     """
     married = Regime(
-        transition=_next_regime_widowed,
+        regime_transitions=_next_regime_widowed,
         active=lambda age: age < 1,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -127,7 +127,7 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
         },
     )
     widowed = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         actions={
@@ -159,7 +159,7 @@ def test_singleton_default_is_untouched():
         return jnp.log(consumption)
 
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": utility},

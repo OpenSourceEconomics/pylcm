@@ -72,7 +72,7 @@ working_life = UserRegime(
         "wealth": next_wealth,
     },
     constraints={"borrowing_constraint": borrowing_constraint},
-    transition=next_regime,
+    regime_transitions=next_regime,
     functions={
         "utility": utility,
         "labor_income": labor_income,
@@ -84,7 +84,7 @@ working_life = UserRegime(
 
 
 dead = UserRegime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 

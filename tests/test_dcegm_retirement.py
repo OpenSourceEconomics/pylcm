@@ -113,7 +113,7 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
             "working_life": base.working_life.replace(active=active),
             "retirement": dcegm_variants.dcegm_retirement_full.replace(
                 active=active,
-                transition={
+                regime_transitions={
                     "retirement": MarkovTransition(_retirement_stay_prob),
                     "dead": MarkovTransition(_retirement_death_prob),
                 },

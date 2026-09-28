@@ -124,12 +124,12 @@ def _build_model(
     return Model(
         regimes={
             "source": Regime(
-                transition=transition,
+                regime_transitions=transition,
                 active=_source_is_early,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": target_utility},
             ),
@@ -336,12 +336,12 @@ def test_the_entry_law_decides_the_action() -> None:
         return 1.5 + 0.0 * wealth
 
     stay = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         functions={"utility": _stay_utility},
     )
     enter = Regime(
-        transition=None,
+        regime_transitions=None,
         states={
             "shock": NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
         },
@@ -358,7 +358,7 @@ def test_the_entry_law_decides_the_action() -> None:
         return jnp.where(go == 1, _ThreeRegimeId.enter, _ThreeRegimeId.stay)
 
     source = Regime(
-        transition=_choose,
+        regime_transitions=_choose,
         active=_source_is_early,
         actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
         state_transitions={"wealth": {"stay": lambda: jnp.asarray(1.0)}},
@@ -455,13 +455,13 @@ def _build_explicit_entry_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3,

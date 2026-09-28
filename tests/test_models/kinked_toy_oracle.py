@@ -141,7 +141,7 @@ def build_model() -> Model:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         constraints={
             "liquid_floor": liquid_floor,
             "illiquid_floor": illiquid_floor,
@@ -150,7 +150,7 @@ def build_model() -> Model:
         functions={"utility": utility, "liquid_savings": liquid_savings},
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )

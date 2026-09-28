@@ -228,7 +228,7 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
     model = Model(
         regimes={
             "alive": Regime(
-                transition={"dead": MarkovTransition(_certain)},
+                regime_transitions={"dead": MarkovTransition(_certain)},
                 active=lambda age: age < 21,
                 states={
                     "wealth": _WEALTH,
@@ -243,7 +243,7 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
                 functions={"utility": _no_utility},
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=_Binary),

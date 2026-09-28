@@ -72,7 +72,7 @@ ages/actions.
 Keep terminal regimes as they are:
 
 ```python
-Regime(transition=None, functions={"utility": terminal_payoff})
+Regime(regime_transitions=None, functions={"utility": terminal_payoff})
 ```
 
 Remove their activity predicate, not the regime-level terminal rule. Do not wrap `None`

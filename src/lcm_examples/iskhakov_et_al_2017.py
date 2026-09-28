@@ -150,7 +150,7 @@ working_life = Regime(
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     constraints={"borrowing_constraint": borrowing_constraint},
-    transition=next_regime_from_working,
+    regime_transitions=next_regime_from_working,
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
@@ -160,7 +160,7 @@ working_life = Regime(
 )
 
 retirement = Regime(
-    transition=next_regime_from_retirement,
+    regime_transitions=next_regime_from_retirement,
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
@@ -170,7 +170,7 @@ retirement = Regime(
 )
 
 dead = Regime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
     active=lambda _age: True,
 )
@@ -214,7 +214,7 @@ dcegm_working_life = ConsumptionSavingsRegime(
     },
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth_from_savings},
-    transition=next_regime_from_working,
+    regime_transitions=next_regime_from_working,
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
@@ -228,7 +228,7 @@ dcegm_working_life = ConsumptionSavingsRegime(
 )
 
 dcegm_retirement = ConsumptionSavingsRegime(
-    transition=next_regime_from_retirement,
+    regime_transitions=next_regime_from_retirement,
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth_from_savings},

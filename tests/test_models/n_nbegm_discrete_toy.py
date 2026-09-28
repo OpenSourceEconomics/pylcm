@@ -129,7 +129,7 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=smooth.next_regime,
+            regime_transitions=smooth.next_regime,
             functions=functions,
             constraints={"budget_feasible": smooth.budget_feasible},
             solver=build_solver(variant=variant),
@@ -140,7 +140,7 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=smooth.next_regime,
+            regime_transitions=smooth.next_regime,
             functions=functions,
             solver=build_solver(variant=variant),
             liquid=LiquidMargin(
@@ -157,7 +157,7 @@ def build_model(
             ),
         )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=final_age_alive: age > n,
         states=states,
         functions={"utility": smooth.terminal_utility},

@@ -53,7 +53,7 @@ def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
 
 
 _active = UserRegime(
-    transition=_next_regime,
+    regime_transitions=_next_regime,
     actions={
         "labor_supply": DiscreteGrid(category_class=_LaborSupply),
         "consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3),
@@ -71,7 +71,9 @@ _active = UserRegime(
 )
 
 
-_dead = UserRegime(transition=None, functions={"utility": lambda: jnp.array(0.0)})
+_dead = UserRegime(
+    regime_transitions=None, functions={"utility": lambda: jnp.array(0.0)}
+)
 
 
 def _build_model() -> Model:
@@ -198,7 +200,7 @@ def _f2_next_regime(period: Period) -> ScalarInt:
 
 def _f2_build_model() -> Model:
     live = UserRegime(
-        transition=_f2_next_regime,
+        regime_transitions=_f2_next_regime,
         active=lambda age: age < 27,
         states={
             "good": DiscreteGrid(category_class=_Good),
@@ -212,7 +214,7 @@ def _f2_build_model() -> Model:
         functions={"utility": _f2_utility},
     )
     last = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 27,
         functions={"utility": lambda: jnp.array(0.0)},
     )

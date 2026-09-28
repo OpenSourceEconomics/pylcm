@@ -66,12 +66,12 @@ def _entered_process_model(*, at_construction: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=lambda age: age < 22,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -130,13 +130,13 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
         return Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
+                    regime_transitions={"target": MarkovTransition(_one_probability)},
                     active=lambda age: age < 22,
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
@@ -170,12 +170,12 @@ def _model_with_law_value(value: Any) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=lambda age: age < 22,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _process(at_construction=False)},
                 functions={"utility": _shock_utility},
             ),

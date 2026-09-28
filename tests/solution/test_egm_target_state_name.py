@@ -124,7 +124,7 @@ def _model(*, solver, n_consumption=14):
             "estate": {"gone": next_estate},
         },
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        transition={
+        regime_transitions={
             "alive": MarkovTransition(prob_survive),
             "gone": MarkovTransition(prob_gone),
         },
@@ -145,7 +145,7 @@ def _model(*, solver, n_consumption=14):
         ),
     )
     gone = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"estate": _ESTATE_GRID},
         functions={"utility": bequest},
         active=lambda age: age >= _LAST_AGE,

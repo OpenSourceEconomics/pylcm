@@ -56,11 +56,11 @@ def _make_model() -> Model:
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )

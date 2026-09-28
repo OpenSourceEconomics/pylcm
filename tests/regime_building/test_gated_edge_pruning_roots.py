@@ -107,7 +107,7 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
     it, and nothing in `retired` or `outside` does.
     """
     worker = Regime(
-        transition={
+        regime_transitions={
             "retired": ValueDependentTransition(
                 probability=MarkovTransition(_probability_one),
                 gate=_gate_reading_bonus,
@@ -155,7 +155,7 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
     which the incoming edge's gate reference reads `outside`'s value.
     """
     worker = Regime(
-        transition={
+        regime_transitions={
             "retired": ValueDependentTransition(
                 probability=MarkovTransition(_probability_one),
                 gate=_gate_comparing_values,
@@ -198,7 +198,7 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
 def _make_retired_regime(*, states: dict[str, LinSpacedGrid]) -> Regime:
     """Build the gated edge's target regime over the given states."""
     return Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states=states,
         functions={"utility": _utility_retired},
@@ -208,7 +208,7 @@ def _make_retired_regime(*, states: dict[str, LinSpacedGrid]) -> Regime:
 def _make_outside_regime() -> Regime:
     """Build the reference regime the gate-closed branch falls back to."""
     return Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_outside},

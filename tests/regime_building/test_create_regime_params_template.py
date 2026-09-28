@@ -18,7 +18,7 @@ def test_create_params_without_processes(binary_category_class):
             "b": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"b": lambda b: b},
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
     )
     got = create_regime_params_template(user_regime=regime)
@@ -58,7 +58,7 @@ def test_create_params_reads_concrete_function_params(binary_category_class):
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": lambda b: b},
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "net_income": net_income,
@@ -81,7 +81,7 @@ def test_create_params_unions_phased_variant_params(binary_category_class):
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": lambda b: b},
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "net_income": Phased(solve=solve_income, simulate=simulate_income),
@@ -117,7 +117,7 @@ def test_create_params_walks_a_phased_function_a_transition_reads(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": next_b},
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "adjustment": Phased(solve=solve_adjustment, simulate=simulate_adjustment),
@@ -168,7 +168,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
         states={"discount_factor": None},
         state_transitions={"discount_factor": fixed_transition("discount_factor")},
         functions={"utility": lambda a, discount_factor: None},  # noqa: ARG005
-        transition=lambda discount_factor: discount_factor,
+        regime_transitions=lambda discount_factor: discount_factor,
     )
     got = create_regime_params_template(user_regime=regime)
     assert got == ensure_containers_are_immutable(
@@ -240,7 +240,7 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
             "wealth": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"wealth": lambda wealth: wealth},
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": lambda a, wealth, risk_aversion: None},  # noqa: ARG005
     )
     got = create_regime_params_template(user_regime=regime)
@@ -279,7 +279,7 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
             "wealth": next_wealth,
             "aime": lambda aime: aime,
         },
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": lambda a, wealth, aime: None},  # noqa: ARG005
     )
     got = create_regime_params_template(user_regime=regime)

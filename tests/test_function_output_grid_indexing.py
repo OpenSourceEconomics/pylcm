@@ -92,11 +92,11 @@ def _make_clashing_model() -> Model:
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
@@ -138,11 +138,11 @@ def test_safe_pattern_does_not_raise():
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
@@ -173,11 +173,11 @@ def test_array_valued_producer_indexed_by_state_does_not_raise():
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
@@ -233,7 +233,7 @@ def test_function_output_indexed_by_derived_categorical_raises():
             state_transitions={"spousal_income": fixed_transition("spousal_income")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             derived_categoricals={"is_married": DiscreteGrid(category_class=IsMarried)},
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             active=lambda age: age < 2,
         )
 
@@ -274,7 +274,7 @@ def test_function_output_indexed_by_discrete_action_raises():
                 "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5),
                 "labor_supply": DiscreteGrid(category_class=WorkChoice),
             },
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             active=lambda age: age < 2,
         )
 
@@ -305,7 +305,7 @@ def test_constraint_indexing_function_output_by_state_raises():
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             constraints={"feasibility": _constraint_indexing_function_output},
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             active=lambda age: age < 2,
         )
 
@@ -335,11 +335,11 @@ def test_phased_function_in_functions_does_not_crash_validation():
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 2,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )
@@ -378,6 +378,6 @@ def test_phased_function_solve_variant_unsafe_indexing_raises():
             states={"pref_type": DiscreteGrid(category_class=PrefType)},
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             active=lambda age: age < 2,
         )

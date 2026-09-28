@@ -184,7 +184,7 @@ def _pass_through_model(
     """
     margin = _pass_through_margin()
     working = ConsumptionSavingsRegime(
-        transition=_pass_through_next_regime,
+        regime_transitions=_pass_through_next_regime,
         states={"wealth": wealth_grid},
         actions={"consumption": _PASS_THROUGH_CONSUMPTION_GRID},
         state_transitions={"wealth": _pass_through_next_wealth},
@@ -200,7 +200,7 @@ def _pass_through_model(
         active=lambda age: age == 0,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": _pass_through_terminal_utility},
         active=lambda age: age == 1,

@@ -63,7 +63,7 @@ def next_regime(age: int) -> ScalarInt:
 def model() -> Model:
     """Model whose only constraint reads the post-decision function."""
     alive = UserRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age: age < _N_PERIODS - 1,
         states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=20.0, n_points=8)},
@@ -72,7 +72,7 @@ def model() -> Model:
         constraints={"savings_stay_above_the_floor": savings_stay_above_the_floor},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= _N_PERIODS - 1,
         functions={"utility": lambda: 0.0},
     )
@@ -129,7 +129,7 @@ def test_the_constraint_is_available_as_an_additional_target(model):
 def model_with_a_renamed_constraint() -> Model:
     """The same model, declaring the same predicate under a different key."""
     alive = UserRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age: age < _N_PERIODS - 1,
         states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=20.0, n_points=8)},
@@ -138,7 +138,7 @@ def model_with_a_renamed_constraint() -> Model:
         constraints={"liquidity_floor": savings_stay_above_the_floor},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= _N_PERIODS - 1,
         functions={"utility": lambda: 0.0},
     )

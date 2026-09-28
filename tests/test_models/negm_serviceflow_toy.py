@@ -243,7 +243,7 @@ FINAL_AGE_ALIVE = 20 + (N_PERIODS - 2) * 5
 def _build_dead_regime() -> Regime:
     """The terminal regime (shared by both twins)."""
     return Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=FINAL_AGE_ALIVE: age > n,
         functions={"utility": lambda: 0.0},
     )
@@ -259,7 +259,7 @@ def build_negm_model() -> Model:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -308,7 +308,7 @@ def build_brute_model() -> Model:
             "consumption": CONSUMPTION_GRID_BRUTE,
             "new_durable": OUTER_GRID,
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "serviced_durable": serviced_durable_brute,

@@ -84,7 +84,7 @@ def _build_model(*, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 state_transitions={
                     "shock": {"target": _enter_shock},
@@ -94,7 +94,7 @@ def _build_model(*, enable_jit: bool) -> Model:
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _process(), "other": _process()},
                 functions={"utility": _target_utility},
             ),

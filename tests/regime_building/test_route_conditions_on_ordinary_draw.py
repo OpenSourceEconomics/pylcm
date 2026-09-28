@@ -298,7 +298,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         ),
     }
     src = Regime(
-        transition={name: edges[name] for name in edge_order},
+        regime_transitions={name: edges[name] for name in edge_order},
         active=lambda age: age < 1,
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
@@ -306,25 +306,25 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         functions={"utility": _u_src},
     )
     target_a = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_target_a},
     )
     target_b = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_target_b},
     )
     fallback_a = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_fallback_a},
     )
     fallback_b = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_fallback_b},

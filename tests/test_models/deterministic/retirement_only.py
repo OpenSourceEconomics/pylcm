@@ -39,7 +39,7 @@ def next_regime_from_retirement(*, age: int, final_age_alive: float) -> ScalarIn
 
 
 retirement = UserRegime(
-    transition=next_regime_from_retirement,
+    regime_transitions=next_regime_from_retirement,
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},

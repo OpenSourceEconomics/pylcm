@@ -81,7 +81,7 @@ def _next_regime(*, period, last):
 
 _DEAD = Regime(
     active=lambda age: age >= 20 + _N - 1,
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
@@ -92,7 +92,7 @@ def _alive_regime(*, wealth_grid, active=lambda age: age < 20 + _N - 1):
         states={"wealth": wealth_grid},
         actions={"consumption": _CGRID},
         state_transitions={"wealth": _next_wealth},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         constraints={"bc": _bc},
         functions={"utility": _utility},
     )

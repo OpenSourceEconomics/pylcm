@@ -204,7 +204,7 @@ def _make_regimes() -> dict[str, Regime]:
     carries the value constraints and same-period references that flag drives.
     """
     couple = Regime(
-        transition={
+        regime_transitions={
             "couple_ir": ValueDependentTransition(
                 probability=MarkovTransition(_probability_one),
                 gate=_no_dissolution_gate,
@@ -246,7 +246,7 @@ def _make_regimes() -> dict[str, Regime]:
         constraints={"work_pays": _work_pays},
     )
     couple_ir = Regime(
-        transition={"couple_terminal": MarkovTransition(_probability_one)},
+        regime_transitions={"couple_terminal": MarkovTransition(_probability_one)},
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -276,7 +276,7 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -287,7 +287,7 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        transition={"single_terminal": MarkovTransition(_probability_one)},
+        regime_transitions={"single_terminal": MarkovTransition(_probability_one)},
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -296,7 +296,7 @@ def _make_regimes() -> dict[str, Regime]:
     )
     single_m = single_f.replace(functions={"utility": _utility_single_m})
     single_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_terminal_single},

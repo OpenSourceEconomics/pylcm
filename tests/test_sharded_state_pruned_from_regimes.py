@@ -111,7 +111,7 @@ def _entry_kind(wealth: FloatND) -> FloatND:
 def _working(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "active": lambda age: age < 2,
-        "transition": _retire_at_one,
+        "regime_transitions": _retire_at_one,
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
@@ -124,7 +124,7 @@ def _working(**overrides: Any) -> Regime:
 def _retired(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "active": lambda age: (age >= 2) & (age < 3),
-        "transition": _die_at_three,
+        "regime_transitions": _die_at_three,
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
@@ -137,7 +137,7 @@ def _retired(**overrides: Any) -> Regime:
 def _dead() -> Regime:
     return Regime(
         active=lambda age: age >= 3,
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )

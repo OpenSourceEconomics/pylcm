@@ -85,12 +85,14 @@ def _model(*, kind: str, width: int) -> Model:
     return Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=lambda age: age < 1,
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(transition=None, active=lambda age: age >= 1, **common),
+            "done": Regime(
+                regime_transitions=None, active=lambda age: age >= 1, **common
+            ),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
@@ -193,12 +195,14 @@ def _collision_model() -> Model:
     return Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=lambda age: age < 1,
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(transition=None, active=lambda age: age >= 1, **common),
+            "done": Regime(
+                regime_transitions=None, active=lambda age: age >= 1, **common
+            ),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
@@ -248,12 +252,14 @@ def test_trivial_state_product_does_not_declare_a_cell_axis(
     model = Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=lambda age: age < 1,
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(transition=None, active=lambda age: age >= 1, **common),
+            "done": Regime(
+                regime_transitions=None, active=lambda age: age >= 1, **common
+            ),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,

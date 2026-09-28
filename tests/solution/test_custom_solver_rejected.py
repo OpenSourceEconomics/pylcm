@@ -129,7 +129,7 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         actions={"consumption": _ACTION_GRID},
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "savings": savings,
@@ -145,7 +145,7 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
     )
     done_regime = Regime(
         actions={},
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         active=lambda age: age == 1,

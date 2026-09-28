@@ -61,7 +61,7 @@ def _model(width: int | None = None) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age, la=last_age: age < la,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "income": _income_process("iid")},

@@ -85,7 +85,7 @@ def _settled_wealth(wealth: ContinuousState) -> ContinuousState:
 
 def _make_model() -> Model:
     worker = Regime(
-        transition={
+        regime_transitions={
             "retired": ValueDependentTransition(
                 probability=MarkovTransition(_certain),
                 gate=_well_off,
@@ -112,19 +112,19 @@ def _make_model() -> Model:
         functions={"utility": _zero},
     )
     retired = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={"utility": _generous},
     )
     hardship = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={"utility": _meagre},
     )
     shelter = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={

@@ -61,7 +61,7 @@ def model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "target": MarkovTransition(_p_target),
                     "other": MarkovTransition(_p_other),
                 },
@@ -74,7 +74,7 @@ def model() -> Model:
                 functions={"utility": _wealth_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
@@ -83,7 +83,7 @@ def model() -> Model:
                 functions={"utility": _shock_utility},
             ),
             "other": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _wealth_utility},
             ),

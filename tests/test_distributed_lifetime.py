@@ -596,7 +596,7 @@ def _model(
     return Model(
         regimes={
             "alive": Regime(
-                transition={"dead": MarkovTransition(_certain)},
+                regime_transitions={"dead": MarkovTransition(_certain)},
                 active=lambda age: age < _N_PERIODS - 1,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
@@ -604,7 +604,7 @@ def _model(
                 solver=solver if solver is not None else _ReadingSolver(),
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
                 solver=(

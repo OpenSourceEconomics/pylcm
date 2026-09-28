@@ -135,7 +135,7 @@ def test_gated_edge_source_solves_on_its_own():
 def _make_gated_regimes() -> dict[str, Regime]:
     """Build the gated-edge branch: `mover`, `moved_terminal`, `stay_terminal`."""
     mover = Regime(
-        transition={
+        regime_transitions={
             "moved_terminal": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_move_gate,
@@ -162,14 +162,14 @@ def _make_gated_regimes() -> dict[str, Regime]:
         solver=GridSearch(),
     )
     moved_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": WEALTH_GRID},
         functions={"utility": _moved_terminal_utility},
         solver=GridSearch(),
     )
     stay_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": WEALTH_GRID},
         functions={"utility": _stay_terminal_utility},
@@ -185,7 +185,7 @@ def _make_gated_regimes() -> dict[str, Regime]:
 def _make_mixed_regimes() -> dict[str, Regime]:
     """Add an unconnected endogenous-grid branch to the gated-edge branch."""
     saver = ConsumptionSavingsRegime(
-        transition={"saver_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"saver_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"assets": ASSET_GRID},
         state_transitions={"assets": _next_assets},
@@ -207,7 +207,7 @@ def _make_mixed_regimes() -> dict[str, Regime]:
         solver=EGM(savings_grid=SAVINGS_GRID),
     )
     saver_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"assets": ASSET_GRID},
         functions={"utility": _saver_terminal_utility},

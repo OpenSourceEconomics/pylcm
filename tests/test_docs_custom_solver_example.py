@@ -98,7 +98,7 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=lambda age: age < _N_PERIODS - 1,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},
@@ -106,7 +106,7 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
                 solver=documented["WealthSolver"](),
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _terminal_utility},
             ),

@@ -194,7 +194,7 @@ def build_model(
     """
     pair_utility = _utility_of_y if pair_reads == "y" else _utility_of_x_and_health
     solo = Regime(
-        transition={
+        regime_transitions={
             "solo": MarkovTransition(_solo_stays_before_age_two),
             "dead": MarkovTransition(_solo_leaves_from_age_two),
         },
@@ -208,7 +208,7 @@ def build_model(
         },
     )
     pair = Regime(
-        transition={
+        regime_transitions={
             "pair": MarkovTransition(_stay_before_age_one),
             "dead": ValueDependentTransition(
                 probability=MarkovTransition(_leave_from_age_one),
@@ -237,7 +237,7 @@ def build_model(
         },
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},

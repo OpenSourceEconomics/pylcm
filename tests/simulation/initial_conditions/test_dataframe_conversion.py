@@ -398,7 +398,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         return wealth
 
     with_status = UserRegime(
-        transition={"dead": MarkovTransition(_one_probability)},
+        regime_transitions={"dead": MarkovTransition(_one_probability)},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "status": DiscreteGrid(category_class=_Status),
@@ -410,12 +410,12 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         functions={"utility": _utility_with_status},
     )
     without_status = UserRegime(
-        transition={"dead": MarkovTransition(_one_probability)},
+        regime_transitions={"dead": MarkovTransition(_one_probability)},
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility_without_status},
     )
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
 
     model = Model(
         regimes={
@@ -478,7 +478,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         return wealth
 
     earner = UserRegime(
-        transition={"dead": MarkovTransition(_one_probability)},
+        regime_transitions={"dead": MarkovTransition(_one_probability)},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "income": UniformIIDProcess(n_points=5),
@@ -487,12 +487,12 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         functions={"utility": _earner_utility},
     )
     retiree = UserRegime(
-        transition={"dead": MarkovTransition(_one_probability)},
+        regime_transitions={"dead": MarkovTransition(_one_probability)},
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _retiree_utility},
     )
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
 
     model = Model(
         regimes={"earner": earner, "retiree": retiree, "dead": dead},

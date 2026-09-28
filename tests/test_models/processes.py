@@ -115,12 +115,12 @@ def get_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -181,7 +181,7 @@ def get_multi_regime_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        transition=_next_regime_multi,
+        regime_transitions=_next_regime_multi,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -199,12 +199,12 @@ def get_multi_regime_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        transition=_next_regime_multi,
+        regime_transitions=_next_regime_multi,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead_regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(

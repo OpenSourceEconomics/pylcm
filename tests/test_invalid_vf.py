@@ -77,12 +77,12 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
         constraints={
             "borrowing_constraint": borrowing_constraint,
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age, n=n_periods: age < n - 1,
     )
 
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age, n=n_periods: age >= n - 1,
     )

@@ -165,7 +165,7 @@ def get_model(
         n_points=n_consumption_points,
     )
     alive = Regime(
-        transition=MarkovTransition(next_regime),
+        regime_transitions=MarkovTransition(next_regime),
         states={
             "wealth": wealth_grid,
             "health": DiscreteGrid(category_class=HealthStatus),
@@ -182,7 +182,7 @@ def get_model(
         active=lambda age, la=last_age: age < la,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": dead_wealth_grid},
         functions={"utility": utility_dead},
     )

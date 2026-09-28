@@ -119,7 +119,7 @@ def borrowing_constraint(
 
 def _make_dead_regime() -> UserRegime:
     return UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": BEQUEST_WEALTH_GRID},
         functions={
             "utility": bequest_utility,
@@ -146,7 +146,7 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     last_age = ages.exact_values[-1]
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     retirement = regime_type(
-        transition=next_regime_from_retirement,
+        regime_transitions=next_regime_from_retirement,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={

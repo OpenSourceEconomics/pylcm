@@ -81,7 +81,7 @@ def _couple(
 ) -> Regime:
     """The collective regime of the miniature, with `functions` supplied."""
     return Regime(
-        transition=lambda: RegimeId.couple_terminal,
+        regime_transitions=lambda: RegimeId.couple_terminal,
         active=lambda age: age < 1,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -113,7 +113,7 @@ def test_a_none_body_may_still_arrive_from_the_model_level():
         functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
     )
     terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={
@@ -139,7 +139,7 @@ def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
         functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
     )
     terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={
@@ -202,7 +202,7 @@ def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
         }
     )
     terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={

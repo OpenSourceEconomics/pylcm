@@ -165,7 +165,7 @@ def _build_model() -> Model:
 
     """
     couple = Regime(
-        transition={
+        regime_transitions={
             "single": ValueDependentTransition(
                 probability=MarkovTransition(_probability_of_separating),
                 gate=_wage_clears_the_floor,
@@ -204,17 +204,17 @@ def _build_model() -> Model:
         },
     )
     single = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _single_utility},
     )
     outside_f = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_f_utility},
     )
     outside_m = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_m_utility},
     )

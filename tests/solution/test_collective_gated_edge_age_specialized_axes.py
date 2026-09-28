@@ -238,7 +238,7 @@ def _build_gate_ref_model() -> Model:
 
     """
     couple = Regime(
-        transition={
+        regime_transitions={
             "couple": MarkovTransition(_probability_of_staying_put),
             "account": ValueDependentTransition(
                 probability=MarkovTransition(_probability_of_leaving),
@@ -277,7 +277,7 @@ def _build_gate_ref_model() -> Model:
         },
     )
     account = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: (age >= 1) & (age < 3),
         states={"balance": LinSpacedGrid(start=0.0, stop=4.0, n_points=2)},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
@@ -288,7 +288,7 @@ def _build_gate_ref_model() -> Model:
         },
     )
     index = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={
             "level": AgeSpecializedGrid(build=_moving_grid, signature=_moving_ceiling)
@@ -296,13 +296,13 @@ def _build_gate_ref_model() -> Model:
         functions={"utility": _index_felicity},
     )
     annuity_f = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_felicity_f},
     )
     annuity_m = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_felicity_m},
@@ -350,7 +350,7 @@ def _build_dissolution_model() -> Model:
 
     """
     couple = Regime(
-        transition={
+        regime_transitions={
             "couple": MarkovTransition(_probability_of_staying_put),
             "pair": ValueDependentTransition(
                 probability=MarkovTransition(_probability_of_leaving),
@@ -381,7 +381,7 @@ def _build_dissolution_model() -> Model:
         },
     )
     pair = Regime(
-        transition={"pair_terminal": MarkovTransition(_certainty)},
+        regime_transitions={"pair_terminal": MarkovTransition(_certainty)},
         active=lambda age: (age >= 1) & (age < 3),
         states={"w": AgeSpecializedGrid(build=_moving_grid, signature=_moving_ceiling)},
         state_transitions={"w": fixed_transition("w")},
@@ -394,7 +394,7 @@ def _build_dissolution_model() -> Model:
         constraints={"ir_f": ValueDependentConstraint(predicate=_wife_participates)},
     )
     pair_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"w": _ANNUITY_GRID},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
@@ -405,13 +405,13 @@ def _build_dissolution_model() -> Model:
         },
     )
     single_f = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"s": _ANNUITY_GRID},
         functions={"utility": _single_felicity_f},
     )
     single_m = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"s": _ANNUITY_GRID},
         functions={"utility": _single_felicity_m},

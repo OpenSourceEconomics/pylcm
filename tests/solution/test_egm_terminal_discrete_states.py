@@ -141,7 +141,7 @@ def borrowing_constraint(
 
 def _make_dead_regime() -> UserRegime:
     return UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={
             "wealth": BEQUEST_WEALTH_GRID,
             "pref_type": DiscreteGrid(category_class=PrefType),
@@ -163,7 +163,7 @@ def _get_dcegm_model() -> Model:
         n_constrained_points=64,
     )
     retirement = ConsumptionSavingsRegime(
-        transition=next_regime_from_retirement,
+        regime_transitions=next_regime_from_retirement,
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -200,7 +200,7 @@ def _get_brute_model() -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     retirement = UserRegime(
-        transition=next_regime_from_retirement,
+        regime_transitions=next_regime_from_retirement,
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -297,7 +297,7 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
 
     # The parent does NOT carry `pref_type`; only `dead` does.
     retirement = ConsumptionSavingsRegime(
-        transition=next_regime_from_retirement,
+        regime_transitions=next_regime_from_retirement,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={"wealth": next_wealth_from_savings},

@@ -63,7 +63,7 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"saving": next_wealth, "done": next_wealth}},
         constraints={"feasible": feasible},
-        transition={
+        regime_transitions={
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
@@ -78,7 +78,7 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         ),
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         active=lambda age: age >= _LAST_AGE,

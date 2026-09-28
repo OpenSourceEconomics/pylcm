@@ -87,13 +87,13 @@ def model(request: pytest.FixtureRequest) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 state_transitions={"income": {"target": income_law}},
                 functions=functions,
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"income": _THREE_NODES, "shock": _THREE_NODES},
                 functions={"utility": _income_plus_shock},
             ),
@@ -147,14 +147,14 @@ def test_an_unread_runtime_process_does_not_block_a_fixed_draw() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 states={"noise": _RUNTIME_NOISE},
                 state_transitions={"wealth": {"target": _wealth_from_fixed_draw}},
                 functions={"utility": _utility_reading_the_noise},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "wealth": _WEALTH,
                     "shock": _THREE_NODES,
@@ -215,14 +215,14 @@ def test_a_dependent_entry_is_contracted_as_a_value_not_averaged_as_a_lottery() 
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 state_transitions={"income": {"target": _income_between_two_nodes}},
                 functions={"utility": _no_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"income": _WIDE_INCOME, "shock": _OFFSET_SHOCK},
                 functions={"utility": _income_only},
             ),
@@ -282,13 +282,13 @@ def test_a_draw_conditioned_on_a_sibling_draw_is_rejected() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_to_target)},
+                    regime_transitions={"target": MarkovTransition(_to_target)},
                     active=lambda age: age < 22,
                     state_transitions={"health": {"target": conditioned}},
                     functions={"utility": _no_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={
                         "health": DiscreteGrid(category_class=Health),
                         "shock": _THREE_NODES,

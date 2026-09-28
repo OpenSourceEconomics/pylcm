@@ -77,7 +77,7 @@ def _model(*, hand_written: bool = False) -> Model:
         states={"liquid": _ACTION_GRID},
         state_transitions={"liquid": {"alive": next_liquid, "dead": next_liquid}},
         constraints={"borrowing_limit": borrowing_limit},
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "savings": Phased(
@@ -90,7 +90,7 @@ def _model(*, hand_written: bool = False) -> Model:
         liquid=_MARGIN,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": _ACTION_GRID},
         functions={"utility": terminal_utility},
         active=lambda age: age == 2,

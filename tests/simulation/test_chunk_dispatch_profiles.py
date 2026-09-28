@@ -50,11 +50,13 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_finish_regime,
+                regime_transitions=_finish_regime,
                 active=lambda age: age == 0,
                 functions={"utility": _flag_utility},
             ),
-            "done": Regime(transition=None, functions={"utility": _flag_utility}),
+            "done": Regime(
+                regime_transitions=None, functions={"utility": _flag_utility}
+            ),
         },
         states={"flag": DiscreteGrid(_Flag)},
         state_transitions={

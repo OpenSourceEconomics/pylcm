@@ -77,7 +77,7 @@ def _make_model(*, gate) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "target": ValueDependentTransition(
                         probability=MarkovTransition(_prob_one),
                         gate=gate,
@@ -98,13 +98,13 @@ def _make_model(*, gate) -> Model:
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 45,
                 states={"x": _X},
                 functions={"utility": _utility_target},
             ),
             "fallback": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 45,
                 states={"x": _X},
                 functions={"utility": _utility_fallback},

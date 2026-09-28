@@ -426,7 +426,7 @@ def build_model(
     )
 
     working = NestedConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age, ra=retirement_age: age < ra,
         states={
             "liquid": liquid_grid,
@@ -453,7 +453,7 @@ def build_model(
     )
 
     retired = NestedConsumptionSavingsRegime(
-        transition=next_regime_from_retired,
+        regime_transitions=next_regime_from_retired,
         active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={
@@ -472,7 +472,7 @@ def build_model(
     )
 
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, fa=final_age: age >= fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},

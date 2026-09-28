@@ -59,11 +59,13 @@ def test_subannual_activity_uses_one_canonical_schedule(x64_disabled: None) -> N
     model = Model(
         regimes={
             "solo": Regime(
-                transition=_next_term,
+                regime_transitions=_next_term,
                 active=_active_from_threshold,
                 functions={"utility": _zero_utility},
             ),
-            "term": Regime(transition=None, functions={"utility": _zero_utility}),
+            "term": Regime(
+                regime_transitions=None, functions={"utility": _zero_utility}
+            ),
         },
         ages=ages,
         regime_id_class=RegimeId,

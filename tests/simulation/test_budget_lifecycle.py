@@ -58,13 +58,14 @@ def _stateful_target_model() -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=_lifecycle_next_regime,
+                regime_transitions=_lifecycle_next_regime,
                 active=_only_initial_age,
                 functions={"utility": _lifecycle_utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),
             "done": Regime(
-                transition=None, functions={"utility": _lifecycle_terminal_utility}
+                regime_transitions=None,
+                functions={"utility": _lifecycle_terminal_utility},
             ),
         },
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=5)},

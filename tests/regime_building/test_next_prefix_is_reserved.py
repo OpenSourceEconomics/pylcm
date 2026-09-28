@@ -62,7 +62,7 @@ def _build(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 states={"wealth": _WEALTH} if states is None else states,
                 state_transitions=(
@@ -74,7 +74,7 @@ def _build(
                 koopmans_aggregator=koopmans_aggregator,
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK},
                 functions={"utility": _wealth_and_shock},
             ),
@@ -149,7 +149,7 @@ def test_a_constraint_may_not_read_a_targets_draw() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_to_target)},
+                    regime_transitions={"target": MarkovTransition(_to_target)},
                     active=lambda age: age < 22,
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
@@ -157,7 +157,7 @@ def test_a_constraint_may_not_read_a_targets_draw() -> None:
                     constraints={"affordable": _constraint_of_a_next_name},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),
@@ -216,7 +216,7 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 states={"wealth": _WEALTH, "aime": aime},
                 state_transitions={
@@ -226,7 +226,7 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
                 functions={"utility": _wealth_and_aime},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "aime": aime},
                 functions={"utility": _wealth_and_aime},
             ),
@@ -330,7 +330,7 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    transition={
+                    regime_transitions={
                         "target": MarkovTransition(_probability_reading_a_next_name)
                     },
                     active=lambda age: age < 22,
@@ -339,7 +339,7 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
                     functions={"utility": _plain_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),
@@ -366,7 +366,7 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
         Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_to_target)},
+                    regime_transitions={"target": MarkovTransition(_to_target)},
                     active=lambda age: age < 22,
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
@@ -377,7 +377,7 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
                     ),
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),

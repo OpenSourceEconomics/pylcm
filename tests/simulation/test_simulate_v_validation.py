@@ -113,7 +113,7 @@ def _nan_producing_model() -> Model:
     """Build a two-regime model whose simulated value is NaN at `NAN_AGE` only."""
     grid = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
     work = UserRegime(
-        transition=_off_node_next_regime,
+        regime_transitions=_off_node_next_regime,
         actions={"consumption": grid},
         states={"wealth": grid},
         state_transitions={"wealth": _off_node_next_wealth},
@@ -121,7 +121,7 @@ def _nan_producing_model() -> Model:
         functions={"utility": _off_node_utility},
         active=lambda age: age < 60,
     )
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     return Model(
         regimes={"work": work, "dead": dead},
         ages=AgeGrid(start=40, stop=60, step="10Y"),
@@ -173,10 +173,10 @@ def _two_offender_model() -> Model:
     """Build a model whose simulated value is NaN in two regimes of one period."""
     grid = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
 
-    def occupied_regime(*, transition: Callable[..., ScalarInt]) -> UserRegime:
+    def occupied_regime(*, regime_transitions: Callable[..., ScalarInt]) -> UserRegime:
         """Build one regime whose value goes NaN off a wealth node at `NAN_AGE`."""
         return UserRegime(
-            transition=transition,
+            regime_transitions=regime_transitions,
             actions={"consumption": grid},
             states={"wealth": grid},
             state_transitions={"wealth": _off_node_next_wealth},
@@ -187,9 +187,11 @@ def _two_offender_model() -> Model:
 
     return Model(
         regimes={
-            "work": occupied_regime(transition=_next_regime_from_work),
-            "study": occupied_regime(transition=_next_regime_from_study),
-            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+            "work": occupied_regime(regime_transitions=_next_regime_from_work),
+            "study": occupied_regime(regime_transitions=_next_regime_from_study),
+            "dead": UserRegime(
+                regime_transitions=None, functions={"utility": lambda: 0.0}
+            ),
         },
         ages=AgeGrid(start=40, stop=60, step="10Y"),
         regime_id_class=TwoOffenderRegimeId,

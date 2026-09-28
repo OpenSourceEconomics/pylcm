@@ -84,7 +84,7 @@ def _regime(*, source: int, identity: bool) -> Regime:
 
     return Regime(
         active=lambda age: age < 2,
-        transition=MarkovTransition(probabilities),
+        regime_transitions=MarkovTransition(probabilities),
         actions={"decision": DiscreteGrid(_Three)},
         functions={"utility": utility, "landing": _landing},
         constraints={"feasible": lambda landing: (landing >= -4) & (landing <= 19)},
@@ -114,7 +114,7 @@ def _model(
             "r1": _regime(source=1, identity=identity),
             "terminal": Regime(
                 active=lambda age: age == 2,
-                transition=None,
+                regime_transitions=None,
                 functions={
                     "utility": lambda assets, pref_type, spousal_income: (
                         -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
@@ -661,7 +661,7 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
 
     _require_eight()
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         states={
             "liquid": LinSpacedGrid(start=-4, stop=19, n_points=24),
             "pref_type": DiscreteGrid(_Three),

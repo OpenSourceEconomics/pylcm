@@ -78,7 +78,7 @@ def _same_target_fallback_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "target": ValueDependentTransition(
                         probability=MarkovTransition(_always_true),
                         gate=_always_closed,
@@ -99,7 +99,7 @@ def _same_target_fallback_model() -> Model:
                 functions={"utility": _costly_saving},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"x": _X},
                 functions={"utility": _constant_utility},

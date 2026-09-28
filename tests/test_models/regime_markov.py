@@ -35,7 +35,7 @@ def _next_regime_probs(
 
 
 alive = UserRegime(
-    transition=MarkovTransition(_next_regime_probs),
+    regime_transitions=MarkovTransition(_next_regime_probs),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -49,7 +49,7 @@ alive = UserRegime(
 )
 
 dead = UserRegime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 

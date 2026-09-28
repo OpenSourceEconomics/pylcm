@@ -22,12 +22,12 @@ Stochastic process states already own their transitions and must not appear in
 `state_transitions`. A terminal regime has no state transitions.
 
 Per-target state-transition mappings must cover exactly the reachable targets that carry
-the state. Reachability comes from the regime's `transition` declaration; extra or
-missing targets are errors.
+the state. Reachability comes from the regime's `regime_transitions` declaration; extra
+or missing targets are errors.
 
 ## Regime transitions
 
-`Regime.transition` accepts:
+`Regime.regime_transitions` accepts:
 
 - `None` for a terminal regime;
 - a deterministic callable returning a regime code;
@@ -57,7 +57,7 @@ mapping from target regime, to local joint-node name, to the `JointTransition`:
 
 ```python
 source = Regime(
-    transition={"target_regime": MarkovTransition(target_probability)},
+    regime_transitions={"target_regime": MarkovTransition(target_probability)},
     joint_transitions={
         "target_regime": {
             "joint_draw": JointTransition(
@@ -179,7 +179,7 @@ select the already-resolved period objects and never call `build(age)`.
 differ by phase:
 
 - `functions` and `state_transitions` accept phase-specific variants;
-- `transition` accepts variants with the same transition form and target keys;
+- `regime_transitions` accepts variants with the same transition form and target keys;
 - `koopmans_aggregator` accepts one callable per phase;
 - `states` accepts the special carried-state form
   `Phased(solve=callable, simulate=Grid)`.

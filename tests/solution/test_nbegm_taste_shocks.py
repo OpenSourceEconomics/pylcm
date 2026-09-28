@@ -99,7 +99,7 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
             "consumption": CONSUMPTION_GRID,
             "labor_supply": DiscreteGrid(category_class=Work),
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         taste_shocks=ExtremeValueTasteShocks(),
         functions={
             "utility": utility,
@@ -116,7 +116,7 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age > 20,
         states={"wealth": WEALTH_GRID},
         functions={"utility": terminal_utility},
@@ -146,7 +146,7 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
             "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
             "labor_supply": DiscreteGrid(category_class=Work),
         },
-        transition=n_nbegm_toy.next_regime,
+        regime_transitions=n_nbegm_toy.next_regime,
         taste_shocks=ExtremeValueTasteShocks(),
         functions={
             "utility": utility_with_labor_disutility,
@@ -171,7 +171,7 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age > 20,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,

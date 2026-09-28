@@ -110,7 +110,7 @@ def _pension_grid() -> LinSpacedGrid:
 def _build_regime(**overrides: Any) -> UserRegime:
     """A small valid regime; tests override individual slots."""
     spec: dict[str, Any] = {
-        "transition": _next_regime,
+        "regime_transitions": _next_regime,
         "states": {
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
         },
@@ -210,7 +210,9 @@ def test_phased_regime_transition_splits_into_phase_variants() -> None:
     def _planned(age: float) -> ScalarInt:  # noqa: ARG001
         return jnp.asarray(0, dtype=jnp.int32)
 
-    regime = _build_regime(transition=Phased(solve=_planned, simulate=_next_regime))
+    regime = _build_regime(
+        regime_transitions=Phased(solve=_planned, simulate=_next_regime)
+    )
     spec = normalize_regime_phases(regime)
     assert spec.solution.regime_transition is _planned
     assert spec.simulation.regime_transition is _next_regime
@@ -222,7 +224,7 @@ def test_phased_regime_transition_splits_into_phase_variants() -> None:
 def test_phased_markov_regime_transition_sets_stochastic_flags() -> None:
     """Markov variants on both sides mark both phases stochastic."""
     regime = _build_regime(
-        transition=Phased(
+        regime_transitions=Phased(
             solve=MarkovTransition(_next_regime_probs),
             simulate=MarkovTransition(_next_regime_probs),
         )
@@ -335,7 +337,7 @@ def test_terminal_regime_with_carried_state_is_rejected() -> None:
     """Terminal regimes have no next period to carry a state into."""
     with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
         UserRegime(
-            transition=None,
+            regime_transitions=None,
             states={
                 "pension_wealth": Phased(
                     solve=_impute_pension_wealth, simulate=_pension_grid()
@@ -399,14 +401,14 @@ def test_phased_regime_transition_with_none_side_is_rejected() -> None:
     """Terminality is phase-invariant: a regime is terminal in both phases or
     neither, so `None` cannot be a `Phased` variant."""
     with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
-        _build_regime(transition=Phased(solve=None, simulate=_next_regime))
+        _build_regime(regime_transitions=Phased(solve=None, simulate=_next_regime))
 
 
 def test_phased_regime_transition_with_mixed_stochasticity_is_rejected() -> None:
     """Both regime-transition variants must agree on stochasticity."""
     with pytest.raises(RegimeInitializationError, match="stochastic"):
         _build_regime(
-            transition=Phased(
+            regime_transitions=Phased(
                 solve=MarkovTransition(_next_regime_probs), simulate=_next_regime
             )
         )
@@ -446,9 +448,9 @@ def _consumption_leq_wealth(*, consumption: float, wealth: float) -> bool:
 
 
 def _build_phased_law_model(*, phased_law: bool) -> Model:
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        transition=_next_regime_working,
+        regime_transitions=_next_regime_working,
         active=lambda age: age < 64,
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         state_transitions={
@@ -539,9 +541,9 @@ def _true_drift_law(*, wealth: float, true_drift: float) -> float:
 
 def test_phased_law_params_template_unions_both_variants() -> None:
     """The params template lists both laws' parameters under `next_<state>`."""
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        transition=_next_regime_working,
+        regime_transitions=_next_regime_working,
         active=lambda age: age < 64,
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         state_transitions={
@@ -566,9 +568,9 @@ def _income_law(*, income: float, rho: float, sigma: float) -> float:
 
 def _build_wrong_beliefs_model() -> Model:
     """One shared law, `rho` renamed apart per phase, `sigma` shared."""
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        transition=_next_regime_working,
+        regime_transitions=_next_regime_working,
         active=lambda age: age < 64,
         states={"income": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
         state_transitions={
@@ -825,9 +827,11 @@ def _realized_next_regime(age: float) -> ScalarInt:  # noqa: ARG001
 
 
 def _build_phased_transition_model(*, phased_transition: bool) -> Model:
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        transition=Phased(solve=_plan_next_regime, simulate=_realized_next_regime)
+        regime_transitions=Phased(
+            solve=_plan_next_regime, simulate=_realized_next_regime
+        )
         if phased_transition
         else _plan_next_regime,
         active=lambda age: age < 64,
@@ -904,9 +908,9 @@ def test_regime_draw_reads_carried_value() -> None:
     reads the carried state; the decision itself still follows the policy
     solved on the imputation.
     """
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     working = UserRegime(
-        transition=_retire_when_pension_rich,
+        regime_transitions=_retire_when_pension_rich,
         active=lambda age: age < 64,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -978,7 +982,7 @@ def test_model_builds_when_a_transition_reads_a_phased_function():
     model = Model(
         regimes={
             "working": UserRegime(
-                transition={"dead": MarkovTransition(lambda: jnp.float32(1))},
+                regime_transitions={"dead": MarkovTransition(lambda: jnp.float32(1))},
                 active=lambda age: age < 22,
                 states={"wealth": wealth_grid},
                 state_transitions={"wealth": {"dead": next_wealth}},
@@ -990,7 +994,7 @@ def test_model_builds_when_a_transition_reads_a_phased_function():
                 },
             ),
             "dead": UserRegime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": wealth_grid},
                 functions={"utility": utility},
             ),

@@ -221,7 +221,7 @@ def terminal_utility(wealth):
 
 
 working = Regime(
-    transition=next_regime,
+    regime_transitions=next_regime,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=50),
     },
@@ -236,7 +236,7 @@ working = Regime(
 )
 
 retired = Regime(
-    transition=None,
+    regime_transitions=None,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=50),
     },

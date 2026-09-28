@@ -167,7 +167,7 @@ NEGM_SOLVER = NEGM(
 def _build_dead_regime() -> Regime:
     """The terminal regime: a bequest over both continuous states."""
     return Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=FINAL_AGE_ALIVE: age > n,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": bequest},
@@ -184,7 +184,7 @@ def build_negm_model() -> Model:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -277,7 +277,7 @@ def build_brute_model() -> Model:
             "consumption": CONSUMPTION_GRID_BRUTE,
             "new_durable": OUTER_GRID,
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={"utility": utility_brute},
         constraints={"feasible": feasible_brute},
     )

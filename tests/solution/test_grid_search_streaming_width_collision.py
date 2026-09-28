@@ -76,7 +76,7 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
     Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=lambda age: age < 1,
                 actions={
                     "action": LinSpacedGrid(start=1.0, stop=3.0, n_points=3),
@@ -84,7 +84,7 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
                 functions={"utility": _selector_model_utility},
             ),
             "done": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 functions={"utility": _terminal_utility},
             ),
@@ -160,13 +160,13 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
     model = Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=lambda age: age < 1,
                 actions=actions,
                 functions={"utility": utility},
             ),
             "done": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 functions={"utility": _terminal_utility},
             ),

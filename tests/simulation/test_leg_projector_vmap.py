@@ -149,7 +149,7 @@ def _settlement_from_health(health: DiscreteState) -> FloatND:
 def _make_regimes() -> dict[str, Regime]:
     """Source with a dissolution edge, its target, and the leg's fallback."""
     source = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_dissolves_everywhere,
@@ -170,13 +170,13 @@ def _make_regimes() -> dict[str, Regime]:
         functions={"utility": _utility_source},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": _utility_target},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"settlement": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
         functions={"utility": _utility_fallback},

@@ -527,7 +527,7 @@ def build_model(
     borrowing = borrowing_constraint_taxed if use_taxes else borrowing_constraint
 
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, fa=final_age_alive: age >= fa,
         states={"assets": assets_grid, "housing": DiscreteGrid(category_class=Housing)},
         functions={"utility": bequest},
@@ -535,7 +535,7 @@ def build_model(
 
     if variant == "brute":
         working = UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=lambda age, fa=final_age_alive: age < fa,
             states={
                 "assets": assets_grid,
@@ -566,7 +566,7 @@ def build_model(
         )
 
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age, fa=final_age_alive: age < fa,
         states={
             "assets": assets_grid,

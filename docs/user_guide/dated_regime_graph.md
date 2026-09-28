@@ -21,12 +21,12 @@ simulation never visits. Simulation entry does not select the solve domain.
 ## Terminality is unchanged
 
 ```python
-dead = Regime(transition=None, functions={"utility": bequest})
+dead = Regime(regime_transitions=None, functions={"utility": bequest})
 ```
 
-`transition=None` means the regime is terminal. Its payoff is available at every model
-age, and a history entering it ends after evaluating that payoff. Terminal is not a
-synonym for last age.
+`regime_transitions=None` means the regime is terminal. Its payoff is available at every
+model age, and a history entering it ends after evaluating that payoff. Terminal is not
+a synonym for last age.
 
 ```python
 transition = "dead"

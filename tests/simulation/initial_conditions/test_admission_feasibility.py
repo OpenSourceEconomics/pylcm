@@ -99,7 +99,7 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=_initial_age,
                 states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
                 state_transitions={"wealth": lcm.fixed_transition("wealth")},
@@ -108,7 +108,7 @@ def _inputs(
                 constraints=constraints,
             ),
             "done": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
                 functions={"utility": _terminal_utility},
             ),

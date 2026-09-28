@@ -70,12 +70,12 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
     model = Model(
         regimes={
             "source": Regime(
-                transition=transition,
+                regime_transitions=transition,
                 active=_source_early,
                 functions={"utility": _zero},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock},
             ),

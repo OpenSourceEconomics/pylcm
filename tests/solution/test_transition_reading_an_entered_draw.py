@@ -72,13 +72,13 @@ def _build(*, functions, next_wealth) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 state_transitions={"wealth": {"target": next_wealth}},
                 functions=functions,
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK},
                 functions={"utility": _wealth_plus_shock},
             ),
@@ -132,14 +132,14 @@ def _build_reading_a_runtime_draw() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 states={"shock": _RUNTIME_SHOCK},
                 state_transitions={"wealth": {"target": _next_wealth_from_draw}},
                 functions={"utility": _shock_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _RUNTIME_SHOCK},
                 functions={"utility": _wealth_plus_shock},
             ),

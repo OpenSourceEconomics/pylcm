@@ -472,12 +472,12 @@ def _make_three_type_model(
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=lambda age: jnp.where(
+        regime_transitions=lambda age: jnp.where(
             age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
         ),
     )
     retired = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={
             "utility": (
                 _constant_retired_value
@@ -987,7 +987,7 @@ def _make_two_mesh_model() -> Model:
                 "wealth": lambda wealth, consumption: wealth - consumption
             },
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=6)},
-            transition=lambda age: jnp.where(
+            regime_transitions=lambda age: jnp.where(
                 age >= 0, _TwoMeshRegimeId.retired, _TwoMeshRegimeId.alpha
             ),
         )
@@ -997,7 +997,7 @@ def _make_two_mesh_model() -> Model:
             "alpha": _worker(),
             "beta": _worker(),
             "retired": UserRegime(
-                transition=None,
+                regime_transitions=None,
                 functions={"utility": lambda wealth: wealth * 0.5},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=8)},
             ),
@@ -1146,30 +1146,30 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     def _next_wealth(*, wealth: Any, consumption: Any) -> Any:
         return wealth - consumption
 
-    def _worker(*, transition: Any, active: Any) -> UserRegime:
+    def _worker(*, regime_transitions: Any, active: Any) -> UserRegime:
         return UserRegime(
             functions={"utility": _utility},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             state_transitions={"wealth": _next_wealth},
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-            transition=transition,
+            regime_transitions=regime_transitions,
             active=active,
         )
 
     first = _worker(
-        transition=lambda age: jnp.where(
+        regime_transitions=lambda age: jnp.where(
             age >= 1, _TwoBlockRegimeId.second, _TwoBlockRegimeId.first
         ),
         active=lambda age: age < 3,
     )
     second = _worker(
-        transition=lambda age: jnp.where(
+        regime_transitions=lambda age: jnp.where(
             age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
         ),
         active=lambda _age: True,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         active=lambda age: age >= 4,
@@ -1795,14 +1795,14 @@ def _uniform_placement_model(
     return Model(
         regimes={
             "alive": UserRegime(
-                transition=_uniform_placement_transition,
+                regime_transitions=_uniform_placement_transition,
                 active=_uniform_placement_initial_age,
                 states={"income": UniformIIDProcess(n_points=5)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _uniform_placement_utility},
             ),
             "done": UserRegime(
-                transition=None,
+                regime_transitions=None,
                 active=_uniform_placement_terminal_age,
                 functions={
                     "utility": _stateless_placement_terminal

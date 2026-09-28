@@ -174,7 +174,7 @@ def _hand_computed_gate(shock: np.ndarray) -> np.ndarray:
 
 def _make_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        transition={
+        regime_transitions={
             "married_terminal": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
@@ -206,19 +206,19 @@ def _make_regimes() -> dict[str, Regime]:
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _u_single_f_terminal},
     )
     single_m_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE, "shock": _SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},

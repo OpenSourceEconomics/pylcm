@@ -216,7 +216,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
     different projections -- the topology model construction must reject.
     """
     married = Regime(
-        transition={
+        regime_transitions={
             "married_ir": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
@@ -247,7 +247,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         },
     )
     married_ir = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -258,7 +258,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         },
     )
     single_shared = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_3},
         functions={"utility": _u_shared},
@@ -419,7 +419,7 @@ _WAGE_GRID_2 = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 
 def _make_all_collective_regimes() -> dict[str, Regime]:
     couple = Regime(
-        transition=lambda: jnp.int32(1),
+        regime_transitions=lambda: jnp.int32(1),
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
@@ -429,7 +429,7 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID_2},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -522,7 +522,7 @@ def _u_stateless_m(work: DiscreteAction) -> FloatND:
 
 def _make_stateless_collective_regime() -> dict[str, Regime]:
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
@@ -604,7 +604,7 @@ def test_stateless_collective_without_any_action_finalizes():
     finalized = finalize_regimes(
         user_regimes={
             "couple": Regime(
-                transition=None,
+                regime_transitions=None,
                 functions={
                     "utility": CollectiveUtility(
                         utilities={

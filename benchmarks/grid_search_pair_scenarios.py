@@ -248,7 +248,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     model = Model(
         regimes={
             "working": Regime(
-                transition=next_regime,
+                regime_transitions=next_regime,
                 active=lambda age: age < 5,
                 states={"wealth": wealth},
                 state_transitions={"wealth": next_wealth},
@@ -257,7 +257,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
                 constraints={"affordable": affordable},
             ),
             "retired": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 5,
                 states={"wealth": wealth},
                 functions={"utility": retired_utility},
@@ -310,7 +310,7 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
     model = Model(
         regimes={
             "working": Regime(
-                transition=next_regime,
+                regime_transitions=next_regime,
                 active=lambda age: age < 4,
                 states={
                     "wealth": wealth,
@@ -328,7 +328,7 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
                 constraints={"affordable": affordable},
             ),
             "retired": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 4,
                 states={"wealth": wealth},
                 functions={"utility": retired_utility},

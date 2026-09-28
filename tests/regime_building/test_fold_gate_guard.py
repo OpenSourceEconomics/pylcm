@@ -114,7 +114,7 @@ _AGES_2P = AgeGrid(start=0, stop=2, step="Y")
 def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (collective, folds `wage_shock`)."""
     source = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
@@ -133,12 +133,12 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
         functions={"utility": _u_work},
     )
     source_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _u_zero},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -165,14 +165,14 @@ def _dummy_constraint(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
 def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     """`reader` (collective) --same_period_refs--> `ref_target` (collective, folded)."""
     ref_target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
     )
     reader = Regime(
-        transition={"reader_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"reader_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -192,7 +192,7 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
         },
     )
     reader_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -227,7 +227,7 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     plays no part in the ordering this fixture exercises.
     """
     source = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=lambda V_ref: V_ref > 0.0,
@@ -252,12 +252,12 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
         functions={"utility": _u_work},
     )
     source_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _u_zero},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -265,7 +265,7 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
         },
     )
     ref_target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},

@@ -234,7 +234,7 @@ def make_alive_dead_model(
             states=alive_states,
             state_transitions=alive_state_transitions,
             constraints=dict(constraints),
-            transition=alive_transition,
+            regime_transitions=alive_transition,
             functions=dict(alive_functions),
             active=alive_active,
             solver=alive_solver,
@@ -251,7 +251,7 @@ def make_alive_dead_model(
             states=alive_states,
             state_transitions=alive_state_transitions,
             constraints=dict(constraints),
-            transition=alive_transition,
+            regime_transitions=alive_transition,
             functions=dict(alive_functions),
             active=alive_active,
             solver=alive_solver,
@@ -264,7 +264,7 @@ def make_alive_dead_model(
     # entered.
     first_dead_age = 1 if survival_transition is not None else final_age
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions=dict(dead_functions)
         if dead_functions is not None

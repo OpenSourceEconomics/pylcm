@@ -71,7 +71,7 @@ def _wealth_grid() -> LinSpacedGrid:
 
 def _base_regime_kwargs() -> dict[str, Any]:
     return {
-        "transition": _next_regime,
+        "regime_transitions": _next_regime,
         "states": {"wealth": _wealth_grid()},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         "functions": {"utility": _utility},
@@ -97,7 +97,7 @@ def _canonicalize(regimes: dict[str, UserRegime]) -> Mapping:
 
 def _two_regime_model_specs(work_overrides: dict[str, Any]) -> Mapping:
     retire = _regime(state_transitions={"wealth": _next_wealth})
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     return _canonicalize(
         {"work": _regime(**work_overrides), "retire": retire, "dead": dead}
     )
@@ -121,7 +121,7 @@ def test_per_target_dict_is_restricted_to_named_targets() -> None:
     """
     specs = _two_regime_model_specs(
         {
-            "transition": {
+            "regime_transitions": {
                 "retire": MarkovTransition(lambda age: jnp.asarray(0.6)),  # noqa: ARG005
                 "dead": MarkovTransition(lambda age: jnp.asarray(0.4)),  # noqa: ARG005
             },
@@ -148,7 +148,7 @@ def test_fixed_transition_desugars_to_per_target_identities() -> None:
             "utility": lambda consumption, health: jnp.log(consumption)  # noqa: ARG005
         },
     }
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     specs = _canonicalize(
         {"work": _regime(**overrides), "retire": _regime(**overrides), "dead": dead}
     )
@@ -173,7 +173,7 @@ def test_markov_law_broadcasts_as_markov() -> None:
             "utility": lambda consumption, health: jnp.log(consumption)  # noqa: ARG005
         },
     }
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     specs = _canonicalize(
         {"work": _regime(**overrides), "retire": _regime(**overrides), "dead": dead}
     )
@@ -200,7 +200,7 @@ def test_carried_state_law_lives_only_in_the_simulation_slice() -> None:
         },
         "state_transitions": {"wealth": _next_wealth, "pension_wealth": _evolve},
     }
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     specs = _canonicalize(
         {"work": _regime(**overrides), "retire": _regime(**overrides), "dead": dead}
     )
@@ -220,7 +220,10 @@ def test_coarse_markov_regime_transition_canonicalizes_to_shared_cells() -> None
     """
     transition = MarkovTransition(lambda age: jnp.asarray([0.5, 0.3, 0.2]))  # noqa: ARG005
     specs = _two_regime_model_specs(
-        {"transition": transition, "state_transitions": {"wealth": _next_wealth}}
+        {
+            "regime_transitions": transition,
+            "state_transitions": {"wealth": _next_wealth},
+        }
     )
     canonical = specs["work"].solution.regime_transition
     assert isinstance(canonical, Mapping)
@@ -246,7 +249,7 @@ def test_temporal_graph_limits_canonical_transition_bundles() -> None:
     regimes = {
         "work": _regime(state_transitions={"wealth": _next_wealth}),
         "retire": _regime(state_transitions={"wealth": _next_wealth}),
-        "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+        "dead": UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0}),
     }
     finalized = finalize_regimes(
         user_regimes=regimes,
@@ -287,7 +290,7 @@ def test_per_target_regime_transition_passes_through() -> None:
     to_dead = MarkovTransition(lambda age: jnp.asarray(0.4))  # noqa: ARG005
     specs = _two_regime_model_specs(
         {
-            "transition": {"retire": to_retire, "dead": to_dead},
+            "regime_transitions": {"retire": to_retire, "dead": to_dead},
             "state_transitions": {"wealth": {"retire": _next_wealth}},
         }
     )
@@ -316,7 +319,9 @@ def test_two_step_seam_matches_wrapper() -> None:
         user_regimes={
             "work": _regime(state_transitions={"wealth": _next_wealth}),
             "retire": _regime(state_transitions={"wealth": _next_wealth}),
-            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+            "dead": UserRegime(
+                regime_transitions=None, functions={"utility": lambda: 0.0}
+            ),
         },
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),

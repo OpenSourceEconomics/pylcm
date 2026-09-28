@@ -387,7 +387,7 @@ def _model(
     return Model(
         regimes={
             "active": Regime(
-                transition={
+                regime_transitions={
                     "active": MarkovTransition(_stay_active),
                     "retired": MarkovTransition(_enter_retirement),
                 },
@@ -420,7 +420,7 @@ def _model(
                 solver=solver,
             ),
             "retired": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= _N_PERIODS,
                 functions={"utility": _retired_utility},
                 solver=TerminalCounterSolver(),

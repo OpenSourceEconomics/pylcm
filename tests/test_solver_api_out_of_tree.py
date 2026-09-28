@@ -202,7 +202,7 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=transition,
+                regime_transitions=transition,
                 active=alive_active,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
@@ -210,7 +210,7 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
                 solver=solver,
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
             ),
@@ -662,7 +662,7 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=next_regime_dead,
+                regime_transitions=next_regime_dead,
                 active=lambda age: age < _N_PERIODS - 1,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
@@ -670,7 +670,7 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
                 solver=_MarginalDemandingSolver(),
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
                 solver=target_solver,
@@ -731,7 +731,7 @@ def _choice_model(*, solver: Solver) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=_die_at_the_end,
+                regime_transitions=_die_at_the_end,
                 active=lambda age: age < _N_PERIODS - 1,
                 states={"wealth": _WEALTH},
                 actions={"consumption": _CONSUMPTION},
@@ -740,7 +740,7 @@ def _choice_model(*, solver: Solver) -> Model:
                 solver=solver,
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
             ),

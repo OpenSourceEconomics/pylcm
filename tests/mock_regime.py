@@ -33,7 +33,7 @@ class MockRegime(UserRegime):
         states: dict[str, Grid | None] | None = None,
         state_transitions: dict[str, UserFunction | None] | None = None,
         constraints: dict[str, UserFunction] | None = None,
-        transition: UserFunction | None = None,
+        regime_transitions: UserFunction | None = None,
         # Loosely typed on purpose: tests pass markers (`AgeSpecializedFunction`,
         # `Phased`) alongside plain callables.
         functions: Mapping[str, object] | None = None,
@@ -51,7 +51,7 @@ class MockRegime(UserRegime):
         object.__setattr__(
             self, "constraints", constraints if constraints is not None else {}
         )
-        object.__setattr__(self, "transition", transition)
+        object.__setattr__(self, "regime_transitions", regime_transitions)
         object.__setattr__(
             self, "functions", functions if functions is not None else {}
         )
@@ -61,7 +61,7 @@ class MockRegime(UserRegime):
             self,
             "koopmans_aggregator",
             koopmans_aggregator
-            if koopmans_aggregator is not None or self.transition is None
+            if koopmans_aggregator is not None or self.regime_transitions is None
             else LinearAggregator(),
         )
         object.__setattr__(
@@ -81,7 +81,7 @@ class MockRegime(UserRegime):
 
     @property
     def terminal(self) -> bool:
-        return self.transition is None
+        return self.regime_transitions is None
 
     def get_all_functions(
         self, phase: Literal["solve", "simulate"] = "solve"
@@ -103,10 +103,12 @@ class MockRegime(UserRegime):
                 "dict[str, UserFunction | None]", self.state_transitions
             ),
             constraints=cast("dict[str, UserFunction]", self.constraints),
-            transition=self.transition if callable(self.transition) else _noop,
+            regime_transitions=self.regime_transitions
+            if callable(self.regime_transitions)
+            else _noop,
             functions=cast("dict[str, UserFunction]", self.functions),
         )
         result = dict(UserRegime.get_all_functions(normalized, phase))
-        if not callable(self.transition):
+        if not callable(self.regime_transitions):
             del result["next_regime"]
         return MappingProxyType(result)

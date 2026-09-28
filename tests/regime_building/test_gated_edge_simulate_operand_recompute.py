@@ -168,7 +168,7 @@ def _value_gate(*, V_target: FloatND, V_ref: FloatND) -> BoolND:
 
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_value_gate,
@@ -193,19 +193,19 @@ def _make_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": _X2},
         functions={"utility": _u_target},
     )
     ref = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": _X2},
         functions={"utility": _u_ref},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": _X2},
         functions={"utility": _u_fallback},
@@ -382,7 +382,7 @@ def _threshold_gate(*, V_target: FloatND, gate_threshold: FloatND) -> BoolND:
 
 def _make_curved_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_threshold_gate,
@@ -402,14 +402,14 @@ def _make_curved_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": _X2},
         actions={"invest": DiscreteGrid(category_class=Invest)},
         functions={"utility": _u_curved_target},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": _X2},
         functions={"utility": _u_fallback},

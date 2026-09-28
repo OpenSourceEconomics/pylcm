@@ -112,12 +112,12 @@ def _get_model(*, sigma_low: float, sigma_high: float, n_periods: int = 5) -> Mo
             "uncertainty": MarkovTransition(next_uncertainty),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        transition=next_regime,
+        regime_transitions=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )
@@ -271,12 +271,14 @@ def _ar1_model(*, sigma_low: float, sigma_high: float) -> Model:
             "uncertainty": MarkovTransition(next_uncertainty),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        transition=next_regime,
+        regime_transitions=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = Regime(
-        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+        regime_transitions=None,
+        active=lambda age: age > 60,
+        functions={"utility": lambda: 0.0},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
@@ -352,12 +354,12 @@ def _get_switching_model(*, sigma_low: float, sigma_high: float) -> Model:
             "uncertainty": MarkovTransition(next_uncertainty_switching),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        transition=next_regime,
+        regime_transitions=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )
@@ -437,12 +439,14 @@ def _model_with_income(income_proc) -> Model:
             "uncertainty": MarkovTransition(next_uncertainty),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        transition=next_regime,
+        regime_transitions=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = Regime(
-        transition=None, active=lambda age: age > 21, functions={"utility": lambda: 0.0}
+        regime_transitions=None,
+        active=lambda age: age > 21,
+        functions={"utility": lambda: 0.0},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
@@ -587,7 +591,7 @@ def _alive_regime_without_local_uncertainty() -> Regime:
         },
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        transition=next_regime,
+        regime_transitions=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -595,7 +599,9 @@ def _alive_regime_without_local_uncertainty() -> Regime:
 
 def _dead_regime() -> Regime:
     return Regime(
-        transition=None, active=lambda age: age > 50, functions={"utility": lambda: 0.0}
+        regime_transitions=None,
+        active=lambda age: age > 50,
+        functions={"utility": lambda: 0.0},
     )
 
 
@@ -645,7 +651,7 @@ def test_conditioning_only_state_is_not_reported_unused():
             "uncertainty": MarkovTransition(next_uncertainty_age_only),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        transition=next_regime,
+        regime_transitions=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -782,7 +788,7 @@ def _cross_regime_alive(*, active, income_proc, uncertainty_law, local_uncertain
         states=states,
         state_transitions=transitions,
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        transition=next_phase,
+        regime_transitions=next_phase,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -823,7 +829,9 @@ def test_cross_regime_regime_local_conditioner_builds_and_solves():
         local_uncertainty=True,
     )
     gone = Regime(
-        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+        regime_transitions=None,
+        active=lambda age: age > 60,
+        functions={"utility": lambda: 0.0},
     )
     model = Model(
         regimes={"young": young, "old": old, "gone": gone},
@@ -856,7 +864,9 @@ def test_cross_regime_model_level_conditioner_survives_pruning():
         local_uncertainty=False,
     )
     gone = Regime(
-        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+        regime_transitions=None,
+        active=lambda age: age > 60,
+        functions={"utility": lambda: 0.0},
     )
     model = Model(
         regimes={"young": young, "old": old, "gone": gone},
@@ -899,7 +909,9 @@ def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state():
         local_uncertainty=True,
     )
     gone = Regime(
-        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+        regime_transitions=None,
+        active=lambda age: age > 60,
+        functions={"utility": lambda: 0.0},
     )
     model = Model(
         regimes={"young": young, "old": old, "gone": gone},
@@ -951,7 +963,7 @@ def test_conditioned_process_the_source_lacks_is_rejected():
             "uncertainty": MarkovTransition(next_uncertainty_phase_absorbing),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        transition=next_phase,
+        regime_transitions=next_phase,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -962,7 +974,9 @@ def test_conditioned_process_the_source_lacks_is_rejected():
         local_uncertainty=True,
     )
     gone = Regime(
-        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+        regime_transitions=None,
+        active=lambda age: age > 60,
+        functions={"utility": lambda: 0.0},
     )
     with pytest.raises(ModelInitializationError, match="does not carry 'income'"):
         Model(
@@ -992,7 +1006,7 @@ def test_conditioned_process_may_be_entered_with_an_explicit_law():
             "income": {"old": lambda: jnp.array(0.0)},
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        transition=next_phase,
+        regime_transitions=next_phase,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -1003,7 +1017,9 @@ def test_conditioned_process_may_be_entered_with_an_explicit_law():
         local_uncertainty=True,
     )
     gone = Regime(
-        transition=None, active=lambda age: age > 60, functions={"utility": lambda: 0.0}
+        regime_transitions=None,
+        active=lambda age: age > 60,
+        functions={"utility": lambda: 0.0},
     )
     model = Model(
         regimes={"young": young, "old": old, "gone": gone},

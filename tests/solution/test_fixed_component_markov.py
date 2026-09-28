@@ -166,7 +166,7 @@ def _model(
         regimes={
             "alive": Regime(
                 active=lambda age: age < 3,
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 states={
                     "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
                     **states,
@@ -179,7 +179,7 @@ def _model(
                     **laws,
                 },
             ),
-            "dead": Regime(transition=None, functions={"utility": lambda: 0.0}),
+            "dead": Regime(regime_transitions=None, functions={"utility": lambda: 0.0}),
         },
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
@@ -326,7 +326,7 @@ def test_fixed_component_lowering_covers_declarations_and_terminal(
         local_laws = {"kind_health": {"alive": law}}
     alive = Regime(
         active=(lambda age: age == 0) if terminal_carries else (lambda age: age < 2),
-        transition={"dead": MarkovTransition(lambda: jnp.asarray(1.0))}
+        regime_transitions={"dead": MarkovTransition(lambda: jnp.asarray(1.0))}
         if terminal_carries
         else _next_regime,
         states=local_states,
@@ -334,7 +334,7 @@ def test_fixed_component_lowering_covers_declarations_and_terminal(
         functions={"utility": _code_utility},
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"kind_health": grid} if terminal_carries and form != "model" else {},
         functions={"utility": _code_utility}
         if terminal_carries
@@ -405,7 +405,7 @@ def test_fixed_component_rejects_an_occupied_model_state_name():
             regimes={
                 "alive": Regime(
                     active=lambda age: age < 1,
-                    transition=_next_regime,
+                    regime_transitions=_next_regime,
                     states={"kind_health": DiscreteGrid(_KindHealth)},
                     state_transitions={
                         "kind_health": MarkovTransition(
@@ -418,7 +418,9 @@ def test_fixed_component_rejects_an_occupied_model_state_name():
                         )
                     },
                 ),
-                "dead": Regime(transition=None, functions={"utility": lambda: 0.0}),
+                "dead": Regime(
+                    regime_transitions=None, functions={"utility": lambda: 0.0}
+                ),
             },
             states={"kind_health_fixed": DiscreteGrid(_Kind)},
             state_transitions={
@@ -523,13 +525,13 @@ def test_fixed_component_transition_parameters_keep_their_public_names(
         regimes={
             "alive": Regime(
                 active=lambda age: age == 0,
-                transition={"dead": MarkovTransition(lambda: jnp.asarray(1.0))},
+                regime_transitions={"dead": MarkovTransition(lambda: jnp.asarray(1.0))},
                 states={"kind_health": DiscreteGrid(_KindHealth)},
                 functions={"utility": _code_utility},
                 state_transitions={"kind_health": {"dead": law} if per_target else law},
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"kind_health": DiscreteGrid(_KindHealth)},
                 functions={"utility": _code_utility},
             ),
@@ -601,19 +603,21 @@ def test_two_fixed_components_cross_adjacent_carriers_and_terminal(
         regimes={
             "first": Regime(
                 active=lambda age: age == 0,
-                transition={"middle": MarkovTransition(lambda: jnp.asarray(1.0))},
+                regime_transitions={
+                    "middle": MarkovTransition(lambda: jnp.asarray(1.0))
+                },
                 states=states,
                 state_transitions=laws,
                 functions=functions,
             ),
             "middle": Regime(
                 active=lambda age: age == 1,
-                transition={"last": MarkovTransition(lambda: jnp.asarray(1.0))},
+                regime_transitions={"last": MarkovTransition(lambda: jnp.asarray(1.0))},
                 states=states,
                 state_transitions=laws,
                 functions=functions,
             ),
-            "last": Regime(transition=None, states=states, functions=functions),
+            "last": Regime(regime_transitions=None, states=states, functions=functions),
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_CarrierRegimeId,
@@ -668,19 +672,25 @@ def test_fixed_component_rejects_incoherent_handoff_laws(*, reset: bool) -> None
             regimes={
                 "first": Regime(
                     active=lambda age: age == 0,
-                    transition={"middle": MarkovTransition(lambda: jnp.asarray(1.0))},
+                    regime_transitions={
+                        "middle": MarkovTransition(lambda: jnp.asarray(1.0))
+                    },
                     states=states,
                     state_transitions={"kind_health": first_law},
                     functions=functions,
                 ),
                 "middle": Regime(
                     active=lambda age: age == 1,
-                    transition={"last": MarkovTransition(lambda: jnp.asarray(1.0))},
+                    regime_transitions={
+                        "last": MarkovTransition(lambda: jnp.asarray(1.0))
+                    },
                     states=states,
                     state_transitions={"kind_health": incompatible},
                     functions=functions,
                 ),
-                "last": Regime(transition=None, states=states, functions=functions),
+                "last": Regime(
+                    regime_transitions=None, states=states, functions=functions
+                ),
             },
             ages=AgeGrid(start=0, stop=3, step="Y"),
             regime_id_class=_CarrierRegimeId,
@@ -697,7 +707,7 @@ def test_fixed_component_generated_names_do_not_shadow_regime_slots(
             regimes={
                 "alive": Regime(
                     active=lambda age: age < 1,
-                    transition=_next_regime,
+                    regime_transitions=_next_regime,
                     states={"kind_health": DiscreteGrid(_KindHealth)},
                     state_transitions={
                         "kind_health": MarkovTransition(
@@ -712,7 +722,9 @@ def test_fixed_component_generated_names_do_not_shadow_regime_slots(
                     if slot == "derived_categoricals"
                     else {},
                 ),
-                "dead": Regime(transition=None, functions={"utility": lambda: 0.0}),
+                "dead": Regime(
+                    regime_transitions=None, functions={"utility": lambda: 0.0}
+                ),
             },
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=_RegimeId,
@@ -742,11 +754,13 @@ def test_fixed_component_rejects_cross_state_identity_at_model_level() -> None:
             regimes={
                 "alive": Regime(
                     active=lambda age: age < 2,
-                    transition=_next_regime,
+                    regime_transitions=_next_regime,
                     states={"kind_health": DiscreteGrid(_KindHealth)},
                     functions={"utility": _code_utility},
                 ),
-                "dead": Regime(transition=None, functions={"utility": lambda: 0.0}),
+                "dead": Regime(
+                    regime_transitions=None, functions={"utility": lambda: 0.0}
+                ),
             },
             state_transitions={
                 "kind_health": Phased(
@@ -767,7 +781,7 @@ def test_fixed_component_eager_sharding_with_a_state_absent_terminal() -> None:
         regimes={
             "alive": Regime(
                 active=lambda age: age == 0,
-                transition={"dead": MarkovTransition(lambda: jnp.asarray(1.0))},
+                regime_transitions={"dead": MarkovTransition(lambda: jnp.asarray(1.0))},
                 states={"kind_health": DiscreteGrid(_KindHealth)},
                 state_transitions={
                     "kind_health": MarkovTransition(
@@ -776,7 +790,7 @@ def test_fixed_component_eager_sharding_with_a_state_absent_terminal() -> None:
                 },
                 functions={"utility": _code_utility},
             ),
-            "dead": Regime(transition=None, functions={"utility": lambda: 0.0}),
+            "dead": Regime(regime_transitions=None, functions={"utility": lambda: 0.0}),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,

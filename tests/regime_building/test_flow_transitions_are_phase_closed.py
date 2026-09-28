@@ -90,14 +90,14 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions=live_functions,
     ).replace(active=lambda age: age < 2)
     last = Regime(
-        transition=None,
+        regime_transitions=None,
         state_transitions={},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},

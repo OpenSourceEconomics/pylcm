@@ -254,7 +254,7 @@ def _branch_terminal_utility() -> FloatND:
 def _branching_regime() -> UserRegime:
     """Return one of the two regimes a subject moves between."""
     return UserRegime(
-        transition=_branch_next_regime,
+        regime_transitions=_branch_next_regime,
         active=lambda age: age < 2,
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         state_transitions={"wealth": _branch_next_wealth},
@@ -272,7 +272,7 @@ def _two_target_model() -> Model:
             "stay": _branching_regime(),
             "switch": _branching_regime(),
             "done": UserRegime(
-                transition=None, functions={"utility": _branch_terminal_utility}
+                regime_transitions=None, functions={"utility": _branch_terminal_utility}
             ),
         },
         regime_id_class=_BranchRegimeId,

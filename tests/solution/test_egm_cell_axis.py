@@ -153,7 +153,7 @@ def _model(width: int | None = None) -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "working": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
         },
@@ -184,7 +184,7 @@ def _model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -210,7 +210,7 @@ def _model_with_batched_health() -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "working": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
         },
@@ -238,7 +238,7 @@ def _model_with_batched_health() -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -272,7 +272,7 @@ def _action_model(width: int | None = None) -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "working": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
         },
@@ -303,7 +303,7 @@ def _action_model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -451,7 +451,7 @@ def _two_combo_model(width: int | None = None) -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "working": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
         },
@@ -484,7 +484,7 @@ def _two_combo_model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )

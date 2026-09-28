@@ -110,7 +110,7 @@ def _shock(*, sigma: float | StateConditioned, fold: bool = True) -> NormalIIDPr
 
 def _conditioned_model() -> Model:
     period0 = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -123,7 +123,7 @@ def _conditioned_model() -> Model:
         functions={"utility": _utility},
     )
     terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
@@ -141,14 +141,14 @@ def _unconditioned_model(*, sigma: float) -> Model:
     the widest category — see `test_high_risk_cell_matches_the_unconditioned_fold`.
     """
     period0 = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={"wage_shock": _shock(sigma=sigma)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
@@ -260,7 +260,7 @@ def test_a_folded_shock_whose_conditioner_can_move_is_rejected() -> None:
     """
     with pytest.raises(RegimeInitializationError, match="conditioning state"):
         Regime(
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             active=lambda age: age < 1,
             states={
                 "risk_type": DiscreteGrid(category_class=RiskType),
@@ -302,7 +302,7 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
     this one can change it.
     """
     entry = Regime(
-        transition=_to_folding,
+        regime_transitions=_to_folding,
         active=lambda age: age < 1,
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -316,7 +316,7 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
         functions={"utility": _utility},
     )
     folding = Regime(
-        transition=_to_done,
+        regime_transitions=_to_done,
         active=lambda age: 1 <= age < 2,
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -329,7 +329,7 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
         functions={"utility": _utility},
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
@@ -371,7 +371,7 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
     against exactly the category the shock was realized under.
     """
     entry = Regime(
-        transition={
+        regime_transitions={
             "folding": MarkovTransition(_split_probability_of_folding),
             "sideways": MarkovTransition(_split_probability_of_sideways),
         },
@@ -393,7 +393,7 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         functions={"utility": _utility},
     )
     folding = Regime(
-        transition=_to_done_from_split,
+        regime_transitions=_to_done_from_split,
         active=lambda age: 1 <= age < 2,
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -406,7 +406,7 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         functions={"utility": _utility},
     )
     sideways = Regime(
-        transition=_to_done_from_split,
+        regime_transitions=_to_done_from_split,
         active=lambda age: 1 <= age < 2,
         states={"risk_type": DiscreteGrid(category_class=RiskType)},
         state_transitions={"risk_type": fixed_transition("risk_type")},
@@ -414,7 +414,7 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         functions={"utility": lambda work: jnp.asarray(work, dtype=jnp.float64) * 0.0},
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
@@ -457,7 +457,7 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
     reject this valid model.
     """
     safe_entry = Regime(
-        transition={"folding": MarkovTransition(_probability_one)},
+        regime_transitions={"folding": MarkovTransition(_probability_one)},
         active=lambda age: age < 1,
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -471,7 +471,7 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         functions={"utility": _utility},
     )
     moving_entry = Regime(
-        transition=Phased(
+        regime_transitions=Phased(
             solve={"sideways": MarkovTransition(_probability_one)},
             simulate={"sideways": MarkovTransition(_probability_one)},
         ),
@@ -488,7 +488,7 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         functions={"utility": _utility},
     )
     folding = Regime(
-        transition=lambda: PhasedSplitRegimeId.done,
+        regime_transitions=lambda: PhasedSplitRegimeId.done,
         active=lambda age: 1 <= age < 2,
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
@@ -501,7 +501,7 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         functions={"utility": _utility},
     )
     sideways = Regime(
-        transition=lambda: PhasedSplitRegimeId.done,
+        regime_transitions=lambda: PhasedSplitRegimeId.done,
         active=lambda age: 1 <= age < 2,
         states={"risk_type": DiscreteGrid(category_class=RiskType)},
         state_transitions={"risk_type": fixed_transition("risk_type")},
@@ -509,7 +509,7 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         functions={"utility": lambda work: jnp.asarray(work) * 0.0},
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )

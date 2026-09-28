@@ -236,7 +236,7 @@ def dead_utility(
 def build_dead_regime() -> Regime:
     """The paper-mode dead regime (terminal, with the Euler axis declared)."""
     return Regime(
-        transition=None,
+        regime_transitions=None,
         active=partial(dead_is_active, initial_age=int(ages.values[0])),
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
@@ -295,7 +295,7 @@ def build_working_regime(
 ) -> NestedConsumptionSavingsRegime:
     """The paper-mode working regime with continuous effort and habit."""
     return NestedConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "working": MarkovTransition(working_to_working_probability),
             "retirement": MarkovTransition(working_to_retirement_probability),
             "dead": MarkovTransition(working_to_dead_probability),
@@ -365,7 +365,7 @@ def build_retirement_regime(
 ) -> NestedConsumptionSavingsRegime:
     """The paper-mode retirement regime without work-only dimensions."""
     return NestedConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "retirement": MarkovTransition(retirement_to_retirement_probability),
             "dead": MarkovTransition(retirement_to_dead_probability),
         },

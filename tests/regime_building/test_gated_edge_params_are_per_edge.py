@@ -85,7 +85,7 @@ def _gate(*, V_target: FloatND, marriage_bonus: float) -> BoolND:
 def _build_model(*, with_bystander: bool) -> Model:
     regimes = {
         "source": Regime(
-            transition={
+            regime_transitions={
                 "target": ValueDependentTransition(
                     probability=MarkovTransition(_certain_target),
                     gate=_gate,
@@ -105,13 +105,13 @@ def _build_model(*, with_bystander: bool) -> Model:
             functions={"utility": _utility_source},
         ),
         "target": Regime(
-            transition=None,
+            regime_transitions=None,
             active=lambda age: age >= 45,
             states={"x": X},
             functions={"utility": _utility_target},
         ),
         "fallback": Regime(
-            transition=None,
+            regime_transitions=None,
             active=lambda age: age >= 45,
             states={"x": X},
             functions={"utility": _utility_fallback},
@@ -119,7 +119,7 @@ def _build_model(*, with_bystander: bool) -> Model:
     }
     if with_bystander:
         regimes["bystander"] = Regime(
-            transition=None,
+            regime_transitions=None,
             active=lambda age: age >= 45,
             states={"marriage_bonus": BONUS_GRID},
             functions={"utility": _utility_bystander},

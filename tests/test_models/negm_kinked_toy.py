@@ -181,7 +181,7 @@ def build_alive_regime() -> NestedConsumptionSavingsRegime:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -214,7 +214,7 @@ def build_dead_regime() -> Regime:
     """The terminal regime."""
     final_age_alive = 20 + (N_PERIODS - 2) * 5
     return Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )

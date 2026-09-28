@@ -268,12 +268,12 @@ def _make_minimal_stochastic_model(
             "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={"utility": utility},
         active=lambda age: age <= final_age,
     )
     dead_regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(

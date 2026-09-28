@@ -74,7 +74,7 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
     flow payoff: `(1 + 0.95 * 10, 2 + 0.95 * 4) = (10.5, 5.8)`.
     """
     couple = Regime(
-        transition=_next_couple_regime,
+        regime_transitions=_next_couple_regime,
         active=lambda age: age < 1,
         states={},
         actions={},
@@ -85,7 +85,7 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={},
         actions={},
@@ -124,7 +124,7 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
     `(1 + 0.95 * 1, 2 + 0.95 * 2) = (1.95, 3.9)`.
     """
     couple = Regime(
-        transition=_next_couple_regime,
+        regime_transitions=_next_couple_regime,
         active=lambda age: age < 1,
         states={},
         actions={"consumption": CONSUMPTION_GRID},
@@ -135,7 +135,7 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={},
         actions={"consumption": CONSUMPTION_GRID},

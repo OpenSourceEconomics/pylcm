@@ -104,7 +104,7 @@ def _build_model(
     utility_m=_utility_m,
 ) -> Model:
     couple = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states=states or {},
         state_transitions=state_transitions or {},
@@ -116,7 +116,7 @@ def _build_model(
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={
             "utility": CollectiveUtility(
@@ -423,7 +423,7 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
     }
     weights = {"f": 0.5, "m": 0.25, "child": 0.25}
     household = Regime(
-        transition=_next_three_regime,
+        regime_transitions=_next_three_regime,
         active=lambda age: age < 1,
         actions={"choice": DiscreteGrid(category_class=Choice)},
         functions={
@@ -436,7 +436,7 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
         },
     )
     household_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={
             "utility": CollectiveUtility(utilities=dict.fromkeys(order, _terminal_zero))
@@ -504,7 +504,7 @@ def _carry_power(power: DiscreteState) -> ScalarInt:
 def _build_carried_power_model() -> Model:
     """A household whose Pareto weights read a carried bargaining-power state."""
     couple = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={
             "power": Phased(
@@ -523,7 +523,7 @@ def _build_carried_power_model() -> Model:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={
             "utility": CollectiveUtility(
@@ -566,7 +566,7 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
     weights select her preferred action and publish stakeholder values `(3, 0)`.
     """
     couple = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={
             "power": Phased(
@@ -587,7 +587,7 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={
             "utility": CollectiveUtility(

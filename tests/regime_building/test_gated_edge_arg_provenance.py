@@ -220,7 +220,7 @@ def _ref_gate(*, V_target: FloatND, ref_v: FloatND) -> BoolND:
 
 def _make_shift_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_ref_gate,
@@ -245,19 +245,19 @@ def _make_shift_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     refregime = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -531,7 +531,7 @@ def _u_fallback_identity(z: ContinuousState) -> FloatND:
 
 def _make_projector_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_always_closed_gate,
@@ -551,13 +551,13 @@ def _make_projector_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"z": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
         functions={"utility": _u_fallback_identity},
@@ -867,7 +867,7 @@ def _make_ref_grid_regimes() -> dict[str, Regime]:
     """The gate ref's reference regime carries a RUNTIME irregular grid, and the
     source declares an identically named state on a DIFFERENT runtime grid."""
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_ref_only,
@@ -892,19 +892,19 @@ def _make_ref_grid_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     refregime = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": IrregSpacedGrid(n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -1026,7 +1026,7 @@ def _make_fallback_grid_regimes() -> dict[str, Regime]:
     `get_edge_fold` builds for the CLOSED branch (a third consumer of
     `_build_same_period_ref_reader`, on the solve side)."""
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_always_closed_gate,
@@ -1046,13 +1046,13 @@ def _make_fallback_grid_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"z": IrregSpacedGrid(n_points=3)},
         functions={"utility": _u_fallback_z},
@@ -1149,13 +1149,13 @@ def _project_wage(wage: ContinuousState) -> ContinuousState:
 
 def _make_e2_ref_grid_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age < 1,
         states={"wage": IrregSpacedGrid(n_points=2)},
         functions={"utility": _u_wage},
     )
     married = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": IrregSpacedGrid(n_points=2)},
         state_transitions={"wage": _identity_x_wage},
@@ -1177,7 +1177,7 @@ def _make_e2_ref_grid_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": IrregSpacedGrid(n_points=2)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -1333,7 +1333,7 @@ def _gate_reads_target_helper(*, V_target: FloatND, target_scaled_x: FloatND) ->
 
 def _make_target_helper_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_reads_target_helper,
@@ -1353,13 +1353,13 @@ def _make_target_helper_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -1423,7 +1423,7 @@ def _gate_ref_value_only(*, V_target: FloatND, scaled_ref: FloatND) -> BoolND:
 
 def _make_gate_ref_target_helper_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_ref_value_only,
@@ -1449,19 +1449,19 @@ def _make_gate_ref_target_helper_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
     )
     refregime = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -1569,7 +1569,7 @@ def _gate_reads_outside(*, V_target: FloatND, outside: FloatND) -> BoolND:
 
 def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_reads_outside,
@@ -1597,19 +1597,19 @@ def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity, "outside": _target_outside},
     )
     refregime = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -1673,7 +1673,7 @@ def _gate_reads_shadowed_threshold(*, V_target: FloatND, threshold: FloatND) -> 
 
 def _make_threshold_shadow_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_reads_shadowed_threshold,
@@ -1693,13 +1693,13 @@ def _make_threshold_shadow_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity, "threshold": _target_threshold},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -1743,7 +1743,7 @@ def _gate_uses_v_target(V_target: FloatND) -> BoolND:
 
 def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_uses_v_target,
@@ -1769,19 +1769,19 @@ def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     refregime = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -1875,7 +1875,7 @@ def _gate_reads_x_operand(*, V_target: FloatND, x: FloatND) -> BoolND:
 
 def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_reads_x_operand,
@@ -1902,19 +1902,19 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     refregime = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -2006,7 +2006,7 @@ def _make_gate_param_aliases_target_state_regimes(
     read of the target state (the legitimate case that must still solve).
     """
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_reads_x,
@@ -2030,13 +2030,13 @@ def _make_gate_param_aliases_target_state_regimes(
         },
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -2131,7 +2131,7 @@ def _make_source_param_aliases_regimes(gate: UserFunction) -> dict[str, Regime]:
     exercises.
     """
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=gate,
@@ -2151,13 +2151,13 @@ def _make_source_param_aliases_regimes(gate: UserFunction) -> dict[str, Regime]:
         functions={"utility": _u_src_no_param},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -2193,7 +2193,7 @@ def _make_source_param_aliases_engine_v_regimes() -> dict[str, Regime]:
     supplied in `flat_params['src']`. `SAME_PERIOD_V_ARG` is ALWAYS in the fold
     signature, so the source scalar overwrites the solve-side value MAPPING."""
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_v_only,
@@ -2213,13 +2213,13 @@ def _make_source_param_aliases_engine_v_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src_reads_v_arg_param},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_identity},
@@ -2247,7 +2247,7 @@ def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
     """Target STATE named exactly `SAME_PERIOD_V_ARG`; the gate reads it. It shares
     one fold leaf with the engine value mapping."""
     src = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_reads_v_arg_state,
@@ -2268,13 +2268,13 @@ def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src_no_param},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={SAME_PERIOD_V_ARG: LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_id_v_arg_state},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={SAME_PERIOD_V_ARG: LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_id_v_arg_state},
@@ -2405,7 +2405,7 @@ def test_source_param_near_engine_name_still_solves():
     regimes = _make_source_param_aliases_engine_params_regimes()
     # swap the gate to read the near-miss (non-engine) name
     regimes["src"] = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_gate_near,

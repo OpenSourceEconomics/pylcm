@@ -154,7 +154,7 @@ def _build_single_target_model(
 
     """
     return _build_model(
-        transition={"couple_terminal": MarkovTransition(_target_probability)},
+        regime_transitions={"couple_terminal": MarkovTransition(_target_probability)},
         household=household,
         stakeholder=stakeholder,
         source_ends_at_age=1,
@@ -181,7 +181,7 @@ def _build_two_target_model(
 
     """
     return _build_model(
-        transition={
+        regime_transitions={
             "couple": MarkovTransition(_stay_probability),
             "couple_terminal": MarkovTransition(_leave_probability),
         },
@@ -193,7 +193,7 @@ def _build_two_target_model(
 
 def _build_model(
     *,
-    transition: Mapping[RegimeName, MarkovTransition],
+    regime_transitions: Mapping[RegimeName, MarkovTransition],
     household: tuple[str, ...] | None,
     stakeholder: str,
     source_ends_at_age: int,
@@ -216,7 +216,7 @@ def _build_model(
 
     """
     couple = Regime(
-        transition=transition,
+        regime_transitions=regime_transitions,
         active=lambda age: age < source_ends_at_age,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -224,7 +224,7 @@ def _build_model(
         functions=_source_functions(household=household, stakeholder=stakeholder),
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},

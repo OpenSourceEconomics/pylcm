@@ -124,7 +124,7 @@ def _model(
             "wealth": {"saving": next_wealth, "done": next_wealth},
         },
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        transition={
+        regime_transitions={
             "saving": MarkovTransition(prob_continue),
             "done": MarkovTransition(prob_stop),
         },
@@ -147,7 +147,7 @@ def _model(
         ),
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": terminal_utility},
         active=lambda age, la=last_age: age >= la,

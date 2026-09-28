@@ -616,7 +616,7 @@ class Model:
 
         # The single canonical coverage schedule, read once here from the raw
         # regimes and threaded through pruning, validation, and model-structure
-        # preparation below. A dated model takes it from each `transition`
+        # preparation below. A dated model takes it from each `regime_transitions`
         # declaration, whose laws are lowered to the engine's period-independent
         # vocabulary; any other model evaluates each `active` predicate.
         schedules = resolve_regime_schedules(
@@ -628,11 +628,11 @@ class Model:
             },
         )
         declared_transitions = {
-            name: regime.transition for name, regime in regimes.items()
+            name: regime.regime_transitions for name, regime in regimes.items()
         }
         if schedules.dated:
             regimes = {
-                name: regime.replace(transition=schedules.transitions[name])
+                name: regime.replace(regime_transitions=schedules.transitions[name])
                 for name, regime in regimes.items()
             }
         active_periods_by_regime = schedules.coverage_by_regime
@@ -735,7 +735,7 @@ class Model:
         self.user_regimes = (
             MappingProxyType(
                 {
-                    name: regime.replace(transition=declared_transitions[name])
+                    name: regime.replace(regime_transitions=declared_transitions[name])
                     for name, regime in self._engine_user_regimes.items()
                 }
             )

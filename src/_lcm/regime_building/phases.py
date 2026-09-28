@@ -142,7 +142,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         ]
     else:
         solve_aggregator = simulate_aggregator = aggregator
-    terminal = user_regime.transition is None
+    terminal = user_regime.regime_transitions is None
     terminal_errors = (
         [
             (
@@ -307,9 +307,9 @@ def phase_variation_paths(
             ):
                 varied.append(f"joint_transitions[{target_name!r}][{kernel_name!r}]")
 
-    transition = user_regime.transition
+    transition = user_regime.regime_transitions
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:
-        varied.append("transition")
+        varied.append("regime_transitions")
 
     aggregator = user_regime.koopmans_aggregator
     if isinstance(aggregator, Phased) and aggregator.solve is not aggregator.simulate:
@@ -693,7 +693,7 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
 def _split_regime_transition(
     *, user_regime: lcm.regime.Regime
 ) -> tuple[_PhaseRegimeTransition, _PhaseRegimeTransition, list[str]]:
-    """Split the regime `transition` into per-phase variants.
+    """Split the regime `regime_transitions` into per-phase variants.
 
     Returns the solve-phase variant, the simulate-phase variant, and the
     grammar violations found along the way.
@@ -711,7 +711,7 @@ def _split_regime_transition(
         if side is None:
             errors.append(
                 "Regime transition variants cannot be `None` — terminality is "
-                "phase-invariant; use `transition=None` for a terminal regime."
+                "phase-invariant; use `regime_transitions=None` for a terminal regime."
             )
         elif not callable(side) and not isinstance(side, Mapping):
             errors.append(

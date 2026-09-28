@@ -65,7 +65,7 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     """A regime's Pareto weights are its own; the declaring dict cannot rewrite them."""
     declared_weights = {"f": 0.25, "m": 0.75}
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
@@ -185,7 +185,7 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
 
     """
     source = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_enters_target),
                 gate=_no_dissolution,
@@ -207,13 +207,13 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
         functions={"utility": _wage_utility},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": GATE_WAGE_GRID},
         functions={"utility": _terminal_wage_utility},
     )
     fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": GATE_WAGE_GRID},
         functions={"utility": _fallback_wage_utility},

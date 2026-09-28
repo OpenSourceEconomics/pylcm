@@ -76,12 +76,12 @@ def _entered_process_model(*, fixed_params: dict, enable_jit: bool = False) -> M
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=lambda age: age < 22,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -168,12 +168,12 @@ def test_a_broadcast_that_binds_a_law_still_reaches_a_function() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=lambda age: age < 22,
                 functions={"utility": _mu_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -222,12 +222,12 @@ def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=lambda age: age < 22,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": LogNormalIIDProcess(n_points=3, gauss_hermite=True)},
                 functions={"utility": _shock_utility},
             ),
@@ -260,12 +260,12 @@ def test_a_coarse_regime_transition_pins_the_same_law() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition=_always_target,
+                regime_transitions=_always_target,
                 active=lambda age: age < 22,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -311,7 +311,7 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=lambda age: age < 22,
                 states={
                     "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
@@ -327,7 +327,7 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),

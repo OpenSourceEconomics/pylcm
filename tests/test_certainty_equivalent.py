@@ -243,7 +243,7 @@ def _check_probes(model: Model) -> None:
 def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) -> Model:
     """Build a minimal model, attaching regime-owned EGM margins as needed."""
     base_alive: dict[str, Any] = {
-        "transition": _next_regime,
+        "regime_transitions": _next_regime,
         "states": {"wealth": _WEALTH},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": _CONSUMPTION},
@@ -252,7 +252,7 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
         "active": lambda age: age < 41,
     }
     base_dead: dict[str, Any] = {
-        "transition": None,
+        "regime_transitions": None,
         "states": {"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
         "functions": {"utility": _utility_dead},
     }
@@ -510,7 +510,7 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -540,7 +540,7 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         return jnp.sqrt(wealth) + 0.0 * kind
 
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -585,7 +585,7 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -609,7 +609,7 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -663,7 +663,7 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -690,7 +690,7 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -737,7 +737,7 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -761,7 +761,7 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -815,7 +815,7 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_with_transfer,
@@ -839,7 +839,7 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -1780,7 +1780,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         return consumption
 
     alive = Regime(
-        transition=MarkovTransition(_survival_probs),
+        regime_transitions=MarkovTransition(_survival_probs),
         states={
             "wealth": LinSpacedGrid(start=0.5 * scale, stop=12.0 * scale, n_points=6),
             "health": DiscreteGrid(category_class=_Health),
@@ -1801,7 +1801,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         active=lambda age: age < 27,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=12.0 * scale, n_points=25)},
         functions={"utility": utility_dead},
     )
@@ -1845,7 +1845,7 @@ def _make_mixed_target_model(scale: float) -> Model:
         return consumption
 
     alive = Regime(
-        transition=MarkovTransition(_survival_probs),
+        regime_transitions=MarkovTransition(_survival_probs),
         states={
             "wealth": LinSpacedGrid(start=0.5 * scale, stop=12.0 * scale, n_points=6),
             "health": DiscreteGrid(category_class=_Health),
@@ -1865,7 +1865,9 @@ def _make_mixed_target_model(scale: float) -> Model:
         certainty_equivalent=PowerMean(),
         active=lambda age: age < 27,
     )
-    dead = Regime(transition=None, states={}, functions={"utility": utility_dead})
+    dead = Regime(
+        regime_transitions=None, states={}, functions={"utility": utility_dead}
+    )
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=25, stop=27, step="Y"),
@@ -2069,17 +2071,17 @@ def _make_stacked_model(
     # next period, and no non-terminal regime survives into the last one:
     # working (40) -> retired (41) -> dead (42).
     working: dict[str, Any] = (
-        base | {"transition": _to_retired, "active": lambda age: age < 41}
+        base | {"regime_transitions": _to_retired, "active": lambda age: age < 41}
     ) | working_kwargs
     retired: dict[str, Any] = (
-        base | {"transition": _to_dead, "active": lambda age: 41 <= age < 42}
+        base | {"regime_transitions": _to_dead, "active": lambda age: 41 <= age < 42}
     ) | retired_kwargs
     return Model(
         regimes={
             "working": Regime(**working),
             "retired": Regime(**retired),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
                 functions={"utility": _utility_dead},
             ),

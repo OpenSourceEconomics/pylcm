@@ -160,7 +160,7 @@ def _offer_probs(education: DiscreteState) -> FloatND:
 
 def _make_offer_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        transition={
+        regime_transitions={
             "married_terminal": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
@@ -199,19 +199,19 @@ def _make_offer_regimes() -> dict[str, Regime]:
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _u_single_f_terminal},
     )
     single_m_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={
             "education": DiscreteGrid(category_class=Education),
@@ -396,7 +396,7 @@ def _u_job(*, offer: DiscreteState, work: DiscreteAction) -> FloatND:  # noqa: A
 
 def _make_job_offer_regimes() -> dict[str, Regime]:
     job = Regime(
-        transition=lambda age: JobRegimeId.job_terminal,  # noqa: ARG005
+        regime_transitions=lambda age: JobRegimeId.job_terminal,  # noqa: ARG005
         active=lambda age: age < 1,
         states={"offer": DiscreteGrid(category_class=Offer)},
         state_transitions={"offer": MarkovTransition(_offer_arrival_probs)},
@@ -405,7 +405,7 @@ def _make_job_offer_regimes() -> dict[str, Regime]:
         constraints={"work_requires_offer": _work_requires_offer},
     )
     job_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"offer": DiscreteGrid(category_class=Offer)},
         actions={"work": DiscreteGrid(category_class=Work)},

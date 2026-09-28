@@ -226,7 +226,7 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_support_next_regime,
+                regime_transitions=_support_next_regime,
                 active=lambda age: age == 0,
                 states=states,
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
@@ -234,7 +234,7 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
                 functions={"utility": _support_current_payoff},
             ),
             "done": Regime(
-                transition=None,
+                regime_transitions=None,
                 states=states,
                 functions={"utility": _support_terminal_payoff},
             ),

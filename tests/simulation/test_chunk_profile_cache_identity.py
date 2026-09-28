@@ -68,12 +68,14 @@ def _budgeted_model(*, device_memory_bytes: int = 2**32) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=_only_initial_age,
                 functions={"utility": _utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),
-            "done": Regime(transition=None, functions={"utility": _terminal_utility}),
+            "done": Regime(
+                regime_transitions=None, functions={"utility": _terminal_utility}
+            ),
         },
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=5)},
         state_transitions={"wealth": _next_wealth},

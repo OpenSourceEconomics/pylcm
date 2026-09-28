@@ -73,7 +73,7 @@ LIQUID_MARGIN = LiquidMargin(
 
 
 dcegm_retirement = ConsumptionSavingsRegime(
-    transition=retirement_only.next_regime_from_retirement,
+    regime_transitions=retirement_only.next_regime_from_retirement,
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth_from_savings},
@@ -88,7 +88,7 @@ dcegm_retirement = ConsumptionSavingsRegime(
 
 
 dcegm_working_life = ConsumptionSavingsRegime(
-    transition=base.next_regime_from_working,
+    regime_transitions=base.next_regime_from_working,
     actions={
         "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
@@ -108,7 +108,7 @@ dcegm_working_life = ConsumptionSavingsRegime(
 
 
 dcegm_retirement_full = ConsumptionSavingsRegime(
-    transition=base.next_regime_from_retirement,
+    regime_transitions=base.next_regime_from_retirement,
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth_from_savings},

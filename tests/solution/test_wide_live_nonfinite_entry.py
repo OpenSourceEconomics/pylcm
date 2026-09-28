@@ -190,7 +190,7 @@ def _build_model(
         certainty_equivalent=certainty_equivalent,
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain)},
+                regime_transitions={"target": MarkovTransition(_certain)},
                 active=lambda age: age < 21,
                 state_transitions={
                     "income": {"target": _make_entry(rare_entry)},
@@ -202,7 +202,7 @@ def _build_model(
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
                     **{name: DiscreteGrid(category_class=Draw) for name in axis_names},

@@ -148,7 +148,7 @@ def _build_living_regime(
             states=regime_states,
             state_transitions=regime_state_transitions,
             constraints=constraints,
-            transition=regime_transition,
+            regime_transitions=regime_transition,
             functions=functions,
             active=active,
             solver=solver,
@@ -164,7 +164,7 @@ def _build_living_regime(
         states=regime_states,
         state_transitions=regime_state_transitions,
         constraints=constraints,
-        transition=regime_transition,
+        regime_transitions=regime_transition,
         functions=functions,
         active=active,
         solver=solver,
@@ -214,7 +214,7 @@ def build_model(
         )
 
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions={"utility": bequest},
         active=lambda age, fa=final_age: age >= fa,

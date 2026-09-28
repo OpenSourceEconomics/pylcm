@@ -65,7 +65,7 @@ def _utility_bonus(*, bonus_shock: FloatND, work: DiscreteAction) -> FloatND:
 
 def _build_model(*, fold: bool) -> Model:
     start = Regime(
-        transition=_next_bonus,
+        regime_transitions=_next_bonus,
         active=lambda age: age < 1,
         states={"wealth": WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -73,7 +73,7 @@ def _build_model(*, fold: bool) -> Model:
         functions={"utility": _utility_start},
     )
     bonus = Regime(
-        transition=_next_terminal,
+        regime_transitions=_next_terminal,
         active=lambda age: (age >= 1) & (age < 2),
         states={
             "bonus_shock": NormalIIDProcess(
@@ -89,7 +89,7 @@ def _build_model(*, fold: bool) -> Model:
         functions={"utility": _utility_bonus},
     )
     terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )

@@ -119,7 +119,7 @@ def _build_model(*, helper_name: str, override) -> Model:
             "consumption": negm_kinked_toy.CONSUMPTION_GRID,
             "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions=functions,
         solver=replace(NEGM_SOLVER),
         liquid=LiquidMargin(

@@ -256,7 +256,7 @@ def _survival_prob_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
         },
@@ -320,7 +320,7 @@ def _markov_health_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
@@ -394,7 +394,7 @@ def _passive_skill_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},
@@ -481,7 +481,7 @@ def smooth_death_prob(wealth: ContinuousState) -> FloatND:
 
 def _build_model_with_survival_cells(*, stay, die) -> Model:
     working = ConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(stay),
             "dead": MarkovTransition(die),
         },

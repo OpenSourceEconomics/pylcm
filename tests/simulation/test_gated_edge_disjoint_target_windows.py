@@ -94,9 +94,9 @@ WEALTH_GRID = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.5, stop=9.0, n_points=5)
 
 
-def _decision_regime(*, transition: object, active: object) -> Regime:
+def _decision_regime(*, regime_transitions: object, active: object) -> Regime:
     return Regime(
-        transition=transition,  # ty: ignore[invalid-argument-type]
+        regime_transitions=regime_transitions,  # ty: ignore[invalid-argument-type]
         active=active,  # ty: ignore[invalid-argument-type]
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
@@ -109,21 +109,21 @@ def _decision_regime(*, transition: object, active: object) -> Regime:
 def _build_model(*, enable_jit: bool) -> Model:
     wealth_grid = WEALTH_GRID
     source = _decision_regime(
-        transition={
+        regime_transitions={
             "near": _edge(probability=p_near, fallback_regime="source"),
             "far": _edge(probability=p_far, fallback_regime="far_fallback"),
         },
         active=lambda age: age < 2,
     )
-    near = _decision_regime(transition=near_next, active=lambda age: age == 1)
+    near = _decision_regime(regime_transitions=near_next, active=lambda age: age == 1)
     far = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wealth": wealth_grid},
         functions={"utility": utility_state},
     )
     far_fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wealth": wealth_grid},
         functions={"utility": utility_state},

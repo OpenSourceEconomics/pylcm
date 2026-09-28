@@ -127,11 +127,11 @@ def _build_nan_model() -> tuple[Model, dict]:
         state_transitions={"wealth": next_wealth},
         functions={"utility": utility},
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age: age < 1,
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 1,
     )
@@ -183,11 +183,11 @@ def _build_always_nan_model() -> tuple[Model, dict]:
         state_transitions={"wealth": next_wealth},
         functions={"utility": utility},
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age: age < 1,
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 1,
     )

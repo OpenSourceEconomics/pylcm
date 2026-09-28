@@ -108,7 +108,7 @@ _DEFAULT_AGE_GRID = AgeGrid(start=25, stop=65, step="20Y")
 _RETIREMENT_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 working_life = Regime(
-    transition=next_regime,
+    regime_transitions=next_regime,
     active=lambda age: age < _RETIREMENT_AGE,
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
@@ -126,7 +126,7 @@ working_life = Regime(
 )
 
 retirement = Regime(
-    transition=None,
+    regime_transitions=None,
     active=lambda age: age >= _RETIREMENT_AGE,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_retirement},

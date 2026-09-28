@@ -146,7 +146,7 @@ def _make_ir_regimes(
     with_value_constraints: bool = True,
 ) -> dict[str, Regime]:
     single_f = Regime(
-        transition={"single_f_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_f_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -154,18 +154,18 @@ def _make_ir_regimes(
         functions={"utility": _utility_single_f},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_zero},
     )
     single_m = single_f.replace(
-        transition={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
         functions={"utility": _utility_single_m},
     )
     single_m_terminal = single_f_terminal.replace()
     married = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -199,7 +199,7 @@ def _make_ir_regimes(
         ),
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -440,7 +440,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     married_grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
     single_f = Regime(
-        transition={"single_f_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_f_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": single_grid},
         state_transitions={"wage": fixed_transition("wage")},
@@ -448,13 +448,13 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         functions={"utility": _utility_single},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": single_grid},
         functions={"utility": _utility_zero},
     )
     married = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": married_grid},
         state_transitions={"wage": fixed_transition("wage")},
@@ -474,7 +474,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         },
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": married_grid},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -593,7 +593,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         return wage < 2.5
 
     couple = Regime(
-        transition={"couple_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"couple_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -604,7 +604,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         constraints={"wage_ok": _wage_ok},
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -672,7 +672,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
 
 def _minimal_collective_kwargs() -> dict:
     return {
-        "transition": {"married_terminal": MarkovTransition(_prob_one)},
+        "regime_transitions": {"married_terminal": MarkovTransition(_prob_one)},
         "active": lambda age: age < 1,
         "states": {"wage": _WAGE_GRID},
         "state_transitions": {"wage": fixed_transition("wage")},
@@ -699,7 +699,7 @@ def test_value_constraints_on_a_terminal_collective_regime_are_accepted():
     `test_terminal_value_constraints.py` for what the flag and the value are.
     """
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -798,7 +798,7 @@ def test_same_period_ref_cycle_is_rejected_at_build():
         constraints: dict[str, ValueDependentConstraint],
     ) -> Regime:
         return Regime(
-            transition={terminal_name: MarkovTransition(_prob_one)},
+            regime_transitions={terminal_name: MarkovTransition(_prob_one)},
             active=lambda age: age < 1,
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": fixed_transition("wage")},
@@ -842,7 +842,7 @@ def test_same_period_ref_cycle_is_rejected_at_build():
         },
     )
     terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -872,7 +872,7 @@ def test_same_period_ref_to_collective_regime_requires_stakeholder():
     # target. Reuse single_m as the m-ref and misdeclare the f-ref onto a
     # collective regime without a stakeholder.
     couple_b = Regime(
-        transition={"married_terminal_b": MarkovTransition(_prob_one)},
+        regime_transitions={"married_terminal_b": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},

@@ -258,7 +258,7 @@ def _make_unreachable_role_routing_regimes():
     select on a role a subject started in `alone` with.
     """
     alone = Regime(
-        transition={"alone_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"alone_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
@@ -270,7 +270,7 @@ def _make_unreachable_role_routing_regimes():
         },
     )
     alone_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -365,7 +365,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
     every row following one partner's dissolution path.
     """
     prelude = Regime(
-        transition={"married": MarkovTransition(_prob_one)},
+        regime_transitions={"married": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},

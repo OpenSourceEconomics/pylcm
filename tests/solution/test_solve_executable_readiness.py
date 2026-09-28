@@ -189,7 +189,9 @@ def _model(*, budget: int | None) -> Model:
         regimes={
             "working": Regime(
                 active=lambda age: age == 0,
-                transition={"terminal": MarkovTransition(lambda: jnp.asarray(1.0))},
+                regime_transitions={
+                    "terminal": MarkovTransition(lambda: jnp.asarray(1.0))
+                },
                 states={"wealth": grid},
                 state_transitions={"wealth": lambda wealth: wealth},
                 functions={"utility": _utility},
@@ -197,7 +199,7 @@ def _model(*, budget: int | None) -> Model:
             ),
             "terminal": Regime(
                 active=lambda age: age == 1,
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": grid},
                 functions={"utility": lambda wealth: wealth},
             ),

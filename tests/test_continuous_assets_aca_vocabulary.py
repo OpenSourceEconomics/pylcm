@@ -112,7 +112,7 @@ def _model(
         regimes={
             "working": Regime(
                 active=lambda age: age < 2,
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 actions={"decision": DiscreteGrid(_Decision)},
                 functions={"utility": _utility},
                 state_transitions={
@@ -124,7 +124,7 @@ def _model(
             ),
             "dead": Regime(
                 active=lambda age: age == 2,
-                transition=None,
+                regime_transitions=None,
                 functions={"utility": _terminal},
                 states={"pension": None},
             ),

@@ -241,7 +241,7 @@ def _make_consent_model() -> Model:
 
     """
     single = Regime(
-        transition={
+        regime_transitions={
             "married_terminal": ValueDependentTransition(
                 probability=MarkovTransition(_certain_transition),
                 gate=_consent_gate,
@@ -269,13 +269,13 @@ def _make_consent_model() -> Model:
         functions={"utility": _single_utility},
     )
     single_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _single_terminal_utility},
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         actions={"work": DiscreteGrid(category_class=Work)},

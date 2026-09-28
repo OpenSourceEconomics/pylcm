@@ -68,7 +68,7 @@ def _utility(
 
 def _build_model(*, fold: bool) -> Model:
     alive = Regime(
-        transition={
+        regime_transitions={
             "alive": MarkovTransition(_probability_alive),
             "dead": MarkovTransition(_probability_dead),
         },
@@ -89,7 +89,7 @@ def _build_model(*, fold: bool) -> Model:
         functions={"utility": _utility},
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= LAST_ALIVE_AGE,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )

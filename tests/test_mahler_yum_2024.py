@@ -168,8 +168,10 @@ def test_retirement_split_removes_exactly_the_work_only_dimensions():
         "productivity_shock",
     }
     assert retirement_dimensions <= working_dimensions
-    working_transition = cast("Mapping[str, object]", WORKING_REGIME.transition)
-    retirement_transition = cast("Mapping[str, object]", RETIREMENT_REGIME.transition)
+    working_transition = cast("Mapping[str, object]", WORKING_REGIME.regime_transitions)
+    retirement_transition = cast(
+        "Mapping[str, object]", RETIREMENT_REGIME.regime_transitions
+    )
     assert set(working_transition) == {"working", "retirement", "dead"}
     assert set(retirement_transition) == {"retirement", "dead"}
 

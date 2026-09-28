@@ -281,7 +281,7 @@ def _asset_row_model(*, arithmetic: ComparisonArithmetic | None) -> Model:
     is_dcegm = arithmetic is not None
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working_life = regime_type(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
         },

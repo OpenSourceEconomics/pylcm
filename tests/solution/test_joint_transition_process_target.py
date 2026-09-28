@@ -70,7 +70,7 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _model(*, support: tuple[float, float]) -> Model:
     working = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 62,
         states={
             "wealth": LinSpacedGrid(
@@ -97,7 +97,7 @@ def _model(*, support: tuple[float, float]) -> Model:
             }
         },
     )
-    dead = Regime(transition=None, functions={"utility": _zero_utility})
+    dead = Regime(regime_transitions=None, functions={"utility": _zero_utility})
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=63, step="Y"),

@@ -340,7 +340,7 @@ CASES = {
         "not passive",
     ),
     "regime_transition_cliff_in_wealth": (
-        lambda: VALID.replace(transition=_regime_transition_with_wealth_cliff),
+        lambda: VALID.replace(regime_transitions=_regime_transition_with_wealth_cliff),
         "regime transition function.*discontinuous",
     ),
     "stochastic_euler_state_transition": (
@@ -595,7 +595,7 @@ def _three_regime_model_with_brute_worker(retirement_transition) -> Model:
                 active=lambda age, la=last_age: age < la
             ),
             "retirement": PORTABLE_DCEGM_RETIREMENT_FULL.replace(
-                transition=retirement_transition,
+                regime_transitions=retirement_transition,
                 active=lambda age, la=last_age: age < la,
             ),
             "dead": dead,
@@ -656,7 +656,7 @@ def test_activity_disjoint_brute_target_imposes_no_dcegm_requirement() -> None:
     """A catalog target outside every adjacent activity window is not an edge."""
     source = dcegm_variants.dcegm_retirement
     brute_target = UserRegime(
-        transition=source.transition,
+        regime_transitions=source.regime_transitions,
         solver=GridSearch(),
         active=lambda age: age < 50,
         states=source.states,
@@ -690,7 +690,7 @@ def test_non_dcegm_non_terminal_target_raises():
     """A DC-EGM regime may not target a brute-force non-terminal regime."""
     source = dcegm_variants.dcegm_retirement
     brute_target = UserRegime(
-        transition=source.transition,
+        regime_transitions=source.regime_transitions,
         solver=GridSearch(),
         active=lambda age: age < 60,
         states=source.states,

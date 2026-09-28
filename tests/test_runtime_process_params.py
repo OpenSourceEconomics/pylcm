@@ -61,11 +61,13 @@ def _make_model(*, fixed_params=None):
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},
         constraints={"borrowing": _constraint},
-        transition=lambda period: jnp.where(period >= 1, RegimeId.dead, RegimeId.alive),
+        regime_transitions=lambda period: jnp.where(
+            period >= 1, RegimeId.dead, RegimeId.alive
+        ),
         active=lambda age: age < 2,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
     )

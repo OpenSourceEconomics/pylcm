@@ -67,7 +67,7 @@ def model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(lambda: jnp.float32(1))},
+                regime_transitions={"target": MarkovTransition(lambda: jnp.float32(1))},
                 active=lambda age: age < 22,
                 states={
                     "wealth": _WEALTH,
@@ -82,7 +82,7 @@ def model() -> Model:
                 functions={"utility": _wealth_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=Health),

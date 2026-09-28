@@ -253,7 +253,7 @@ def build_model(  # noqa: C901
         )
 
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, fa=final_age: age >= fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
@@ -269,7 +269,7 @@ def build_model(  # noqa: C901
 
     if variant == "brute":
         alive = UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=lambda age, fa=final_age: age < fa,
             states={
                 "liquid": liquid_grid,
@@ -298,7 +298,7 @@ def build_model(  # noqa: C901
         n_constrained_points=32,
     )
     alive = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age, fa=final_age: age < fa,
         states={
             "liquid": liquid_grid,

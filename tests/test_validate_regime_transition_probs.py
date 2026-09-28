@@ -246,7 +246,7 @@ def _next_regime_only_fails_for_leave(action: DiscreteAction) -> FloatND:
 def _build_action_dependent_model() -> tuple[Model, dict]:
     """Build a minimal model whose transition bug only shows for the second action."""
     active = UserRegime(
-        transition=MarkovTransition(_next_regime_only_fails_for_leave),
+        regime_transitions=MarkovTransition(_next_regime_only_fails_for_leave),
         active=lambda age: age < 27,
         actions={
             "action": DiscreteGrid(category_class=_Action),
@@ -258,7 +258,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
@@ -301,7 +301,7 @@ def test_regime_transition_validation_passes_period_as_int32():
         )
 
     active = UserRegime(
-        transition=MarkovTransition(_transition_recording_period),
+        regime_transitions=MarkovTransition(_transition_recording_period),
         active=lambda age: age < 27,
         actions={
             "action": DiscreteGrid(category_class=_Action),
@@ -313,7 +313,7 @@ def test_regime_transition_validation_passes_period_as_int32():
         functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
@@ -454,7 +454,7 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
     model = Model(
         regimes={
             "solo": UserRegime(
-                transition={"term": MarkovTransition(_one_probability)},
+                regime_transitions={"term": MarkovTransition(_one_probability)},
                 active=lambda age: age >= 21,
                 states={"aux": DiscreteGrid(category_class=_AuxOutcome)},
                 state_transitions={"aux": MarkovTransition(_malformed_aux_probs)},
@@ -462,7 +462,7 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
                 functions={"utility": _zero_utility},
             ),
             "term": UserRegime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age < 21,
                 functions={"utility": _zero_utility},
             ),

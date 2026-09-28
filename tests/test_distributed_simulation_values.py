@@ -244,7 +244,7 @@ def _build_model(
     return Model(
         regimes={
             "working": Regime(
-                transition=_transition,
+                regime_transitions=_transition,
                 active=lambda age: age < 3,
                 states={"wealth": wealth},
                 state_transitions={"wealth": _next_wealth},
@@ -252,7 +252,7 @@ def _build_model(
                 functions={"utility": _utility},
             ),
             "retired": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": wealth},
                 functions={"utility": _terminal_utility},
             ),

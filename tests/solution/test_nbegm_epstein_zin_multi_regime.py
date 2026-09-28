@@ -94,7 +94,7 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         states={"liquid": _LIQUID_GRID, "income": _INCOME},
         state_transitions={"liquid": {"alive": _next_liquid, "dead": _next_liquid}},
         actions={"consumption": _CONSUMPTION_GRID},
-        transition={
+        regime_transitions={
             "alive": MarkovTransition(_prob_alive),
             "dead": MarkovTransition(_prob_dead),
         },
@@ -117,7 +117,7 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=_FIRST_AGE: age > n,
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _bequest},

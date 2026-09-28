@@ -69,14 +69,14 @@ def _build_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=lambda age: age < 22,
                 state_transitions={"shock": {"target": _enter_between_nodes}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0

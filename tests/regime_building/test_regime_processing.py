@@ -229,14 +229,14 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
         late: ScalarInt
 
     early = UserRegime(
-        transition=regime_transition,
+        regime_transitions=regime_transition,
         states={"x": LinSpacedGrid(start=0, stop=10, n_points=4)},
         state_transitions={"x": next_x},
         functions={"utility": lambda x: x},
         active=lambda age: age < 1,
     )
     late = UserRegime(
-        transition=regime_transition,
+        regime_transitions=regime_transition,
         states={"x": LinSpacedGrid(start=0, stop=10, n_points=6)},
         state_transitions={"x": next_x},
         functions={"utility": lambda x: x},
@@ -348,7 +348,7 @@ def _pair_handover_regime() -> UserRegime:
         return jnp.asarray(wealth)
 
     return UserRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "pension_wealth": Phased(
@@ -416,7 +416,7 @@ def test_carried_state_counts_as_covered_for_reachability():
         return jnp.asarray(wealth)
 
     working = UserRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "health": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
@@ -474,7 +474,7 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         return jnp.asarray(wealth)
 
     kwargs: dict = {
-        "transition": next_regime,
+        "regime_transitions": next_regime,
         "states": {
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "pension_wealth": Phased(

@@ -135,7 +135,7 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
     # linear interpolation on this grid, so it must resolve the curvature of
     # `log` for the closed form to be the test oracle.
     bequest_dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
@@ -233,7 +233,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
     ages = AgeGrid(start=40, stop=40 + n_periods - 1, step="Y")
     last_age = ages.exact_values[-1]
     retirement = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=100)},
         states={"wealth": LinSpacedGrid(start=1, stop=400, n_points=1000)},
         state_transitions={"wealth": next_wealth},
@@ -260,7 +260,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
         active=lambda age: age < last_age,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda _age: True,
     )
@@ -339,7 +339,7 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
     discount_factor = 0.98
     bequest_points = (0.0, *(float(x) for x in np.geomspace(0.005, 400.0, 400)))
     bequest_dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": IrregSpacedGrid(points=bequest_points)},
         functions={"utility": _bequest_utility},
     )

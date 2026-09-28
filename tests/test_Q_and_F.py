@@ -360,7 +360,7 @@ def _build_partial_coverage_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        transition=work_transition,
+        regime_transitions=work_transition,
         functions={"utility": _utility},
     )
     retire = UserRegime(
@@ -376,11 +376,11 @@ def _build_partial_coverage_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        transition=next_regime_func,
+        regime_transitions=next_regime_func,
         functions={"utility": _utility},
     )
     dead_regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
@@ -900,7 +900,7 @@ def _model_emitting_total_regime_mass(
     """
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        transition={
+        regime_transitions={
             "alive": MarkovTransition(
                 lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
             ),
@@ -916,7 +916,7 @@ def _model_emitting_total_regime_mass(
         certainty_equivalent=certainty_equivalent,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
@@ -1015,7 +1015,7 @@ def _model_with_alive_active_at_every_age(
     """
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        transition=lambda: _MassRegimeId.dead,
+        regime_transitions=lambda: _MassRegimeId.dead,
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -1023,7 +1023,7 @@ def _model_with_alive_active_at_every_age(
         certainty_equivalent=certainty_equivalent,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age < 2,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},

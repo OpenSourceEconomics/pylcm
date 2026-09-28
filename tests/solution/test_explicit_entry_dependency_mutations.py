@@ -126,14 +126,14 @@ def test_explicit_entry_feeds_another_explicit_entry(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 state_transitions=state_transitions,
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states=target_states,
                 functions={"utility": _two_process_utility},
             ),
@@ -180,13 +180,13 @@ def test_explicit_entry_feeds_stochastic_weight_law(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 state_transitions=state_transitions,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states=target_states,
                 functions={"utility": _good_utility},
             ),
@@ -240,13 +240,13 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 state_transitions=state_transitions,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states=target_states,
                 functions={"utility": _wealth_utility},
             ),

@@ -166,7 +166,9 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
     regimes = _new_vocabulary_regimes()
     married = regimes["married"]
     regimes["married"] = married.replace(
-        transition=Phased(solve=married.transition, simulate=married.transition)
+        regime_transitions=Phased(
+            solve=married.regime_transitions, simulate=married.regime_transitions
+        )
     )
 
     phased = _solve(regimes)
@@ -191,7 +193,7 @@ def _solve(regimes):
 def _new_vocabulary_regimes() -> dict[str, Regime]:
     """The dissolution miniature, declared in the value-dependent vocabulary."""
     married = Regime(
-        transition={
+        regime_transitions={
             "married_ir": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
@@ -222,7 +224,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         },
     )
     married_ir = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
@@ -252,7 +254,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -263,7 +265,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        transition={"single_f_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_f_terminal": MarkovTransition(_prob_one)},
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
@@ -271,13 +273,13 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         functions={"utility": _u_single_f_ir},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE_3},
         functions={"utility": _u_zero},
     )
     single_m = single_f.replace(
-        transition={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     return {
@@ -316,7 +318,7 @@ def test_a_gate_must_be_keyed_by_the_target_it_opens():
     """
     with pytest.raises(RegimeInitializationError, match="per-target"):
         Regime(
-            transition=_a_value_dependent_transition(),
+            regime_transitions=_a_value_dependent_transition(),
             active=lambda age: age < 1,
             states={"wage": _WAGE_3},
             state_transitions={"wage": fixed_transition("wage")},
@@ -362,7 +364,7 @@ def _phased_edge_regime(
         else MarkovTransition(_prob_half)
     )
     return Regime(
-        transition=Phased(
+        regime_transitions=Phased(
             solve={
                 "married_ir": ValueDependentTransition(
                     probability=MarkovTransition(_prob_one),
@@ -441,7 +443,7 @@ def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
     )
 
     regime = Regime(
-        transition={
+        regime_transitions={
             "married_ir": ValueDependentTransition(
                 probability=_prob_one,
                 gate=_no_dissolution_gate,
@@ -588,7 +590,7 @@ def test_a_derived_slot_cannot_be_declared(slot):
 
     with pytest.raises(TypeError, match=slot):
         Regime(
-            transition=None,
+            regime_transitions=None,
             states={"wage": _WAGE_3},
             functions={"utility": _u_zero},
             **declared,  # ty: ignore[invalid-argument-type]
@@ -608,7 +610,7 @@ def test_a_derived_slot_cannot_be_declared(slot):
 def test_a_derived_slot_cannot_be_replaced(slot):
     """`replace` reaches the declarations, not what they decompose to."""
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wage": _WAGE_3},
         functions={"utility": _u_zero},
     )

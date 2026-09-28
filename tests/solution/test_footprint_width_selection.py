@@ -100,7 +100,7 @@ def _build_model(
 ) -> Model:
     """Build one acting regime over three periods into a terminal regime."""
     acting = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 3,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH),
@@ -113,7 +113,7 @@ def _build_model(
         functions={"utility": _utility},
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 3,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH),

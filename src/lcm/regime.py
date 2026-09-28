@@ -72,9 +72,9 @@ class Regime:
     (identity law). Stochastic processes have intrinsic transitions and must not
     appear in `state_transitions`.
 
-    The `transition` field on the regime itself is the *regime* transition function.
-    A regime with `transition=None` is terminal — no separate `terminal` flag is
-    needed.
+    The `regime_transitions` field declares movement between regimes. A regime is
+    terminal exactly when `regime_transitions is None`; there is no separate
+    `terminal` flag.
 
     """
 
@@ -82,7 +82,7 @@ class Regime:
 
     # `UserFunction`/`Phased` inside the per-target dict pass the type check
     # so the validator can reject them with an explanation.
-    transition: (
+    regime_transitions: (
         RegimeName
         | Choose
         | ByAge
@@ -145,7 +145,7 @@ class Regime:
     """Callable that takes age (float) and returns True if regime is active.
 
     Only for models without dated transitions; a dated model derives coverage
-    from `transition`.
+    from `regime_transitions`.
     """
 
     # `None` masks a model-level entry of the same name.
@@ -430,7 +430,7 @@ class Regime:
     )
     """Gated edges routing this regime's continuation into a target regime.
 
-    Derived from the `ValueDependentTransition` entries of `transition`,
+    Derived from the `ValueDependentTransition` entries of `regime_transitions`,
     which is where a model declares them, so that target selection and
     value-dependent routing are one declaration rather than two.
 
@@ -442,7 +442,7 @@ class Regime:
     `Wbar^s = jnp.where(gate, V_target, V_fallback)` on the target regime's
     grid at each period's end, and this regime's continuation reads `Wbar` in
     place of the raw target V. See `GatedEdge`. Only meaningful together
-    with the corresponding `transition` / `state_transitions` into the target's
+    with the corresponding `regime_transitions` / `state_transitions` into the target's
     state space; a target reached by a gated edge is exempt from the mixed-
     stakeholder rejection.
     """
@@ -466,8 +466,8 @@ class Regime:
 
     @property
     def terminal(self) -> bool:
-        """Whether this is a terminal regime (derived from transition being None)."""
-        return self.transition is None
+        """Whether this is a terminal regime: `regime_transitions is None`."""
+        return self.regime_transitions is None
 
     @property
     def stochastic_regime_transition(self) -> bool:
@@ -478,9 +478,9 @@ class Regime:
         representative.
         """
         transition = (
-            self.transition.solve
-            if isinstance(self.transition, Phased)
-            else self.transition
+            self.regime_transitions.solve
+            if isinstance(self.regime_transitions, Phased)
+            else self.regime_transitions
         )
         return isinstance(transition, MarkovTransition | Mapping)
 
@@ -495,17 +495,17 @@ class Regime:
         return self.active is not _always_active
 
     def __post_init__(self) -> None:
-        transition = self.transition
+        transition = self.regime_transitions
         if not is_dated_declaration(transition):
             self._post_init_engine_view()
             return
         # Validate the dated declaration through its period-independent engine
         # view, then keep the declaration itself for the model to resolve.
-        object.__setattr__(self, "transition", declaration_view(transition))
+        object.__setattr__(self, "regime_transitions", declaration_view(transition))
         try:
             self._post_init_engine_view()
         finally:
-            object.__setattr__(self, "transition", transition)
+            object.__setattr__(self, "regime_transitions", transition)
 
     def _post_init_engine_view(self) -> None:
         self._lower_value_dependent_declarations()
@@ -571,7 +571,7 @@ class Regime:
 
         `CollectiveUtility`, `ValueDependentConstraint` and
         `ValueDependentTransition` are declared inside the slots a regime
-        already has — `functions`, `constraints` and `transition` — and each
+        already has — `functions`, `constraints` and `regime_transitions` — and each
         one carries several engine-side facts at once. Deriving those facts
         here, without replacing the raw declarations, lets every later stage
         read the fields and decomposed views it needs.
@@ -628,7 +628,7 @@ class Regime:
         | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
         | None
     ):
-        """`transition` with every `ValueDependentTransition` taken apart.
+        """`regime_transitions` with every `ValueDependentTransition` taken apart.
 
         A value-dependent transition carries two facts at once: which target
         the regime selects, and how the household is routed once there. The
@@ -639,7 +639,7 @@ class Regime:
 
         Deterministic and idempotent, like the other two views.
         """
-        return decompose_transition(self.transition)
+        return decompose_transition(self.regime_transitions)
 
     def _lower_collective_utility(self) -> None:
         """Derive stakeholder metadata from `functions["utility"]`."""
@@ -700,7 +700,7 @@ class Regime:
         """
         if not self.gated_edges:
             return
-        transition = self.transition
+        transition = self.regime_transitions
         sides = (
             (transition.solve, transition.simulate)
             if isinstance(transition, Phased)
@@ -713,20 +713,20 @@ class Regime:
             f"This regime carries a gated edge into "
             f"{min(self.gated_edges)!r} on {where}. A gate is a route, so "
             "it needs a target to route to: declare it in a per-target "
-            "`transition` dict, keyed by the regime the gate opens onto."
+            "`regime_transitions` dict, keyed by the regime the gate opens onto."
         )
 
     def _lower_value_dependent_transitions(self) -> None:
         """Derive target-local edges from value-dependent transitions."""
-        transition = self.transition
+        transition = self.regime_transitions
         if isinstance(transition, ValueDependentTransition):
             raise RegimeInitializationError(
                 "This regime declares a `ValueDependentTransition` as its whole "
                 "transition. A gate is a route — it says where a household goes "
                 "when consent fails — so it belongs to one target and is written "
-                "in a per-target `transition` dict, keyed by the regime the gate "
-                "opens onto: `transition={'<target>': ValueDependentTransition("
-                "...)}`."
+                "in a per-target `regime_transitions` dict, keyed by the regime "
+                "the gate opens onto: `regime_transitions={'<target>': "
+                "ValueDependentTransition(...)}`."
             )
         if isinstance(transition, Phased):
             self._lower_phased_value_dependent_transitions(transition)
@@ -1103,7 +1103,7 @@ def decompose_transition(
     """Replace every `ValueDependentTransition` by the probability it declares.
 
     Args:
-        transition: A regime's `transition` as declared, including the `Phased`
+        transition: A regime's `regime_transitions` as declared, including the `Phased`
             form.
 
     Returns:

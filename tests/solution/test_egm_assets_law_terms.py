@@ -282,7 +282,7 @@ def _health_insurance_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={
             "buy_private": DiscreteGrid(category_class=Insurance),
@@ -362,7 +362,7 @@ def _means_test_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -427,7 +427,7 @@ def _bequest_utility(wealth: ContinuousState) -> FloatND:
 def _per_target_model(solver: str) -> Model:
     """Per-target asymmetry: the law term applies toward one target only."""
     bequest = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": BEQUEST_GRID},
         functions={"utility": _bequest_utility},
     )
@@ -456,7 +456,7 @@ def _per_target_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(_stay_prob),
             "dead": MarkovTransition(_death_prob),
         },
@@ -547,7 +547,7 @@ def _phased_law_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -628,7 +628,7 @@ def _chained_law_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),

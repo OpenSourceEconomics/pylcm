@@ -53,7 +53,7 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain)},
+                regime_transitions={"target": MarkovTransition(_certain)},
                 active=lambda age: age < 21,
                 actions={"choice": DiscreteGrid(category_class=Choice)},
                 functions={"utility": lambda: jnp.asarray(0.0)},
@@ -69,7 +69,7 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
                 },
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"payoff": IrregSpacedGrid(points=(0.0, 6.0, 10.0))},
                 functions={"utility": lambda payoff: payoff},
             ),

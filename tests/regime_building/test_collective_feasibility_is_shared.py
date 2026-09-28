@@ -111,7 +111,7 @@ def _next_regime() -> ScalarInt:
 
 def _make_model() -> Model:
     couple = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -122,7 +122,7 @@ def _make_model() -> Model:
         constraints={"participation_f": _participation_f},
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},

@@ -80,7 +80,7 @@ def _inputs(
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     regimes = {
         "alive": Regime(
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             active=_initial_age,
             states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
             state_transitions={"wealth": fixed_transition("wealth")},
@@ -92,7 +92,7 @@ def _inputs(
             constraints={"budget": _feasible},
         ),
         "done": Regime(
-            transition=None,
+            regime_transitions=None,
             states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
             functions={"utility": _terminal_utility},
         ),

@@ -221,7 +221,7 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     young = regime_type(
-        transition={
+        regime_transitions={
             "old": MarkovTransition(young_stay_prob),
             "dead": MarkovTransition(young_death_prob),
         },
@@ -267,7 +267,7 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
     )
     pension_funcs = {"accrued_pension": accrued_pension, "pension_value": pension_value}
     old = regime_type(
-        transition={
+        regime_transitions={
             "old": MarkovTransition(next_old_stay_prob),
             "dead": MarkovTransition(next_old_death_prob),
         },
@@ -304,7 +304,7 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda _age: True,
     )

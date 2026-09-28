@@ -184,11 +184,11 @@ def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
             "wealth": _next_wealth,
         },
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         functions={"utility": _utility},
         active=lambda age: age <= _FINAL_AGE_ALIVE,
     )
-    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+    dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
     model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=_FINAL_AGE_ALIVE + 1, step="Y"),

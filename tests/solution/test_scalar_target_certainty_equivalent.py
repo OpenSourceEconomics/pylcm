@@ -49,7 +49,7 @@ def _no_flow_payoff(wealth):
 def _solve_with_geometric_certainty_equivalent():
     """Solve a model whose only continuation is an even stateless lottery."""
     alive = Regime(
-        transition={
+        regime_transitions={
             "low": MarkovTransition(lambda: jnp.array(0.5)),
             "high": MarkovTransition(lambda: jnp.array(0.5)),
         },
@@ -62,9 +62,11 @@ def _solve_with_geometric_certainty_equivalent():
         state_transitions={"wealth": fixed_transition("wealth")},
         certainty_equivalent=PowerMean(),
     )
-    low = Regime(transition=None, functions={"utility": lambda: jnp.array(_LOW_PAYOFF)})
+    low = Regime(
+        regime_transitions=None, functions={"utility": lambda: jnp.array(_LOW_PAYOFF)}
+    )
     high = Regime(
-        transition=None, functions={"utility": lambda: jnp.array(_HIGH_PAYOFF)}
+        regime_transitions=None, functions={"utility": lambda: jnp.array(_HIGH_PAYOFF)}
     )
     model = Model(
         regimes={"alive": alive, "low": low, "high": high},

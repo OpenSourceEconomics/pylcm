@@ -67,12 +67,12 @@ def _make_three_type_model(
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=lambda age: jnp.where(
+        regime_transitions=lambda age: jnp.where(
             age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
         ),
     )
     retired = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={
             "utility": (
                 _constant_retired_value

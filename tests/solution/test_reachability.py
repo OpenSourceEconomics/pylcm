@@ -55,7 +55,7 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "low": MarkovTransition(_probability_low),
                     "high": MarkovTransition(_probability_high),
                 },
@@ -63,12 +63,12 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
                 functions={"utility": _zero_utility},
             ),
             "low": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_target_is_active,
                 functions={"utility": _low_utility},
             ),
             "high": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_target_is_active,
                 functions={"utility": _high_utility},
             ),
@@ -112,7 +112,7 @@ def test_positive_granular_probability_outside_graph_is_rejected() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "target": MarkovTransition(_complement_of_dormant_probability),
                     "dormant": MarkovTransition(_positive_dormant_probability),
                 },
@@ -120,12 +120,12 @@ def test_positive_granular_probability_outside_graph_is_rejected() -> None:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 functions={"utility": _low_utility},
             ),
             "dormant": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age < 1,
                 functions={"utility": _low_utility},
             ),

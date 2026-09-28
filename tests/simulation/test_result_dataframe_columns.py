@@ -181,7 +181,7 @@ def _make_reverse_alphabetical_collective_model() -> Model:
     the alphabetical order of the names disagree.
     """
     couple = Regime(
-        transition=_next_couple_regime,
+        regime_transitions=_next_couple_regime,
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -193,7 +193,7 @@ def _make_reverse_alphabetical_collective_model() -> Model:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -219,7 +219,7 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
     declares no stakeholders at all.
     """
     working = Regime(
-        transition=_next_solo_regime,
+        regime_transitions=_next_solo_regime,
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -227,7 +227,7 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
         functions={"utility": _solo_utility, "value_of_leisure": _value_of_leisure},
     )
     retired = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -248,7 +248,7 @@ def _make_collective_model_with_colliding_state() -> Model:
     name of the column the wife's published value claims.
     """
     couple = Regime(
-        transition=_next_couple_regime,
+        regime_transitions=_next_couple_regime,
         active=lambda age: age < 1,
         states={"value_f": WAGE_GRID},
         state_transitions={"value_f": _next_colliding_state},
@@ -260,7 +260,7 @@ def _make_collective_model_with_colliding_state() -> Model:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"value_f": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -286,7 +286,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
     never meet — they share nothing but the published frame.
     """
     couple = Regime(
-        transition={"couple_terminal": MarkovTransition(_probability_one)},
+        regime_transitions={"couple_terminal": MarkovTransition(_probability_one)},
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -298,7 +298,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -309,7 +309,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         },
     )
     solo = Regime(
-        transition={"solo_terminal": MarkovTransition(_probability_one)},
+        regime_transitions={"solo_terminal": MarkovTransition(_probability_one)},
         active=lambda age: age < 1,
         states={"value_f": WAGE_GRID},
         state_transitions={"value_f": _next_colliding_state},
@@ -317,7 +317,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         functions={"utility": _colliding_solo_utility},
     )
     solo_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"value_f": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},

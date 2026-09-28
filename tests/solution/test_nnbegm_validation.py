@@ -59,7 +59,7 @@ def _valid_regime() -> NestedConsumptionSavingsRegime:
             "consumption": n_nbegm_toy.CONSUMPTION_GRID,
             "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        transition=n_nbegm_toy.next_regime,
+        regime_transitions=n_nbegm_toy.next_regime,
         functions={
             "utility": n_nbegm_toy.utility,
             "new_illiquid": n_nbegm_toy.new_illiquid,
@@ -163,7 +163,7 @@ def test_a_regime_with_a_non_nested_solver_is_left_alone() -> None:
         states=_VALID.states,
         state_transitions=_VALID.state_transitions,
         actions={"illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID},
-        transition=_VALID.transition,
+        regime_transitions=_VALID.regime_transitions,
         functions=_VALID.functions,
         solver=n_nbegm_toy.build_solver(variant="brute"),
     )
@@ -252,7 +252,7 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
         }
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age > 20,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,

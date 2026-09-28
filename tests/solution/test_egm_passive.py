@@ -166,7 +166,7 @@ def _get_model(variant: str) -> Model:
 
     if variant == "brute":
         working = UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=active,
             actions={
                 "labor_supply": DiscreteGrid(category_class=LaborChoice),
@@ -183,7 +183,7 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "dcegm_no_skill":
         working = ConsumptionSavingsRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=active,
             actions={
                 "labor_supply": DiscreteGrid(category_class=LaborChoice),
@@ -211,7 +211,7 @@ def _get_model(variant: str) -> Model:
             fixed_transition("skill") if variant == "dcegm_fixed_skill" else next_skill
         )
         working = ConsumptionSavingsRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=active,
             actions={
                 "labor_supply": DiscreteGrid(category_class=LaborChoice),

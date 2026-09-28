@@ -225,7 +225,7 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
 
     if solver == "dcegm":
         alive = ConsumptionSavingsRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=active,
             actions=actions,
             states=states,
@@ -245,7 +245,7 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
         )
     else:
         alive = UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=active,
             actions=actions,
             states=states,

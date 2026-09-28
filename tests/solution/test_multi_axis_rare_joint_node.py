@@ -165,7 +165,7 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
     )
     regimes = {
         "source": Regime(
-            transition=(
+            regime_transitions=(
                 {
                     "lottery": MarkovTransition(_to_lottery),
                     "safe": MarkovTransition(_to_safe),
@@ -185,13 +185,15 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
             certainty_equivalent=PowerMean(),
         ),
         "lottery": Regime(
-            transition=None,
+            regime_transitions=None,
             states={name: DiscreteGrid(category_class=Draw) for name in axis_names},
             functions={"utility": lottery_utility},
         ),
     }
     if with_a_safe_alternative:
-        regimes["safe"] = Regime(transition=None, functions={"utility": _safe_utility})
+        regimes["safe"] = Regime(
+            regime_transitions=None, functions={"utility": _safe_utility}
+        )
     return Model(
         regimes=regimes,
         ages=AgeGrid(start=20, stop=21, step="Y"),

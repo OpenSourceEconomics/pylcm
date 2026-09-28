@@ -45,7 +45,7 @@ def _next_regime(age: float) -> ScalarInt:
 
 def _build_work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "transition": _next_regime,
+        "regime_transitions": _next_regime,
         "active": lambda age: age < 2,
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
@@ -58,7 +58,7 @@ def _build_work_regime(**overrides: Any) -> UserRegime:
 
 def _build_model(work: UserRegime) -> Model:
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 1,
     )
@@ -136,7 +136,7 @@ def test_model_level_derived_categoricals_are_merged() -> None:
 
     work = _build_work_regime()
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 1,
     )

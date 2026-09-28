@@ -226,12 +226,12 @@ def get_model(
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={"liquid": next_liquid, "housing": next_housing},
         constraints={"feasible": feasible},
-        transition=next_regime_from_working,
+        regime_transitions=next_regime_from_working,
         functions={"utility": utility},
         active=lambda age, fa=final_age: age < fa,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )

@@ -38,14 +38,16 @@ def _next_regime(*, wealth, age):
 
 def _build_model():
     alive = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < _LAST_AGE,
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         functions={"utility": _utility},
     )
-    gone = Regime(transition=None, functions={"utility": lambda: jnp.array(5.0)})
+    gone = Regime(
+        regime_transitions=None, functions={"utility": lambda: jnp.array(5.0)}
+    )
     return Model(
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),

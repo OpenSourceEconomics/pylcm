@@ -69,7 +69,7 @@ def _next_regime(period: Period) -> ScalarInt:
 
 def _last_regime() -> Regime:
     return Regime(
-        transition=None,
+        regime_transitions=None,
         state_transitions={},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -79,7 +79,7 @@ def _last_regime() -> Regime:
 
 def _model(*, live_functions, state_transitions, constraints) -> Model:
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},

@@ -371,7 +371,7 @@ def build_model(
         return (new_housing >= housing_min) & (new_housing <= housing_max)
 
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, fa=final_age: age >= fa,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
@@ -387,7 +387,7 @@ def build_model(
 
     if variant == "brute":
         alive = UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=lambda age, fa=final_age: age < fa,
             states={
                 "liquid": liquid_grid,
@@ -431,7 +431,7 @@ def build_model(
     )
 
     alive = NestedConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=lambda age, fa=final_age: age < fa,
         states={
             "liquid": liquid_grid,

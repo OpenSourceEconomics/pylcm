@@ -212,7 +212,7 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
     working = regime_type(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(stay_prob),
             "dead": MarkovTransition(death_prob),
         },
@@ -413,7 +413,7 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
     working = regime_type(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(stay_prob_share),
             "dead": MarkovTransition(death_prob_share),
         },

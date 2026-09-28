@@ -221,13 +221,15 @@ def _axis_width_case(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=_initial_age,
                 states={"income": NormalIIDProcess(n_points=5, gauss_hermite=False)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _utility},
             ),
-            "done": Regime(transition=None, functions={"utility": _terminal_utility}),
+            "done": Regime(
+                regime_transitions=None, functions={"utility": _terminal_utility}
+            ),
         },
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),

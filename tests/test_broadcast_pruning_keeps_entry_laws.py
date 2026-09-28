@@ -79,7 +79,7 @@ def _entry_health(wealth: float) -> FloatND:
 
 def _working_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "transition": {"retired": MarkovTransition(_always_retire)},
+        "regime_transitions": {"retired": MarkovTransition(_always_retire)},
         "active": lambda age: age < 1,
         "states": {"wealth": _WEALTH_GRID},
         "state_transitions": {
@@ -95,7 +95,7 @@ def _working_regime(**overrides: Any) -> Regime:
 
 def _retired_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "transition": None,
+        "regime_transitions": None,
         "active": lambda age: age >= 1,
         "states": {"wealth": _WEALTH_GRID},
         "functions": {"utility": _utility_with_health},

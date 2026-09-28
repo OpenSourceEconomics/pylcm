@@ -261,7 +261,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
     """
     if variant == "brute":
         return UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=_active,
             actions={"consumption": CONSUMPTION_GRID},
             states={
@@ -281,7 +281,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
             },
         )
     return ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
         states={

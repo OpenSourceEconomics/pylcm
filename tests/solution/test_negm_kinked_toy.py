@@ -114,7 +114,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
                 start=-_INVESTMENT_BOUND, stop=_INVESTMENT_BOUND, n_points=25
             ),
         },
-        transition=negm_kinked_toy.next_regime,
+        regime_transitions=negm_kinked_toy.next_regime,
         functions={
             "utility": negm_kinked_toy.utility,
             "new_durable": negm_kinked_toy.new_durable,
@@ -142,7 +142,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=_FINAL_AGE_ALIVE: age > n,
         functions={"utility": lambda: 0.0},
     )
@@ -216,7 +216,7 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
                 start=-_INVESTMENT_BOUND, stop=_INVESTMENT_BOUND, n_points=n_investment
             ),
         },
-        transition=negm_kinked_toy.next_regime,
+        regime_transitions=negm_kinked_toy.next_regime,
         constraints={
             "liquid_floor": _liquid_floor,
             "illiquid_floor": _illiquid_floor,
@@ -228,7 +228,7 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
         },
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=_FINAL_AGE_ALIVE: age > n,
         functions={"utility": lambda: 0.0},
     )

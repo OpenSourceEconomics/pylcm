@@ -180,7 +180,7 @@ class ConstraintFunction(Protocol):
 class TransitionFunction(Protocol):
     """A state / regime / process transition function.
 
-    Stored on `Regime.transition` (regime transition), in
+    Stored on `Regime.regime_transitions` (regime transition), in
     `Regime.state_transitions` (per-state, plus per-target dicts),
     and as the auto-generated stubs for process-derived transitions.
     Returns the deterministic next-period value (`IntND` / `FloatND`)

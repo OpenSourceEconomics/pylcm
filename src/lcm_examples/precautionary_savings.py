@@ -149,13 +149,13 @@ def create_model(
                 start=0.1, stop=5, n_points=consumption_n_points
             ),
         },
-        transition=next_regime,
+        regime_transitions=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
 
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )

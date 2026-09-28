@@ -58,7 +58,7 @@ _MODEL = Model(
     regimes={
         "alive": Regime(
             active=lambda age: age < 2,
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             states={
                 "wealth": LinSpacedGrid(start=1, stop=10, n_points=4),
                 "health": DiscreteGrid(_Health),
@@ -68,7 +68,7 @@ _MODEL = Model(
             constraints={"feasible": _feasible},
             state_transitions={"wealth": _next_wealth, "health": _next_health},
         ),
-        "dead": Regime(transition=None, functions={"utility": lambda: 0.0}),
+        "dead": Regime(regime_transitions=None, functions={"utility": lambda: 0.0}),
     },
     ages=AgeGrid(start=0, stop=3, step="Y"),
     regime_id_class=_RegimeId,

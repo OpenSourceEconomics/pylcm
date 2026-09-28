@@ -189,7 +189,7 @@ def _build_model(*, variant: str) -> Model:
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=transition,
+            regime_transitions=transition,
             functions=functions,
             constraints=constraints,
             koopmans_aggregator=CESAggregator(),
@@ -202,7 +202,7 @@ def _build_model(*, variant: str) -> Model:
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=transition,
+            regime_transitions=transition,
             functions=functions,
             constraints=constraints,
             koopmans_aggregator=CESAggregator(),
@@ -222,7 +222,7 @@ def _build_model(*, variant: str) -> Model:
             ),
         )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=_FIRST_AGE: age > n,
         states={"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID},
         functions={"utility": _bequest},

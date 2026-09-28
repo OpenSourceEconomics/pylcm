@@ -58,7 +58,7 @@ def _build_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "low": MarkovTransition(_probability_low),
                     "high": MarkovTransition(_probability_high),
                 },
@@ -66,12 +66,12 @@ def _build_model() -> Model:
                 functions={"utility": _zero_utility},
             ),
             "low": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_target_is_active,
                 functions={"utility": _low_utility},
             ),
             "high": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_target_is_active,
                 functions={"utility": _high_utility},
             ),

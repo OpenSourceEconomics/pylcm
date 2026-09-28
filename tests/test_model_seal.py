@@ -41,7 +41,7 @@ def _next_regime(age: float) -> ScalarInt:
 
 def _build_model(*, enable_jit: bool) -> Model:
     working = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.5, n_points=3)},
@@ -49,7 +49,7 @@ def _build_model(*, enable_jit: bool) -> Model:
         constraints={"feasible": _feasible},
         active=lambda age: age < 19,
     )
-    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+    dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=18, stop=20, step="Y"),

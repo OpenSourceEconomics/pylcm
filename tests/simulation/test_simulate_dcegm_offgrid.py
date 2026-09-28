@@ -43,7 +43,7 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 
 def _closed_form_model() -> Model:
     bequest_dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
@@ -197,7 +197,7 @@ def _skill_model() -> Model:
         },
     )
     bequest_dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={
             "wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400),
             "skill": skill_grid,
@@ -280,7 +280,7 @@ def test_phase_variant_utility_keeps_the_grid_consumption_path():
         },
     )
     bequest_dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )

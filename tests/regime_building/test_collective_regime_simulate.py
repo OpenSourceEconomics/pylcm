@@ -162,7 +162,7 @@ _WAGE_GRID_2 = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 
 def _make_couple_regimes() -> dict[str, Regime]:
     couple = Regime(
-        transition=_next_couple_regime,
+        regime_transitions=_next_couple_regime,
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
@@ -172,7 +172,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID_2},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -357,7 +357,7 @@ def _consent_gate(
 
 def _make_consent_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        transition={
+        regime_transitions={
             "married_terminal": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
@@ -389,19 +389,19 @@ def _make_consent_regimes() -> dict[str, Regime]:
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_single_f_terminal},
     )
     single_m_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -578,7 +578,7 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
 
 def _make_dissolution_regimes() -> dict[str, Regime]:
     married = Regime(
-        transition={
+        regime_transitions={
             "married_ir": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
@@ -609,7 +609,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         },
     )
     married_ir = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
@@ -639,7 +639,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -650,7 +650,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        transition={"single_f_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_f_terminal": MarkovTransition(_prob_one)},
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
@@ -658,13 +658,13 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         functions={"utility": _u_single_f_ir},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE_3},
         functions={"utility": _u_zero},
     )
     single_m = single_f.replace(
-        transition={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     single_m_terminal = single_f_terminal.replace()
@@ -942,7 +942,7 @@ def _u_married_m_educ(
 
 def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
     single_f = Regime(
-        transition={
+        regime_transitions={
             "married_terminal": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
@@ -980,19 +980,19 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
         functions={"utility": _u_single_f_educ},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2, "educ": DiscreteGrid(category_class=Educ)},
         functions={"utility": _u_single_f_terminal_educ},
     )
     single_m_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2, "educ": DiscreteGrid(category_class=Educ)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -1412,7 +1412,7 @@ def _make_solo_regimes() -> dict[str, Regime]:
     `utility_f`/`utility_m` pair — isolates the singleton path from the
     collective one for the byte-identical regression check below."""
     solo = Regime(
-        transition=_next_solo_regime,
+        regime_transitions=_next_solo_regime,
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
@@ -1420,7 +1420,7 @@ def _make_solo_regimes() -> dict[str, Regime]:
         functions={"utility": _u_solo},
     )
     solo_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID_2},
         functions={"utility": _u_solo_terminal},
@@ -1542,7 +1542,7 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
     regime's declared transition targets).
     """
     src = Regime(
-        transition={
+        regime_transitions={
             "src": ValueDependentTransition(
                 probability=MarkovTransition(_prob_stay),
                 gate=_repeat_gate,
@@ -1564,13 +1564,13 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src_repeat},
     )
     src_exit = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_src_exit},
     )
     src_fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
         functions={"utility": _u_src_fallback},

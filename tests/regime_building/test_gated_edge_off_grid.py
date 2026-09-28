@@ -104,7 +104,7 @@ def _make_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "target": ValueDependentTransition(
                         probability=MarkovTransition(_certain_target),
                         gate=_gate,
@@ -126,13 +126,13 @@ def _make_model(
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"x": _X},
                 functions={"utility": _utility_target},
             ),
             "fallback": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"x": _X},
                 functions={"utility": _utility_fallback},
@@ -274,7 +274,7 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "target": ValueDependentTransition(
                         probability=MarkovTransition(_certain_target),
                         gate=_healthy_gate,
@@ -295,13 +295,13 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
                 functions={"utility": _utility_zero},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"health": health},
                 functions={"utility": _utility_healthy_target},
             ),
             "fallback": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"health": health},
                 functions={"utility": _fallback_utility},
@@ -376,7 +376,7 @@ def _witness_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "target": ValueDependentTransition(
                         probability=MarkovTransition(_certain_target),
                         gate=_witness_gate,
@@ -402,19 +402,19 @@ def _witness_model() -> Model:
                 functions={"utility": _witness_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"x": _WITNESS_X},
                 functions={"utility": _witness_target},
             ),
             "reference": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"x": _WITNESS_X},
                 functions={"utility": _witness_reference},
             ),
             "fallback": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"x": _WITNESS_X},
                 functions={"utility": _witness_fallback},

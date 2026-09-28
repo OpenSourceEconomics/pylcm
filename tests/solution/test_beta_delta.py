@@ -100,14 +100,14 @@ def _make_model(*, H_func=beta_delta_H):
         },
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={"utility": utility},
         koopmans_aggregator=H_func,
         active=lambda age: age <= 1,
     )
 
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(
                 start=WEALTH_START,

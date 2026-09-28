@@ -63,7 +63,7 @@ def _closed_gate(V_target: FloatND) -> BoolND:
 
 def _build_model(*, gate, enable_jit: bool) -> Model:
     src = Regime(
-        transition={
+        regime_transitions={
             "stateless_target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=gate,
@@ -83,12 +83,12 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
         functions={"utility": _u_src},
     )
     stateless_target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _u_stateless_target},
     )
     stateless_fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _u_stateless_fallback},
     )

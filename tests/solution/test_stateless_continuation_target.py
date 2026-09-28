@@ -68,14 +68,16 @@ def _enter_shock() -> FloatND:
 def _solve_with_bequest(bequest: float):
     """Solve a two-regime model whose terminal regime carries no state."""
     alive = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < _LAST_AGE,
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(transition=None, functions={"utility": lambda: jnp.array(bequest)})
+    gone = Regime(
+        regime_transitions=None, functions={"utility": lambda: jnp.array(bequest)}
+    )
     model = Model(
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
@@ -146,7 +148,7 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
         return (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
 
     alive = Regime(
-        transition={
+        regime_transitions={
             "alive": MarkovTransition(
                 lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
             ),
@@ -160,9 +162,11 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(transition=None, functions={"utility": lambda: jnp.array(10.0)})
+    gone = Regime(
+        regime_transitions=None, functions={"utility": lambda: jnp.array(10.0)}
+    )
     limbo = Regime(
-        transition=None, functions={"utility": lambda: jnp.array(limbo_bequest)}
+        regime_transitions=None, functions={"utility": lambda: jnp.array(limbo_bequest)}
     )
     model = Model(
         regimes={"alive": alive, "gone": gone, "limbo": limbo},
@@ -204,7 +208,7 @@ def _solve_with_process_only_target(level: float):
     target's process. Once entered, the process carries its own intrinsic law.
     """
     alive = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < _LAST_AGE,
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -215,7 +219,7 @@ def _solve_with_process_only_target(level: float):
         functions={"utility": _utility},
     )
     retired = Regime(
-        transition=None,
+        regime_transitions=None,
         # Fixed at construction, not passed at runtime: the entry law places a
         # value on this process's own support, and that support has to exist
         # before the source's laws are built.

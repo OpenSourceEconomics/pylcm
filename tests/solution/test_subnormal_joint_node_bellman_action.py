@@ -128,7 +128,7 @@ def _model(*, node_is_reachable: bool = True) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition={"dead": MarkovTransition(_certain)},
+                regime_transitions={"dead": MarkovTransition(_certain)},
                 active=lambda age: age < 21,
                 actions={"bet": DiscreteGrid(category_class=_Bet)},
                 states={"health": levels, "mood": levels},
@@ -139,7 +139,7 @@ def _model(*, node_is_reachable: bool = True) -> Model:
                 functions={"utility": _bet_payoff},
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"health": levels, "mood": levels},
                 functions={"utility": _terminal_payoff},
             ),

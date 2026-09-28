@@ -708,7 +708,7 @@ def _grid_support(
 
 
 # Regime slots whose simulate-phase truth a stored solution is independent of.
-_TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
+_TRANSITION_SLOTS = frozenset({"state_transitions", "regime_transitions"})
 
 
 def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, object]:

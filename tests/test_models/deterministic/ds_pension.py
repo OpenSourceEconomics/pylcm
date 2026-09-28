@@ -330,7 +330,7 @@ def get_model(
             "pension": {"working": pension_working},
         },
         constraints={"feasible": feasible_working},
-        transition={
+        regime_transitions={
             "working": MarkovTransition(prob_stay_working),
             "retired": MarkovTransition(prob_retire),
         },
@@ -355,7 +355,7 @@ def get_model(
         constraints={}
         if isinstance(retired_solver, EGM)
         else {"feasible": feasible_retired},
-        transition={
+        regime_transitions={
             "retired": MarkovTransition(prob_stay_retired),
             "dead": MarkovTransition(prob_die),
         },
@@ -383,7 +383,7 @@ def get_model(
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": dead_liquid_grid or liquid_grid},
         functions={"utility": bequest},
         solver=solvers.get("dead", GridSearch()),

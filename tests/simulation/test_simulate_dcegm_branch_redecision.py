@@ -91,7 +91,7 @@ def _bonus_model(constraints: dict | None = None) -> Model:
         constraints=constraints or {},
     )
     bequest_dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )

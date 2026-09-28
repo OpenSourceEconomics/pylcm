@@ -78,7 +78,7 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _build_model(*, probabilities) -> Model:
     working = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 64,
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
         actions={"effort": DiscreteGrid(category_class=Effort)},
@@ -94,7 +94,9 @@ def _build_model(*, probabilities) -> Model:
             }
         },
     )
-    dead = Regime(transition=None, functions={"utility": lambda: jnp.asarray(0.0)})
+    dead = Regime(
+        regime_transitions=None, functions={"utility": lambda: jnp.asarray(0.0)}
+    )
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=64, step="2Y"),

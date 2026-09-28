@@ -168,7 +168,7 @@ def _make_model(*, later_ceiling: float) -> Model:
         return LinSpacedGrid(start=0.0, stop=ceiling, n_points=2)
 
     single_f = Regime(
-        transition={
+        regime_transitions={
             "single_f": MarkovTransition(_stays_single),
             "single_f_terminal": MarkovTransition(_leaves_single),
         },
@@ -182,13 +182,13 @@ def _make_model(*, later_ceiling: float) -> Model:
         functions={"utility": _single_utility},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wealth": LinSpacedGrid(start=0.0, stop=INITIAL_CEILING, n_points=2)},
         functions={"utility": _zero_utility},
     )
     couple = Regime(
-        transition={"couple_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"couple_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wealth": COUPLE_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -210,7 +210,7 @@ def _make_model(*, later_ceiling: float) -> Model:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": COUPLE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},

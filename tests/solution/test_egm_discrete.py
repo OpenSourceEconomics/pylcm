@@ -111,7 +111,7 @@ def _get_skill_model() -> Model:
         active=lambda age, la=last_age: age < la,
     )
     retirement = dcegm_retirement_full.replace(
-        transition=RETIREMENT_TRANSITION,
+        regime_transitions=RETIREMENT_TRANSITION,
         state_transitions={
             "wealth": dcegm_retirement_full.state_transitions["wealth"],
         },
@@ -241,7 +241,7 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
                 active=lambda age, la=last_age: age < la,
             ),
             "retirement": base.retirement.replace(
-                transition=RETIREMENT_TRANSITION,
+                regime_transitions=RETIREMENT_TRANSITION,
                 state_transitions={"wealth": base.next_wealth},
                 active=lambda age, la=last_age: age < la,
             ),
@@ -289,7 +289,7 @@ def test_nan_regime_transition_prob_surfaces_as_error():
     model = Model(
         regimes={
             "retirement": dcegm_retirement.replace(
-                transition={
+                regime_transitions={
                     "retirement": MarkovTransition(_stay_prob_from_param),
                     "dead": MarkovTransition(_death_prob_from_param),
                 },
@@ -343,7 +343,7 @@ def test_undeclared_stateless_regime_does_not_enter_the_continuation():
             active=lambda age, la=last_age: age < la
         ),
         "retirement": dcegm_retirement_full.replace(
-            transition=RETIREMENT_TRANSITION,
+            regime_transitions=RETIREMENT_TRANSITION,
             active=lambda age, la=last_age: age < la,
         ),
         "dead": base.dead,
@@ -390,7 +390,7 @@ def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
             active=lambda age: age < 70,
         ),
         "retirement": dcegm_retirement_full.replace(
-            transition=RETIREMENT_TRANSITION,
+            regime_transitions=RETIREMENT_TRANSITION,
             state_transitions={
                 "wealth": dcegm_retirement_full.state_transitions["wealth"],
             },

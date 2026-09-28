@@ -47,13 +47,13 @@ def _build() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 state_transitions={"shock": {"target": _enter_at_several_values}},
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0

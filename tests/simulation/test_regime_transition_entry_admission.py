@@ -65,12 +65,12 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=MarkovTransition(probabilities),
+                regime_transitions=MarkovTransition(probabilities),
                 active=_active_alive,
                 functions={"utility": _utility},
             ),
             "done": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_active_done,
                 functions={"utility": _utility},
             ),
@@ -154,12 +154,14 @@ def _numerical_inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=MarkovTransition(_parameterized_regime_probabilities),
+                regime_transitions=MarkovTransition(
+                    _parameterized_regime_probabilities
+                ),
                 active=_active_alive,
                 functions={"utility": _alive_payoff},
             ),
             "done": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_active_done,
                 functions={"utility": _done_payoff},
             ),

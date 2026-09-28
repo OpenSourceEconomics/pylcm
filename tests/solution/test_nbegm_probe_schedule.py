@@ -95,7 +95,7 @@ def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     kind = DiscreteGrid(category_class=_Kind)
     alive = ConsumptionSavingsRegime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={"wealth": wealth, "kind": kind},
         state_transitions={
             "wealth": _next_wealth,
@@ -122,7 +122,7 @@ def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth, "kind": kind},
         functions={"utility": _bequest},
     )

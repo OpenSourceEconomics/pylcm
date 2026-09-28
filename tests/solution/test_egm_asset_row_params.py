@@ -218,7 +218,7 @@ def _resources_param_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(stay_prob_wealth),
             "dead": MarkovTransition(death_prob_wealth),
         },
@@ -351,7 +351,7 @@ def _smoothstep_intermediate_model(*, solver: str, rate_is_fixed: bool) -> Model
     }
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(stay_prob_share),
             "dead": MarkovTransition(death_prob_share),
         },
@@ -482,7 +482,7 @@ def _imputed_pension_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(stay_prob_wealth),
             "dead": MarkovTransition(death_prob_wealth),
         },
@@ -584,7 +584,7 @@ def resources_decreasing(*, wealth: ContinuousState, offset: float) -> FloatND:
 def _decreasing_resources_model() -> Model:
     """Asset-row DC-EGM regime whose resources decreases in wealth."""
     working = ConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "working_life": MarkovTransition(stay_prob_wealth),
             "dead": MarkovTransition(death_prob_wealth),
         },

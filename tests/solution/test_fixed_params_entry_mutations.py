@@ -106,12 +106,12 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
     model = Model(
         regimes={
             "source": Regime(
-                transition=transition,
+                regime_transitions=transition,
                 active=active,
                 functions={"utility": zero},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": utility},
             ),

@@ -124,7 +124,7 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
 
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
+        regime_transitions={
             "src": ValueDependentTransition(
                 probability=MarkovTransition(_prob_stay),
                 gate=_repeat_gate,
@@ -159,13 +159,13 @@ def _make_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src_repeat},
     )
     src_exit = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _u_src_exit},
     )
     src_fallback = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _u_src_fallback},

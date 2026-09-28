@@ -108,14 +108,14 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=_alive,
                 states={"health": grid},
                 state_transitions={"health": MarkovTransition(law)},
                 functions={"utility": _utility},
             ),
             "done": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_done,
                 states={"health": grid},
                 functions={"utility": _utility},

@@ -71,7 +71,7 @@ class MarkovTransition:
     regime active in the next period: every temporally compatible candidate
     must have a valid state handoff, and the check runs regardless of what
     probability the transition function happens to return at runtime. Use a
-    per-target dict on `Regime.transition` to declare narrower, structural
+    per-target dict on `Regime.regime_transitions` to declare narrower, structural
     support — a runtime-zero probability does not narrow it.
 
     """
@@ -357,7 +357,7 @@ class AgeSpecializedFunction(_AgeSpecialized):
     policy-dependent law of motion is expressed as a plain state transition that
     reads an `AgeSpecializedFunction` entry of `functions`; a direct
     `AgeSpecializedFunction` state-transition value, a specialized regime
-    `transition`, a regime transition whose dependency graph reads an
+    `regime_transitions`, a regime transition whose dependency graph reads an
     `AgeSpecializedFunction`, a `MarkovTransition(AgeSpecializedFunction(...))`, and
     any `AgeSpecializedFunction` in a terminal regime are rejected at `Regime`
     construction. Every concrete function returned by `build` must expose the same
@@ -479,7 +479,7 @@ class ByAge:
     - an `AgeRange` selects every grid age in `[start, stop)`.
 
     Cases may not overlap, and a nonterminal law may not cover the last age.
-    `None` — terminality — is only ever the top-level `Regime.transition`.
+    `None` — terminality — is only ever the top-level `Regime.regime_transitions`.
     """
 
     # keyword-only-exempt: primary-argument=cases
@@ -564,7 +564,8 @@ class ByAge:
             raise RegimeInitializationError(
                 f"`ByAge` covers the last age {ages.exact_values[last]} with a "
                 "nonterminal law, but no continuation exists there. Declare a "
-                "terminal regime (`transition=None`) for values at the last age."
+                "terminal regime (`regime_transitions=None`) for values at the "
+                "last age."
             )
         return ResolvedSchedule(
             ages=ages,
@@ -619,7 +620,8 @@ def _fail_if_not_a_nonterminal_law(law: object) -> None:
         if side is None:
             raise RegimeInitializationError(
                 "`None` marks a terminal regime only as the top-level "
-                "`Regime.transition`; a schedule case must be a nonterminal law. "
+                "`Regime.regime_transitions`; a schedule case must be a "
+                "nonterminal law. "
                 'Name the terminal regime to exit into it, e.g. `then="dead"`.'
             )
         if isinstance(side, ByAge):

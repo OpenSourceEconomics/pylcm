@@ -112,7 +112,7 @@ def get_shared_decision_model() -> Model:
         utilities={"f": _shared_utility_f, "m": _shared_utility_m}
     )
     couple = Regime(
-        transition=_to_shared_terminal,
+        regime_transitions=_to_shared_terminal,
         active=lambda age: age < 1,
         states={"wage": _SHARED_WAGE_GRID},
         state_transitions={"wage": _next_shared_wage},
@@ -120,7 +120,7 @@ def get_shared_decision_model() -> Model:
         functions={"utility": shared_utility},
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _SHARED_WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -209,19 +209,19 @@ def get_dissolution_model() -> Model:
     transition routes each stakeholder to their own singleton fallback.
     """
     single_f = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         functions={"utility": _single_f_value},
     )
     single_m = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         functions={"utility": _single_m_value},
     )
     married_with_participation = Regime(
-        transition={"married_terminal": MarkovTransition(_probability_one)},
+        regime_transitions={"married_terminal": MarkovTransition(_probability_one)},
         active=lambda age: (age >= 1) & (age < _DISSOLUTION_AGE),
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -257,7 +257,7 @@ def get_dissolution_model() -> Model:
         # gate-closed branch is each stakeholder's own single regime, so keying
         # this edge by one of them would send both partners there whenever the
         # household stays together.
-        transition={
+        regime_transitions={
             "married_with_participation": ValueDependentTransition(
                 probability=MarkovTransition(_probability_one),
                 gate=_no_dissolution,
@@ -290,7 +290,7 @@ def get_dissolution_model() -> Model:
         },
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= _DISSOLUTION_AGE,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},

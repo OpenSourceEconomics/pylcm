@@ -73,7 +73,7 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
 
     """
     shocked = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={"wealth": WEALTH_GRID, "wage_shock": FOLDED_SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -81,7 +81,7 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
         state_transitions={"wealth": _next_wealth},
     )
     shocked_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": WEALTH_GRID},
         functions={"utility": _terminal_utility},

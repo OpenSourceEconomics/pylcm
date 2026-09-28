@@ -48,7 +48,7 @@ def _prob_dead(*, age: float, hazard: float) -> FloatND:
 
 def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "transition": {
+        "regime_transitions": {
             "retired": MarkovTransition(
                 lambda age, hazard: 1.0 - _prob_dead(age=age, hazard=hazard)
             ),
@@ -75,7 +75,7 @@ def _certain_death(age: float) -> FloatND:
 
 def _retired_regime() -> UserRegime:
     return UserRegime(
-        transition={
+        regime_transitions={
             "dead": MarkovTransition(_certain_death),
         },
         # Outlives `work` by one age, so the mass `work` sends it in its final
@@ -93,7 +93,9 @@ def _build_model(work: UserRegime) -> Model:
         regimes={
             "work": work,
             "retired": _retired_regime(),
-            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+            "dead": UserRegime(
+                regime_transitions=None, functions={"utility": lambda: 0.0}
+            ),
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
@@ -162,7 +164,7 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
 
     work = _work_regime(state_transitions={"wealth": _next_wealth_growth})
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         functions={"utility": lambda wealth: 0.1 * wealth},
     )
@@ -238,7 +240,7 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
         return jnp.stack([jnp.zeros_like(dead), 1.0 - dead, dead])
 
     work = _work_regime(
-        transition=MarkovTransition(_prob_vector),
+        regime_transitions=MarkovTransition(_prob_vector),
         state_transitions={"wealth": _next_wealth},
     )
     model = _build_model(work)

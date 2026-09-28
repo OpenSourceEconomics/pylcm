@@ -40,7 +40,7 @@ def _next_regime() -> ScalarInt:
 
 
 working = UserRegime(
-    transition=_next_regime,
+    regime_transitions=_next_regime,
     active=lambda age: age < 30,
     states={
         "health": DiscreteGrid(category_class=Health),
@@ -54,7 +54,7 @@ working = UserRegime(
 )
 
 dead = UserRegime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 

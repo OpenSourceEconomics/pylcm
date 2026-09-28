@@ -84,9 +84,9 @@ def _model(law: Any) -> Model:
         "functions": {"utility": utility},
     }
     live = Regime(
-        transition=_next_regime, state_transitions={"good": law}, **common
+        regime_transitions=_next_regime, state_transitions={"good": law}, **common
     ).replace(active=lambda age: age < 2)
-    last = Regime(transition=None, state_transitions={}, **common).replace(
+    last = Regime(regime_transitions=None, state_transitions={}, **common).replace(
         active=lambda age: age >= 2
     )
     return Model(
@@ -210,7 +210,7 @@ def test_markov_and_process_states_coexist():
         "functions": {"utility": utility_with_shock},
     }
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         state_transitions={
             "good": Phased(
                 solve=MarkovTransition(next_good_belief),
@@ -219,7 +219,7 @@ def test_markov_and_process_states_coexist():
         },
         **common,
     ).replace(active=lambda age: age < 2)
-    last = Regime(transition=None, state_transitions={}, **common).replace(
+    last = Regime(regime_transitions=None, state_transitions={}, **common).replace(
         active=lambda age: age >= 2
     )
     model = Model(
@@ -283,11 +283,11 @@ def test_continuation_helper_resolves_from_the_solve_phase():
         },
     }
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         state_transitions={"good": MarkovTransition(next_good)},
         **common,
     ).replace(active=lambda age: age < 2)
-    last = Regime(transition=None, state_transitions={}, **common).replace(
+    last = Regime(regime_transitions=None, state_transitions={}, **common).replace(
         active=lambda age: age >= 2
     )
     model = Model(
@@ -326,7 +326,7 @@ def test_both_phase_variants_get_their_own_metadata_entry():
     would reach the solver unchecked.
     """
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         state_transitions={
             "good": Phased(
                 solve=MarkovTransition(next_good_belief),
@@ -350,7 +350,7 @@ def test_both_phase_variants_get_their_own_metadata_entry():
 def test_bare_law_keeps_its_unqualified_key_and_no_phase():
     """A phase-invariant law is untouched by the phase tagging."""
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         state_transitions={"good": MarkovTransition(next_good_actual)},
         states={"good": DiscreteGrid(category_class=Good)},
         actions={"move": DiscreteGrid(category_class=Move)},

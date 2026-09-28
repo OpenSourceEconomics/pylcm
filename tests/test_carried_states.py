@@ -72,7 +72,7 @@ def _working_active(age: float) -> bool:
 def _build_pension_regime() -> UserRegime:
     """A non-terminal regime whose pension wealth is a carried state."""
     return UserRegime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=_working_active,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -93,7 +93,7 @@ def _build_pension_regime() -> UserRegime:
     )
 
 
-_DEAD = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+_DEAD = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
 
 
 def _build_pension_model(*, pension_as_pair: bool) -> Model:
@@ -107,7 +107,7 @@ def _build_pension_model(*, pension_as_pair: bool) -> Model:
         working = _build_pension_regime()
     else:
         working = UserRegime(
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             active=_working_active,
             states={
                 "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -264,7 +264,7 @@ def _retired_utility(pension_wealth: float) -> FloatND:
     return jnp.log(pension_wealth)
 
 
-_DEAD3 = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+_DEAD3 = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
 
 
 def _build_handover_model() -> Model:
@@ -275,7 +275,7 @@ def _build_handover_model() -> Model:
     hand-over on the crossing.
     """
     working = UserRegime(
-        transition=_next_regime_from_working,
+        regime_transitions=_next_regime_from_working,
         active=lambda age: age < 64,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -295,7 +295,7 @@ def _build_handover_model() -> Model:
         functions={"utility": _utility},
     )
     retired = UserRegime(
-        transition=_next_regime_from_retired,
+        regime_transitions=_next_regime_from_retired,
         active=lambda age: 64 <= age < 66,
         states={
             "pension_wealth": Phased(
@@ -455,7 +455,7 @@ def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
         return next_pension_wealth >= 0.0
 
     working = UserRegime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 64,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),

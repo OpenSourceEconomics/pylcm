@@ -66,7 +66,10 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"a": MarkovTransition(_to_a), "b": MarkovTransition(_to_b)},
+                regime_transitions={
+                    "a": MarkovTransition(_to_a),
+                    "b": MarkovTransition(_to_b),
+                },
                 active=lambda age: age < 21,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _keep},
@@ -74,12 +77,12 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
                 certainty_equivalent=certainty_equivalent,
             ),
             "a": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _pays_wealth},
             ),
             "b": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _pays_ten_times},
             ),
@@ -155,7 +158,7 @@ def test_a_signed_cell_on_a_target_that_drops_out_is_refused_by_validation() -> 
 
     def _terminal(active) -> Regime:
         return Regime(
-            transition=None,
+            regime_transitions=None,
             active=active,
             states={"wealth": _WEALTH},
             functions={"utility": _pays_wealth},
@@ -164,7 +167,7 @@ def test_a_signed_cell_on_a_target_that_drops_out_is_refused_by_validation() -> 
     model = Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "live": MarkovTransition(_all_mass_to_live),
                     "gone_a": MarkovTransition(_positive_on_a_dead_target),
                     "gone_b": MarkovTransition(_negative_on_a_dead_target),

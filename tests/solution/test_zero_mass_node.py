@@ -61,14 +61,14 @@ def model() -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
+                regime_transitions=_next_regime,
                 active=lambda age: age < 26,
                 states={"health": DiscreteGrid(category_class=_Health)},
                 state_transitions={"health": MarkovTransition(_health_probs)},
                 functions={"utility": _alive_utility},
             ),
             "last": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 26,
                 states={"health": DiscreteGrid(category_class=_Health)},
                 actions={"spend": DiscreteGrid(category_class=_Spend)},

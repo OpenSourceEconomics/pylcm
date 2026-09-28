@@ -202,7 +202,7 @@ def _make_participation_model() -> Model:
 
     """
     couple = Regime(
-        transition={"couple_terminal": MarkovTransition(_certain_transition)},
+        regime_transitions={"couple_terminal": MarkovTransition(_certain_transition)},
         active=lambda age: age < 1,
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
@@ -224,7 +224,7 @@ def _make_participation_model() -> Model:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -235,7 +235,7 @@ def _make_participation_model() -> Model:
         },
     )
     single_f = Regime(
-        transition={"single_f_terminal": MarkovTransition(_certain_transition)},
+        regime_transitions={"single_f_terminal": MarkovTransition(_certain_transition)},
         active=lambda age: age < 1,
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
@@ -243,7 +243,7 @@ def _make_participation_model() -> Model:
         functions={"utility": _single_f_utility},
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _zero_terminal_utility},

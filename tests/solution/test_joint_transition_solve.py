@@ -102,7 +102,7 @@ def _build_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain_target)},
+                regime_transitions={"target": MarkovTransition(_certain_target)},
                 active=lambda age: age < 21,
                 functions={"utility": lambda: jnp.asarray(0.0)},
                 joint_transitions={
@@ -120,7 +120,7 @@ def _build_model(
                 },
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
                     "income": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
@@ -364,7 +364,7 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
     return Model(
         regimes={
             "single": Regime(
-                transition={
+                regime_transitions={
                     "couple": ValueDependentTransition(
                         probability=MarkovTransition(_bdy_certain_couple),
                         gate=_bdy_gate_always_open,
@@ -398,13 +398,13 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
                 },
             ),
             "single_terminal": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
                 functions={"utility": _bdy_fallback_utility},
             ),
             "couple": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=lambda age: age >= 1,
                 actions={"household_choice": DiscreteGrid(category_class=BDYChoice)},
                 states={

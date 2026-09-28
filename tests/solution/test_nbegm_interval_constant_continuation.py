@@ -113,7 +113,7 @@ def test_transition_prob_piecewise_constant_in_liquid_builds() -> None:
         transition_smooth=False,
     )
     transition = cast(
-        "Mapping[str, MarkovTransition]", model.user_regimes["alive"].transition
+        "Mapping[str, MarkovTransition]", model.user_regimes["alive"].regime_transitions
     )
     assert "liquid" in inspect.signature(transition["alive"].func).parameters
 

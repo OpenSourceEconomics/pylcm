@@ -379,7 +379,7 @@ def _chain_link(*, terminal_name, reference_regime):
 
     kernels = _chain_kernels()
     return Regime(
-        transition={terminal_name: MarkovTransition(kernels["to_terminal"])},
+        regime_transitions={terminal_name: MarkovTransition(kernels["to_terminal"])},
         active=lambda age: age < 1,
         states={"wealth": _chain_wealth_grid()},
         state_transitions={"wealth": kernels["next_wealth"]},
@@ -399,7 +399,7 @@ def _chain_link_terminal():
 
     kernels = _chain_kernels()
     return Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _chain_wealth_grid()},
         actions={"consumption": _chain_consumption_grid()},

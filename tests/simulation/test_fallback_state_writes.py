@@ -307,7 +307,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
     if carrying_fallback:
         wife_projection = {"wage": _identity_wage, "career": _project_career}
         single_f = Regime(
-            transition={"single_f_terminal": MarkovTransition(_prob_one)},
+            regime_transitions={"single_f_terminal": MarkovTransition(_prob_one)},
             active=lambda age: (age >= 1) & (age < 2),
             states={
                 "wage": _WAGE,
@@ -323,7 +323,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
     else:
         wife_projection = {"wage": _identity_wage}
         single_f = Regime(
-            transition={"single_f_terminal": MarkovTransition(_prob_one)},
+            regime_transitions={"single_f_terminal": MarkovTransition(_prob_one)},
             active=lambda age: (age >= 1) & (age < 2),
             states={"wage": _WAGE},
             state_transitions={"wage": fixed_transition("wage")},
@@ -332,7 +332,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         )
 
     married = Regime(
-        transition={
+        regime_transitions={
             "married_terminal": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
@@ -363,7 +363,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -374,7 +374,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         },
     )
     single_m = Regime(
-        transition={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(_prob_one)},
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
@@ -382,7 +382,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         functions={"utility": _utility_single_m},
     )
     single_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},

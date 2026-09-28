@@ -56,7 +56,7 @@ def _fake_peak(
 
 def _model(*, carry: bool, budget_bytes: int) -> Model:
     acting = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < _N_PERIODS,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -67,7 +67,7 @@ def _model(*, carry: bool, budget_bytes: int) -> Model:
         functions={"utility": _utility},
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= _N_PERIODS,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         functions={"utility": _terminal_utility},

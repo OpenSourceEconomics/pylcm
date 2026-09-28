@@ -99,7 +99,7 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints={"declared": constraint},
-        transition=next_regime,
+        regime_transitions=next_regime,
         functions={"utility": utility, "savings": savings},
         active=lambda age: age == 0,
         solver=solver,
@@ -107,7 +107,7 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
     )
     done_regime = Regime(
         actions={},
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         active=lambda age: age == 1,

@@ -250,7 +250,7 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
     return Model(
         regimes={
             name: Regime(
-                transition={name: MarkovTransition(_stay)},
+                regime_transitions={name: MarkovTransition(_stay)},
                 active=_always,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},
@@ -261,7 +261,7 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
         }
         | {
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
             )

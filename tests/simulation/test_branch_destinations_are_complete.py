@@ -66,7 +66,7 @@ def _prosperous_enough(wage: ContinuousState) -> BoolND:
 
 def _make_model() -> Model:
     household = Regime(
-        transition={
+        regime_transitions={
             "household_next": ValueDependentTransition(
                 probability=MarkovTransition(_certain),
                 gate=_prosperous_enough,
@@ -95,7 +95,7 @@ def _make_model() -> Model:
         functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     household_next = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={
@@ -105,7 +105,7 @@ def _make_model() -> Model:
         },
     )
     care_pair = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={
@@ -115,7 +115,7 @@ def _make_model() -> Model:
         },
     )
     lodging = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _zero},

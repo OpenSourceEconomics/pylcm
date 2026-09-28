@@ -74,7 +74,7 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 21,
                 states={},
                 state_transitions={
@@ -85,7 +85,7 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
                 certainty_equivalent=certainty_equivalent,
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
                     "health": DiscreteGrid(category_class=Health),

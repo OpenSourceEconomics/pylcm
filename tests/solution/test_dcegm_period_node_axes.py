@@ -84,7 +84,7 @@ def _model(
     grid = LinSpacedGrid(start=1.0, stop=20.0, n_points=4)
     old_domain = ShortHealth if short_old_health else Health
     parent = ConsumptionSavingsRegime(
-        transition={
+        regime_transitions={
             "young": MarkovTransition(young_probability),
             "old": MarkovTransition(old_probability),
         },
@@ -122,18 +122,18 @@ def _model(
         regimes={
             "parent": parent,
             "young": parent.replace(
-                transition={"dead": MarkovTransition(death_probability)},
+                regime_transitions={"dead": MarkovTransition(death_probability)},
                 active=lambda age: age == 50,
                 state_transitions={"wealth": next_wealth, "health": {}},
             ),
             "old": parent.replace(
-                transition={"dead": MarkovTransition(death_probability)},
+                regime_transitions={"dead": MarkovTransition(death_probability)},
                 active=lambda age: age == 60 or (overlapping_children and age == 50),
                 states={"wealth": grid, "health": DiscreteGrid(old_domain)},
                 state_transitions={"wealth": next_wealth, "health": {}},
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": grid},
                 functions={"utility": final_bequest},
             ),

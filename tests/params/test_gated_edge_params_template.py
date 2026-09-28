@@ -199,7 +199,7 @@ def _build_model(
 
     """
     single_f = Regime(
-        transition={
+        regime_transitions={
             "married_terminal": ValueDependentTransition(
                 probability=MarkovTransition(_marry_for_sure),
                 gate=gate,
@@ -231,7 +231,7 @@ def _build_model(
         functions={"utility": _utility_single_f},
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -242,13 +242,13 @@ def _build_model(
         },
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _utility_single_f_terminal},
     )
     single_m_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _utility_single_m_terminal},

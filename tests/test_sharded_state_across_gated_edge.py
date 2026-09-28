@@ -212,7 +212,7 @@ def build_model(
         else MarkovTransition(_half_before_age_two)
     )
     solo = Regime(
-        transition={
+        regime_transitions={
             "solo": MarkovTransition(_all_before_age_two),
             "dead": MarkovTransition(_none_before_age_two),
         },
@@ -226,7 +226,7 @@ def build_model(
         },
     )
     pair = Regime(
-        transition={
+        regime_transitions={
             "pair": MarkovTransition(_half_before_age_two),
             "mate": leaving,
             "dead": MarkovTransition(_none_before_age_two),
@@ -244,7 +244,7 @@ def build_model(
         },
     )
     mate = Regime(
-        transition={
+        regime_transitions={
             "mate": MarkovTransition(_all_before_age_two),
             "dead": MarkovTransition(_none_before_age_two),
         },
@@ -258,7 +258,7 @@ def build_model(
         },
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},

@@ -123,7 +123,7 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
 
     """
     couple = Regime(
-        transition=_next_couple_regime,
+        regime_transitions=_next_couple_regime,
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -133,7 +133,7 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -174,7 +174,7 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
 
     """
     couple = Regime(
-        transition=_next_couple_regime,
+        regime_transitions=_next_couple_regime,
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -184,7 +184,7 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -220,14 +220,14 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
 
     """
     shocked = Regime(
-        transition=_next_shock_regime,
+        regime_transitions=_next_shock_regime,
         active=lambda age: age < 1,
         states={"wage_shock": FOLDED_SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _shock_utility},
     )
     shocked_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _fold_terminal_utility},
     )
@@ -260,7 +260,7 @@ def make_folding_collective_regime_kwargs() -> dict[str, Any]:
 
     """
     return {
-        "transition": _next_couple_regime,
+        "regime_transitions": _next_couple_regime,
         "active": lambda age: age < 1,
         "states": {"wage_shock": FOLDED_SHOCK},
         "actions": {"work": DiscreteGrid(category_class=Work)},
@@ -286,7 +286,7 @@ def make_folding_collective_regimes() -> dict[str, Regime]:
 
     """
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={},
         actions={"work": DiscreteGrid(category_class=Work)},

@@ -75,14 +75,14 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 
 def _make_model(*, participation: bool) -> Model:
     couple = Regime(
-        transition={"couple_terminal": MarkovTransition(_certain)},
+        regime_transitions={"couple_terminal": MarkovTransition(_certain)},
         active=lambda age: age < 1,
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={
@@ -107,7 +107,7 @@ def _make_model(*, participation: bool) -> Model:
         ),
     )
     single_f_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         functions={"utility": _outside_option},
@@ -215,7 +215,7 @@ def test_a_terminal_singleton_regime_still_refuses_value_constraints() -> None:
     """
     with pytest.raises(Exception, match="value_constraints"):
         Regime(
-            transition=None,
+            regime_transitions=None,
             states={"wage": _WAGE},
             functions={"utility": _wage_for_her},
             constraints={

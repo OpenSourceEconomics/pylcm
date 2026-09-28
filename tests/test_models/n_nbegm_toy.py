@@ -381,7 +381,7 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=regime_transition,
+            regime_transitions=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
@@ -402,7 +402,7 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=regime_transition,
+            regime_transitions=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
@@ -422,7 +422,7 @@ def build_model(
             ),
         )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=final_age_alive: terminal_active_from_start or age > n,
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         functions={"utility": terminal_utility_function},

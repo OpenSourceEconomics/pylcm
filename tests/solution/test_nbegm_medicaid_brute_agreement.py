@@ -198,7 +198,7 @@ def _build_model(
             }
         },
         constraints={},
-        transition={
+        regime_transitions={
             "alive": MarkovTransition(toy.prob_stay_alive),
             "dead": MarkovTransition(toy.prob_die),
         },
@@ -224,7 +224,7 @@ def _build_model(
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": grid},
         functions={"utility": toy.bequest},
         active=lambda age: age >= 1.0,

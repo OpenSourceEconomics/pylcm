@@ -209,7 +209,7 @@ def _same_grid_markov_model(solver: str) -> Model:
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
@@ -332,7 +332,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     early = regime_type(
-        transition={
+        regime_transitions={
             "late": MarkovTransition(to_live_prob),
             "dead": MarkovTransition(to_dead_prob),
         },
@@ -370,7 +370,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
         ),
     )
     late = regime_type(
-        transition={
+        regime_transitions={
             "late": MarkovTransition(to_live_prob),
             "dead": MarkovTransition(to_dead_prob),
         },
@@ -485,7 +485,7 @@ def _joint_process_markov_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
         states={
@@ -617,7 +617,7 @@ def _point_mass_floor_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
+        regime_transitions=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},

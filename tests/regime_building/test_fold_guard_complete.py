@@ -121,7 +121,7 @@ _AGES_2P = AgeGrid(start=0, stop=2, step="Y")
 def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (SINGLETON, folds `wage_shock`)."""
     source = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_true_gate,
@@ -139,12 +139,12 @@ def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
         functions={"utility": _u_work},
     )
     source_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _u_zero},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -180,14 +180,14 @@ def _dummy_constraint(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
 def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     """`reader` (collective) --same_period_refs--> `ref_target` (SINGLETON, folded)."""
     ref_target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     reader = Regime(
-        transition={"reader_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"reader_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -206,7 +206,7 @@ def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
         },
     )
     reader_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -248,7 +248,7 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
     either kind of reference name.
     """
     source = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
@@ -268,14 +268,14 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
         functions={"utility": _u_work},
     )
     fallback_regime = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -321,7 +321,7 @@ def test_fold_with_nonlinear_certainty_equivalent_is_rejected():
     """
     with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
         Regime(
-            transition={"terminal": MarkovTransition(_prob_one)},
+            regime_transitions={"terminal": MarkovTransition(_prob_one)},
             active=lambda age: age < 1,
             states={"wage_shock": _shock(fold=True)},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -333,7 +333,7 @@ def test_fold_with_nonlinear_certainty_equivalent_is_rejected():
 def test_fold_without_certainty_equivalent_still_constructs():
     """Pin: the SAME topology with no `certainty_equivalent` still constructs."""
     Regime(
-        transition={"terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -355,7 +355,7 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
     so no rule may fire.
     """
     source = Regime(
-        transition={
+        regime_transitions={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
                 gate=lambda wage_shock: wage_shock > 0.0,
@@ -374,12 +374,12 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
         functions={"utility": _u_f},
     )
     source_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": _u_zero},
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},

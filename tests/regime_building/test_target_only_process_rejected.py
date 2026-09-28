@@ -74,7 +74,7 @@ def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Mo
     return Model(
         regimes={
             "source": Regime(
-                transition=transition,
+                regime_transitions=transition,
                 active=_source_is_early,
                 states=source_states,
                 functions={
@@ -82,7 +82,7 @@ def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Mo
                 },
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -100,12 +100,12 @@ def _target_only_process_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -213,13 +213,13 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
         return Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
+                    regime_transitions={"target": MarkovTransition(_one_probability)},
                     active=_source_is_early,
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
@@ -238,7 +238,7 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
         return Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
+                    regime_transitions={"target": MarkovTransition(_one_probability)},
                     active=_source_is_early,
                     states={"shock": process},
                     state_transitions={
@@ -247,7 +247,7 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={
                         "shock": process,
                         "extra": LinSpacedGrid(start=0, stop=1, n_points=2),
@@ -288,7 +288,7 @@ def _explicit_entry_model(process: TauchenAR1Process) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 state_transitions={
                     "shock": {"target": lambda: jnp.float32(0)},
@@ -296,7 +296,7 @@ def _explicit_entry_model(process: TauchenAR1Process) -> Model:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -349,12 +349,12 @@ def test_activity_incompatible_target_only_process_is_accepted() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_forced_out,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_target_can_work,
                 states={
                     "shock": TauchenAR1Process(
@@ -381,12 +381,12 @@ def test_coarse_activity_incompatible_target_only_process_is_accepted() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition=_next_target,
+                regime_transitions=_next_target,
                 active=_source_is_forced_out,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 active=_target_can_work,
                 states={
                     "shock": TauchenAR1Process(
@@ -417,12 +417,12 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
+                    regime_transitions={"target": MarkovTransition(_one_probability)},
                     active=_source_is_early,
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={
                         "shock": LinSpacedGrid(start=-1, stop=1, n_points=3),
                     },
@@ -462,12 +462,12 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
         Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
+                    regime_transitions={"target": MarkovTransition(_one_probability)},
                     active=_source_is_early,
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
-                    transition={"terminal": MarkovTransition(_one_probability)},
+                    regime_transitions={"terminal": MarkovTransition(_one_probability)},
                     states={"shock": DiscreteGrid(category_class=_Outcome)},
                     # Target's own outgoing (target -> terminal) law satisfies
                     # completeness; it says nothing about the incoming
@@ -476,7 +476,7 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
                     functions={"utility": _shock_utility},
                 ),
                 "terminal": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     functions={"utility": _zero_utility},
                 ),
             },
@@ -495,13 +495,13 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 state_transitions={"shock": {"target": _enter_shock}},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": LinSpacedGrid(start=-1, stop=1, n_points=3),
                 },
@@ -539,13 +539,13 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 state_transitions={"shock": {"target": MarkovTransition(_entry_probs)}},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),
@@ -588,13 +588,13 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
+                regime_transitions={"target": MarkovTransition(_one_probability)},
                 active=_source_is_early,
                 state_transitions={"shock": {"target": MarkovTransition(_entry_probs)}},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),

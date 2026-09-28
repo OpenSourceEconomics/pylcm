@@ -112,7 +112,7 @@ _STATES = {
 
 def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         state_transitions={"stock": carry_new_stock, "tag": tag_law},
         states=_STATES,
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -122,7 +122,7 @@ def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
         },
     ).replace(active=lambda age: age < 2)
     last = Regime(
-        transition=None,
+        regime_transitions=None,
         state_transitions={},
         states=_STATES,
         actions={"move": DiscreteGrid(category_class=Move)},

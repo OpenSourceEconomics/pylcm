@@ -121,14 +121,14 @@ def _project_shock(wage: FloatND) -> FloatND:
 
 def _make_shock_ref_regimes() -> dict[str, Regime]:
     shock_ref = Regime(
-        transition={"shock_ref_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"shock_ref_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"shock": _SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_shock_ref},
     )
     shock_ref_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         functions={"utility": lambda: 0.0},
     )
@@ -241,7 +241,7 @@ def _vc_f(*, Q_f: FloatND, V_shock_ref: FloatND) -> BoolND:
 def _make_regimes() -> dict[str, Regime]:
     regimes = _make_shock_ref_regimes()
     married = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
@@ -263,7 +263,7 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},

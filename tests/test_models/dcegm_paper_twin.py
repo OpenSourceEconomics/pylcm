@@ -191,13 +191,13 @@ def next_regime_from_retirement(age: float) -> ScalarInt:
 
 
 done_from_working = UserRegime(
-    transition=None,
+    regime_transitions=None,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_done_from_working},
 )
 
 done_retired = UserRegime(
-    transition=None,
+    regime_transitions=None,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_done_retired},
 )
@@ -212,7 +212,7 @@ def _working_life(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        transition=next_regime_from_working,
+        regime_transitions=next_regime_from_working,
         states={"wealth": WEALTH_GRID},
         actions={
             "work_choice": DiscreteGrid(category_class=WorkChoice),
@@ -231,7 +231,7 @@ def _working_life(
     if solver == "brute_force":
         return brute
     return ConsumptionSavingsRegime(
-        transition=brute.transition,
+        regime_transitions=brute.regime_transitions,
         states=brute.states,
         actions=brute.actions,
         taste_shocks=brute.taste_shocks,
@@ -259,7 +259,7 @@ def _retirement(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        transition=next_regime_from_retirement,
+        regime_transitions=next_regime_from_retirement,
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         active=lambda age: age <= LAST_ALIVE_AGE,
@@ -270,7 +270,7 @@ def _retirement(
     if solver == "brute_force":
         return brute
     return ConsumptionSavingsRegime(
-        transition=brute.transition,
+        regime_transitions=brute.regime_transitions,
         states=brute.states,
         actions=brute.actions,
         taste_shocks=brute.taste_shocks,

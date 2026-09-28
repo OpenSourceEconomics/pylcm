@@ -86,9 +86,9 @@ def _simulate(law: Any) -> pd.DataFrame:
         "functions": {"utility": utility},
     }
     live = Regime(
-        transition=_next_regime, state_transitions={"good": law}, **common
+        regime_transitions=_next_regime, state_transitions={"good": law}, **common
     ).replace(active=lambda age: age < 2)
-    last = Regime(transition=None, state_transitions={}, **common).replace(
+    last = Regime(regime_transitions=None, state_transitions={}, **common).replace(
         active=lambda age: age >= 2
     )
     model = Model(

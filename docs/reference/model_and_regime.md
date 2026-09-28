@@ -79,7 +79,7 @@ A general regime declares:
 
 | Field                  | Contract                                                                                       |
 | ---------------------- | ---------------------------------------------------------------------------------------------- |
-| `transition`           | Regime transition callable, stochastic declaration, per-target mapping, or `None` for terminal |
+| `regime_transitions`   | Regime transition callable, stochastic declaration, per-target mapping, or `None` for terminal |
 | `active`               | Age predicate; omitted means always active                                                     |
 | `states` / `actions`   | Name-to-grid mappings                                                                          |
 | `functions`            | Named DAG functions; a finalized regime needs utility                                          |

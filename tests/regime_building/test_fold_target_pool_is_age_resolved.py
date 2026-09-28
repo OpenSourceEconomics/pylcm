@@ -133,7 +133,7 @@ def _plain_bonus(wealth: ContinuousState) -> FloatND:
 def _build_model() -> Model:
     """Build a worker whose `bonus` helper is bound per age."""
     worker = Regime(
-        transition={"dead": MarkovTransition(_prob_one)},
+        regime_transitions={"dead": MarkovTransition(_prob_one)},
         active=lambda age: age < 3,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": {"dead": _keep_wealth}},
@@ -143,7 +143,7 @@ def _build_model() -> Model:
         },
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         functions={"utility": _terminal_utility},

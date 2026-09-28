@@ -86,11 +86,11 @@ def test_validation_vmaps_over_action_combos():
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age, n=n_periods: age < n - 1,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age, n=n_periods: age >= n - 1,
     )

@@ -65,7 +65,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
     model = Model(
         regimes={
             "alive": UserRegime(
-                transition=_width_collision_next_regime,
+                regime_transitions=_width_collision_next_regime,
                 active=lambda age: age == 0,
                 functions={"utility": _width_collision_utility},
                 actions={
@@ -73,7 +73,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
                 },
             ),
             "done": UserRegime(
-                transition=None,
+                regime_transitions=None,
                 functions={"utility": _width_collision_terminal_utility},
             ),
         },

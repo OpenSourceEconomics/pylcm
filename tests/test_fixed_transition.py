@@ -54,7 +54,7 @@ def _next_regime(age: float) -> ScalarInt:
 def _build_regime(**overrides: Any) -> UserRegime:
     """A small valid regime with a fixed health state; tests override slots."""
     spec: dict[str, Any] = {
-        "transition": _next_regime,
+        "regime_transitions": _next_regime,
         "active": lambda age: age < 2,
         "states": {
             "health": DiscreteGrid(category_class=_Health),
@@ -73,7 +73,7 @@ def _build_regime(**overrides: Any) -> UserRegime:
 
 def _build_model(work: UserRegime) -> Model:
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 1,
     )

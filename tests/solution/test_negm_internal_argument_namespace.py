@@ -40,7 +40,7 @@ def _alive_regime_with_outer_node_named(
             "consumption": toy.CONSUMPTION_GRID,
             "illiquid_investment": toy.ILLIQUID_INVESTMENT_GRID,
         },
-        transition=toy.next_regime,
+        regime_transitions=toy.next_regime,
         functions={
             "utility": toy.utility,
             outer_node: toy.new_durable,

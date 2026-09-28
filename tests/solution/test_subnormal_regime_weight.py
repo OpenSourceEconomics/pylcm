@@ -113,7 +113,7 @@ def _model(
     return Model(
         regimes={
             "source": Regime(
-                transition={
+                regime_transitions={
                     "common": MarkovTransition(_certain),
                     "rare": MarkovTransition(rare_probability),
                 },
@@ -121,9 +121,11 @@ def _model(
                 functions={"utility": _no_utility},
                 certainty_equivalent=certainty_equivalent,
             ),
-            "common": Regime(transition=None, functions={"utility": _common_payoff}),
+            "common": Regime(
+                regime_transitions=None, functions={"utility": _common_payoff}
+            ),
             "rare": Regime(
-                transition=None,
+                regime_transitions=None,
                 states=rare_states,
                 functions={"utility": rare_utility},
             ),

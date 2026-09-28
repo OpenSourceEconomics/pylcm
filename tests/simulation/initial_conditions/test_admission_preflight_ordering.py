@@ -314,7 +314,7 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
     actions = {"consumption": LinSpacedGrid(start=2, stop=3, n_points=2)}
     regimes = {
         name: UserRegime(
-            transition=next_regime,
+            regime_transitions=next_regime,
             active=lambda age: age == 0,
             states=states,
             actions=actions,
@@ -328,7 +328,7 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
         )
     }
     regimes["dead"] = UserRegime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age == 1,
         states=states,
         functions={"utility": terminal_utility},

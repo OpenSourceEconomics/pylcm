@@ -74,7 +74,7 @@ ONE_MARGIN = LiquidMargin(
 def build_one_margin_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, one-margin model solved by plain EGM."""
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
@@ -90,7 +90,7 @@ def build_one_margin_model(*, enable_jit: bool = True) -> Model:
         active=lambda age: age == 0,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": WEALTH_GRID},
         functions={"utility": terminal_utility},
         active=lambda age: age == 1,
@@ -163,7 +163,7 @@ TAX_MARGIN = LiquidMargin(
 def build_kinked_tax_model(*, enable_jit: bool = True) -> Model:
     """Build the smallest NBEGM model with a continuous tax-bracket kink."""
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         states={"liquid": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"liquid": next_liquid},
@@ -185,7 +185,7 @@ def build_kinked_tax_model(*, enable_jit: bool = True) -> Model:
         active=lambda age: age == 0,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": WEALTH_GRID},
         functions={"utility": tax_terminal_utility},
         active=lambda age: age == 1,
@@ -298,7 +298,7 @@ OUTER_MARGIN = OuterContinuousMargin(
 def build_nested_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, two-margin model solved by nested EGM."""
     working = NestedConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         actions={
             "consumption": CONSUMPTION_GRID,
@@ -331,7 +331,7 @@ def build_nested_model(*, enable_jit: bool = True) -> Model:
         active=lambda age: age == 0,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": nested_terminal_utility},
         active=lambda age: age == 1,

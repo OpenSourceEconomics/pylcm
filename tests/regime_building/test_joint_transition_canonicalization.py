@@ -47,13 +47,13 @@ def _specs(
     state_transitions: dict[str, object] | None = None,
 ) -> MappingProxyType[str, PhasedRegimeSpec]:
     source = Regime(
-        transition={"target": MarkovTransition(_probability)},
+        regime_transitions={"target": MarkovTransition(_probability)},
         functions={"utility": lambda: jnp.asarray(0.0)},
         state_transitions=state_transitions or {},  # ty: ignore[invalid-argument-type]
         joint_transitions=joint_transitions,
     )
     target = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
         functions={"utility": lambda wealth: wealth},
     )

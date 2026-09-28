@@ -303,7 +303,7 @@ def _raw_transition_reads(source: str) -> list[ast.Attribute]:
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Attribute)
-        and node.attr in {"transition", "state_transitions"}
+        and node.attr in {"regime_transitions", "transition", "state_transitions"}
         and not (
             node.attr == "transition"
             and (

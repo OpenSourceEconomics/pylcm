@@ -99,7 +99,7 @@ _EXPECTED_V_PERIOD_0 = np.array([[46.0, 92.0], [78.0, 156.0]])
 
 def _make_couple_regimes() -> dict[str, Regime]:
     couple = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -109,7 +109,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -241,7 +241,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
       (m, wage=40): work analogously -> V=(80.375+5m, 156)
     """
     couple = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={"mood": DiscreteGrid(category_class=Mood), "wage": _WAGE_GRID},
         state_transitions={
@@ -256,7 +256,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
         },
     )
     couple_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"mood": DiscreteGrid(category_class=Mood), "wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -372,7 +372,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
         return wage
 
     couple = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
@@ -382,7 +382,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
         },
     )
     single_terminal = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_single},
@@ -418,7 +418,7 @@ def test_collective_regime_with_taste_shocks_is_rejected():
     """EV1 taste shocks on a collective regime are out of scope."""
     with pytest.raises(NotImplementedError, match="taste shocks"):
         Regime(
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             taste_shocks=ExtremeValueTasteShocks(),
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": _next_wage},
@@ -435,7 +435,7 @@ def test_collective_regime_with_certainty_equivalent_is_rejected():
     """A nonlinear certainty equivalent on a collective regime is out of scope."""
     with pytest.raises(NotImplementedError, match="certainty equivalent"):
         Regime(
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             certainty_equivalent=PowerMean(),
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": _next_wage},

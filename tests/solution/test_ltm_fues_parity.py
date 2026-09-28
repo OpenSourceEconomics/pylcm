@@ -148,7 +148,7 @@ def test_ltm_publishes_neg_inf_for_all_infeasible_combo_like_fues():
                 "retirement": _with_backend(
                     regime=dcegm_retirement_full, envelope=envelope
                 ).replace(
-                    transition=retirement_transition,
+                    regime_transitions=retirement_transition,
                     state_transitions={
                         "wealth": dcegm_retirement_full.state_transitions["wealth"],
                     },

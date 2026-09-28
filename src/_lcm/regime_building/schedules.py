@@ -1,9 +1,9 @@
 """Lower dated regime declarations into coverage, support and period-indexed laws.
 
-A regime's `transition` declares where it is solved and where it may go. This
+A regime's `regime_transitions` declares where it is solved and where it may go. This
 module is the single place that reads it for that purpose:
 
-- `transition=None` is terminal and covered at every age;
+- `regime_transitions=None` is terminal and covered at every age;
 - a plain nonterminal law — a regime name, a `Choose`, a vector
   `MarkovTransition` with `targets`, or a per-target mapping — covers every
   non-final age;
@@ -107,7 +107,8 @@ def resolve_regime_schedules(
 ) -> RegimeSchedules:
     """Resolve every regime's declared coverage, support and engine law."""
     dated = any(
-        is_dated_declaration(regime.transition) for regime in user_regimes.values()
+        is_dated_declaration(regime.regime_transitions)
+        for regime in user_regimes.values()
     )
     if not dated:
         coverage = {
@@ -119,7 +120,10 @@ def resolve_regime_schedules(
             coverage_by_regime=MappingProxyType(coverage),
             support_by_phase=MappingProxyType({}),
             transitions=MappingProxyType(
-                {name: regime.transition for name, regime in user_regimes.items()}
+                {
+                    name: regime.regime_transitions
+                    for name, regime in user_regimes.items()
+                }
             ),
         )
 
@@ -131,7 +135,7 @@ def resolve_regime_schedules(
     ] = {phase: {} for phase in _PHASES}
     transitions: dict[RegimeName, object] = {}
     for name, regime in user_regimes.items():
-        transition = regime.transition
+        transition = regime.regime_transitions
         if transition is None:
             coverage[name] = all_periods
             transitions[name] = None
@@ -702,7 +706,7 @@ def _fail_if_legacy_declarations(*, user_regimes: Mapping[RegimeName, Any]) -> N
                 "where each transition declares a law: wrap the law in `ByAge` "
                 "to restrict its ages, e.g. `ByAge({AgeRange(stop=65): law})`."
             )
-        transition = regime.transition
+        transition = regime.regime_transitions
         laws = (
             transition.laws
             if isinstance(transition, ByAge)

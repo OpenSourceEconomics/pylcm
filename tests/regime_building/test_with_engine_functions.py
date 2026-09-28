@@ -66,7 +66,7 @@ def _resources(wealth: ContinuousState) -> FloatND:
 def _couple(*, functions: Mapping[str, object]) -> Regime:
     """The collective regime of the miniature."""
     return Regime(
-        transition=lambda: RegimeId.couple_terminal,
+        regime_transitions=lambda: RegimeId.couple_terminal,
         active=lambda age: age < 1,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},

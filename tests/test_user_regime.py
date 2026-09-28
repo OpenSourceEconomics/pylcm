@@ -60,12 +60,12 @@ def test_regime_name_does_not_contain_separator():
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         active=lambda age: age < 5,
         state_transitions={"wealth": fixed_transition("wealth")},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0},
         active=lambda age: age >= 5,
     )
@@ -85,7 +85,7 @@ def test_function_name_does_not_contain_separator():
         UserRegime(
             states={"wealth": WEALTH_GRID},
             actions={f"consumption{QNAME_DELIMITER}action": CONSUMPTION_GRID},
-            transition=next_wealth,
+            regime_transitions=next_wealth,
             functions={"utility": utility, f"helper{QNAME_DELIMITER}func": lambda: 1},
             active=lambda age: age < 5,
             state_transitions={"wealth": fixed_transition("wealth")},
@@ -98,7 +98,7 @@ def test_state_name_does_not_contain_separator():
             functions={"utility": utility},
             states={f"my{QNAME_DELIMITER}wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
-            transition=next_wealth,
+            regime_transitions=next_wealth,
             active=lambda age: age < 5,
             state_transitions={
                 f"my{QNAME_DELIMITER}wealth": fixed_transition(
@@ -111,7 +111,7 @@ def test_state_name_does_not_contain_separator():
 def test_terminal_regime_creation():
     """Terminal regime (transition=None) can be created with states and utility."""
     regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={"wealth": WEALTH_GRID},
         active=lambda age: age >= 5,
@@ -122,7 +122,7 @@ def test_terminal_regime_creation():
 def test_terminal_regime_with_actions():
     """Terminal regime can have actions for final decisions."""
     regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda wealth, bequest_share: wealth * bequest_share},
         states={"wealth": WEALTH_GRID},
         actions={"bequest_share": LinSpacedGrid(start=0, stop=1, n_points=11)},
@@ -138,7 +138,7 @@ def test_non_terminal_regime_has_transition():
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
-        transition=next_wealth,
+        regime_transitions=next_wealth,
         active=lambda age: age < 5,
         state_transitions={"wealth": fixed_transition("wealth")},
     )
@@ -148,7 +148,7 @@ def test_non_terminal_regime_has_transition():
 def test_terminal_regime_can_be_created_without_states():
     """Terminal regime can be created without states (e.g., death state)."""
     regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0},
         states={},
         active=lambda age: age >= 5,
@@ -160,7 +160,7 @@ def test_terminal_regime_can_be_created_without_states():
 def test_regime_with_active_callable():
     """Regime can specify active periods with a callable."""
     regime = UserRegime(
-        transition=next_wealth,
+        regime_transitions=next_wealth,
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
@@ -185,7 +185,7 @@ def _finalize(regime: UserRegime) -> UserRegime:
 def test_regime_requires_utility_in_functions():
     """Regime must have 'utility' in the functions dict."""
     regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"helper": lambda: 1},
         states={"wealth": WEALTH_GRID},
     )
@@ -197,7 +197,7 @@ def test_active_validation_rejects_non_callable():
     """Active attribute must be a callable."""
     with pytest.raises(RegimeInitializationError, match="active"):
         UserRegime(
-            transition=next_wealth,
+            regime_transitions=next_wealth,
             functions={"utility": utility},
             states={"wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
@@ -264,7 +264,7 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
         high: ScalarInt
 
     regime = UserRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": lambda education: education},
         states={"education": DiscreteGrid(category_class=Edu)},
         state_transitions={"education": fixed_transition("education")},
@@ -279,7 +279,7 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
 def test_get_all_functions_includes_identity_for_fixed_continuous_state():
     """Fixed continuous states get identity transitions with correct annotation."""
     regime = UserRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": lambda wealth: wealth},
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -294,7 +294,7 @@ def test_get_all_functions_includes_identity_for_fixed_continuous_state():
 def test_state_grid_without_explicit_transition_raises():
     """Non-terminal regime with a state missing from state_transitions is rejected."""
     regime = UserRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         actions={"consumption": CONSUMPTION_GRID},
@@ -308,7 +308,7 @@ def test_state_grid_without_explicit_transition_raises():
 def test_state_grid_with_fixed_transition_is_accepted():
     """A fixed state declared via `fixed_transition` is valid."""
     regime = UserRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         actions={"consumption": CONSUMPTION_GRID},
@@ -320,7 +320,7 @@ def test_state_grid_with_fixed_transition_is_accepted():
 def test_state_grid_with_transition_callable_is_accepted():
     """State with a transition function in state_transitions is valid."""
     regime = UserRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         actions={"consumption": CONSUMPTION_GRID},
@@ -332,7 +332,7 @@ def test_state_grid_with_transition_callable_is_accepted():
 def test_action_grid_without_transition_is_accepted():
     """Action grid with default UNSET transition is valid."""
     regime = UserRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
@@ -354,7 +354,7 @@ def test_state_grid_unset_error_with_different_grid_types(grid_cls):
         grid = IrregSpacedGrid(points=(1.0, 5.0, 10.0))
 
     regime = UserRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": utility},
         states={"wealth": grid},
     )
@@ -373,7 +373,7 @@ def test_discrete_state_grid_without_explicit_transition_raises():
         high: ScalarInt
 
     regime = UserRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         functions={"utility": lambda status: status},
         states={"status": DiscreteGrid(category_class=Status)},
     )
@@ -424,13 +424,13 @@ def test_regime_with_fixed_states_only():
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         constraints={"borrowing": fixed_borrowing},
-        transition=fixed_next_regime,
+        regime_transitions=fixed_next_regime,
         functions={"utility": fixed_utility},
         active=lambda age: age <= final_age,
         state_transitions={"wealth": fixed_transition("wealth")},
     )
     dead_regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age > final_age,
     )

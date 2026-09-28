@@ -102,7 +102,7 @@ def _build_model(
         states={"liquid": _LIQUID_GRID, "health": _HEALTH},
         state_transitions={"liquid": _next_liquid},
         actions={"consumption": _CONSUMPTION_GRID},
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -122,7 +122,7 @@ def _build_model(
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         active=lambda age, n=final_age_alive: age > n,
         # Starts at zero so the terminal carry covers the whole attainable
         # savings range: the corner `s = 0` reads the terminal value exactly

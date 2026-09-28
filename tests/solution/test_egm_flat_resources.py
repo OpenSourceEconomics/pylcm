@@ -109,7 +109,7 @@ def _get_means_tested_model(variant: str) -> Model:
 
     if variant == "brute":
         regime = UserRegime(
-            transition=next_regime_from_retirement,
+            regime_transitions=next_regime_from_retirement,
             active=active,
             actions={"consumption": CONSUMPTION_GRID},
             states={"wealth": WEALTH_GRID},
@@ -119,7 +119,7 @@ def _get_means_tested_model(variant: str) -> Model:
         )
     else:
         regime = ConsumptionSavingsRegime(
-            transition=next_regime_from_retirement,
+            regime_transitions=next_regime_from_retirement,
             active=active,
             actions={"consumption": CONSUMPTION_GRID},
             states={"wealth": WEALTH_GRID},
@@ -160,7 +160,7 @@ def _get_corner_model() -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
     regime = ConsumptionSavingsRegime(
-        transition=next_regime_from_retirement,
+        regime_transitions=next_regime_from_retirement,
         active=lambda age, la=last_age: age < la,
         actions={"consumption": CORNER_CONSUMPTION_GRID},
         states={"wealth": CORNER_WEALTH_GRID},

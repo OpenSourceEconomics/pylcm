@@ -153,7 +153,7 @@ its own transition:
 from lcm import LinSpacedGrid, NormalIIDProcess, Regime
 
 working = Regime(
-    transition=next_regime,
+    regime_transitions=next_regime,
     states={
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=50),
         "income_shock": NormalIIDProcess(
@@ -312,7 +312,7 @@ standard deviation for each of its categories. The regime declares both:
 
 ```python
 working = Regime(
-    transition=next_regime,
+    regime_transitions=next_regime,
     states={
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=50),
         "employment_status": DiscreteGrid(category_class=EmploymentStatus),

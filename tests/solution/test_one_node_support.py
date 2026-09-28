@@ -77,13 +77,13 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 state_transitions={"shock": {"target": _enter_at_the_node}},
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _ONE_NODE},
                 functions={"utility": _shock_plus_ten},
             ),
@@ -107,7 +107,7 @@ def _model_entering_at(enter_law) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
+                regime_transitions={"target": MarkovTransition(_to_target)},
                 active=lambda age: age < 22,
                 states={"wealth": _WEALTH},
                 state_transitions={
@@ -117,7 +117,7 @@ def _model_entering_at(enter_law) -> Model:
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _ONE_NODE, "wealth": _WEALTH},
                 functions={"utility": _shock_and_wealth},
             ),

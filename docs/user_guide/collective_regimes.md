@@ -13,7 +13,7 @@ cover that, and each goes in a slot a regime already has.
 | -------------------------- | ---------------------- | -------------------------------------------------------------------- |
 | `CollectiveUtility`        | `functions["utility"]` | who the stakeholders are, and how their action values are traded off |
 | `ValueDependentConstraint` | `constraints`          | where the cell is feasible, reading values as well as states         |
-| `ValueDependentTransition` | `transition`           | which target, and which branch within it                             |
+| `ValueDependentTransition` | `regime_transitions`   | which target, and which branch within it                             |
 
 `ProjectedRegimeValue` is what the last two share: a reading of another regime's value
 in the *same* period.
@@ -33,7 +33,7 @@ array, so `value_f` comes before `value_m` in the simulated frame.
 from lcm import CollectiveUtility, Regime
 
 couple = Regime(
-    transition=...,
+    regime_transitions=...,
     states={"wealth": couple_wealth},
     state_transitions={"wealth": next_couple_wealth},
     actions={"consumption": consumption},
@@ -142,7 +142,7 @@ from lcm import ProjectedRegimeValue, StakeholderRoute, ValueDependentTransition
 from lcm.transition import MarkovTransition
 
 single_f = Regime(
-    transition={
+    regime_transitions={
         "couple": ValueDependentTransition(
             probability=MarkovTransition(meets_a_partner),
             gate=mutual_consent,
@@ -205,7 +205,7 @@ together continues in the couple regime, so **that** is the key, under
 
 ```python
 couple = Regime(
-    transition={
+    regime_transitions={
         "couple": ValueDependentTransition(
             probability=MarkovTransition(stays_married),
             gate=no_dissolution,  # ~D_target

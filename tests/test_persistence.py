@@ -64,7 +64,7 @@ def _build_tiny_model(*, enable_jit: bool):
         return jnp.where(period >= 1, 1, 0)
 
     working = UserRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1, n_points=3)},
@@ -72,7 +72,7 @@ def _build_tiny_model(*, enable_jit: bool):
         active=lambda age: age < 2,
     )
     retired = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         functions={"utility": _retired_utility},
         active=lambda age: age >= 2,
