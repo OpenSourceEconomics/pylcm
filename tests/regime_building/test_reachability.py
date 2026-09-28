@@ -148,25 +148,6 @@ def _solver_runtime_paths() -> list[Path]:
     ]
 
 
-def test_solver_runtime_does_not_call_activity_predicates() -> None:
-    """Solver runtime modules consume the graph, not an age predicate.
-
-    Coverage is resolved once from the `regime_transitions` declarations; the
-    solve/simulate runtime reads the prepared `active_periods_by_regime`
-    mapping instead of evaluating predicates or `AgeGrid.get_periods_where`.
-    """
-    calls = [
-        (path, node.lineno)
-        for path in _solver_runtime_paths()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in {"active", "get_periods_where"}
-    ]
-
-    assert calls == []
-
-
 def _is_simulation_program_bundle(node: ast.expr | None) -> bool:
     """Recognize the canonical engine phase's published program bundle."""
     return (

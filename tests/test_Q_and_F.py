@@ -33,14 +33,11 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     Choose,
     LinearAggregator,
     LinearExpectation,
     PowerMean,
 )
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -1016,55 +1013,6 @@ def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
     np.testing.assert_allclose(
         np.asarray(V_arr), np.array(expected), rtol=1e-15, atol=0.0
     )
-
-
-def _model_with_alive_active_at_every_age(
-    certainty_equivalent: CertaintyEquivalent,
-) -> Model:
-    """A two-regime model whose non-terminal regime is declared at every age.
-
-    `alive` is declared at every age, including the last, where no regime is
-    left to carry its continuation.
-    """
-    wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
-    alive = UserRegime(
-        regime_transitions=ByAge(
-            {AgeRange(stop=3): Choose(lambda: _MassRegimeId.dead, targets=("dead",))}
-        ),
-        states={"wealth": wealth},
-        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
-        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
-        functions={"utility": lambda consumption: consumption},
-        certainty_equivalent=certainty_equivalent,
-    )
-    dead = UserRegime(
-        regime_transitions=None,
-        states={"wealth": wealth},
-        functions={"utility": lambda wealth: wealth + 1.0},
-    )
-    return Model(
-        regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=_MassRegimeId,
-    )
-
-
-@pytest.mark.parametrize(
-    "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
-)
-def test_a_non_terminal_regime_declared_at_the_last_age_is_refused(
-    certainty_equivalent: CertaintyEquivalent,
-):
-    """A non-terminal regime has no continuation at the last age, so building fails.
-
-    Solving such a regime would aggregate no continuation mass at the last age
-    and return the utility-only Bellman value: finite, plausible, and an answer
-    to a model that cannot be solved.
-    """
-    with pytest.raises(
-        (RegimeInitializationError, ModelInitializationError), match="last age"
-    ):
-        _model_with_alive_active_at_every_age(certainty_equivalent)
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

@@ -107,7 +107,7 @@ def _target_only_process_model(
     )
 
 
-def test_activity_compatible_target_only_ar1_is_rejected() -> None:
+def test_retained_target_only_ar1_is_rejected() -> None:
     """A retained edge cannot introduce an AR(1) process without a value.
 
     Its next draw is conditioned on a previous value that the source neither
@@ -122,7 +122,7 @@ def test_activity_compatible_target_only_ar1_is_rejected() -> None:
         )
 
 
-def test_activity_compatible_target_only_iid_is_entered_at_its_own_law() -> None:
+def test_retained_target_only_iid_is_entered_at_its_own_law() -> None:
     """A target-only IID process is priced at its unconditional mean.
 
     An IID draw does not depend on its previous value, so the source has
@@ -546,7 +546,7 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
     )
 
 
-def test_coarse_transition_validates_each_activity_compatible_candidate() -> None:
-    """A function-based transition must be valid for every retained candidate."""
+def test_coarse_transition_validates_each_declared_candidate() -> None:
+    """A function-based transition must be valid for every declared candidate."""
     with pytest.raises(ModelInitializationError, match=r"source.*target.*shock"):
         _build_overlapping_model(coarse=True)

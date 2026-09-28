@@ -148,20 +148,21 @@ def test_missing_age_error_message(*, model: Model, flat_params: FlatParams) -> 
         )
 
 
-def test_subject_in_inactive_regime_at_starting_age() -> None:
-    """Subject starts in dead at age 0, but dead is only active for age >= 2."""
+def test_subject_in_a_regime_not_solved_at_its_starting_age() -> None:
+    """A subject cannot start in `alive` at the last age; only `dead` is solved."""
     model = make_asymmetric_state_model()
     flat_params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template
     )
-    _dead = model.regime_names_to_ids["dead"]
+    _alive = model.regime_names_to_ids["alive"]
 
     with pytest.raises(InvalidInitialConditionsError, match="not active"):
         validate_initial_conditions(
             initial_conditions={
-                "age": jnp.array([0.0]),
+                "age": jnp.array([3.0]),
                 "wealth": jnp.array([10.0]),
-                "regime_id": jnp.array([_dead]),
+                "health": jnp.array([0]),
+                "regime_id": jnp.array([_alive]),
             },
             regimes=model._regimes,
             regime_names_to_ids=model.regime_names_to_ids,

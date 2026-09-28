@@ -46,10 +46,6 @@ def _probability_low(probability_high: ScalarFloat) -> ScalarFloat:
     return 1 - probability_high
 
 
-def _target_is_active(age: float) -> bool:
-    return age >= 1
-
-
 def _build_model() -> Model:
     return Model(
         regimes={
