@@ -9,7 +9,8 @@ interleavings.
 import logging
 import threading
 from collections.abc import Callable, Hashable
-from typing import Any
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -34,11 +35,13 @@ def _program(*, wealth: jax.Array, scale: int) -> jax.Array:
     return jnp.cumsum(wealth * scale)
 
 
-def _wave_kwargs(*, n: int, n_workers: int) -> tuple[dict[str, Any], jax.Array]:
-    """Arguments for one wave of three programs over `n` integer-valued states."""
+def _wave_kwargs(
+    *, n: int, n_workers: int, keys: tuple[str, ...] = _KEYS
+) -> tuple[dict[str, Any], jax.Array]:
+    """Arguments for one wave of programs, one per key, over `n` integer states."""
     wealth = jnp.asarray(np.arange(n) - n // 2, dtype=jnp.asarray(0.0).dtype)
     candidates: dict[Hashable, backward_induction._CoreCandidate] = {
-        key: ((key, 0, key), ()) for key in _KEYS
+        key: ((key, 0, key), ()) for key in keys
     }
     resolved = {
         candidate: ResolvedCoreProgram(
@@ -71,7 +74,7 @@ def _wave_kwargs(*, n: int, n_workers: int) -> tuple[dict[str, Any], jax.Array]:
         "internal_templates": {candidate: {} for candidate in candidates.values()},
         "donations": dict.fromkeys(candidates.values(), ()),
         "ages": AgeGrid(start=0, stop=1, step="Y"),
-        "n_triples_per_lowering": dict.fromkeys(_KEYS, 1),
+        "n_triples_per_lowering": dict.fromkeys(keys, 1),
         "log_kernel_memory": False,
         "n_workers": n_workers,
         "logger": logging.getLogger("pipelined-lowering-contract"),
@@ -233,51 +236,80 @@ def test_lower_and_compile_wave_keys_survive_reversed_worker_finishing(
     assert holds(_run_reversed_finishing(monkeypatch))
 
 
-def _run_lowering_error_during_compile_error(
+class _RecordingExecutor(ThreadPoolExecutor):
+    """Thread pool that remembers every executor and future it creates."""
+
+    instances: ClassVar[list[_RecordingExecutor]] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.futures: list[Future] = []
+        _RecordingExecutor.instances.append(self)
+
+    def submit(self, *args: Any, **kwargs: Any) -> Future:
+        future = super().submit(*args, **kwargs)
+        self.futures.append(future)
+        return future
+
+
+def _run_lowering_error_while_compiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, Any]:
-    """Fail the third lowering while the first compile is failing concurrently."""
-    kwargs, _ = _wave_kwargs(n=1, n_workers=1)
+    """Fail the third of four lowerings while the first compile is still running.
+
+    One compile worker: the first compile blocks until released, so the second
+    compile is queued but not started when the third lowering fails.
+    """
+    keys = ("first", "second", "third", "fourth")
+    kwargs, _ = _wave_kwargs(n=1, n_workers=1, keys=keys)
     original_compile = backward_induction._compile_and_log
     original_roles = backward_induction._assert_lowered_output_roles
-    third_lowered = threading.Event()
+    release_first = threading.Event()
     first_finished = threading.Event()
-    second_finished = threading.Event()
+    started: list[str] = []
+    lowered: list[str] = []
     lower_error = RuntimeError("distinct third-lowering error")
-    compile_error = ValueError("distinct first-compilation error")
-    calls = 0
 
-    def observed_compile(**arguments: Any) -> Any:
+    def held_compile(**arguments: Any) -> Any:
+        started.append(arguments["lowering_key"])
         if arguments["lowering_key"] == "first":
-            try:
-                third_lowered.wait(_WAIT_SECONDS)
-                raise compile_error
-            finally:
-                first_finished.set()
-        result = original_compile(**arguments)
-        second_finished.set()
-        return result
+            release_first.wait(_WAIT_SECONDS)
+            first_finished.set()
+        return original_compile(**arguments)
 
     def fail_third(**arguments: Any) -> None:
-        nonlocal calls
-        calls += 1
+        lowered.append(arguments["label"])
         original_roles(**arguments)
-        if calls == 3:
-            third_lowered.set()
+        if len(lowered) == 3:
             raise lower_error
 
-    monkeypatch.setattr(backward_induction, "_compile_and_log", observed_compile)
+    _RecordingExecutor.instances = []
+    monkeypatch.setattr(backward_induction, "ThreadPoolExecutor", _RecordingExecutor)
+    monkeypatch.setattr(backward_induction, "_compile_and_log", held_compile)
     monkeypatch.setattr(backward_induction, "_assert_lowered_output_roles", fail_third)
     raised: BaseException | None = None
     try:
         backward_induction._lower_and_compile_wave(**kwargs)
     except Exception as exc:  # noqa: BLE001
         raised = exc
+    returned_while_first_held = not first_finished.is_set()
+    release_first.set()
+    (pool,) = _RecordingExecutor.instances
+    for thread in tuple(pool._threads):
+        thread.join(_WAIT_SECONDS)
     return {
         "raised_is_lowering_error": raised is lower_error,
-        "first_finished": first_finished.is_set(),
-        "second_finished": second_finished.is_set(),
+        "raised_while_first_compile_runs": returned_while_first_held,
+        "queued_compile_cancelled": pool.futures[1].cancelled(),
+        "queued_compile_never_started": started == ["first"],
+        "no_further_lowering": len(lowered) == 3,
+        "note_names_failing_program": any(
+            kwargs["labels"]["third"] in note
+            for note in getattr(raised, "__notes__", [])
+        ),
         "nothing_published": kwargs["compiled"] == {},
+        "no_threads_left": not any(t.is_alive() for t in pool._threads),
+        "no_futures_left": all(future.done() for future in pool.futures),
     }
 
 
@@ -285,21 +317,29 @@ def _run_lowering_error_during_compile_error(
     "observation",
     [
         "raised_is_lowering_error",
-        "first_finished",
-        "second_finished",
+        "raised_while_first_compile_runs",
+        "queued_compile_cancelled",
+        "queued_compile_never_started",
+        "no_further_lowering",
+        "note_names_failing_program",
         "nothing_published",
+        "no_threads_left",
+        "no_futures_left",
     ],
 )
-def test_lower_and_compile_wave_lowering_error_wins_and_submitted_queue_drains(
+def test_lower_and_compile_wave_lowering_error_stops_the_wave_at_once(
     *, monkeypatch: pytest.MonkeyPatch, observation: str
 ) -> None:
-    """A lowering error wins over a concurrent compile error.
+    """A lowering error is raised at once, without waiting for queued compiles.
 
-    - the raised exception is the lowering error itself;
-    - the failing compile and the already-submitted compile both run to the end;
-    - no executable is published.
+    - the raised exception is the lowering error itself, raised while an earlier
+      compile is still running;
+    - compiles queued but not started are cancelled and no later program is lowered;
+    - the exception carries a note naming the program whose lowering failed;
+    - no executable is published, even from compiles that were already running;
+    - once the running compile ends, no pool thread or unfinished future remains.
     """
-    assert _run_lowering_error_during_compile_error(monkeypatch)[observation]
+    assert _run_lowering_error_while_compiling(monkeypatch)[observation]
 
 
 def _run_failing_second_compile(
