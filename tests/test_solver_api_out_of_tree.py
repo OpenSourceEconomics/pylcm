@@ -265,7 +265,8 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
     # A regime that dies into the terminal one leaves the last period to it, so
     # a simulated subject always has somewhere to go. A self-looping regime is
     # its own target at every one of `_N_PERIODS` acting ages, which takes one
-    # more age for it to die into the terminal regime at the end.
+    # more age for it to die into the terminal regime at the end, which then
+    # publishes the continuation the self-looping solver reads.
     transition = (
         ByAge.until(
             stop_age_exclusive=_N_PERIODS,
@@ -290,9 +291,7 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
                 **(
-                    {"solver": TerminalPublisher(parent=solver)}
-                    if solver.required_continuation_keys
-                    else {}
+                    {"solver": TerminalPublisher(parent=solver)} if self_looping else {}
                 ),
             ),
         },
