@@ -54,10 +54,6 @@ from lcm.transition import (
 from lcm.typing import UserFunction
 
 
-def _always_active(_age: float) -> bool:
-    return True
-
-
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Regime:
@@ -141,7 +137,7 @@ class Regime:
     their probabilities may differ.
     """
 
-    active: ActiveFunction = _always_active
+    active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active.
 
     Only for models without dated transitions; a dated model derives coverage
@@ -492,7 +488,7 @@ class Regime:
     @property
     def declares_active(self) -> bool:
         """Whether `active` was set rather than left at its default."""
-        return self.active is not _always_active
+        return self.active is not type(self).__dataclass_fields__["active"].default
 
     def __post_init__(self) -> None:
         transition = self.regime_transitions

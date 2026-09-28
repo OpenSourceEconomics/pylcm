@@ -5,19 +5,23 @@ working float format, so the table records one row per format and each test read
 the row of the format the session runs under. What it never covers is execution
 policy: two models differing only in ExecutionConfig widths are the same model.
 
-The immutable table records Solver API 2 identities. A test-only projection of
-SolverIdentity.solver_api_version isolates the deliberate API 3 compatibility
-break; every other semantic field must still reproduce the historical digest.
-Production fingerprints continue to bind the current API version.
+The immutable table records Solver API 2 identities of regimes whose transition
+field was named `transition`. Test-only projections of
+SolverIdentity.solver_api_version and of the `regime_transitions` field name
+isolate those two deliberate compatibility breaks; every other semantic field must
+still reproduce the historical digest. Production fingerprints continue to bind
+the current API version and field name.
 """
 
 import dataclasses
 import json
 from pathlib import Path
+from types import MappingProxyType
 
 import jax
 import pytest
 
+from _lcm.solution import fingerprint
 from _lcm.solution.fingerprint import _SemanticHasher, fingerprint_model_structure
 from lcm import ExecutionConfig
 from lcm.solver_api import SolverIdentity
@@ -82,7 +86,7 @@ def test_fingerprint_is_invariant_to_a_solvers_execution_policy(key: str) -> Non
 def test_model_declaration_matches_api2_pin_after_version_projection(
     *, key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only the explicit solver API identity differs from the immutable model pins."""
+    """Only the solver API identity and field name differ from the immutable pins."""
     original = _SemanticHasher._visit_dataclass
     projected = []
     model = _MODELS[key]()
@@ -106,7 +110,32 @@ def test_model_declaration_matches_api2_pin_after_version_projection(
             value = historical
         original(self, value)
 
+    project_declaration = fingerprint._project_user_regime_declaration
+
+    def project_with_historical_field_name(
+        regime: object,
+    ) -> MappingProxyType[str, object]:
+        projected_declaration = project_declaration(regime)
+        fields = projected_declaration["fields"]
+        assert isinstance(fields, MappingProxyType)
+        return MappingProxyType(
+            {
+                **projected_declaration,
+                "fields": MappingProxyType(
+                    {
+                        "transition" if name == "regime_transitions" else name: value
+                        for name, value in fields.items()
+                    }
+                ),
+            }
+        )
+
     monkeypatch.setattr(_SemanticHasher, "_visit_dataclass", visit_at_api2)
+    monkeypatch.setattr(
+        fingerprint,
+        "_project_user_regime_declaration",
+        project_with_historical_field_name,
+    )
     historical = fingerprint_model_structure(
         ages=model.ages,
         regimes=model._regimes,
