@@ -6,6 +6,7 @@ original codes or labels until the simulation input boundary.
 """
 
 import dataclasses
+import functools
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, make_dataclass
@@ -16,6 +17,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+from dags import concatenate_functions
 
 from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
@@ -27,7 +29,7 @@ from _lcm.typing import RegimeNamesToIds
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime
-from lcm.transition import MarkovTransition, fixed_transition
+from lcm.transition import AgeSpecializedFunction, MarkovTransition, fixed_transition
 from lcm.typing import (
     DiscreteState,
     FloatND,
@@ -150,12 +152,20 @@ def factor_fixed_components(
     UserParams,
     Mapping[str, object],
     Mapping[str, object],
+    Mapping[str, object],
     Mapping[str, FixedComponentSplit],
 ]:
     """Inventory declarations, then lower each grid and law in its original slot."""
     groups = _collect_groups(regimes=regimes, state_transitions=state_transitions)
     if not groups:
-        return regimes, fixed_params, states, state_transitions, MappingProxyType({})
+        return (
+            regimes,
+            fixed_params,
+            states,
+            state_transitions,
+            functions,
+            MappingProxyType({}),
+        )
     # Resolve masks and the exactly-one-level rule without changing ownership.
     merged, _ = merge_model_slots(
         user_regimes=regimes,
@@ -185,6 +195,10 @@ def factor_fixed_components(
             | set(regime.state_transitions)
         )
     splits, parts = _create_splits(regimes=merged, groups=groups, occupied=occupied)
+    next_outputs = {
+        f"next_{name}": _recombine(name=f"next_{name}", code_by_parts=parts[name])
+        for name in splits
+    }
     model_states = dict(states)
     # Renaming must keep the original insertion slot. Canonical edge lowering
     # uses declaration order for lottery axes; pop-and-append permutes a mixed
@@ -195,7 +209,7 @@ def factor_fixed_components(
                 law=law, name=name, split=splits[name], code_by_parts=parts[name]
             )
             if name in splits
-            else law
+            else _lower_next_output_reads(node=law, next_outputs=next_outputs)
         )
         for name, law in state_transitions.items()
     }
@@ -214,11 +228,14 @@ def factor_fixed_components(
                     law=law, name=name, split=splits[name], code_by_parts=parts[name]
                 )
                 if name in splits
-                else law
+                else _lower_next_output_reads(node=law, next_outputs=next_outputs)
             )
             for name, law in regime.state_transitions.items()
         }
-        regime_functions = dict(regime.functions)
+        regime_functions = {
+            name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
+            for name, func in regime.functions.items()
+        }
         for name, split in splits.items():
             if name in regime_states:
                 grid = regime_states.pop(name)
@@ -240,8 +257,74 @@ def factor_fixed_components(
         rename_split_params(params=fixed_params, splits=splits),
         MappingProxyType(model_states),
         MappingProxyType(model_laws),
+        MappingProxyType(
+            {
+                name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
+                for name, func in functions.items()
+            }
+        ),
         MappingProxyType(splits),
     )
+
+
+def _lower_next_output_reads(
+    *, node: object, next_outputs: Mapping[str, Callable[..., DiscreteState]]
+) -> object:
+    """Substitute original next-state reads with their deterministic decode DAG.
+
+    The lowered arguments name the same target's realized transition outputs.
+    Parameter discovery and the target-local draw-dependency walk therefore see
+    the very dependencies evaluated by solve and simulation. Helpers keep their
+    names and parameter ownership; no alias becomes a persisted state or draw.
+    """
+    if isinstance(node, Phased):
+        return Phased(
+            solve=_lower_next_output_reads(node=node.solve, next_outputs=next_outputs),
+            simulate=_lower_next_output_reads(
+                node=node.simulate, next_outputs=next_outputs
+            ),
+        )
+    if isinstance(node, Mapping):
+        return MappingProxyType(
+            {
+                name: _lower_next_output_reads(node=child, next_outputs=next_outputs)
+                for name, child in node.items()
+            }
+        )
+    if isinstance(node, MarkovTransition):
+        return dataclasses.replace(
+            node,
+            func=_lower_next_output_reads(node=node.func, next_outputs=next_outputs),
+        )
+    if isinstance(node, AgeSpecializedFunction):
+        return dataclasses.replace(
+            node,
+            build=functools.partial(
+                _build_with_next_outputs, build=node.build, next_outputs=next_outputs
+            ),
+        )
+    if (
+        not callable(node)
+        or not next_outputs.keys() & inspect.signature(node).parameters.keys()
+    ):
+        return node
+    return concatenate_functions(
+        functions=dict(next_outputs) | {"__consumer": node},
+        targets="__consumer",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+
+
+# keyword-only-exempt: library-callback=AgeSpecializedFunction
+def _build_with_next_outputs(
+    age: float,
+    *,
+    build: Callable[[float], object],
+    next_outputs: Mapping[str, Callable[..., DiscreteState]],
+) -> object:
+    """Decode next-state reads in an age-specialized helper's concrete DAG."""
+    return _lower_next_output_reads(node=build(age), next_outputs=next_outputs)
 
 
 def rename_split_params(
