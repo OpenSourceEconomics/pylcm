@@ -11,6 +11,7 @@ solves to.
 
 import inspect
 from collections.abc import Mapping
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -171,9 +172,10 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
     """
     regimes = _new_vocabulary_regimes()
     married = regimes["married"]
+    (law,) = cast("ByAge", married.regime_transitions).laws
     regimes["married"] = married.replace(
-        regime_transitions=Phased(
-            solve=married.regime_transitions, simulate=married.regime_transitions
+        regime_transitions=ByAge(
+            cases={AgeRange(stop=1): Phased(solve=law, simulate=law)}
         )
     )
 
