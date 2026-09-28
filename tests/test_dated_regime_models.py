@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -18,7 +19,11 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidInitialConditionsError,
+    InvalidRegimeTransitionProbabilitiesError,
+    ModelInitializationError,
+)
 from lcm.regime import Regime
 from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
 
@@ -305,3 +310,40 @@ def test_entry_permissions_leave_the_model_identity_unchanged() -> None:
         _model_with_entries({})._model_structure_fingerprint
         == _dated_model()._model_structure_fingerprint
     )
+
+
+def _choose_working(health: DiscreteState) -> ScalarInt:
+    return jnp.where(health == Health.good, RegimeId.working, RegimeId.dead)
+
+
+def _leaky_vector(health: DiscreteState) -> FloatND:
+    return jnp.array([0.1, 0.0, 0.9]) + 0.0 * health
+
+
+def _short_mass(health: DiscreteState) -> FloatND:
+    return 0.8 * _stay(health)
+
+
+@pytest.mark.parametrize(
+    "transition",
+    [
+        Choose(_choose_working, targets=("retirement", "dead")),
+        MarkovTransition(_leaky_vector, targets=("retirement", "dead")),
+        {"retirement": MarkovTransition(_short_mass), "dead": MarkovTransition(_die)},
+    ],
+    ids=["choose-outside-support", "vector-mass-outside-support", "short-mass"],
+)
+@pytest.mark.parametrize("log_level", ["off", "warning"])
+def test_invalid_regime_selection_raises_at_every_log_level(
+    *, transition: Any, log_level: LogLevel
+) -> None:
+    """Regime-selection validity does not depend on verbosity in a dated model."""
+    model = _dated_model(
+        working=_regime(
+            transition=ByAge(
+                {AgeRange(stop=55): "working", 55: transition},
+            )
+        )
+    )
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
+        model.solve(params={"discount_factor": 0.95}, log_level=log_level)

@@ -156,7 +156,7 @@ from _lcm.solution.result_snapshot import (
 )
 from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
 from _lcm.solution.validate_V import contains_nan
-from _lcm.transition_checks import validate_transitions
+from _lcm.transition_checks import validate_regime_selection, validate_transitions
 from _lcm.typing import (
     FlatParams,
     FunctionName,
@@ -634,6 +634,7 @@ class Model:
                 for name, regime in regimes.items()
             }
         active_periods_by_regime = schedules.coverage_by_regime
+        self._dated = schedules.dated
 
         model_slots = {
             "functions": functions,
@@ -3047,6 +3048,10 @@ class Model:
         )
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
+        if getattr(self, "_dated", False):
+            validate_regime_selection(
+                regimes=self._regimes, flat_params=flat_params, ages=self.ages
+            )
         if array_writer is not None:
             array_writer.publish(stage="params", tree=flat_params)
         return flat_params

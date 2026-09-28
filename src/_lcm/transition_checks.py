@@ -379,6 +379,36 @@ def _params_callable_for_state_transition(
     )
 
 
+_REGIME_SELECTION_LOGGER = logging.getLogger("_lcm.regime_selection")
+_REGIME_SELECTION_LOGGER.setLevel(logging.DEBUG)
+_REGIME_SELECTION_LOGGER.propagate = False
+_REGIME_SELECTION_LOGGER.addHandler(logging.NullHandler())
+
+
+def validate_regime_selection(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+) -> None:
+    """Validate regime-selection laws of a dated model, at every log level.
+
+    Every covered source period's selection must put finite mass in [0, 1] that
+    sums to one on its declared targets, and zero mass elsewhere; a failure
+    always raises.
+
+    Raises:
+        InvalidRegimeTransitionProbabilitiesError: On the first invalid row.
+
+    """
+    validate_regime_transitions_all_periods(
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        logger=_REGIME_SELECTION_LOGGER,
+    )
+
+
 def validate_regime_transitions_all_periods(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
