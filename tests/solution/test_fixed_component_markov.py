@@ -22,6 +22,7 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     ExecutionConfig,
+    JointTransition,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -1001,3 +1002,161 @@ def test_fixed_component_preserves_a_transition_reading_its_next_code(
     last = panel.loc[panel["period"] == 1].sort_values("subject_id")
     next_s = last["s_rest"] + 2 * last["s_fixed"] if annotated else last["s"]
     np.testing.assert_array_equal(last["y"].to_numpy(), next_s.to_numpy())
+
+
+@categorical(ordered=False)
+class _ConsumerRegimeId:
+    source: ScalarInt
+    middle: ScalarInt
+    end: ScalarInt
+
+
+def _consumer_utility(*, s: DiscreteState, t: DiscreteState) -> FloatND:
+    return 1.0 * (s + t)
+
+
+def _consumer_identity_probabilities(s: DiscreteState) -> FloatND:
+    return jnp.where(jnp.arange(4) == s, 1.0, 0.0)
+
+
+def _consumer_probabilities(*, t: DiscreteState, next_s: DiscreteState) -> FloatND:
+    destination = 2 * (t // 2) + next_s % 2
+    return jnp.where(jnp.arange(4) == destination, 1.0, 0.0)
+
+
+def _consumer_joint_probabilities() -> FloatND:
+    return jnp.ones(1)
+
+
+def _consumer_joint_output(
+    *, draw: DiscreteState, next_s: DiscreteState
+) -> DiscreteState:
+    return next_s ^ draw
+
+
+@pytest.mark.parametrize("annotated", [False, True])
+@pytest.mark.parametrize("kind", ["probability", "joint"])
+def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
+    *, annotated: bool, kind: str
+) -> None:
+    """Probability laws and joint outputs consume the original next-state code."""
+    grid = DiscreteGrid(_NextOutputCode)
+    grouping = (0, 0, 1, 1) if annotated else None
+    if kind == "probability":
+        states = {"s": grid, "t": grid}
+        utility: Callable[..., FloatND] = _consumer_utility
+        regimes = {
+            "source": Regime(
+                active=lambda age: age == 0,
+                transition={"middle": MarkovTransition(_next_output_to_end)},
+                states=states,
+                state_transitions={
+                    "s": fixed_transition("s"),
+                    "t": MarkovTransition(
+                        _consumer_probabilities, fixed_component=grouping
+                    ),
+                },
+                functions={"utility": utility},
+            ),
+            "middle": Regime(
+                active=lambda age: age == 1,
+                transition={"end": MarkovTransition(_next_output_to_end)},
+                states=states,
+                state_transitions={
+                    "s": MarkovTransition(
+                        _consumer_identity_probabilities, fixed_component=grouping
+                    ),
+                    "t": fixed_transition("t"),
+                },
+                functions={"utility": utility},
+            ),
+        }
+        last_period = 2
+    else:
+        states = {"s": grid, "y": grid}
+        utility = _next_output_utility
+        regimes = {
+            "source": Regime(
+                active=lambda age: age == 0,
+                transition={"end": MarkovTransition(_next_output_to_end)},
+                states=states,
+                state_transitions={
+                    "s": MarkovTransition(_next_output_law, fixed_component=grouping)
+                },
+                joint_transitions={
+                    "end": {
+                        "draw": JointTransition(
+                            support_size=1,
+                            support=jnp.zeros(1, dtype=jnp.int32),
+                            probabilities=_consumer_joint_probabilities,
+                            outputs={"y": _consumer_joint_output},
+                        )
+                    },
+                },
+                functions={"utility": utility},
+            ),
+        }
+        last_period = 1
+    regimes["end"] = Regime(
+        transition=None, states=states, functions={"utility": utility}
+    )
+    model = Model(
+        regimes=regimes,
+        ages=AgeGrid(start=0, stop=last_period, step="Y"),
+        regime_id_class=_ConsumerRegimeId,
+    )
+    assert _next_output_parameter_leaves(value=model.get_params_template()) == []
+    s = np.repeat(np.arange(4, dtype=np.int32), 4)
+    second = np.tile(np.arange(4, dtype=np.int32), 4)
+    second_name = "t" if kind == "probability" else "y"
+    for beta in (0.5, 0.25):
+        params = {"discount_factor": beta}
+        solution = model.solve(params=params, log_level="off")
+        panel = model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "regime_id": np.zeros(16, dtype=np.int32),
+                "age": np.zeros(16),
+                "s": s,
+                second_name: second,
+            },
+            seed=123,
+            log_level="off",
+        ).to_dataframe(use_labels=False)
+        if "period" not in panel.columns:
+            panel = panel.reset_index()
+        first = panel.loc[panel["period"] == 0].sort_values("subject_id")
+        following = panel.loc[panel["period"] == 1].sort_values("subject_id")
+        next_s = (
+            following["s_rest"] + 2 * following["s_fixed"]
+            if annotated
+            else following["s"]
+        )
+        if kind == "probability":
+            expected_t = 2 * (second // 2) + s % 2
+            expected_value = s + second + (beta + beta**2) * (s + expected_t)
+            np.testing.assert_array_equal(next_s, s)
+            next_t = (
+                following["t_rest"] + 2 * following["t_fixed"]
+                if annotated
+                else following["t"]
+            )
+            np.testing.assert_array_equal(next_t, expected_t)
+            terminal = panel.loc[panel["period"] == 2].sort_values("subject_id")
+            terminal_s = (
+                terminal["s_rest"] + 2 * terminal["s_fixed"]
+                if annotated
+                else terminal["s"]
+            )
+            terminal_t = (
+                terminal["t_rest"] + 2 * terminal["t_fixed"]
+                if annotated
+                else terminal["t"]
+            )
+            np.testing.assert_array_equal(terminal_s, s)
+            np.testing.assert_array_equal(terminal_t, expected_t)
+        else:
+            expected_value = s + second + beta * (4 * (s // 2) + 1)
+            np.testing.assert_array_equal(following["y"], next_s)
+        np.testing.assert_array_equal(first["value"], expected_value)
