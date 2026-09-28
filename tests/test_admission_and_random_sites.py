@@ -23,7 +23,11 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidInitialConditionsError
+from lcm.exceptions import (
+    InvalidInitialConditionsError,
+    InvalidRegimeTransitionProbabilitiesError,
+)
+from lcm.phased import Phased
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.test_demand_worklists import _phased_model
 
@@ -190,3 +194,123 @@ def test_a_start_changing_only_visits_changes_the_structure_identity() -> None:
     assert visits_perceived[0] == values_perceived[0]
     assert visits_perceived[1] != values_perceived[1]
     assert visits_perceived[2] != values_perceived[2]
+
+
+def _overweight_death() -> FloatND:
+    return jnp.asarray(0.9)
+
+
+def _laws(*, die: Any) -> dict:
+    return {
+        "working": MarkovTransition(func=_stay),
+        "dead": MarkovTransition(func=die),
+    }
+
+
+def _law_model(*, law: Any, n_wealth: int = 2) -> Model:
+    wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_wealth)
+    return Model(
+        regimes={
+            "island": _island(),
+            "working": Regime(
+                regime_transitions=ByAge.until(
+                    stop_age_exclusive=75, law=law, then="dead"
+                ),
+                states={"wealth": wealth},
+                state_transitions={"wealth": fixed_transition("wealth")},
+                functions={"utility": _utility},
+            ),
+            "dead": Regime(
+                regime_transitions=None,
+                states={"wealth": wealth},
+                functions={"utility": _utility},
+            ),
+        },
+        ages=_AGES,
+        regime_id_class=_Life,
+        initial_regimes={25: "working"},
+    )
+
+
+def _simulate_off(model: Model) -> None:
+    model.simulate(
+        params=_PARAMS,
+        initial_conditions={
+            "wealth": jnp.zeros(2),
+            "age": jnp.full(2, 25.0),
+            "regime_id": jnp.full(2, model.regime_names_to_ids["working"]),
+        },
+        log_level="off",
+        seed=0,
+    )
+
+
+def test_solve_refuses_an_invalid_regime_law_with_logging_off() -> None:
+    """A selection row with mass 1.4 raises even at `log_level="off"`."""
+    model = _law_model(law=_laws(die=_overweight_death))
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+def test_simulate_refuses_an_invalid_realized_law_with_logging_off() -> None:
+    """An invalid simulate-side `Phased` law raises before simulation succeeds."""
+    model = _law_model(
+        law=Phased(solve=_laws(die=_die), simulate=_laws(die=_overweight_death))
+    )
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
+        _simulate_off(model)
+
+
+def test_valid_realized_law_simulates_with_logging_off() -> None:
+    """The control: the same model with a valid realized law simulates."""
+    _simulate_off(
+        _law_model(law=Phased(solve=_laws(die=_die), simulate=_laws(die=_die)))
+    )
+
+
+def _one_third() -> FloatND:
+    return jnp.asarray(1 / 3)
+
+
+def _two_thirds() -> FloatND:
+    return jnp.asarray(2 / 3)
+
+
+def test_a_changed_law_changes_the_structure_identity() -> None:
+    """Different selection probabilities give a different structure digest."""
+    base = _law_model(law=_laws(die=_die))
+    changed = _law_model(
+        law={
+            "working": MarkovTransition(func=_two_thirds),
+            "dead": MarkovTransition(func=_one_third),
+        }
+    )
+    assert base._model_structure_fingerprint != changed._model_structure_fingerprint
+
+
+def _durable_digest(*, model: Model, params: dict) -> str:
+    return model._model_fingerprint(flat_params=model._process_params(params))
+
+
+def test_a_changed_grid_changes_the_durable_identity() -> None:
+    """A finer wealth grid gives a different durable result digest."""
+    coarse = _law_model(law=_laws(die=_die))
+    fine = _law_model(law=_laws(die=_die), n_wealth=3)
+    assert _durable_digest(model=coarse, params=_PARAMS) != _durable_digest(
+        model=fine, params=_PARAMS
+    )
+
+
+def test_changed_params_change_the_durable_identity() -> None:
+    """A different discount factor gives a different durable result digest."""
+    model = _law_model(law=_laws(die=_die))
+    assert _durable_digest(model=model, params=_PARAMS) != _durable_digest(
+        model=model, params={"discount_factor": 0.8}
+    )
+
+
+def test_identical_models_share_the_durable_identity() -> None:
+    """The control: two builds of the same model agree on the digest."""
+    assert _durable_digest(model=_law_model(law=_laws(die=_die)), params=_PARAMS) == (
+        _durable_digest(model=_law_model(law=_laws(die=_die)), params=_PARAMS)
+    )
