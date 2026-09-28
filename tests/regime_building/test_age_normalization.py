@@ -230,30 +230,6 @@ def test_no_public_markers_remain_after_normalization() -> None:
         )
 
 
-def test_never_active_specialized_regime_is_rejected() -> None:
-    """A regime with a marker but active at no age is a modelling error."""
-    alive = UserRegime(
-        regime_transitions=_next_regime,
-        states={
-            "wealth": AgeSpecializedGrid(
-                build=lambda age: LinSpacedGrid(
-                    start=float(age), stop=float(age) + 10.0, n_points=5
-                ),
-                signature=lambda age: age,
-            ),
-        },
-        actions={"consumption": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
-        functions={"utility": lambda consumption: consumption},
-        state_transitions={"wealth": _next_wealth},
-    )
-    with pytest.raises(RegimeInitializationError, match="active at no model age"):
-        _normalized(
-            regimes={"work": alive, "dead": _dead()},
-            ages=_ages(),
-            coverage={"work": ()},
-        )
-
-
 def test_function_marker_build_receives_float_age_on_integer_age_grid() -> None:
     """`build(age)`/`signature(age)` always see a `float`, even on a whole-year grid.
 

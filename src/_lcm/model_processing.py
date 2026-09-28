@@ -480,14 +480,11 @@ def _validate_all_variables_used(
                 else active_periods_by_regime.get(regime_name, ())
             )
             if not active_periods and _regime_has_markers(user_regime):
-                # This regime is about to fail with the precise
-                # "active at no model age" `RegimeInitializationError` once
-                # `normalize_age_specialization` runs. Leaving its markers
-                # unresolved here would make `get_ancestors` see only
-                # `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`
-                # signature, misreporting a variable used only through a marker
-                # as unused and raising that instead — so skip this regime's
-                # variable-usage check and let the real cause surface.
+                # Without coverage the markers cannot be resolved, and
+                # `get_ancestors` would see only `AgeSpecializedFunction.__call__`'s
+                # generic `(*args, **kwargs)` signature, misreporting a variable
+                # used only through a marker as unused — so skip this regime's
+                # variable-usage check.
                 continue
             if active_periods:
                 # Resolve any `AgeSpecializedFunction` marker to its concrete

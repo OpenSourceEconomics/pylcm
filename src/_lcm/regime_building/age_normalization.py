@@ -914,8 +914,7 @@ def normalize_age_specialization(
     when no regime declares an `AgeSpecializedGrid`.
 
     Raises:
-        RegimeInitializationError: If a regime declares an age-specialized marker
-            but is active at no model age, if a grid marker violates the
+        RegimeInitializationError: If a grid marker violates the
             shape-invariance contract, or if a grid marker resolves to a
             runtime-points grid.
     """
@@ -935,13 +934,6 @@ def normalize_age_specialization(
             continue
 
         active_periods = active_periods_by_regime[regime_name]
-        if not active_periods:
-            msg = (
-                f"Regime '{regime_name}' declares age-specialized objects but is "
-                f"active at no model age. Remove the marker or make the regime "
-                f"active at least once."
-            )
-            raise RegimeInitializationError(msg)
 
         function_cache: dict[int, _ResolvedFunctionMarker] = {
             marker_id: _resolve_function_marker(
