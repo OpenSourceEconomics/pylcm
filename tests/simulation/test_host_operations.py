@@ -191,6 +191,28 @@ def test_impossible_inventory_refuses_before_compilation() -> None:
     assert dispatcher.cache == {}
 
 
+def test_dispatch_rejects_a_closure_before_caching_it() -> None:
+    """A dispatched closure raises and leaves the operation cache empty."""
+    offset = 1.0
+
+    def shift_by_offset(state: jax.Array) -> jax.Array:
+        return state + offset
+
+    state = jnp.arange(4.0)
+    dispatcher = ProfiledSimulationOperations()
+    with pytest.raises(ExecutionPlanningError, match="module-level"):
+        dispatcher.dispatch(
+            function=shift_by_offset,
+            arguments={"state": state},
+            subject_arg_names=("state",),
+            devices=(jax.devices()[0],),
+            live_footprint=_OwnedInputs(arrays=[state]),
+            budget_devices=(jax.devices()[0],),
+            budget_bytes=1_000_000,
+        )
+    assert dispatcher.cache == {}
+
+
 def test_static_bindings_include_types_and_reject_arrays() -> None:
     dispatcher = ProfiledSimulationOperations()
     state = jnp.arange(4.0)
