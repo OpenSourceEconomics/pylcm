@@ -963,9 +963,9 @@ def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> GatedEdge:
     )
 
 
-def test_gated_edge_reference_inactive_in_consumed_period_is_rejected():
-    """A gate reference (or fallback) inactive in a period whose ``Wbar`` is
-    actually CONSUMED (target active at t, source active at t-1) must be rejected
+def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
+    """A gate reference (or fallback) uncovered in a period whose ``Wbar`` is
+    actually CONSUMED (target covered at t, source covered at t-1) must be rejected
     at construction, so the solve-side `_roll_gated_edges` never feeds the source
     a stale later-period ``Wbar``.
     """
@@ -996,8 +996,8 @@ def test_gated_edge_reference_inactive_in_consumed_period_is_rejected():
         )
 
 
-def test_gated_edge_coactive_references_pass():
-    """References active in every consumed period pass the guard."""
+def test_gated_edge_references_covered_in_every_consumed_period_pass():
+    """References covered in every consumed period pass the guard."""
     edge = _edge_with_refs(
         fallback_regime="single_f_terminal", gate_ref_regime="single_m_terminal"
     )
@@ -1021,14 +1021,14 @@ def test_gated_edge_coactive_references_pass():
     )
 
 
-def test_gated_edge_reference_inactive_at_unconsumed_boundary_passes():
-    """Over-reach guard: a self-loop edge's reference may be inactive in a
-    target-active period whose ``Wbar`` is NEVER consumed — the target's earliest
-    active period, where no source exists one period earlier. Requiring
-    co-activity across ALL target-active periods would wrongly reject the
+def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
+    """Over-reach guard: a self-loop edge's reference may be uncovered in a
+    target-covered period whose ``Wbar`` is NEVER consumed — the target's earliest
+    covered period, where no source exists one period earlier. Requiring
+    joint coverage across ALL target-covered periods would wrongly reject the
     legitimate repeating self-loop model (regression: see
     ``test_collective_regime_simulate.py::
-    test_repeating_self_loop_gated_edge_simulates_past_activity_boundary``).
+    test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age``).
     """
     # Self-loop: source == target == "src", active in periods {0, 1}; the
     # fallback is active in {1, 2}, i.e. NOT in target-active period 0 — but

@@ -136,8 +136,8 @@ def test_an_unknown_regime_is_refused_by_name(model: Model) -> None:
         )
 
 
-def test_a_period_the_regime_is_inactive_in_is_refused(model: Model) -> None:
-    """A regime has no kernel outside its activity window."""
+def test_a_period_the_regime_does_not_cover_is_refused(model: Model) -> None:
+    """A regime has no kernel outside its covered ages."""
     with pytest.raises(ValueError, match=re.escape("period 9")):
         model._compile_period_cores(
             params=get_params(n_periods=_N_PERIODS),

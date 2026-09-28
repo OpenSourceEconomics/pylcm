@@ -80,8 +80,8 @@ def test_raises_for_mass_large_enough_to_reverse_an_argmax():
         )
 
 
-def test_valid_probs_with_inactive_regime_at_zero():
-    """Inactive regime with zero probability passes validation."""
+def test_valid_probs_with_undeclared_target_at_zero():
+    """A target outside the declared support with zero probability passes validation."""
     probs = MappingProxyType(
         {
             "working_life": jnp.array([0.7, 0.6]),
@@ -119,8 +119,8 @@ def test_raises_for_probs_not_summing_to_one():
         )
 
 
-def test_raises_for_positive_probability_on_inactive_regime():
-    """Positive probability on an inactive regime raises an error."""
+def test_raises_for_positive_probability_outside_the_declared_targets():
+    """Positive probability outside the declared targets raises an error."""
     probs = MappingProxyType(
         {
             "working_life": jnp.array([0.7, 0.6]),

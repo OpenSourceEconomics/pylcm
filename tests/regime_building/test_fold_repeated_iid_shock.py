@@ -189,7 +189,7 @@ def test_the_folded_panel_matches_its_unfolded_twin() -> None:
     pd.testing.assert_frame_equal(_simulate(fold=True), _simulate(fold=False))
 
 
-def test_every_active_period_redraws_the_shock() -> None:
+def test_every_covered_period_redraws_the_shock() -> None:
     """A subject meets a different shock each period, not one carried forward.
 
     A panel that reused one draw would still match an equally broken twin, so

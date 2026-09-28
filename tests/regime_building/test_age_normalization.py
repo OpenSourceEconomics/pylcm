@@ -99,8 +99,8 @@ def test_no_markers_passes_through_unchanged() -> None:
     assert result.representative_user_regimes["work"] is finalized["work"]
 
 
-def test_grid_builder_called_once_per_active_period() -> None:
-    """The grid factory runs exactly once per active age, never at inactive ages."""
+def test_grid_builder_called_once_per_covered_period() -> None:
+    """The grid factory runs exactly once per covered age, never at uncovered ages."""
     calls: list[float] = []
 
     def build(age: float) -> LinSpacedGrid:
@@ -129,8 +129,8 @@ def test_grid_builder_called_once_per_active_period() -> None:
     )
 
 
-def test_function_builder_called_once_per_active_period() -> None:
-    """A broadcast function marker builds once per active age, not once per phase."""
+def test_function_builder_called_once_per_covered_period() -> None:
+    """A broadcast function marker builds once per covered age, not once per phase."""
     calls: list[float] = []
 
     def build(age: float):
@@ -161,8 +161,8 @@ def test_function_builder_called_once_per_active_period() -> None:
         assert tuple(sorted(func.concrete_by_period)) == (0, 2)
 
 
-def test_representative_objects_come_from_first_active_period() -> None:
-    """Representative function/grid are the first-active-period concrete objects."""
+def test_representative_objects_come_from_first_covered_period() -> None:
+    """Representative function/grid are the first-covered-period concrete objects."""
 
     def build_grid(age: float) -> LinSpacedGrid:
         return LinSpacedGrid(start=float(age), stop=float(age) + 10.0, n_points=5)

@@ -358,7 +358,7 @@ def test_the_key_refusal_names_the_equivalent_callable_case(
 
 
 @pytest.mark.parametrize(("build_model", "regime_name"), _GROUPING_SOLVER_CASES)
-def test_a_grouping_solver_publishes_one_group_key_per_active_period(
+def test_a_grouping_solver_publishes_one_group_key_per_covered_period(
     *, build_model: Callable[[], Model], regime_name: RegimeName
 ) -> None:
     """An EGM-family regime reports the group key it built each period under."""

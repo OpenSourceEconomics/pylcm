@@ -86,8 +86,8 @@ def _edge(
     )
 
 
-def test_source_reads_folded_wbar_when_the_source_is_active_one_period_earlier():
-    """A folded ``Wbar`` is read exactly when the source is active at `t - 1`."""
+def test_source_reads_folded_wbar_when_the_source_is_covered_one_period_earlier():
+    """A folded ``Wbar`` is read exactly when the source is covered at `t - 1`."""
     assert source_reads_folded_wbar(source_active_periods=(0, 1), fold_period=1) is True
 
 
@@ -164,14 +164,14 @@ def test_rejection_names_every_unsolved_reference_regime():
         )
 
 
-def test_repeating_self_loop_solves_with_its_fallback_inactive_in_the_unread_period():
+def test_repeating_self_loop_solves_with_its_fallback_uncovered_in_the_unread_period():
     """A self-loop edge solves although its fallback is absent where no source reads.
 
-    `src` is active in periods 0 and 1 and gates an edge back to itself, whose
-    fallback `src_fallback` is active only from period 1 on. Period 0's fold has
+    `src` is covered in periods 0 and 1 and gates an edge back to itself, whose
+    fallback `src_fallback` is covered only from period 1 on. Period 0's fold has
     the target (`src`) solved and the fallback not — yet no `src` exists at
     period -1 to read it, so the edge keeps the value it already holds and the
-    model solves. Requiring the fallback in every target-active period would
+    model solves. Requiring the fallback in every target-covered period would
     reject this model instead.
 
     Hand computation, `beta = 0.95`: period 2 has no `src`; period 1's

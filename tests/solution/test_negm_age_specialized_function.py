@@ -162,10 +162,10 @@ def _specialized(helper_name: str) -> AgeSpecializedFunction:
 
 
 @pytest.mark.parametrize("helper_name", ["keep_illiquid", "credited"])
-def test_the_last_active_age_uses_that_ages_own_outer_helper(helper_name):
-    """The last active age's value equals a plain solve pinned to that age's helper.
+def test_the_last_covered_age_uses_that_ages_own_outer_helper(helper_name):
+    """The last covered age's value equals a plain solve pinned to that age's helper.
 
-    The last active period's value depends on its own economics and on a
+    The last covered period's value depends on its own economics and on a
     continuation into the terminal regime, which no age specialization touches. So
     the age-specialized solve must reproduce, *exactly*, a plain solve whose helper
     is the concrete function `build(age)` returns at that age.

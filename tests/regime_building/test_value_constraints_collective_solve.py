@@ -946,8 +946,8 @@ def test_same_period_ref_projection_must_cover_reference_states():
         _process_ir_variant(regimes)
 
 
-def test_same_period_ref_requires_reference_active_in_same_periods():
-    """The reference regime must be solved in every period the reader is active."""
+def test_same_period_ref_requires_reference_covered_in_same_periods():
+    """The reference regime must be solved in every period the reader is solved."""
     regimes = _make_ir_regimes()
     # Married is solved in periods 0 AND 1, while single_f stays period-0 only.
     regimes["married"] = regimes["married"].replace(

@@ -507,16 +507,16 @@ def test_age_specialized_grid_on_never_solved_regime_is_rejected():
         )
 
 
-def test_builder_undefined_outside_active_ages_still_solves():
-    """A grid builder that is undefined outside its regime's active ages must still
+def test_builder_undefined_outside_covered_ages_still_solves():
+    """A grid builder that is undefined outside its regime's covered ages must still
     build and solve.
 
     Validation and per-period resolution must call `build(age)` only at the
-    regime's active ages, not the whole model horizon — otherwise a builder that
-    deliberately raises outside its regime's active ages would turn a valid
+    regime's covered ages, not the whole model horizon — otherwise a builder that
+    deliberately raises outside its regime's covered ages would turn a valid
     age-limited/terminal-only specialization into a construction failure. Here
-    the `alive` regime is active through age 24 and inactive at the terminal age
-    25; the builder raises at every inactive age.
+    the `alive` regime is covered through age 24 and not covered at the terminal age
+    25; the builder raises at every uncovered age.
     """
     inactive_age = 20 + _N - 1  # the terminal (dead) age; alive is inactive here
 

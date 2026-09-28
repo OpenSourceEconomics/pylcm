@@ -10,12 +10,12 @@ path is a REPEATING self-loop gated edge (mutual-consent, eq. 27) — and in the
 collective `married` regime. Before wiring six coupled EKL regimes on the
 assumption the mechanism composes, pin the interaction here in isolation.
 
-Topology (the singleton half of EKL's `single_f`): `src` is active over ages
+Topology (the singleton half of EKL's `single_f`): `src` is covered over ages
 0-1 with a repeating self-loop `GatedEdge` back to itself, fallback into a
-terminal `src_fallback`; past its activity boundary the ordinary transition
+terminal `src_fallback`; at its last covered age the ordinary transition
 routes it to `src_exit`. This mirrors
-`test_repeating_self_loop_gated_edge_simulates_past_activity_boundary` exactly,
-plus a carried `career` state that accumulates `+1` each period and is read by
+`test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age`
+exactly, plus a carried `career` state that accumulates `+1` each period and is read by
 utility with a ZERO coefficient — so the value function (and hence the gate
 routing) is byte-identical to that test, isolating the carried-state machinery.
 

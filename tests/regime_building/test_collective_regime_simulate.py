@@ -1609,8 +1609,8 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
     return {"src": src, "src_exit": src_exit, "src_fallback": src_fallback}
 
 
-def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
-    """A REPEATING self-loop edge simulates past the source's activity boundary.
+def test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age():
+    """A REPEATING self-loop edge simulates past the source's last covered age.
 
     Hand computation. Period 1's `src` Bellman weights only the `src_exit`
     continuation (`_prob_stay(age=1)=0`, `_prob_exit_boundary(age=1)=1`):
@@ -1623,7 +1623,7 @@ def test_repeating_self_loop_gated_edge_simulates_past_activity_boundary():
       `V_0(1) = 1 + beta * 0.1 = 1.095`.
     - wage=2: period-0 gate OPEN -> STAYS in `src` for period 1 — the
       genuine repeat, and the household that exercises the boundary (period 1
-      is `src`'s own activity boundary, and period 2's solution has no `src`
+      is `src`'s own last covered age, and period 2's solution has no `src`
       entry). The edge is a no-op at period 1, its target being absent; the
       ordinary transition (100% `src_exit` at
       age=1) routes it to `src_exit` for period 2, with period-1 own value
