@@ -7,6 +7,7 @@ group axis and a within-group axis instead of one axis over every code.
 """
 
 import importlib
+from collections.abc import Callable, Mapping
 from typing import Literal, cast
 
 import jax
@@ -888,3 +889,115 @@ def test_fixed_component_simulation_preserves_original_sampling_support(
         panels.append(codes)
     np.testing.assert_array_equal(panels[0], panels[1])
     assert observed == {((4,), (4,))}
+
+
+@categorical(ordered=False)
+class _NextOutputRegimeId:
+    source: ScalarInt
+    end: ScalarInt
+
+
+@categorical(ordered=False)
+class _NextOutputCode:
+    c0: ScalarInt
+    c1: ScalarInt
+    c2: ScalarInt
+    c3: ScalarInt
+
+
+def _next_output_utility(*, s: DiscreteState, y: DiscreteState) -> FloatND:
+    return 1.0 * (s + y)
+
+
+def _next_output_law(*, s: DiscreteState) -> FloatND:
+    groups = jnp.array([0, 0, 1, 1])
+    return jnp.where(groups == groups[s], 0.5, 0.0)
+
+
+def _next_output_copy(*, next_s: DiscreteState) -> DiscreteState:
+    return next_s
+
+
+def _next_output_from_landing(*, landing: DiscreteState) -> DiscreteState:
+    return landing
+
+
+def _next_output_to_end() -> ScalarFloat:
+    return jnp.asarray(1.0)
+
+
+def _next_output_parameter_leaves(
+    *, value: object, prefix: tuple[str, ...] = ()
+) -> list[tuple[str, ...]]:
+    if not isinstance(value, Mapping):
+        return []
+    found: list[tuple[str, ...]] = []
+    for name, child in value.items():
+        path = (*prefix, str(name))
+        if str(name) == "next_s" and not isinstance(child, Mapping):
+            found.append(path)
+        found.extend(_next_output_parameter_leaves(value=child, prefix=path))
+    return found
+
+
+@pytest.mark.parametrize("annotated", [False, True])
+@pytest.mark.parametrize("through_helper", [False, True])
+def test_fixed_component_preserves_a_transition_reading_its_next_code(
+    *, annotated: bool, through_helper: bool
+) -> None:
+    """A deterministic transition shares the original code of the same draw."""
+    grid = DiscreteGrid(_NextOutputCode)
+    functions: dict[str, Callable[..., object]] = {"utility": _next_output_utility}
+    if through_helper:
+        functions["landing"] = _next_output_copy
+    model = Model(
+        regimes={
+            "source": Regime(
+                active=lambda age: age == 0,
+                transition={"end": MarkovTransition(_next_output_to_end)},
+                states={"s": grid, "y": grid},
+                state_transitions={
+                    "s": MarkovTransition(
+                        _next_output_law,
+                        fixed_component=(0, 0, 1, 1) if annotated else None,
+                    ),
+                    "y": _next_output_from_landing
+                    if through_helper
+                    else _next_output_copy,
+                },
+                functions=functions,
+            ),
+            "end": Regime(
+                transition=None,
+                states={"s": grid, "y": grid},
+                functions={"utility": _next_output_utility},
+            ),
+        },
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        regime_id_class=_NextOutputRegimeId,
+    )
+    assert _next_output_parameter_leaves(value=model.get_params_template()) == []
+    params = {"discount_factor": 0.5}
+    solution = model.solve(params=params, log_level="off")
+    s = jnp.repeat(jnp.arange(4, dtype=jnp.int32), 4)
+    y = jnp.tile(jnp.arange(4, dtype=jnp.int32), 4)
+    panel = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "regime_id": jnp.zeros(16, dtype=jnp.int32),
+            "age": jnp.zeros(16),
+            "s": s,
+            "y": y,
+        },
+        seed=123,
+        log_level="off",
+    ).to_dataframe(use_labels=False)
+    if "period" not in panel.columns:
+        panel = panel.reset_index()
+    first = panel.loc[panel["period"] == 0].sort_values("subject_id")
+    expected = np.repeat([0.5, 1.5, 4.5, 5.5], 4) + np.tile(np.arange(4), 4)
+    np.testing.assert_array_equal(first["value"].to_numpy(), expected)
+    last = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    next_s = last["s_rest"] + 2 * last["s_fixed"] if annotated else last["s"]
+    np.testing.assert_array_equal(last["y"].to_numpy(), next_s.to_numpy())
