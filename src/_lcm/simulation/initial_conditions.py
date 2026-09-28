@@ -1375,7 +1375,7 @@ def _collect_structural_errors(
             f"Valid ages are: {sorted(valid_ages)}"
         )
     else:
-        # Validate that each subject's initial regime is solved at their starting age.
+        # Validate that each subject's initial regime is declared at their starting age.
         # Only safe to run when all ages are valid (so age_to_period lookup succeeds).
         periods = jnp.array(
             [ages.age_to_period(a.item()) for a in age_values], dtype=jnp.int32
@@ -1397,11 +1397,11 @@ def _collect_structural_errors(
                 for i in invalid_indices
             }
             details = "\n".join(
-                f"  regime '{name}' is not solved at age {age}"
+                f"  regime '{name}' is not declared at age {age}"
                 for name, age in sorted(invalid_combos)
             )
             errors.append(
-                f"Subjects are assigned to regimes that are not solved "
+                f"Subjects are assigned to regimes that are not declared "
                 f"at their starting age:\n{details}"
             )
 

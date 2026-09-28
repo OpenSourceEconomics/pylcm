@@ -156,7 +156,7 @@ def test_subject_in_a_regime_not_solved_at_its_starting_age() -> None:
     )
     _alive = model.regime_names_to_ids["alive"]
 
-    with pytest.raises(InvalidInitialConditionsError, match="not solved"):
+    with pytest.raises(InvalidInitialConditionsError, match="not declared"):
         validate_initial_conditions(
             initial_conditions={
                 "age": jnp.array([3.0]),

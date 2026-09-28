@@ -293,7 +293,7 @@ def test_initial_regimes_rejects_pairs_that_are_not_declared_problems(
 
 
 def test_simulation_input_outside_the_entry_permissions_raises() -> None:
-    """A covered pair that is not a permitted entry is rejected before evaluation."""
+    """A covered pair that is not an admissible entry is rejected before evaluation."""
     model = _model_with_entries({25: "working"})
     with pytest.raises(InvalidInitialConditionsError, match="retirement"):
         model.validate_initial_conditions(

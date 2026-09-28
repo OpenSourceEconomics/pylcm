@@ -730,11 +730,11 @@ def _fail_if_a_target_is_uncovered(
         for source, by_period in by_regime.items():
             for period, targets in by_period.items():
                 errors.extend(
-                    f"Regime '{source}' at age {ages.exact_values[period]} "
-                    f"({phase}) declares target '{target}', which is not "
-                    f"solved at age {ages.exact_values[period + 1]}. "
-                    f"Extend '{target}''s schedule or remove the target "
-                    "from this case."
+                    f"'{target}' is not declared at age "
+                    f"{ages.exact_values[period + 1]}, the next age after "
+                    f"({ages.exact_values[period]}, '{source}'), which "
+                    f"declares it as a target ({phase}). Extend '{target}''s "
+                    "schedule or remove the target from this case."
                     for target in targets
                     if period + 1 not in covered[target]
                 )

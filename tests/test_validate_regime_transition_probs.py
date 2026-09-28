@@ -130,7 +130,7 @@ def test_raises_for_positive_probability_outside_the_declared_targets():
     )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
-        match=r"'dead' is not solved at age 26\.0",
+        match=r"'dead' is outside the declared targets of 'working_life'",
     ):
         _validate_regime_transition_probs(
             regime_transition_probs=probs,

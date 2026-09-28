@@ -1090,7 +1090,7 @@ def _referenced_value_kwargs(
     # The same per-period set the AOT lowering consults, so a compiled
     # program's pytree and this call's arguments name the same channels — and
     # only the regimes this period's edges land in, since an edge whose target
-    # is inactive at `period + 1` reads nothing there.
+    # is not declared at `period + 1` reads nothing there.
     edge_reference_regimes = regime.simulation.edge_reference_regimes_by_period.get(
         period
     )

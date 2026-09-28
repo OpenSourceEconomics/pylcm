@@ -2978,11 +2978,12 @@ class Model:
         )
         if refused:
             details = "\n".join(
-                f"  regime '{name}' at age {age}" for age, name in refused
+                f"  ({age}, '{name}') is not an admissible entry"
+                for age, name in refused
             )
             raise InvalidInitialConditionsError(
-                "Subjects start where `initial_regimes` does not permit entry:\n"
-                f"{details}"
+                "Subjects start at declared nodes that `initial_regimes` does not "
+                f"admit as entries:\n{details}"
             )
 
     def _resolve_compile_batch_size(

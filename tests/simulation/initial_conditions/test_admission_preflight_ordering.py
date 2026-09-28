@@ -64,7 +64,7 @@ def _validate(*, model: Model, initial: InitialConditions) -> None:
         (999, 99.0, 999, True, "Invalid regime IDs [999]. Valid IDs: [0, 1]"),
         (0, 99.0, 999, True, "Missing model states: ['wealth']."),
         (0, 99.0, 999, False, "Invalid age values [99.0]"),
-        (0, 3.0, 999, False, "not solved"),
+        (0, 3.0, 999, False, "not declared"),
         (0, 0.0, 999, False, "Invalid values [999] for discrete state 'health'"),
     ],
 )
