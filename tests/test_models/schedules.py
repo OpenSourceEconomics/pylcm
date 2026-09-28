@@ -13,6 +13,7 @@ def until_exit(
     law: object,
     exits: tuple[str, ...],
     start: UserAge | float | None = None,
+    stays: tuple[str, ...] | None = None,
 ) -> ByAge:
     """Apply `law` up to the age before `boundary`, then only its `exits`.
 
@@ -23,10 +24,13 @@ def until_exit(
     - per-target mapping ⇒ the exit cells are the mapping's own cells
     - `Choose` / vector `MarkovTransition` ⇒ the same function over `exits`
     - `Phased` ⇒ each phase's law restricted the same way
+
+    `stays`, if given, restricts the earlier ages to those targets the same
+    way, so a deterministic lifecycle declares one target per age.
     """
     return ByAge.until(
         stop_age_exclusive=boundary,
-        law=law,
+        law=law if stays is None else _restricted(law, exits=stays),
         then=_restricted(law, exits=exits),
         start_age_inclusive=start,
     )
