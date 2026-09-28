@@ -72,6 +72,7 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
                 "done": MarkovTransition(func=prob_stop),
             },
             exits=("done",),
+            stays=("saving",),
         ),
         functions={"utility": utility, "savings": savings},
         solver=solver,
