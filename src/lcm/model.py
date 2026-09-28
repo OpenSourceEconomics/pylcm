@@ -2559,6 +2559,13 @@ class Model:
                             process_grid_resolver=process_grid_resolver,
                         )
                     process_grid_resolver.seal()
+                if entry_allocations is not None:
+                    validate_regime_selection(
+                        regimes=self._regimes,
+                        flat_params=flat_params,
+                        ages=self.ages,
+                        process_grid_resolver=process_grid_resolver,
+                    )
             if solution is not None:
                 with solve_phase(
                     name="solution_resolution", logger=log, call_id=call_id
@@ -3060,9 +3067,12 @@ class Model:
         )
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
-        validate_regime_selection(
-            regimes=self._regimes, flat_params=flat_params, ages=self.ages
-        )
+        if array_writer is None:
+            # Under entry admission the caller validates after the process
+            # grids are admitted; see `simulate`.
+            validate_regime_selection(
+                regimes=self._regimes, flat_params=flat_params, ages=self.ages
+            )
         if array_writer is not None:
             array_writer.publish(stage="params", tree=flat_params)
         return flat_params

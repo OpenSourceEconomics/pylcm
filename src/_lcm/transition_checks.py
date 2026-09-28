@@ -390,12 +390,14 @@ def validate_regime_selection(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
+    process_grid_resolver: ProcessGridResolver | None = None,
 ) -> None:
     """Validate every regime-selection law, at every log level.
 
     Every covered source period's selection must put finite mass in [0, 1] that
     sums to one on its declared targets, and zero mass elsewhere; a failure
-    always raises.
+    always raises. Under entry admission, process grids come from the sealed
+    `process_grid_resolver`, so validation allocates nothing unadmitted.
 
     Raises:
         InvalidRegimeTransitionProbabilitiesError: On the first invalid row.
@@ -406,6 +408,7 @@ def validate_regime_selection(
         flat_params=flat_params,
         ages=ages,
         logger=_REGIME_SELECTION_LOGGER,
+        process_grid_resolver=process_grid_resolver,
     )
 
 
