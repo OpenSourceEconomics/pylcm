@@ -25,6 +25,7 @@ from _lcm.constraints.ir import And
 from _lcm.engine import Regime as EngineRegime
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_building import schedules
 from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.functools import _PositionalAdapter, allow_args
@@ -2042,3 +2043,34 @@ def test_a_shipped_class_used_directly_is_fingerprinted_by_identity() -> None:
     assert digest == fingerprints._semantic_fingerprint(
         _utility_through_a_shipped_class
     )
+
+
+def _masked_survival(age: float) -> float:
+    return 1.0 - age / 100.0
+
+
+def _reading(law: Callable[..., object]) -> Callable[..., object]:
+    """A function that reaches `law` only through its closure."""
+
+    def read(**kwargs: object) -> object:
+        return law(**kwargs)
+
+    return read
+
+
+@pytest.mark.parametrize(("left", "right"), [((0,), (0,)), ((0,), (1,))])
+def test_a_function_closing_over_a_lowered_law_is_fingerprinted_by_its_fields(
+    *, left: tuple[int, ...], right: tuple[int, ...]
+) -> None:
+    """A lowered schedule law is identified by its fields, not refused as opaque."""
+    digests = [
+        fingerprints._semantic_fingerprint(
+            _reading(
+                schedules._period_masked(
+                    cell=_masked_survival, periods=periods, names=("age",)
+                )
+            )
+        )
+        for periods in (left, right)
+    ]
+    assert (digests[0] == digests[1]) is (left == right)
