@@ -226,7 +226,7 @@
           },
           {
             "path": "src/_lcm/simulation/host_operations.py",
-            "sha256": "0c3dc3bb2a6cde0a46235760e9f5f9ed1ba221461e41feecd1315b7962e0191d"
+            "sha256": "694f643d3cf582bb01b2a1882ac9e981fe3e6d731a7ee59e476ffc9f539e4637"
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "a9ac1062bcfeec6628a4452d6dbdb71bfd11b16a8c17578d66cf1d1e801fadeb"
+        "source_inventory_sha256": "c59bb22be5dfca2af35e1f04c42e56a7c65c8639bf949257d915a561ad17557c"
       },
       "fast": {
         "candidate_sources": [
@@ -696,7 +696,7 @@
           },
           {
             "path": "src/_lcm/simulation/host_operations.py",
-            "sha256": "0c3dc3bb2a6cde0a46235760e9f5f9ed1ba221461e41feecd1315b7962e0191d"
+            "sha256": "694f643d3cf582bb01b2a1882ac9e981fe3e6d731a7ee59e476ffc9f539e4637"
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "a9ac1062bcfeec6628a4452d6dbdb71bfd11b16a8c17578d66cf1d1e801fadeb"
+        "source_inventory_sha256": "c59bb22be5dfca2af35e1f04c42e56a7c65c8639bf949257d915a561ad17557c"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "a9ac1062bcfeec6628a4452d6dbdb71bfd11b16a8c17578d66cf1d1e801fadeb",
+  "source_inventory_sha256": "c59bb22be5dfca2af35e1f04c42e56a7c65c8639bf949257d915a561ad17557c",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1170,7 +1170,7 @@
     },
     {
       "path": "src/_lcm/simulation/host_operations.py",
-      "sha256": "0c3dc3bb2a6cde0a46235760e9f5f9ed1ba221461e41feecd1315b7962e0191d"
+      "sha256": "694f643d3cf582bb01b2a1882ac9e981fe3e6d731a7ee59e476ffc9f539e4637"
     },
     {
       "path": "src/_lcm/simulation/initial_conditions.py",
