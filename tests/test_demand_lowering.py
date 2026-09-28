@@ -367,3 +367,21 @@ def test_a_gate_fold_exists_only_where_its_source_lands() -> None:
     model = _gated_fold_model({40: "source", 50: "target"})
     folds = model._regimes["source"].gated_edges["target"].folds_by_period
     assert set(folds) == {1}
+
+
+def test_a_gated_target_solved_where_its_source_never_stands_solves() -> None:
+    """A target solved for another start is not folded for this source there."""
+    model = _gated_fold_model(
+        {40: ("source", "target", "reference", "fallback"), 50: "target"}
+    )
+    values = model.solve(params={"discount_factor": 0.9}, log_level="off").values
+    assert {(period, name) for period, by in values.items() for name in by} == {
+        (0, "source"),
+        (0, "target"),
+        (0, "reference"),
+        (0, "fallback"),
+        (1, "target"),
+        (1, "reference"),
+        (1, "fallback"),
+        (2, "target"),
+    }
