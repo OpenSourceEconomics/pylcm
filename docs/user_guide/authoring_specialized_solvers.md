@@ -65,6 +65,7 @@ dead = Regime(
 model = Model(
     regimes={"working": working, "dead": dead},
     regime_id_class=RegimeId,
+    initial_regimes={0: "working"},
     ages=AgeGrid(start=0, stop=1, step="Y"),
 )
 
@@ -196,6 +197,7 @@ dead = Regime(
 model = Model(
     regimes={"working": working, "dead": dead},
     regime_id_class=RegimeId,
+    initial_regimes={0: "working"},
     ages=AgeGrid(start=0, stop=1, step="Y"),
 )
 
@@ -310,6 +312,7 @@ dead = Regime(
 model = Model(
     regimes={"working": working, "dead": dead},
     regime_id_class=RegimeId,
+    initial_regimes={0: "working"},
     ages=AgeGrid(start=0, stop=1, step="Y"),
 )
 

@@ -18,6 +18,7 @@ model = Model(
     regimes={...},
     ages=ages,
     regime_id_class=RegimeId,
+    initial_regimes=initial_regimes,
     enable_jit=False,  # readable tracebacks, but slower
 )
 ```
@@ -258,6 +259,7 @@ model = Model(
     regimes={...},
     ages=ages,
     regime_id_class=RegimeId,
+    initial_regimes=initial_regimes,
     enable_jit=False,
 )
 

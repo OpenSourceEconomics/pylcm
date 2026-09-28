@@ -58,6 +58,7 @@ model = Model(
     regimes=regimes,
     ages=ages,
     regime_id_class=RegimeId,
+    initial_regimes=initial_regimes,
     execution_config=ExecutionConfig(axis_widths={"action_product": 8}),
 )
 ```
