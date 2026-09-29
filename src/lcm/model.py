@@ -714,6 +714,7 @@ class Model:
             broadcast_variables=broadcast_variables,
             ages=self.ages,
             active_periods_by_regime=active_periods_by_regime,
+            visited_periods_by_regime=schedules.visited_periods_by_regime,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(

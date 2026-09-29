@@ -10,6 +10,7 @@ This is the single place that resolves phase-variant values into per-phase
 slices; everything downstream consumes the slices.
 """
 
+import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -25,6 +26,7 @@ from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
+from lcm.collective import CollectiveUtility
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.transition import (
@@ -324,8 +326,8 @@ def project_onto_solve_phase(user_regime: lcm.regime.Regime) -> lcm.regime.Regim
     A regime that is valued but never visited owes its backward problem only,
     so its declaration keeps the solve variant of every `Phased` slot:
 
-    - a `Phased` function, state transition, joint transition, regime
-      transition or aggregator becomes its solve variant;
+    - a `Phased` function, stakeholder utility, state transition, joint
+      transition, regime transition or aggregator becomes its solve variant;
     - a carried state becomes its solve-phase imputation, a function under the
       state's name, and its carried law of motion is dropped.
 
@@ -366,6 +368,17 @@ def project_onto_solve_phase(user_regime: lcm.regime.Regime) -> lcm.regime.Regim
 
 
 def _solve_variant[T](value: T | Phased) -> T:
+    if isinstance(value, CollectiveUtility):
+        return cast(
+            "T",
+            dataclasses.replace(
+                value,
+                utilities={
+                    name: _solve_variant(utility)
+                    for name, utility in value.utilities.items()
+                },
+            ),
+        )
     return cast("T", value.solve) if isinstance(value, Phased) else value
 
 

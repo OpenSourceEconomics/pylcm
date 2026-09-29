@@ -216,6 +216,7 @@ def validate_model_inputs(
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> None:
     """Validate model constructor inputs.
 
@@ -225,7 +226,9 @@ def validate_model_inputs(
 
     `ages` lets the used-variable check resolve `AgeSpecializedFunction` functions at
     each regime's representative age, so a state read only by a policy-specialized
-    function still counts as used.
+    function still counts as used. A marker only the simulate phase reads is
+    resolved at the first of `visited_periods_by_regime`, where a subject can be;
+    they default to the active periods.
     """
 
     # DC-EGM contract checks run before the generic checks below: a contract
@@ -243,6 +246,7 @@ def validate_model_inputs(
         user_regimes=user_regimes,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
     )
     solver_validation_phase_specs = normalize_all_regime_phases(
         user_regimes=solver_validation_regimes
@@ -296,6 +300,7 @@ def validate_model_inputs(
             broadcast_variables=broadcast_variables,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
+            visited_periods_by_regime=visited_periods_by_regime,
         )
     )
     error_messages.extend(
@@ -326,6 +331,7 @@ def _representative_for_validation(
     user_regimes: Mapping[RegimeName, UserRegime],
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> Mapping[RegimeName, UserRegime]:
     """Resolve age markers to their representatives, for solver-contract validation.
 
@@ -345,6 +351,7 @@ def _representative_for_validation(
         phased_specs=phased_specs,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
     ).representative_user_regimes
 
 
@@ -378,6 +385,7 @@ def _validate_all_variables_used(
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -462,11 +470,23 @@ def _validate_all_variables_used(
             # another (see the `_AgeSpecialized` docstring), so this relies on
             # `build` being pure — its result is not cached or reused
             # elsewhere.
+            # A simulate-only root resolves where the regime is simulated.
+            visited_periods = (
+                active_periods
+                if visited_periods_by_regime is None
+                else visited_periods_by_regime.get(regime_name, ())
+            ) or active_periods
             representative_age = float(ages.period_to_age(active_periods[0]))
+            simulated_age = float(ages.period_to_age(visited_periods[0]))
             user_functions = cast(
                 "dict[str, Callable[..., object]]",
                 {
-                    name: resolve_node(node=func, age=representative_age)
+                    name: resolve_node(
+                        node=func,
+                        age=simulated_age
+                        if name.endswith("__simulate")
+                        else representative_age,
+                    )
                     for name, func in user_functions.items()
                 },
             )

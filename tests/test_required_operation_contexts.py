@@ -22,6 +22,7 @@ from lcm import (
     AgeSpecializedGrid,
     ByAge,
     Choose,
+    CollectiveUtility,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -376,16 +377,83 @@ def test_mixed_age_regime_owes_the_realized_route_of_its_visited_age_only() -> N
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Simulate-side programs are built at every valued period of a "
-    "visited regime, so a simulate-only factory also runs at its value-only ages.",
-)
 def test_mixed_age_simulate_factory_runs_at_the_visited_age_only() -> None:
     """The simulate-only factory of `perceived` is needed at age 2 alone."""
     calls: list[float] = []
     _mixed_age_model(calls=calls)
     assert set(calls) == {2.0}
+
+
+def _collective_regime(*, law: Any, utility: Any) -> Regime:
+    return Regime(
+        regime_transitions=law,
+        states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": utility, "m": utility})
+        },
+    )
+
+
+def _collective_demand_model(*, promote: bool) -> Model:
+    """The demand model with two stakeholders in every regime.
+
+    Each stakeholder of `perceived` has a phased utility whose simulate variant
+    reads `simulate_bonus`.
+    """
+    roots: dict[object, str] = {0: "source"}
+    if promote:
+        roots[1] = "perceived"
+    return Model(
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_DemandId,
+        initial_regimes=roots,
+        regimes={
+            "source": _collective_regime(
+                law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")}),
+                utility=_wealth_utility,
+            ),
+            "perceived": _collective_regime(
+                law=_perceived_law(),
+                utility=Phased(solve=_backward_utility, simulate=_simulate_utility),
+            ),
+            "realized": _collective_regime(
+                law=ByAge(cases={1: "end"}), utility=_wealth_utility
+            ),
+            "end": _collective_regime(law=None, utility=_wealth_utility),
+            "other_end": _collective_regime(law=None, utility=_wealth_utility),
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("promote", "expected"),
+    [
+        (False, {"discount_factor", "backward_bonus"}),
+        (
+            True,
+            {"discount_factor", "backward_bonus", "realized_rate", "simulate_bonus"},
+        ),
+    ],
+)
+def test_collective_regime_owes_stakeholder_simulate_parameters_only_when_visited(
+    *, promote: bool, expected: set[str]
+) -> None:
+    """A stakeholder's simulate-side utility counts only once the regime is visited."""
+    model = _collective_demand_model(promote=promote)
+    assert _leaf_names(tree=model.get_params_template()["perceived"]) == expected
+
+
+def test_value_only_collective_regime_keeps_each_stakeholders_value() -> None:
+    """Each stakeholder's source value is the plain `0.5 + 1.75 w`."""
+    values = (
+        _collective_demand_model(promote=False)
+        .solve(params={"discount_factor": 0.5, "backward_bonus": 1.0}, log_level="off")
+        .values
+    )
+    np.testing.assert_array_equal(
+        np.asarray(values[0]["source"]), [[0.5, 0.5], [2.25, 2.25]]
+    )
 
 
 @categorical(ordered=False)
@@ -737,3 +805,35 @@ def test_simulation_admits_a_law_that_is_nan_only_at_infeasible_rows() -> None:
     ).to_dataframe()
     first = panel.query("period == 0").sort_values("subject_id")
     np.testing.assert_array_equal(first["consumption"].to_numpy(), [0.0, 1.0])
+
+
+def test_mixed_age_regime_simulates_its_visited_age() -> None:
+    """With `late_rate = 1`, every subject leaves `perceived` at age 2 for `end`."""
+    model = _mixed_age_model(calls=[])
+    params = {
+        "discount_factor": 0.5,
+        "backward_bonus": 1.0,
+        "simulate_bonus": 0.0,
+        "late_rate": 1.0,
+    }
+    panel = model.simulate(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        initial_conditions={
+            "age": jnp.zeros(2),
+            "regime_id": jnp.full(2, model.regime_names_to_ids["source"]),
+            "wealth": jnp.asarray([0.0, 1.0]),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
+    assert list(panel.sort_values(["period", "subject_id"])["regime_name"]) == [
+        "source",
+        "source",
+        "realized",
+        "realized",
+        "perceived",
+        "perceived",
+        "end",
+        "end",
+    ]
