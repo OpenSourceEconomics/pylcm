@@ -207,8 +207,8 @@ def _even_split() -> FloatND:
     return jnp.asarray([0.5, 0.0, 0.5])
 
 
-def test_a_self_target_named_twice_is_refused() -> None:
-    """Remain mass cannot be declared twice for the same target."""
+def test_a_target_named_twice_in_one_declaration_is_refused_at_construction() -> None:
+    """A vector law's `targets` may not list the same regime twice."""
     with pytest.raises(
         RegimeInitializationError, match=r"\['working', 'working', 'dead'\]"
     ):
@@ -318,6 +318,125 @@ def test_two_half_probabilities_split_the_panel() -> None:
         "working": 0,
         "retirement": retirees,
         "dead": 1000 - retirees,
+    }
+
+
+@categorical(ordered=False)
+class _JobId:
+    unemployed_before_switch: ScalarInt
+    unemployed_after_switch: ScalarInt
+    employed: ScalarInt
+    dead: ScalarInt
+
+
+_JOB_FINDING_RATE = 0.2
+
+
+def _remain() -> FloatND:
+    return jnp.asarray(1 - _JOB_FINDING_RATE)
+
+
+def _find_job() -> FloatND:
+    return jnp.asarray(_JOB_FINDING_RATE)
+
+
+def _remain_split() -> FloatND:
+    return jnp.asarray((1 - _JOB_FINDING_RATE) / 2)
+
+
+_DOUBLE_REMAIN = {
+    "unemployed_before_switch": MarkovTransition(func=_remain),
+    "unemployed_after_switch": MarkovTransition(func=_remain),
+    "employed": MarkovTransition(func=_find_job),
+}
+_SPLIT_REMAIN = {
+    "unemployed_before_switch": MarkovTransition(func=_remain_split),
+    "unemployed_after_switch": MarkovTransition(func=_remain_split),
+    "employed": MarkovTransition(func=_find_job),
+}
+_SHARED_HALF = {
+    "unemployed_after_switch": MarkovTransition(func=_half),
+    "employed": MarkovTransition(func=_half),
+}
+
+
+def _job_model(first_law: Any) -> Model:
+    """Every destination is a known regime with a law at 35 and a wealth handoff."""
+    return Model(
+        regimes={
+            "unemployed_before_switch": _nonterminal(
+                ByAge(cases={25: first_law, 35: "dead"})
+            ),
+            "unemployed_after_switch": _nonterminal(ByAge(cases={35: "dead"})),
+            "employed": _nonterminal(ByAge(cases={35: "dead"})),
+            "dead": _terminal(),
+        },
+        ages=AgeGrid(start=25, stop=45, step="10Y"),
+        regime_id_class=_JobId,
+        initial_regimes={25: "unemployed_before_switch"},
+    )
+
+
+def _job_simulate(*, model: Model, log_level: LogLevel, n_subjects: int) -> Any:
+    return model.simulate(
+        params=_PARAMS,
+        initial_conditions={
+            "wealth": jnp.zeros(n_subjects),
+            "age": jnp.full(n_subjects, 25.0),
+            "regime_id": jnp.full(
+                n_subjects, model.regime_names_to_ids["unemployed_before_switch"]
+            ),
+        },
+        solution=model.solve(params=_PARAMS, log_level="off"),
+        log_level=log_level,
+        seed=0,
+    )
+
+
+_DOUBLE_COUNTED = (
+    r"from 'unemployed_before_switch' at age 25 do not sum to 1\.0"
+    r"(.|\n)*1\.8"
+)
+
+
+@_LOG_LEVELS
+def test_remain_mass_counted_for_two_distinct_targets_fails_in_solve(
+    log_level: LogLevel,
+) -> None:
+    """Rows (0.8, 0.8, 0.2) to three distinct valid regimes sum to 1.8 in solve."""
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=_DOUBLE_COUNTED
+    ):
+        _job_model(_DOUBLE_REMAIN).solve(params=_PARAMS, log_level=log_level)
+
+
+@_LOG_LEVELS
+def test_remain_mass_counted_for_two_distinct_targets_fails_in_simulate(
+    log_level: LogLevel,
+) -> None:
+    """The realized law (0.8, 0.8, 0.2) is refused although the solve law is valid."""
+    model = _job_model(Phased(solve=_SPLIT_REMAIN, simulate=_DOUBLE_REMAIN))
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=_DOUBLE_COUNTED
+    ):
+        _job_simulate(model=model, log_level=log_level, n_subjects=4)
+
+
+def test_two_targets_sharing_a_half_probability_callable_simulate() -> None:
+    """Seed 0 splits 1000 subjects at 25 into the two targets of `_half`.
+
+    The uniform draws depend on the float precision, so the split is pinned per
+    precision.
+    """
+    panel = _job_simulate(
+        model=_job_model(_SHARED_HALF), log_level="warning", n_subjects=_N_SUBJECTS
+    ).to_dataframe()
+    after_switch = -1 if jax.config.jax_enable_x64 else -2
+    assert panel.query("age == 35")["regime_name"].value_counts().to_dict() == {
+        "unemployed_before_switch": 0,
+        "unemployed_after_switch": after_switch,
+        "employed": _N_SUBJECTS - after_switch,
+        "dead": 0,
     }
 
 
