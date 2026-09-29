@@ -269,8 +269,13 @@ def lower_demanded_transitions(
             _fail_if_conflicting_annotations(
                 regime_name=name,
                 laws=tuple(
-                    law_by_period[period]
-                    for period in sorted({*solve_periods, *visited_periods[name]})
+                    _phase_side(law=law_by_period[period], side=side)
+                    for side, periods in zip(
+                        _SIDES,
+                        (solve_periods, visited_periods[name]),
+                        strict=True,
+                    )
+                    for period in periods
                 ),
             )
         lowered[name] = _lower(
