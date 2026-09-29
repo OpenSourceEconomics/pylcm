@@ -32,7 +32,10 @@ from lcm import (
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    RegimeInitializationError,
+)
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -211,3 +214,47 @@ def _prob_alive(*, age: int, final_age_alive: float) -> FloatND:
 
 def _prob_dead(*, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 1.0 - _SURVIVAL)
+
+
+def test_nbegm_refuses_a_ces_aggregator_under_expected_utility() -> None:
+    """NB-EGM's expected-utility route solves only the additive aggregator."""
+    alive = ConsumptionSavingsRegime(
+        states={"liquid": _LIQUID_GRID},
+        state_transitions={"liquid": {"dead": _next_liquid_certain}},
+        actions={"consumption": _CONSUMPTION_GRID},
+        regime_transitions={"dead": MarkovTransition(func=_certain_death)},
+        functions={
+            "utility": _utility,
+            "resources": _resources,
+            "savings": _savings,
+        },
+        koopmans_aggregator=CESAggregator(),
+        certainty_equivalent=LinearExpectation(),
+        solver=NBEGM(savings_grid=_SAVINGS_GRID, envelope_arithmetic="ordinary"),
+        liquid=LiquidMargin(
+            state="liquid",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
+    )
+    dead = Regime(
+        regime_transitions=None,
+        states={"liquid": _LIQUID_GRID},
+        functions={"utility": _bequest},
+    )
+    with pytest.raises(RegimeInitializationError, match="LinearAggregator"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            regime_id_class=_RegimeId,
+            ages=AgeGrid(start=_FIRST_AGE, stop=_LAST_LIVING_AGE, step="5Y"),
+            initial_regimes={_FIRST_AGE: "alive"},
+        )
+
+
+def _next_liquid_certain(savings: FloatND) -> ContinuousState:
+    return 1.03 * savings
+
+
+def _certain_death() -> FloatND:
+    return jnp.asarray(1.0)

@@ -26,7 +26,7 @@ from _lcm.typing import ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.koopmans_aggregation import CESAggregator
+from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
@@ -813,6 +813,7 @@ def _validate_completeness(
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_koopmans_aggregator_errors(regime))
     error_messages.extend(_certainty_equivalent_errors(regime))
+    error_messages.extend(_expected_utility_aggregator_errors(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -892,6 +893,33 @@ def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
             "no continuation value to aggregate."
         )
     return error_messages
+
+
+def _expected_utility_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Refuse a non-additive aggregator on the endogenous-grid EU route.
+
+    Without a nonlinear certainty equivalent, NBEGM and NNBEGM run the
+    expected-utility kernels, which invert the Euler equation of
+    `W = utility + discount_factor * CE`. Any other solve-phase aggregator would
+    be ignored rather than solved.
+    """
+    if not isinstance(regime.solver, (NBEGM, NNBEGM)) or aggregates_nonlinearly(
+        regime.certainty_equivalent
+    ):
+        return []
+    declared = regime.koopmans_aggregator
+    solve_W = declared.solve if isinstance(declared, Phased) else declared
+    if solve_W is None or isinstance(solve_W, LinearAggregator):
+        return []
+    msg = (
+        f"{type(regime.solver).__name__} without a nonlinear "
+        "`certainty_equivalent` solves the additive aggregator "
+        "`W = utility + discount_factor * CE` only, got "
+        f"{type(solve_W).__name__}. Use `koopmans_aggregator=LinearAggregator()` "
+        "(or leave it unset), pair a `CESAggregator` with `PowerMean()`, or "
+        "solve the regime with GridSearch()."
+    )
+    return [msg]
 
 
 def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
