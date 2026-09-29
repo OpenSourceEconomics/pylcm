@@ -67,8 +67,8 @@ def test_tiled_product_limits_coordinate_only_nonlinear_work(*, width: int) -> N
     )
 
 
-def test_full_product_bounds_prefix_nonlinear_rank() -> None:
-    """Coordinate-prefix work adds at most one batch axis to the scalar body."""
+def test_partial_product_bounds_prefix_nonlinear_rank() -> None:
+    """A partial window's prefix work adds at most one batch axis to the scalar body."""
     mapped = functools.partial(
         cast(
             "Callable[..., Any]",
@@ -78,7 +78,7 @@ def test_full_product_bounds_prefix_nonlinear_rank() -> None:
                 width_keyword="cell_width",
             ),
         ),
-        cell_width=30,
+        cell_width=10,
     )
     traced = jax.make_jaxpr(mapped)(
         first=jnp.asarray([1.0, 2.0]),
@@ -367,8 +367,10 @@ def _primitive_count(*, graph: Any, name: str) -> int:
         (("first", "second"), 6, 0),
         # A window narrower than the final grid still decodes a flat index.
         (("first", "second"), 2, 2),
-        # Three coordinates: the two-grid prefix keeps its flat decode.
-        (("first", "second", "last"), 30, 2),
+        # Three coordinates, one tile: every grid is its own window.
+        (("first", "second", "last"), 30, 0),
+        # Three coordinates, a partial tile: the prefix keeps its flat decode.
+        (("first", "second", "last"), 10, 2),
     ],
 )
 def test_whole_coordinate_windows_read_their_grid_without_an_index_gather(
