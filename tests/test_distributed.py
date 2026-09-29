@@ -1445,17 +1445,17 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
         )
         .values
     )
-    # The sharded and single-device solves reduce in different orders. On CPU at
-    # float64 under jax 0.11.1 with eight host devices, three `working_life`
-    # entries at the top wealth node differ by exactly one ulp from period 3
-    # on; the pull request's base commit shows the same gap at the
-    # same entries, so it is a reduction-order effect, not a value change.
+    # The sharded and single-device solves reduce in different orders, and the
+    # gap grows toward earlier periods. On CPU with eight host devices under jax
+    # 0.11.1, `working_life` differs by 1 ulp in period 3 and by at most 3 ulp in
+    # period 0, at float64 and at float32, identically on the pull request's base
+    # commit, so it is a reduction-order effect, not a value change.
     for period, regime_to_value in distributed.items():
         for regime_name, value in regime_to_value.items():
             assert_agrees_to_ulp(
                 got=np.asarray(value),
                 expected=np.asarray(single[period][regime_name]),
-                n_ulp=1,
+                n_ulp=3,
                 err_msg=f"regime {regime_name!r}, period {period}",
             )
 
