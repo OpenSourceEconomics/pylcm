@@ -99,6 +99,7 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.simulation.initial_conditions import (
     validate_initial_conditions as validate_canonical_initial_conditions,
 )
+from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
@@ -2593,11 +2594,21 @@ class Model:
                         )
                     process_grid_resolver.seal()
                 if entry_allocations is not None:
+                    selection_memory = SimulationMemory(
+                        budget_bytes=entry_allocations.budget_bytes,
+                        devices=entry_allocations.devices,
+                        subject_devices=entry_allocations.devices[:1],
+                        operations=entry_allocations.operations,
+                        producers=self._simulate_entry_operations,
+                        inputs=entry_allocations.snapshot(),
+                    )
+                    selection_memory.check_resident()
                     validate_regime_selection(
                         regimes=self._regimes,
                         flat_params=flat_params,
                         ages=self.ages,
                         process_grid_resolver=process_grid_resolver,
+                        memory=selection_memory,
                     )
             if solution is not None:
                 with solve_phase(
