@@ -133,6 +133,27 @@ def test_bounded_width_selector_falls_back_to_the_power_of_two_after_the_cover(
     assert _refusing_walk(extent=extent) == expected
 
 
+def test_bounded_width_selector_does_not_refine_back_toward_a_refused_cover() -> None:
+    """A cover refused at the extent stops at the admitted power-of-two width."""
+    selector = BoundedWidthSelector(
+        axes=(_axis(extent=20),),
+        fixed_widths={},
+        covered_axes=("cell",),
+        policy=WidthSearchPolicy(kind=WidthSearch.BOUNDED, max_evaluations=10),
+    )
+    walk: list[int] = []
+    while (widths := selector.propose()) is not None:
+        walk.append(widths["cell"])
+        selector.record(
+            widths=widths,
+            reservation_bytes=1,
+            resident_bytes=0,
+            peak_bytes=1,
+            admitted=widths["cell"] <= 16,
+        )
+    assert walk == [20, 16]
+
+
 @pytest.mark.parametrize(
     ("covered_axes", "error", "match"),
     [
