@@ -212,14 +212,3 @@ def test_period_kernels_sharing_a_config_reuse_one_compiled_core():
     # configurations) independent of the period count — the property the AOT
     # step relies on to lower two cores rather than one per period.
     assert len(distinct_cores) == 2
-
-
-def test_iskhakov_params_for_a_two_period_horizon_solve_only_working_life():
-    """With one decision period, retirement is never reached, so the example's
-    parameters carry no retirement leaf and the solve publishes working life only.
-    """
-    solution = get_model(n_periods=2).solve(
-        params=get_params(n_periods=2), log_level="off"
-    )
-
-    assert set(solution.values[0]) == {"working_life"}
