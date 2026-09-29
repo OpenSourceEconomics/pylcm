@@ -670,12 +670,21 @@ class BoundedWidthSelector:
     def _shrink_from(
         self, *, widths: MappingProxyType[str, int]
     ) -> MappingProxyType[str, int] | None:
-        """Record the refusal on one axis and return the narrower mapping."""
+        """Record the refusal on one axis and return the narrower mapping.
+
+        A covered axis refused at its whole extent is not recorded: refining back
+        toward the extent would only recompile widths that leave a remainder.
+        """
         shrunk = self._shrink(widths=widths)
         if shrunk is None:
             return None
         name, narrower = shrunk
-        self._last_refused[name] = widths[name]
+        axis = next(axis for axis in self.axes if axis.name == name)
+        if not (
+            widths[name] == axis.extent
+            and _covers(axis=axis, covered_axes=self.covered_axes)
+        ):
+            self._last_refused[name] = widths[name]
         self._shrunk.append(name)
         if len(self._decisions) >= self.policy.max_evaluations:
             return None
