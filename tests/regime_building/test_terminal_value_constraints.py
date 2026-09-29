@@ -122,18 +122,83 @@ def _make_model(*, participation: bool) -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
-        # `single_f_terminal` is also a start, so the control without the predicate
-        # that reads it solves the same problems and takes the same parameters.
-        initial_regimes={0: "couple", 1: "single_f_terminal"},
+        # The outside option is a value dependency, not an admissible start.
+        initial_regimes={0: "couple"},
     )
 
 
-def _params(*, outside_option: float = 3.0) -> dict:
-    return {
+def _params(*, outside_option: float = 3.0, participation: bool = True) -> dict:
+    params = {
         "couple": {"koopmans_aggregator": {"discount_factor": 1.0}},
         "couple_terminal": {},
-        "single_f_terminal": {"utility": {"outside_option": outside_option}},
     }
+    if participation:
+        params["single_f_terminal"] = {"utility": {"outside_option": outside_option}}
+    return params
+
+
+@pytest.mark.parametrize("participation", [False, True])
+def test_a_terminal_value_reference_does_not_become_a_start(
+    *, participation: bool
+) -> None:
+    """Reference demand enlarges solved values only, never admitted/visited pairs."""
+    model = _make_model(participation=participation)
+    physical = frozenset({(0, "couple"), (1, "couple_terminal")})
+    expected_values = physical
+    if participation:
+        expected_values |= {(1, "single_f_terminal")}
+
+    assert model.initial_nodes == frozenset({(0, "couple")})
+    assert model.reachability.visited_nodes == physical
+    assert model.reachability.nodes == expected_values
+
+
+@pytest.mark.parametrize("participation", [False, True])
+def test_the_solution_stores_exactly_the_value_demand(*, participation: bool) -> None:
+    """Solved values cover the physical pairs plus a referenced outside option only."""
+    model = _make_model(participation=participation)
+    expected = {(0, "couple"), (1, "couple_terminal")}
+    if participation:
+        expected |= {(1, "single_f_terminal")}
+
+    solution = model.solve(params=_params(participation=participation), log_level="off")
+
+    assert {
+        (period, name) for period in solution.values for name in solution.values[period]
+    } == expected
+
+
+@pytest.mark.parametrize("anchor", [1.0, 2.0, 3.0])
+@pytest.mark.parametrize("direction", [-1, 0, 1])
+def test_terminal_flags_and_sentinels_at_adjacent_outside_options(
+    *, anchor: float, direction: int
+) -> None:
+    """At each wage node and its adjacent floats, `D` is exactly `wage < option`.
+
+    The outside option sits on a wage node or one representable step to either
+    side in the active precision, so a tolerance or an off-by-one comparison in
+    the participation predicate shows up as a flipped flag. Dissolved cells carry
+    the `-inf` sentinel pair; intact ones carry `(wage, 2 * wage)`.
+    """
+    dtype = np.asarray(jnp.asarray(0.0)).dtype
+    bound = dtype.type(anchor)
+    if direction:
+        bound = np.nextafter(bound, dtype.type(np.inf if direction > 0 else -np.inf))
+    model = _make_model(participation=True)
+
+    solution = model.solve(params=_params(outside_option=float(bound)), log_level="off")
+
+    wage = np.asarray([1.0, 2.0, 3.0], dtype=dtype)
+    expected_flags = wage < bound
+    expected_values = np.column_stack((wage, 2 * wage))
+    expected_values[expected_flags] = -np.inf
+    flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
+    np.testing.assert_array_equal(
+        np.asarray(flags[1]["couple_terminal"]), expected_flags
+    )
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[1]["couple_terminal"]), expected_values
+    )
 
 
 def test_a_terminal_participation_constraint_flags_the_cells_it_empties() -> None:
@@ -180,7 +245,7 @@ def test_the_same_terminal_regime_without_the_constraint_keeps_every_cell() -> N
     """
     model = _make_model(participation=False)
 
-    solution = model.solve(params=_params(), log_level="off")
+    solution = model.solve(params=_params(participation=False), log_level="off")
     flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
 
     np.testing.assert_array_equal(
