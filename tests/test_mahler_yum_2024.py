@@ -10,6 +10,10 @@ engine's numerics, so a change to either moves them and they have to be
 re-frozen against a run whose correctness has been argued separately. They are
 for the explicit working, retirement, and dead regimes and are reproducible
 across GPUs at float64 — a re-freeze needs a fresh run, not a matching device.
+The simulated moments were frozen from the pull-request GPU CI run of commit
+56c465af at float64 under jax and jaxlib 0.11.1. The solved value function is
+pinned separately by `test_value_function_sums`, whose numbers do not depend on
+the simulation's random draws.
 
 The structural invariants at the bottom of the module are the stable half: they
 assert relations that hold for any correct solve, so they survive a re-freeze
