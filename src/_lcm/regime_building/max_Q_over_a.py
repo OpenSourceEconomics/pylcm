@@ -479,6 +479,11 @@ def get_streaming_max_Q_over_a(
             pareto_weights=pareto_weights,
             q_and_f_arg_names=q_and_f_arg_names,
             action_width_keyword=action_width_keyword,
+            whole_product_Q_and_F=productmap(
+                func=Q_and_F,
+                variables=action_names,
+                batch_sizes=dict.fromkeys(action_names, 0),
+            ),
         ),
         args=[
             "next_regime_to_V_arr",
@@ -587,6 +592,9 @@ class _StreamedMaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
+    whole_product_Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    """`Q_and_F` mapped over the named action grids, for a block covering them."""
+
     def __call__(
         self,
         *,
@@ -620,6 +628,18 @@ class _StreamedMaxQOverA:
             return ev1_result.smoothed_value
 
         if self.stakeholders is None:
+            n_actions = math.prod(
+                jnp.shape(states_actions_params[name])[0] for name in self.action_names
+            )
+            if action_block_width >= n_actions:
+                # One block covers the product: map the named grids, as the dense
+                # route does, instead of decoding a flat index into each of them.
+                # The masked maximum is the streamed reduction's value contract.
+                Q_arr, F_arr = self.whole_product_Q_and_F(
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    **q_and_f_params,
+                )
+                return Q_arr.max(where=F_arr, initial=-jnp.inf)
             fixed_cell = build_streaming_max_Q_over_a(
                 Q_and_F=self.Q_and_F,
                 action_names=self.action_names,

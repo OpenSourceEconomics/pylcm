@@ -397,7 +397,7 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "7635700aa70fc8658529995c239c0641d6177e379e8067c3894555add5dad1d3",
+    MAX_Q_SOURCE: "638d2221edb659daf75f928fe4dfb61e0fbc824844f0e93dd6ea1b56b066cb76",
     PROCESSING_SOURCE: "6f328dba0894c60c0a7283513eb384a681e2a6b62395a9c8fc03406be47e8cbf",
     GRID_SEARCH_SOURCE: "7e5bc279645bc2945b822e672e88f1101a14ff56d8359ba54b654df35b88d30a",
     CORE_PROGRAM_SOURCE: "6b96b777960bfdbf6aad394a5c635bebea976a4f6461c24ebe36f80699736924",
@@ -1868,7 +1868,7 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="streamed max-Q builder",
         contracts={
-            "get_streaming_max_Q_over_a": "cfdef947f803d14dd8299471295492ba69f2f91f96a79bd56df24e47d4646ce6",
+            "get_streaming_max_Q_over_a": "10917a849ddca11969d6d0a609e3ab6f9060d9ba1d555aa82bad3dce4ecf075f",
             "_fail_if_action_width_keyword_collides": (
                 "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4"
             ),
@@ -1882,7 +1882,7 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
                 "a586674124f90ff862f64458b40d6a6f8bbf6586e9772d9bdb4d31bf68c9c34c"
             ),
             "_StreamedMaxQOverA.__call__": (
-                "b4865fc0cc966b6f49e58923347328ada708be3cacb4ab5897a87e2d8bc13fda"
+                "ea66e9b7ae2d060f1768fdbbfb5b81ce750ccb91d3fe6cfd9d06000891529ea3"
             ),
         },
     )
@@ -1931,6 +1931,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "pareto_weights: ParetoWeights | None",
                 "q_and_f_arg_names: frozenset[str]",
                 "action_width_keyword: str",
+                "whole_product_Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
             ),
         ),
         (
