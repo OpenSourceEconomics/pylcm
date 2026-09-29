@@ -244,3 +244,46 @@ def test_value_array_indexed_in_state_names_order_matches_lookup(solved):
         },
     )
     np.testing.assert_allclose(got.value, V[index], rtol=1e-6)
+
+
+@pytest.fixture(scope="module")
+def solved_two_states():
+    model = build_shock_model()
+    params = build_shock_params()
+    solution = model.solve(params=params, log_level="off")
+    return model, params, solution
+
+
+def _nodes_in_state_names_order(*, model, params):
+    return {
+        name: model.state_grid(params=params, regime_name="alive", state_name=name)
+        for name in model.state_names(regime_name="alive")
+    }
+
+
+def test_value_array_shape_follows_state_names_order(solved_two_states):
+    """Two states on grids of different sizes: V's shape is their sizes in order."""
+    model, params, solution = solved_two_states
+    nodes = _nodes_in_state_names_order(model=model, params=params)
+    shape = tuple(len(grid) for grid in nodes.values())
+    assert solution.values[0]["alive"].shape == shape != shape[::-1]
+
+
+def test_value_array_indexed_in_state_names_order_matches_lookup_two_states(
+    solved_two_states,
+):
+    model, params, solution = solved_two_states
+    nodes = _nodes_in_state_names_order(model=model, params=params)
+    index = (2, 1)
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="alive",
+        states={
+            name: nodes[name][i : i + 1] for name, i in zip(nodes, index, strict=True)
+        },
+    )
+    V = solution.values[0]["alive"]
+    np.testing.assert_allclose(got.value, V[index], rtol=1e-5)
+    assert not np.isclose(V[index], V[index[::-1]], rtol=1e-5)
