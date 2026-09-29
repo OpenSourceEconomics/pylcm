@@ -41,11 +41,11 @@ def _invalid_costly_regime_probabilities() -> FloatND:
     """Return invalid mass after a visible sort workspace completes."""
     sample = jnp.sin(jnp.arange(4096, dtype=_FLOAT_DTYPE))
     probability = _FLOAT_DTYPE(0.25) + _FLOAT_DTYPE(0) * jnp.sort(sample)[2048]
-    return jnp.stack((probability,))
+    return jnp.stack((jnp.zeros_like(probability), probability))
 
 
 def _valid_regime_probabilities() -> FloatND:
-    return jnp.asarray([1], dtype=_FLOAT_DTYPE)
+    return jnp.asarray([0, 1], dtype=_FLOAT_DTYPE)
 
 
 def _inputs(
@@ -137,7 +137,7 @@ def _done_payoff() -> ScalarFloat:
 
 
 def _parameterized_regime_probabilities(done_probability: float) -> FloatND:
-    return jnp.stack((done_probability,))
+    return jnp.stack((jnp.zeros_like(done_probability), done_probability))
 
 
 def _numerical_inputs(

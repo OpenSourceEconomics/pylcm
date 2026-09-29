@@ -107,20 +107,20 @@ def test_a_negative_regime_probability_is_refused_even_at_unit_mass(
 ) -> None:
     """`1.5` on one target and `-0.5` on another is not a distribution.
 
-    The two sum to one, so the mass budget alone accepts them. Dropping the
-    negative target instead would publish `1.5 * wealth` — precisely the value a
-    well-posed model with all its mass on the first target would produce.
+    The two sum to one, so the mass budget alone accepts them; regime selection
+    refuses the negative entry at every log level, `"off"` included.
     """
     model = _build(
         probability_a=1.5, probability_b=-0.5, certainty_equivalent=certainty_equivalent
     )
 
-    V = model.solve(
-        params=_PARAMS if certainty_equivalent is None else _POWER_MEAN_PARAMS,
-        log_level="off",
-    ).values
-
-    assert bool(jnp.all(jnp.isnan(jnp.asarray(V[0]["source"]))))
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=r"outside \[0, 1\]"
+    ):
+        model.solve(
+            params=_PARAMS if certainty_equivalent is None else _POWER_MEAN_PARAMS,
+            log_level="off",
+        )
 
 
 def test_a_well_formed_regime_transition_is_untouched() -> None:

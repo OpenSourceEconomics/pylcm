@@ -38,6 +38,7 @@ from lcm import (
     LinearExpectation,
     PowerMean,
 )
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -971,21 +972,22 @@ def _solve_alive_without_validation(
 @pytest.mark.parametrize(
     "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
 )
-def test_solve_at_log_level_off_poisons_a_regime_transition_that_drops_mass(
+def test_solve_at_log_level_off_refuses_a_regime_transition_that_drops_mass(
     *, certainty_equivalent: CertaintyEquivalent, x64_enabled: None
 ):
-    """A regime transition emitting 0.977 of unit mass solves to NaN.
+    """A regime transition emitting 0.977 of unit mass is refused.
 
     Every aggregation route divides the continuation by the mass it received,
-    so dropped mass is otherwise divided straight back out: the same model at
-    0.977 and at 1.0 returns bit-identical values, and nothing in the result
-    marks the difference. The check therefore lives in the arithmetic rather
-    than in runtime validation, which `log_level="off"` skips.
+    so dropped mass would otherwise be divided straight back out and leave no
+    trace in the result. Regime selection is validated at every log level, so
+    even `log_level="off"` names the offending regime and its mass.
     """
-    V_arr = _solve_alive_without_validation(
-        total_mass=0.977, certainty_equivalent=certainty_equivalent
-    )
-    assert bool(jnp.all(jnp.isnan(V_arr)))
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=r"do not sum to 1\.0"
+    ):
+        _solve_alive_without_validation(
+            total_mass=0.977, certainty_equivalent=certainty_equivalent
+        )
 
 
 @pytest.mark.parametrize(

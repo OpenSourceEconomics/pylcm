@@ -367,7 +367,7 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
     bad_params = get_params(
         n_periods=N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
     )
-    solution = model.solve(log_level="off", params=bad_params)
+    solution = model.solve(log_level="off", params=get_params(n_periods=N_PERIODS))
     initial_conditions = {
         "age": jnp.array([40.0]),
         "wealth": jnp.array([10.0]),

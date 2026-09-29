@@ -210,7 +210,10 @@ def test_fues_compiler_option_reaches_actual_lowering_keys(
         device_memory_bytes=device_memory_bytes,
         n_periods=4,
     )
-    model.solve(params=get_params(n_periods=4), log_level="off")
+    # `_model` ends every horizon at age 60, so retirement's last exit is at 50.
+    model.solve(
+        params={**get_params(n_periods=4), "final_age_alive": 50}, log_level="off"
+    )
     assert len(compiled_programs) == 1
     cores = compiled_programs[0].executables
     assert (

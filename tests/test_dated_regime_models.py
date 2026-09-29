@@ -486,3 +486,47 @@ def test_laws_may_read_age_ranges_from_module_constants() -> None:
     assert _dated_model(working=working).reachability.nodes == (
         _dated_model().reachability.nodes
     )
+
+
+@categorical(ordered=False)
+class _VectorRegimeId:
+    alive: ScalarInt
+    done: ScalarInt
+
+
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _support_only_vector() -> FloatND:
+    """One entry per declared target, not one per regime id."""
+    return jnp.asarray([1.0])
+
+
+def test_a_vector_law_shorter_than_the_regime_ids_is_refused() -> None:
+    """A vector `MarkovTransition` returns one entry per regime id.
+
+    A vector holding only its declared targets' entries has no position for the
+    other regimes; reading them anyway would repeat the last entry and double the
+    mass, so the solve refuses the law and names both lengths.
+    """
+    model = Model(
+        regimes={
+            "alive": Regime(
+                regime_transitions=MarkovTransition(
+                    func=_support_only_vector, targets=("done",)
+                ),
+                functions={"utility": _zero_utility},
+            ),
+            "done": Regime(
+                regime_transitions=None, functions={"utility": _zero_utility}
+            ),
+        },
+        regime_id_class=_VectorRegimeId,
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        initial_regimes={0: "alive"},
+    )
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=r"1 entries.*2 regime"
+    ):
+        model.solve(params={"alive": {"discount_factor": 0.9}}, log_level="off")

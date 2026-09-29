@@ -1,14 +1,12 @@
-"""Mass normalization and probability poisoning in a collective continuation.
+"""Regime-transition mass in a collective continuation.
 
 A regime's continuation is a lottery over the targets it can reach, weighted by
-the regime-transition probabilities. Two properties of that lottery hold whether
-or not the regime carries stakeholders:
+the regime-transition probabilities. Two properties hold whether or not the
+regime carries stakeholders:
 
-- The aggregated continuation is divided by the probability mass that was summed,
-  so a mass the arithmetic accepts as a distribution but that is not exactly one
-  does not scale the continuation.
-- Probabilities that sum to one only because one of them is negative are not a
-  distribution, and the continuation publishes `NaN` rather than a finite value.
+- A unit mass on the single target prices each stakeholder as its singleton twin.
+- Regime selection refuses a non-unit mass and a negative probability at every
+  log level, including probabilities that sum to one only because one is negative.
 
 Every model here pairs a two-stakeholder regime with singleton twins carrying one
 stakeholder's utility each. The husband's payoff is twice the wife's, so the
@@ -20,9 +18,11 @@ equal its twin's value.
 from collections.abc import Mapping
 
 import jax.numpy as jnp
+import pytest
 from numpy.testing import assert_allclose
 
 from lcm import CollectiveUtility, DiscreteGrid, MarkovTransition, Model, Regime
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import (
     ContinuousState,
     DiscreteAction,
@@ -45,9 +45,7 @@ from tests.test_models.schedules import choose_among, until_exit
 # The stakeholders every collective regime in this module carries, wife first.
 STAKEHOLDERS = ("f", "m")
 
-# Regime-transition mass of the single-target source regime. Inside the band the
-# continuation arithmetic accepts as a distribution, and far enough above one
-# that an undivided sum shows up at either float precision.
+# A regime-transition mass just above one, which regime selection refuses.
 INFLATED_MASS = 1.0 + 1e-4
 
 # Probabilities of the two-target source regime's targets while it is active.
@@ -61,23 +59,17 @@ LEAVE_PROBABILITY = -0.5
 EXPECTED_TWIN_V = {"f": (3808.0, 3840.0), "m": (7616.0, 7680.0)}
 
 
-def test_collective_continuation_divides_by_represented_mass():
-    """A transition mass inside the accepted band is renormalized.
+def test_collective_continuation_prices_each_stakeholder_as_its_singleton_twin():
+    """Every stakeholder slice of a collective value equals its singleton twin's.
 
-    The continuation arithmetic accepts any regime-transition mass within a
-    thousandth of one, and divides the aggregated continuation by the mass it
-    summed. A mass of `1 + 1e-4` therefore prices a collective regime exactly as
-    a mass of one does, and every stakeholder slice of its value equals the value
-    of the singleton regime carrying that stakeholder's utility.
+    The single target carries the regime's whole unit mass, so each twin's value
+    is the hand-computed `EXPECTED_TWIN_V`.
     """
     rtol = 10.0**-DECIMAL_PRECISION
 
     collective = _build_single_target_model(household=STAKEHOLDERS)
-    # Runtime validation rejects a probability above one. The assertion below is
-    # about the continuation arithmetic, which carries its own, wider guard on
-    # the mass it sums.
     collective_V = collective.solve(
-        params=_single_target_params(mass=INFLATED_MASS),
+        params=_single_target_params(mass=1.0),
         log_level="off",
     ).values[0]["couple"]
 
@@ -86,14 +78,14 @@ def test_collective_continuation_divides_by_represented_mass():
         twin = _build_single_target_model(household=None, stakeholder=stakeholder)
         twin_values.append(
             twin.solve(
-                params=_single_target_params(mass=INFLATED_MASS),
+                params=_single_target_params(mass=1.0),
                 log_level="off",
             ).values[0]["couple"]
         )
     expected_V = jnp.stack(twin_values, axis=-1)
 
-    # Certify the reference against the hand-computed unit-mass values, so a
-    # defect in the twins cannot hide one in the collective path.
+    # Certify the reference against the hand-computed values, so a defect in the
+    # twins cannot hide one in the collective path.
     assert_allclose(
         expected_V,
         jnp.asarray([EXPECTED_TWIN_V["f"], EXPECTED_TWIN_V["m"]]).T,
@@ -106,33 +98,29 @@ def test_collective_continuation_divides_by_represented_mass():
     assert_allclose(collective_V, expected_V, rtol=rtol)
 
 
-def test_collective_continuation_poisons_a_negative_probability():
-    """A negative regime-transition probability publishes `NaN`.
+@pytest.mark.parametrize("mass", [INFLATED_MASS, 1.0 - 1e-4])
+def test_collective_regime_selection_refuses_a_non_unit_mass(*, mass: float) -> None:
+    """A regime-transition mass other than one is refused at every log level."""
+    collective = _build_single_target_model(household=STAKEHOLDERS)
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=r"outside|do not sum to 1\.0"
+    ):
+        collective.solve(params=_single_target_params(mass=mass), log_level="off")
 
-    Unit mass alone does not make a set of transition probabilities a
-    distribution: 1.5 and -0.5 sum to one. A collective regime whose two targets
-    carry those probabilities publishes `NaN` at every state and for every
-    stakeholder, the same answer a singleton regime publishes there.
+
+@pytest.mark.parametrize("household", [STAKEHOLDERS, None])
+def test_collective_regime_selection_refuses_a_negative_probability(
+    *, household: tuple[str, ...] | None
+) -> None:
+    """Probabilities 1.5 and -0.5 sum to one but are refused at every log level.
+
+    The collective regime and its singleton twin refuse them alike.
     """
-    collective = _build_two_target_model(household=STAKEHOLDERS)
-    # Runtime validation rejects a probability outside `[0, 1]`. The assertion
-    # below is about the continuation arithmetic, which reads each probability's
-    # sign off its own bits.
-    solution = collective.solve(
-        params=_two_target_params(),
-        log_level="off",
-    ).values
-
-    twin = _build_two_target_model(household=None, stakeholder="f")
-    twin_solution = twin.solve(params=_two_target_params(), log_level="off").values
-    # The singleton contract the collective regime states as well.
-    assert bool(jnp.isnan(twin_solution[0]["couple"]).all())
-    # The source regime's last period reaches its terminal target with
-    # probability one, so a `NaN` there would mean an ill-posed model rather than
-    # the negative probability under test.
-    assert bool(jnp.isfinite(solution[1]["couple"]).all())
-
-    assert bool(jnp.isnan(solution[0]["couple"]).all())
+    model = _build_two_target_model(household=household)
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=r"outside \[0, 1\]"
+    ):
+        model.solve(params=_two_target_params(), log_level="off")
 
 
 def _build_single_target_model(

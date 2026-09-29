@@ -254,7 +254,11 @@ from _lcm.variables import (
     simulate_variables_from_regime,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
@@ -7304,6 +7308,7 @@ def _wrap_regime_transition_probs(
         **kwargs: FloatND | IntND | int,
     ) -> MappingProxyType[RegimeName, FloatND]:
         result = func(*args, **kwargs)
+        _fail_if_not_one_entry_per_regime(result=result, n_regimes=len(regime_names))
         # Convert array to dict using ordering by regime id
         return MappingProxyType(
             {name: result[idx] for idx, name in enumerate(regime_names)}
@@ -7315,6 +7320,23 @@ def _wrap_regime_transition_probs(
     # annotations through `functools.wraps`.
     wrapped.__annotations__ = {**annotations, "return": return_annotation}
     return wrapped
+
+
+def _fail_if_not_one_entry_per_regime(*, result: FloatND, n_regimes: int) -> None:
+    """Refuse a regime-probability vector that is not indexed by every regime id.
+
+    The vector's length is static under tracing, so the check costs nothing at
+    runtime. Without it, indexing past a short vector clamps to its last entry
+    and silently assigns that entry's mass to every missing regime.
+    """
+    n_entries = jnp.shape(result)[-1] if jnp.ndim(result) else 1
+    if n_entries != n_regimes:
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"A vector regime transition returned {n_entries} entries, but the "
+            f"model has {n_regimes} regime ids. Return one probability per "
+            "regime id, in `regime_id_class` order; `targets` names the "
+            "support, not the vector's layout."
+        )
 
 
 @dataclass(frozen=True, eq=False, kw_only=True)
