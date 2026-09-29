@@ -284,27 +284,31 @@ class ExecutionConfig:
     program is not necessarily faster. Disabling this pass does not disable the
     ordinary memory-admission search.
 
-    Past a device- and program-dependent cell count, XLA writes the continuation
-    lookup table to device memory and the reduction reads it back, instead of
-    recomputing it inside the reduction. The planner reads each compiled GridSearch
-    solve program and, while one of its reduce fusions reads a gather table another
-    fusion wrote, recompiles it at half the cell width. A width fixed through
-    `axis_widths` is kept as given. A narrower width is kept only when its compiled
-    program is proved fused. When the walk reaches the narrowest width its cell
-    axis admits and every program still materialises, or reaches a program whose
-    structure the planner does not read completely, the solve keeps the width that
-    passed memory admission, with its materialised gather and its already compiled
-    program, and logs why no narrower width was kept. An unreadable program is
-    diagnosed once and is never assumed fused. Under a device-memory budget, a
-    narrower candidate is admitted like any other width: one that exceeds the
-    budget raises `ExecutionPlanningError`. Each halving is a trial beyond
-    `WidthSearchPolicy.max_evaluations`, and is compiled only when no earlier
+    This targets one specific compiler pattern, observed on an NVIDIA A40 and not on
+    other GPUs tried: past a device- and program-dependent cell count, XLA writes the
+    continuation lookup table to device memory and the reduction reads it back, instead
+    of recomputing it inside the reduction. The check matches that pattern in the
+    optimized HLO text and nothing more. Similar layouts the compiler expresses through
+    other fusion kinds or operations are not detected, and a future JAX/XLA release may
+    emit HLO the check no longer recognises; "fused" below means only "this pattern was
+    not found". The planner reads each compiled GridSearch solve program and, while one
+    of its reduce fusions reads a gather table another fusion wrote, recompiles it at
+    half the cell width. A width fixed through `axis_widths` is kept as given. A
+    narrower width is kept only when the pattern is absent from its compiled program.
+    When the walk reaches the narrowest width its cell axis admits and every program
+    still materialises, or reaches a program whose structure the planner does not read
+    completely, the solve keeps the width that passed memory admission, with its
+    materialised gather and its already compiled program, and logs why no narrower width
+    was kept. An unreadable program is diagnosed once and is never assumed fused. Under
+    a device-memory budget, a narrower candidate is admitted like any other width: one
+    that exceeds the budget raises `ExecutionPlanningError`. Each halving is a trial
+    beyond `WidthSearchPolicy.max_evaluations`, and is compiled only when no earlier
     program shares its lowering. Other solvers and simulation are not checked.
 
     Halving is a bounded heuristic over the compiled executable, not a guarantee
-    that the fused program is faster: the compiler's choice need not be monotone in
-    the width, so the walk can miss a useful width or give up at its floor although
-    an unvisited width fuses.
+    that no table is materialised or that the resulting program is faster: the
+    compiler's choice need not be monotone in the width, so the walk can miss a
+    useful width or give up at its floor although an unvisited width fuses.
     """
 
     width_search: WidthSearchPolicy = WidthSearchPolicy()
