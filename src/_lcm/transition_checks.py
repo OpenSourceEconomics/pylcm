@@ -173,7 +173,7 @@ def _pack_validation_flags(*, flags: tuple[jax.Array, ...]) -> jax.Array:
 
 
 @partial(jax.jit, static_argnames=("inactive_indices",))
-def _regime_probability_flags(
+def regime_probability_flags(
     *,
     probabilities: tuple[jax.Array, ...],
     inactive_indices: tuple[int, ...],
@@ -184,22 +184,37 @@ def _regime_probability_flags(
     `rows` restricts every predicate to the rows it marks — the subjects a
     realized law is evaluated for; `None` checks every row.
     """
-    all_probs = jnp.stack(probabilities)
-    counted = (
-        jnp.ones(all_probs.shape[1:], dtype=bool)
-        if rows is None
-        else jnp.broadcast_to(rows, all_probs.shape[1:])
-    )
+    if rows is None:
+        all_probs = jnp.stack(probabilities)
+        counted = jnp.ones(all_probs.shape[1:], dtype=bool)
+    else:
+        # A law constant across subjects yields scalars; spread it over the rows.
+        *spread, counted = jnp.broadcast_arrays(*probabilities, rows)
+        all_probs = jnp.stack(spread)
     return jnp.stack(
         (
             jnp.any(~jnp.isfinite(all_probs) & counted),
             jnp.any(((all_probs < 0) | (all_probs > 1)) & counted),
             jnp.any(_unit_mass_violations(jnp.sum(all_probs, axis=0)) & counted),
-            *(
-                jnp.any((probabilities[index] > 0) & counted)
-                for index in inactive_indices
-            ),
+            *(jnp.any((all_probs[index] > 0) & counted) for index in inactive_indices),
         )
+    )
+
+
+def regime_probability_inactive_indices(
+    *,
+    names: tuple[RegimeName, ...],
+    active_regimes_next_period: tuple[RegimeName, ...],
+) -> tuple[int, ...]:
+    """Return the positions of the law outputs outside the declared targets.
+
+    Ascending, so the static argument of `regime_probability_flags` and hence
+    its compiled executable are the same wherever the law is checked.
+    """
+    return tuple(
+        index
+        for index, name in enumerate(names)
+        if name not in active_regimes_next_period
     )
 
 
@@ -715,31 +730,29 @@ def _validate_regime_transition_probs(
 
     """
     names = tuple(regime_transition_probs)
-    inactive = tuple(set(names) - set(active_regimes_next_period))
     flag_arguments: dict[str, object] = {
         "probabilities": tuple(regime_transition_probs.values())
     }
     if rows is not None:
         flag_arguments["rows"] = rows
     static_arguments = {
-        "inactive_indices": tuple(names.index(name) for name in inactive)
+        "inactive_indices": regime_probability_inactive_indices(
+            names=names, active_regimes_next_period=active_regimes_next_period
+        )
     }
-    span = (
-        f"after age {age}" if next_age is None else f"between ages {age} and {next_age}"
-    )
     if summary is not None:
         summary.append(
-            function=_regime_probability_flags,
+            function=regime_probability_flags,
             arguments=flag_arguments,
             static_arguments=static_arguments,
         )
         return
     flags = (
-        _regime_probability_flags(**flag_arguments, **static_arguments)
+        regime_probability_flags(**flag_arguments, **static_arguments)
         if memory is None
         else run_simulation_operation(
             memory=memory,
-            function=_regime_probability_flags,
+            function=regime_probability_flags,
             arguments=flag_arguments,
             static_arguments=static_arguments,
         )
@@ -747,6 +760,13 @@ def _validate_regime_transition_probs(
     nonfinite, outside_bounds, invalid_mass, *inactive_flags = np.asarray(
         flags
     ).tolist()
+    if not (nonfinite or outside_bounds or invalid_mass or any(inactive_flags)):
+        return
+    # Formatting a device-held age is a host read, so it waits for a violation.
+    span = (
+        f"after age {age}" if next_age is None else f"between ages {age} and {next_age}"
+    )
+    inactive = tuple(names[index] for index in static_arguments["inactive_indices"])
     if nonfinite:
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Non-finite values in regime transition probabilities from "

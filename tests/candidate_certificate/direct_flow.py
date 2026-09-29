@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "5ddc47f00d244e9cdb3be38d531a15aef475dbef1fd4823068e6f36aa1dda8c2",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "4ede9d2a3c403eeb6275fae728b8c1bc577c21f8840ca71df89836fd6c08962b",
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -353,7 +353,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "82057a91e6cf149f750f90b71c9258cf33b310e0675044bf219d466e836614d1",
     COMBINED_CHUNK_PLANNING_SOURCE: "7b8ff3abda0b6f57bc6bf3901287bb8cbc6fe6ba741cdbec902d45fb4fabb047",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "f3b6b4e013eeedeed51455fd342332974077759dc8538c98c5f91eedcbe6eb35",
-    COMBINED_CHUNK_PROFILES_SOURCE: "406c10f1af4d5492c6d7520f45532cd9f0c5851799d54d93ae4bc1636caa1a36",
+    COMBINED_CHUNK_PROFILES_SOURCE: "cf10eafca997d6634b86f89a5cccc8db5d00675fc603cba07c5146a2312cd696",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "f7461de8c0f7bafdc3c44cc002b209df01fdae5a5de4186aa3f4ef65455e867e",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32",
@@ -3811,7 +3811,7 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/chunk_profiles.py": (
-        "1ce0891793dae0997f1185f3d93ad0deb5b043ef70c251cb6491f7fed8f2b2ad",
+        "d5d1ec584f638ddb8ccf7edc175de1d3d53246784ec72703ef18bc7a43bd12e9",
         {
             "profile_simulation_chunk": "ce7b40dae432c7528a65fdb2b984bbb4823fd27b359582041bf5f611e8425365",
             "_compile_forward_units_in_parallel": "fb00a156b2b7e43153465e2066ad8be6a4fa47f09a119b291d98e08c57ffad11",
@@ -4108,12 +4108,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "1ce0891793dae0997f1185f3d93ad0deb5b043ef70c251cb6491f7fed8f2b2ad",
+        "d5d1ec584f638ddb8ccf7edc175de1d3d53246784ec72703ef18bc7a43bd12e9",
         {
             "profile_simulation_chunk": "ce7b40dae432c7528a65fdb2b984bbb4823fd27b359582041bf5f611e8425365",
             "_compile_forward_units_in_parallel": "fb00a156b2b7e43153465e2066ad8be6a4fa47f09a119b291d98e08c57ffad11",
             "_compile_forward_unit_if_context_matches": "ebf6bfecb0b41357598f2854db7ba5673c28bfcee5260236c4a3c10194daf3a4",
-            "_profile_next_subjects": "de48a39aa6bbbbb495699d6fc399a470b1b733e1020a29268222f854bad513bc",
+            "_profile_next_subjects": "66669c014815357dea3a259dcaddb4125a9ea93b160f7bab20718cc9be0a3b00",
             "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
             "_profile_outer_storage": "654d9ed612edcf263c2eead952a5e5abbc11fef8b43af2670db23d0d098eefa1",
             "_record_core": "942d7b15dcf03da3a04ff12b14485b2e2aec2ca3c2f0f554faa9a78d1cbf6e67",
@@ -6390,7 +6390,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/transition_checks.py": (
-        "1b1aa5089745bdea62d4ff83beb7cb115c4a8cabb601100ce876e5ed909a7190",
+        "a5b8f1b8ad0ab9028ed8b7ddf3e7c88f2f3c6b55eef68c4591bf3cf5b0e0e27f",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
@@ -6400,7 +6400,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_evaluate_regime_probability_law": "c16f5612edb533d8f89d75d0c90fa903d723b4b4235dcc40b0a3e31dc3aecd42",
             "_regime_probability_law": "0af1c02dca10a6d00a10e67342b51996fb23a078886097a363a12935f7c0ab39",
             "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
-            "_validate_regime_transition_probs": "813afdec67f3fa31a6cfeee94db4f9780bc3b8605265eed181670e61605e1141",
+            "_validate_regime_transition_probs": "6362faa31c14941b6b92d5eb1dfbec6508e726d545b6dafb99b29b82c0430ee7",
             "validate_state_transitions_all_periods": "41c223ea8426a823b51d3eac44e3e81d5a86c1c21175030b5000793d82a8fcf1",
             "validate_joint_transitions_all_periods": "816ac82cc7f45fcdc06c169507fa8915ee597f83a672fefe31367b7bd213c6dc",
             "_own_transition_outputs": "29d4ac7f946991d9b73ecf8e8f9b49f5830e5266fbe1a2c006b45e8de8dec6c0",
