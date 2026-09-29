@@ -242,8 +242,9 @@ def lower_demanded_transitions(
     """Lower each regime's law over the periods demand requires, only.
 
     The solve side is lowered over the regime's valued periods and the
-    simulate side over its visited periods, falling back to the valued ones
-    for a regime that is valued but never visited. A case selected only at
+    simulate side over its visited periods. A regime that is valued but never
+    visited lowers to its solve side alone, so its realized routing requires
+    no argument or parameter. A case selected only at
     undemanded ages contributes no cell, no argument and no parameter. A
     regime without demanded periods keeps one declared law unchanged — its
     first available one, or its first declared one if none is available — so
@@ -275,7 +276,7 @@ def lower_demanded_transitions(
         lowered[name] = _lower(
             law_by_period=law_by_period,
             solve_periods=solve_periods,
-            simulate_periods=visited_periods[name] or solve_periods,
+            simulate_periods=visited_periods[name],
             code_by_name=code_by_name,
         )
     return MappingProxyType(lowered)

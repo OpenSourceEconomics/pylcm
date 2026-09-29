@@ -8,7 +8,7 @@
   realized law, and only the economically feasible action rows.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax.numpy as jnp
@@ -18,6 +18,7 @@ import pytest
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    AgeSpecializedFunction,
     AgeSpecializedGrid,
     ByAge,
     Choose,
@@ -30,7 +31,14 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.phased import Phased
-from lcm.typing import BoolND, ContinuousState, FloatND, IntND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    FloatND,
+    IntND,
+    ScalarInt,
+    UserFunction,
+)
 
 
 @categorical(ordered=False)
@@ -63,14 +71,31 @@ def _wealth_regime(*, law: Any, utility: Any = _wealth_utility) -> Regime:
     )
 
 
+def _perceived_law(*, choice: Any = _realized_choice) -> ByAge:
+    return ByAge(
+        cases={
+            1: Phased(
+                solve="end",
+                simulate=Choose(func=choice, targets=("end", "other_end")),
+            )
+        }
+    )
+
+
 def _demand_model(
-    *, promote: bool, redundant_root: bool = False, enable_jit: bool = True
+    *,
+    promote: bool,
+    redundant_root: bool = False,
+    enable_jit: bool = True,
+    perceived: Regime | None = None,
 ) -> Model:
     """Source perceives `perceived` at age 1 but physically enters `realized`.
 
     Only `perceived`'s realized route reads `realized_rate`; its backward
     utility reads `backward_bonus`.
     """
+    if perceived is None:
+        perceived = _wealth_regime(law=_perceived_law(), utility=_backward_utility)
     roots: dict[object, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
@@ -85,19 +110,7 @@ def _demand_model(
             "source": _wealth_regime(
                 law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
             ),
-            "perceived": _wealth_regime(
-                law=ByAge(
-                    cases={
-                        1: Phased(
-                            solve="end",
-                            simulate=Choose(
-                                func=_realized_choice, targets=("end", "other_end")
-                            ),
-                        )
-                    }
-                ),
-                utility=_backward_utility,
-            ),
+            "perceived": perceived,
             "realized": _wealth_regime(law=ByAge(cases={1: "end"})),
             "end": _wealth_regime(law=None),
             "other_end": _wealth_regime(law=None),
@@ -186,6 +199,193 @@ def test_value_only_regime_solves_without_its_realized_route_parameter() -> None
         params={"discount_factor": 0.5, "backward_bonus": 1.0}, log_level="off"
     ).values
     np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
+
+
+def _simulate_utility(*, wealth: ContinuousState, simulate_bonus: float) -> FloatND:
+    return wealth + simulate_bonus
+
+
+def _shared_choice(*, realized_rate: float, share: ContinuousState) -> IntND:
+    return jnp.where(
+        realized_rate + 0.0 * share >= 0.5, _DemandId.end, _DemandId.other_end
+    )
+
+
+def _drifting_share(*, share: ContinuousState, drift: float) -> ContinuousState:
+    return share + drift
+
+
+def _counting_factory(*, calls: list[float]) -> Callable[[float], UserFunction]:
+    def build(age: float) -> UserFunction:
+        calls.append(age)
+        return _simulate_utility
+
+    return build
+
+
+def _zero_signature(age: float) -> int:  # noqa: ARG001
+    return 0
+
+
+def _perceived_with_simulate_slot(*, slot: str, calls: list[float]) -> Regime:
+    """`perceived` whose simulate side declares one more slot than its solve side.
+
+    - `"function"`: a phased utility whose simulate variant reads
+      `simulate_bonus`;
+    - `"factory"`: the same simulate variant built per age by a factory that
+      records each age it is called at;
+    - `"carried"`: a carried state `share` whose law of motion reads `drift`.
+    """
+    wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    simulate_utility: Any = {
+        "function": _simulate_utility,
+        "factory": AgeSpecializedFunction(
+            build=_counting_factory(calls=calls), signature=_zero_signature
+        ),
+        "carried": _backward_utility,
+    }[slot]
+    carried = slot == "carried"
+    return Regime(
+        regime_transitions=_perceived_law(
+            choice=_shared_choice if carried else _realized_choice
+        ),
+        states={"wealth": wealth}
+        | ({"share": Phased(solve=_half, simulate=wealth)} if carried else {}),
+        state_transitions={"wealth": fixed_transition("wealth")}
+        | ({"share": _drifting_share} if carried else {}),
+        functions={
+            "utility": Phased(solve=_backward_utility, simulate=simulate_utility)
+        },
+    )
+
+
+_SIMULATE_SLOT_PARAMETER = {
+    "function": "simulate_bonus",
+    "factory": "simulate_bonus",
+    "carried": "drift",
+}
+
+
+@pytest.mark.parametrize("slot", ["function", "factory", "carried"])
+def test_value_only_regime_owes_no_simulate_side_parameter(*, slot: str) -> None:
+    """A never visited regime's simulate-side slots contribute no parameter."""
+    model = _demand_model(
+        promote=False, perceived=_perceived_with_simulate_slot(slot=slot, calls=[])
+    )
+    assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
+        "discount_factor",
+        "backward_bonus",
+    }
+
+
+@pytest.mark.parametrize("slot", ["function", "factory", "carried"])
+def test_promoted_regime_owes_its_simulate_side_parameter(*, slot: str) -> None:
+    """Once visited, the same regime owes its simulate-side slot's parameter."""
+    model = _demand_model(
+        promote=True, perceived=_perceived_with_simulate_slot(slot=slot, calls=[])
+    )
+    assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
+        "discount_factor",
+        "backward_bonus",
+        "realized_rate",
+        _SIMULATE_SLOT_PARAMETER[slot],
+    }
+
+
+@pytest.mark.parametrize("slot", ["function", "factory", "carried"])
+def test_value_only_regime_with_simulate_slots_keeps_its_value(*, slot: str) -> None:
+    """The backward value is the plain one: `V_source(w) = 0.5 + 1.75 w`."""
+    model = _demand_model(
+        promote=False, perceived=_perceived_with_simulate_slot(slot=slot, calls=[])
+    )
+    values = model.solve(
+        params={"discount_factor": 0.5, "backward_bonus": 1.0}, log_level="off"
+    ).values
+    np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
+
+
+@pytest.mark.parametrize(("promote", "ages"), [(False, set()), (True, {1.0})])
+def test_simulate_side_factory_runs_only_where_its_regime_is_visited(
+    *, promote: bool, ages: set[float]
+) -> None:
+    """A simulate-only factory of a never visited regime is never called."""
+    calls: list[float] = []
+    _demand_model(
+        promote=promote,
+        perceived=_perceived_with_simulate_slot(slot="factory", calls=calls),
+    )
+    assert set(calls) == ages
+
+
+def _late_choice(*, late_rate: float) -> IntND:
+    return jnp.where(late_rate >= 0.5, _DemandId.end, _DemandId.other_end)
+
+
+def _mixed_age_model(*, calls: list[float]) -> Model:
+    """`perceived` is valued only at age 1 and visited at age 2.
+
+    Source perceives `perceived` at age 1 and enters `realized`, which moves
+    into `perceived` at age 2. The age-1 realized route reads `realized_rate`,
+    the age-2 one `late_rate`.
+    """
+    perceived = Regime(
+        regime_transitions=ByAge(
+            cases={
+                age: Phased(
+                    solve="end",
+                    simulate=Choose(func=choice, targets=("end", "other_end")),
+                )
+                for age, choice in ((1, _realized_choice), (2, _late_choice))
+            }
+        ),
+        states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"wealth": fixed_transition("wealth")},
+        functions={
+            "utility": Phased(
+                solve=_backward_utility,
+                simulate=AgeSpecializedFunction(
+                    build=_counting_factory(calls=calls), signature=_zero_signature
+                ),
+            )
+        },
+    )
+    return Model(
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=_DemandId,
+        initial_regimes={0: "source"},
+        regimes={
+            "source": _wealth_regime(
+                law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
+            ),
+            "perceived": perceived,
+            "realized": _wealth_regime(law=ByAge(cases={1: "perceived"})),
+            "end": _wealth_regime(law=None),
+            "other_end": _wealth_regime(law=None),
+        },
+    )
+
+
+def test_mixed_age_regime_owes_the_realized_route_of_its_visited_age_only() -> None:
+    """Visited at age 2 only, `perceived` owes `late_rate`, not `realized_rate`."""
+    model = _mixed_age_model(calls=[])
+    assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
+        "discount_factor",
+        "backward_bonus",
+        "simulate_bonus",
+        "late_rate",
+    }
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Simulate-side programs are built at every valued period of a "
+    "visited regime, so a simulate-only factory also runs at its value-only ages.",
+)
+def test_mixed_age_simulate_factory_runs_at_the_visited_age_only() -> None:
+    """The simulate-only factory of `perceived` is needed at age 2 alone."""
+    calls: list[float] = []
+    _mixed_age_model(calls=calls)
+    assert set(calls) == {2.0}
 
 
 @categorical(ordered=False)

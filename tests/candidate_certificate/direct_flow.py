@@ -419,7 +419,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "c5dc02694a8d42eda5933c3b100c7815a731a47f0b5c7c2d95cfb142b50c3e6b",
     SIMULATION_TRANSITIONS_SOURCE: "40e7cdafd5705640e90db5deb08cfa208d809bb50c20260befe12c849bd7891e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "5bd9b01deff8b4630babd88b78ababc6cebf4c13e9c9d962ea9fd8d019aef57e",
+    MODEL_SOURCE: "d60a6178a4bc3e958117dbec062895d5252498a2c78105e027eac2ef5b8a3690",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "66c367125b7b58e70d2a01084b807ff050417a25170c783d35617322e65c589e",
     PERIOD_REPLAY_SOURCE: "5a9a2d656233a6ec66bc8fa4c364244c9cf29702a0287e5481490ecbed7c2d28",
@@ -3203,12 +3203,12 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "ebbf1a134266c8ea264a039f70fa33620ee4b05642ee1d949765879254060e37",
+            "bd3fde7d5442e0d04b9a4a675277e5e24634e4e7d7e171a4210124c976703a84",
             {
                 "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-                "Model.__init__": "b9a8f45466539dc26ee0652827802ff60421c136674969d1888737e4f88411af",
+                "Model.__init__": "b1acb69fea5d8d23cfdece77b83b0eba3538905dfc91c5ccec5b84a43aee521c",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "20d3f754e43eab78be776d62192b7a42eb879fa5399eec5ecae404fd55911589",
                 # Fixed caller owners flow through both private automatic-solve
@@ -3856,12 +3856,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "ebbf1a134266c8ea264a039f70fa33620ee4b05642ee1d949765879254060e37",
+        "bd3fde7d5442e0d04b9a4a675277e5e24634e4e7d7e171a4210124c976703a84",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "b9a8f45466539dc26ee0652827802ff60421c136674969d1888737e4f88411af",
+            "Model.__init__": "b1acb69fea5d8d23cfdece77b83b0eba3538905dfc91c5ccec5b84a43aee521c",
             "Model.simulate": "20d3f754e43eab78be776d62192b7a42eb879fa5399eec5ecae404fd55911589",
         },
     ),
@@ -4228,12 +4228,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "ebbf1a134266c8ea264a039f70fa33620ee4b05642ee1d949765879254060e37",
+        "bd3fde7d5442e0d04b9a4a675277e5e24634e4e7d7e171a4210124c976703a84",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "b9a8f45466539dc26ee0652827802ff60421c136674969d1888737e4f88411af",
+            "Model.__init__": "b1acb69fea5d8d23cfdece77b83b0eba3538905dfc91c5ccec5b84a43aee521c",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "ada74ce5f724d2944b187c777fb43717cd574db5f64e992cad2a6c669b9d08fa",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -6423,12 +6423,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "ebbf1a134266c8ea264a039f70fa33620ee4b05642ee1d949765879254060e37",
+        "bd3fde7d5442e0d04b9a4a675277e5e24634e4e7d7e171a4210124c976703a84",
         {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "b9a8f45466539dc26ee0652827802ff60421c136674969d1888737e4f88411af",
+            "Model.__init__": "b1acb69fea5d8d23cfdece77b83b0eba3538905dfc91c5ccec5b84a43aee521c",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "1244c00c7a0c9e4b4286a39479b9685ef6ec0e9da157f13944b853d1b27c5cf6",
             "Model.solve": "b7447007287a2846e9f8ae2f42f307d6308b98d81b2d38bf7312053aeac4e9bc",

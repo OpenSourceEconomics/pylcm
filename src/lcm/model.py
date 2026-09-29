@@ -75,6 +75,7 @@ from _lcm.regime_building.fixed_components import (
     split_initial_conditions,
 )
 from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
+from _lcm.regime_building.phases import project_onto_solve_phase
 from _lcm.regime_building.processing import (
     Regime,
     prepare_model_structure,
@@ -670,8 +671,14 @@ class Model:
             declared_transitions=declared_transitions,
             code_by_name=regime_names_to_ids,
         )
+        # A regime no subject visits owes its backward problem only, so none of
+        # its simulate-side declarations is required.
         merged_regimes = {
-            name: regime.replace(regime_transitions=demanded_transitions[name])
+            name: (
+                regime
+                if schedules.visited_periods_by_regime[name]
+                else project_onto_solve_phase(regime)
+            ).replace(regime_transitions=demanded_transitions[name])
             for name, regime in merged_regimes.items()
         }
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(

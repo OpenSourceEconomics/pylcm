@@ -318,6 +318,57 @@ def phase_variation_paths(
     return tuple(varied)
 
 
+def project_onto_solve_phase(user_regime: lcm.regime.Regime) -> lcm.regime.Regime:
+    """Return the regime a backward problem alone reads.
+
+    A regime that is valued but never visited owes its backward problem only,
+    so its declaration keeps the solve variant of every `Phased` slot:
+
+    - a `Phased` function, state transition, joint transition, regime
+      transition or aggregator becomes its solve variant;
+    - a carried state becomes its solve-phase imputation, a function under the
+      state's name, and its carried law of motion is dropped.
+
+    The projection's solve slice is the original's, so its value is unchanged;
+    no simulate-side callable contributes a parameter, a factory call or a
+    program.
+    """
+    carried = {
+        name: spec.solve
+        for name, spec in user_regime.states.items()
+        if isinstance(spec, Phased)
+    }
+    return user_regime.replace(
+        functions={
+            **{
+                name: _solve_variant(value)
+                for name, value in user_regime.functions.items()
+            },
+            **carried,
+        },
+        states={
+            name: spec
+            for name, spec in user_regime.states.items()
+            if name not in carried
+        },
+        state_transitions={
+            name: _solve_variant(law)
+            for name, law in user_regime.state_transitions.items()
+            if name not in carried
+        },
+        joint_transitions={
+            target: {name: _solve_variant(kernel) for name, kernel in kernels.items()}
+            for target, kernels in user_regime.joint_transitions.items()
+        },
+        regime_transitions=_solve_variant(user_regime.regime_transitions),
+        koopmans_aggregator=_solve_variant(user_regime.koopmans_aggregator),
+    )
+
+
+def _solve_variant[T](value: T | Phased) -> T:
+    return cast("T", value.solve) if isinstance(value, Phased) else value
+
+
 @dataclass(frozen=True, kw_only=True)
 class PhasedRegimeSpec:
     """A regime expanded into per-phase slices.
