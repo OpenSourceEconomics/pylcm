@@ -342,6 +342,7 @@ def prepare_model_structure(
         phased_specs=raw_phase_specs,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
     )
     phased_specs = age_normalization.phased_specs
     try:
@@ -3659,6 +3660,24 @@ class _PerPeriodGroupKey:
         return (self.label, period)
 
 
+def _simulated_periods(
+    *,
+    phase_reachability: PhaseReachability,
+    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
+) -> MappingProxyType[RegimeName, tuple[int, ...]]:
+    """Per regime, the active periods at which the simulate graph holds it."""
+    return MappingProxyType(
+        {
+            name: tuple(
+                period
+                for period in periods
+                if name in phase_reachability.active_regimes_by_period[period]
+            )
+            for name, periods in regimes_to_active_periods.items()
+        }
+    )
+
+
 def _is_zero_node_regime(
     *,
     spec: PhasedRegimeSpec,
@@ -4236,6 +4255,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         simulation_variables: Simulate-phase variables (solve variables plus
             carried-only states, appended).
         regimes_to_active_periods: Mapping of regime names to active period tuples.
+            The phase is built at the periods where the simulate graph holds each
+            regime, a subset of these.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
@@ -4276,6 +4297,12 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         Complete simulate functions container.
 
     """
+    # A regime is simulated only where a subject can stand in it, so no
+    # simulate-side program, factory or route exists at a value-only period.
+    simulated_periods = _simulated_periods(
+        phase_reachability=simulation_reachability,
+        regimes_to_active_periods=regimes_to_active_periods,
+    )
     carried_only = spec.carried_only_state_names
     decision_functions = dict(spec.simulation.functions) | {
         name: spec.solution.functions[name] for name in carried_only
@@ -4293,7 +4320,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         functions=MappingProxyType(decision_functions),
         variables=variables,
         flat_param_names=flat_param_names,
-        active_periods=regimes_to_active_periods[regime_name],
+        active_periods=simulated_periods[regime_name],
         grids=all_grids[regime_name],
     )
 
@@ -4340,7 +4367,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             functions=core.functions,
             variables=variables,
             flat_param_names=flat_param_names,
-            active_periods=regimes_to_active_periods[regime_name],
+            active_periods=simulated_periods[regime_name],
             grids=all_grids[regime_name],
         )
         constraints = MappingProxyType(
@@ -4389,7 +4416,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     if _is_zero_node_regime(
         spec=spec,
         regime_name=regime_name,
-        regimes_to_active_periods=regimes_to_active_periods,
+        regimes_to_active_periods=simulated_periods,
     ):
         # A nonterminal regime no required problem solves is never simulated.
         compute_regime_transition_probs = None
@@ -4510,7 +4537,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             | dict(functions)
         )
         Q_and_F_functions = _build_Q_and_F_per_period(
-            active_periods=regimes_to_active_periods[regime_name],
+            active_periods=simulated_periods[regime_name],
             phase_reachability=solution_reachability,
             source_regime_name=regime_name,
             functions=decision_functions_pool,
@@ -4546,7 +4573,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     )
 
     next_state_build = _build_next_state_vmapped(
-        active_periods=regimes_to_active_periods[regime_name],
+        active_periods=simulated_periods[regime_name],
         phase_reachability=simulation_reachability,
         source_regime_name=regime_name,
         functions=simulate_functions,
@@ -4599,7 +4626,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 f"{tuple(simulation_variables.continuous_action_names)!r}."
             )
 
-        active_periods = regimes_to_active_periods[regime_name]
+        active_periods = simulated_periods[regime_name]
         grids = all_grids[regime_name]
         state_names = tuple(state_action_space.states)
         row_discrete_state_names = _get_discrete_state_names(
@@ -4752,7 +4779,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             row_axis_lengths_by_period=_replay_axis_lengths_by_period(
                 axis_names=row_names,
                 regime_name=regime_name,
-                active_periods=regimes_to_active_periods[regime_name],
+                active_periods=simulated_periods[regime_name],
                 grids=all_grids[regime_name],
                 grid_schedule=grid_schedule,
             ),
@@ -4779,7 +4806,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # time. `next_state` above keeps resolving `simulate_functions` per period;
     # per-period *target* reads of a periodized node are still rejected by the guard
     # via `age_specialized_function_names` (a rep-period closure would be wrong).
-    simulation_active_periods = regimes_to_active_periods[regime_name]
+    simulation_active_periods = simulated_periods[regime_name]
     published_simulate_functions = (
         cast(
             "EconFunctionsMapping",
@@ -4808,7 +4835,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         per_subject_transitions=next_state_build.per_subject_by_period,
         per_subject_route=per_subject_route,
         simulation_state_names=simulation_variables.state_names,
-        active_periods=tuple(regimes_to_active_periods[regime_name]),
+        active_periods=tuple(simulated_periods[regime_name]),
         has_gated_edges=bool(user_regime.gated_edges),
     )
 
