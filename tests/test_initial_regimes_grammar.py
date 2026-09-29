@@ -150,7 +150,7 @@ def test_initial_nodes_are_immutable() -> None:
 def test_declarations_reject_positional_arguments(*, call: Any, kwargs: dict) -> None:
     """Declaration constructors take keyword arguments only."""
     first, *rest = kwargs.values()
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="positional"):
         call(first, **dict(zip(list(kwargs)[1:], rest, strict=True)))
 
 
