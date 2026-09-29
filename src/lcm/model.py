@@ -3027,6 +3027,18 @@ class Model:
             value=value,
         )
 
+    def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
+        """Return a regime's state names in the axis order of its value arrays.
+
+        `solution.values[period][regime_name]` has one axis per state, in this
+        order; `state_grid` gives each axis's node values.
+        """
+        regime = self._regimes.get(regime_name)
+        if regime is None:
+            msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
+            raise InvalidSimulationInputError(msg)
+        return tuple(regime.solution.state_names)
+
     def state_grid(
         self, *, params: UserParams, regime_name: RegimeName, state_name: StateName
     ) -> jax.Array:
@@ -3034,6 +3046,8 @@ class Model:
 
         Covers grids whose nodes depend on runtime parameters, such as a shock
         process with a runtime `sigma`.
+        These are the node values along the `state_name` axis of
+        `solution.values[period][regime_name]`; `state_names` gives the axis order.
         """
         regime = self._regimes.get(regime_name)
         if regime is None:

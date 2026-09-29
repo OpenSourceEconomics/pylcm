@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import lcm
 from lcm import PolicyLookup
 from lcm.exceptions import InvalidSimulationInputError
 from lcm_examples.mortality import LaborSupply
@@ -212,3 +213,32 @@ def test_state_grid_rejects_an_unknown_state(solved):
     model, params, _ = solved
     with pytest.raises(InvalidSimulationInputError, match="income"):
         model.state_grid(params=params, regime_name="working_life", state_name="income")
+
+
+def test_solution_result_is_exported_from_lcm(solved):
+    _, _, solution = solved
+    assert isinstance(solution, lcm.SolutionResult)
+
+
+def test_state_names_is_the_value_function_axis_order(solved):
+    model, _, _ = solved
+    assert model.state_names(regime_name="working_life") == ("wealth",)
+
+
+def test_value_array_indexed_in_state_names_order_matches_lookup(solved):
+    """V at grid node k of each state, in `state_names` order, is the lookup's V."""
+    model, params, solution = solved
+    nodes = {
+        name: model.state_grid(
+            params=params, regime_name="working_life", state_name=name
+        )
+        for name in model.state_names(regime_name="working_life")
+    }
+    index = (3,)
+    V = solution.values[0]["working_life"]
+    got = _lookup(
+        solved,
+        period=0,
+        states={name: nodes[name][[i]] for name, i in zip(nodes, index, strict=True)},
+    )
+    np.testing.assert_allclose(got.value, V[index], rtol=1e-6)

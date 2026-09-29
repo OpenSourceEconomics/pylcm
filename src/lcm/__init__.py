@@ -173,6 +173,7 @@ from lcm.processes import (  # noqa: E402
 )
 from lcm.regime import Regime  # noqa: E402
 from lcm.result import PolicyLookup, SimulationResult  # noqa: E402
+from lcm.solver_api import SolutionResult  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
     AgeRange,
@@ -244,6 +245,7 @@ __all__ = [
     "RouwenhorstAR1Process",
     "SimulateSnapshot",
     "SimulationResult",
+    "SolutionResult",
     "SolveSnapshot",
     "StakeholderRoute",
     "StateConditioned",
