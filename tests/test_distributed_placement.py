@@ -456,10 +456,12 @@ def _make_three_type_model(
 ) -> Model:
     """A working regime over a three-valued type beside a single-device terminal one.
 
-    Both regimes are active before the final age and read nothing of each other
-    within a period, so on four devices the working regime runs on three and the
-    terminal one on the fourth. `sharded` names the same axis through
-    `ExecutionConfig`; either spelling places the regime the same way.
+    The working regime starts at age 0 and names the terminal one in its support
+    at every source age, so both are solved at every period between the first
+    and the last and read nothing of each other within a period: on four devices
+    the working regime runs on three and the terminal one on the fourth.
+    `sharded` names the same axis through `ExecutionConfig`; either spelling
+    places the regime the same way.
     `devices` restricts the model to a subset of the four.
     """
     working = UserRegime(
@@ -749,7 +751,7 @@ def test_the_regime_beside_a_sharded_one_stays_on_the_configured_devices() -> No
     solution = _make_three_type_model(
         distributed=False, sharded=("type1",), devices=(1, 2, 3)
     ).solve(params=_PARAMS, log_level="off")
-    value = solution.values[0]["retired"]
+    value = solution.values[1]["retired"]
 
     assert {device.id for device in value.sharding.device_set} <= {1, 2, 3}
 
@@ -796,7 +798,7 @@ def test_the_single_device_regime_takes_the_idle_device() -> None:
     solution = _make_three_type_model(distributed=True).solve(
         params=_PARAMS, log_level="off"
     )
-    value = solution.values[0]["retired"]
+    value = solution.values[1]["retired"]
 
     assert value.sharding == jax.sharding.SingleDeviceSharding(jax.devices()[3])
 
@@ -820,9 +822,9 @@ def test_two_placements_of_one_model_publish_the_same_values(
         params=_PARAMS, log_level="off"
     )
 
-    expected_roster = {
+    expected_roster = {0: {"working"}} | {
         period: {"working", "retired"} if period < 4 else {"retired"}
-        for period in range(5)
+        for period in range(1, 5)
     }
     assert {period: set(values) for period, values in placed.values.items()} == (
         expected_roster
@@ -845,7 +847,10 @@ def test_two_placements_of_one_model_publish_the_same_values(
 def test_independent_regimes_of_one_period_share_one_wave(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Both regimes of a period are dispatched together in the period's first wave."""
+    """Both regimes of a period are dispatched together in the period's first wave.
+
+    Only the working regime is solved at the root period.
+    """
     units_by_period: dict[int, int] = {}
     recorder = _WavePlanRecorder(
         planner=backward_induction.plan_period_waves, units_by_period=units_by_period
@@ -853,7 +858,7 @@ def test_independent_regimes_of_one_period_share_one_wave(
     monkeypatch.setattr(backward_induction, "plan_period_waves", recorder)
     _make_three_type_model(distributed=True).solve(params=_PARAMS, log_level="off")
 
-    assert units_by_period == {0: 2, 1: 2, 2: 2, 3: 2, 4: 1}
+    assert units_by_period == {0: 1, 1: 2, 2: 2, 3: 2, 4: 1}
 
 
 class _WavePlanRecorder:
@@ -878,9 +883,9 @@ def test_a_model_with_one_regime_per_period_is_placed_on_device_zero() -> None:
         _make_correct_distributed_model,
     )
 
-    solution = _make_correct_distributed_model(distributed=False).solve(
-        params=_PARAMS, log_level="off"
-    )
+    solution = _make_correct_distributed_model(
+        distributed=False, one_regime_per_period=True
+    ).solve(params=_PARAMS, log_level="off")
     value = solution.values[5]["retirement"]
 
     assert value.sharding.device_set == {jax.devices()[0]}
@@ -976,11 +981,11 @@ class _TwoMeshRegimeId:
 def _make_two_mesh_model() -> Model:
     """Two co-active regimes over one three-valued type beside a terminal one.
 
-    Both sharded regimes take the same three-device block, and the terminal
-    regime — which does not read the type — takes the device that block leaves
-    idle. Each sharded regime therefore reads the terminal value across
-    disjoint devices, into the one replicated layout their shared mesh
-    defines.
+    Both sharded regimes are roots at the first age and take the same
+    three-device block, and the terminal regime — which does not read the type —
+    takes the device that block leaves idle. Each sharded regime therefore
+    reads the terminal value across disjoint devices, into the one replicated
+    layout their shared mesh defines.
     """
 
     def _worker() -> UserRegime:
@@ -995,8 +1000,11 @@ def _make_two_mesh_model() -> Model:
                 "wealth": lambda wealth, consumption: wealth - consumption
             },
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=6)},
-            regime_transitions=lambda age: jnp.where(
-                age >= 0, _TwoMeshRegimeId.retired, _TwoMeshRegimeId.alpha
+            regime_transitions=Choose(
+                func=lambda age: jnp.where(
+                    age >= 0, _TwoMeshRegimeId.retired, _TwoMeshRegimeId.alpha
+                ),
+                targets=("retired",),
             ),
         )
 
@@ -1015,7 +1023,7 @@ def _make_two_mesh_model() -> Model:
         states={"type1": DiscreteGrid(category_class=_Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
-        initial_regimes={0: "alpha"},
+        initial_regimes={0: ("alpha", "beta")},
     )
 
 

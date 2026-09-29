@@ -149,7 +149,8 @@ def _model(
             },
             device_memory_bytes=budget,
         ),
-        initial_regimes={0: "r0"},
+        # The tests start subjects in both living regimes at both living ages.
+        initial_regimes={(0, 1): ("r0", "r1")},
     )
 
 

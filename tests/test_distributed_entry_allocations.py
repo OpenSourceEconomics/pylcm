@@ -477,10 +477,13 @@ def test_preflight_action_products_use_the_selected_entry_device(  # noqa: PLR09
             # source ownership is a separate assertion against the complete owner.
             full = kwargs["live_footprint"].__self__.snapshot()
             projected = kwargs["live_footprint"]()
-            assert dict(projected.spans) == {
+            # A budget device holding no buffer projects to an empty span tuple.
+            assert {
+                device: spans for device, spans in projected.spans.items() if spans
+            } == {
                 device: spans
                 for device, spans in full.spans.items()
-                if device in kwargs["budget_devices"]
+                if device in kwargs["budget_devices"] and spans
             }
             missing = resident_bytes_by_device(
                 live=sources,

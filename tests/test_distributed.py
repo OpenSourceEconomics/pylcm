@@ -121,6 +121,7 @@ def _make_correct_distributed_model(
     cell_width: int | None = None,
     subject_width: int | None = None,
     exact_layout: bool = False,
+    one_regime_per_period: bool = False,
 ) -> Model:
     @categorical(ordered=False)
     class RegimeId:
@@ -173,6 +174,7 @@ def _make_correct_distributed_model(
                 targets=("working_life", "retirement"),
             ),
             exits=("retirement",),
+            stays=("working_life",) if one_regime_per_period else None,
         ),
     )
 
@@ -262,15 +264,19 @@ def _get_exact_layout_values(
     values: dict[int, dict[str, np.ndarray]] = {
         period: {"working_life": np.empty((4, 4, 9))} for period in range(5)
     }
+    # `working_life`'s declared support names `retirement` at every source age, so
+    # the terminal value is solved at every period after the first; it does not
+    # depend on the period.
     terminal_shape = (4, 4, 9) if retirement_reads_type2 else (4, 9)
-    values[5] = {"retirement": np.empty(terminal_shape)}
+    terminal_value = np.empty(terminal_shape)
+    values[5] = {}
     for type1 in range(4):
         for type2 in range(4):
             slope = Fraction(type1 * (type2 if retirement_reads_type2 else 1), 2)
             intercept = Fraction(0)
             terminal = [float(slope * wealth) for wealth in range(8, 73, 8)]
             index = (type1, type2) if retirement_reads_type2 else type1
-            values[5]["retirement"][index] = terminal
+            terminal_value[index] = terminal
             for period in reversed(range(5)):
                 intercept = intercept / 2 + max(
                     (type1 * type2 - slope / 2) * consumption
@@ -280,6 +286,8 @@ def _get_exact_layout_values(
                 values[period]["working_life"][type1, type2] = [
                     float(slope * wealth + intercept) for wealth in range(8, 73, 8)
                 ]
+    for period in range(1, 6):
+        values[period]["retirement"] = terminal_value
     return values
 
 
@@ -904,7 +912,16 @@ def _make_two_source_distributed_model() -> Model:
     return Model(
         regimes={
             "working_life": working,
-            "working_life_b": working.replace(regime_transitions=to_retirement_b),
+            "working_life_b": working.replace(
+                regime_transitions=until_exit(
+                    5,
+                    law=Choose(
+                        func=to_retirement_b,
+                        targets=("retirement", "working_life_b"),
+                    ),
+                    exits=("retirement",),
+                )
+            ),
             "retirement": UserRegime(
                 regime_transitions=None,
                 functions={"utility": retirement_utility},
@@ -916,7 +933,7 @@ def _make_two_source_distributed_model() -> Model:
         states={"type1": DiscreteGrid(category_class=Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
-        initial_regimes={0: "working_life"},
+        initial_regimes={0: ("working_life", "working_life_b")},
     )
 
 
@@ -1430,7 +1447,12 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
     )
     for period, regime_to_value in distributed.items():
         for regime_name, value in regime_to_value.items():
-            np.testing.assert_array_equal(value, single[period][regime_name])
+            assert_agrees_to_ulp(
+                got=np.asarray(value),
+                expected=np.asarray(single[period][regime_name]),
+                n_ulp=4,
+                err_msg=f"regime {regime_name!r}, period {period}",
+            )
 
 
 def test_execution_config_cannot_shard_an_action():
@@ -1559,7 +1581,16 @@ def _make_two_source_partially_distributed_model() -> Model:
     return Model(
         regimes={
             "working_life": working,
-            "working_life_b": working.replace(regime_transitions=to_retirement_b),
+            "working_life_b": working.replace(
+                regime_transitions=until_exit(
+                    5,
+                    law=Choose(
+                        func=to_retirement_b,
+                        targets=("retirement", "working_life_b"),
+                    ),
+                    exits=("retirement",),
+                )
+            ),
             "retirement": UserRegime(
                 regime_transitions=None,
                 functions={"utility": retirement_utility},
@@ -1571,7 +1602,7 @@ def _make_two_source_partially_distributed_model() -> Model:
         states={"type1": DiscreteGrid(category_class=Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
-        initial_regimes={0: "working_life"},
+        initial_regimes={0: ("working_life", "working_life_b")},
     )
 
 

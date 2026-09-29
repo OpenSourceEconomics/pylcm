@@ -40,7 +40,6 @@ from lcm.solvers import (
 )
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
-from tests.execution.test_pending_solve_work import _is_ready
 from tests.solution import test_donation_solve as counter_fixture
 from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_solver_api_out_of_tree import _WEALTH
@@ -229,33 +228,38 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
     work = jnp.asarray(host_work).block_until_ready()
     original_call = jax.stages.Compiled.__call__
     original_bind = backward_induction._cores_with_transfer_cache
+    array_type = type(work)
+    original_complete = array_type.block_until_ready
     names: dict[int, str] = {}
     returned: list[jax.Array] = []
-    observations: list[tuple[str, tuple[bool, ...]]] = []
+    events: list[tuple[str, int | None]] = []
 
     def bind(**kwargs: Any) -> Any:
         cores = original_bind(**kwargs)
         names.update({id(core.compiled): name for name, core in cores.items()})
         return cores
 
+    # Completion is observed as the engine's own call, not as `is_ready()`: how
+    # fast the host finishes the matrix product must not decide the outcome.
+    def complete(array: jax.Array) -> jax.Array:
+        events.append(("complete", id(array)))
+        return original_complete(array)
+
     def observe(
         compiled: jax.stages.Compiled, *args: object, **kwargs: object
     ) -> object:
         name = names.get(id(compiled))
         if name == "consumer":
-            observations.append(
-                ("consumer_entry", tuple(_is_ready(array=array) for array in returned))
-            )
+            events.append(("consumer_entry", None))
         output = original_call(compiled, *args, **kwargs)
         if name == "producer":
             returned.extend(jax.tree.leaves(output))
-            observations.append(
-                ("producer_return", tuple(_is_ready(array=array) for array in returned))
-            )
+            events.append(("producer_return", None))
         return output
 
     monkeypatch.setattr(backward_induction, "_cores_with_transfer_cache", bind)
     monkeypatch.setattr(jax.stages.Compiled, "__call__", observe)
+    monkeypatch.setattr(array_type, "block_until_ready", complete)
     try:
         solution = model.solve(
             params={"discount_factor": 0.0, "work": work},
@@ -266,12 +270,15 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
         jax.block_until_ready(returned)
     assert len(returned) == 2
     assert all(array.devices() == {jax.devices()[0]} for array in returned)
-    assert observations[0][0] == "producer_return", observations
-    assert observations[0][1][1] is False, (
-        "No actual pending producer matrix was observed."
-    )
-    assert observations[1][0] == "consumer_entry", observations
-    assert observations[1][1][1] is (budget is not None), observations
+    stages = [event for event, _ in events if event != "complete"]
+    assert stages == ["producer_return", "consumer_entry"], events
+    between = events[
+        events.index(("producer_return", None)) + 1 : events.index(
+            ("consumer_entry", None)
+        )
+    ]
+    matrix_completed = ("complete", id(returned[1])) in between
+    assert matrix_completed is (budget is not None), events
     expected = np.array([1.0, 2.0]) + np.sum(left) * np.sum(right) * np.dot(
         right, left
     ) / (_SIZE * _SIZE)

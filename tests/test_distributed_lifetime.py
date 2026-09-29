@@ -623,7 +623,9 @@ def _model(
         states={"type1": DiscreteGrid(category_class=_Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
-        initial_regimes={0: "alive"},
+        # Every reading age is a start: `alive` exits straight to `dead`, so one
+        # age-0 root would demand the reading problem at period 0 alone.
+        initial_regimes={range(_N_PERIODS - 1): "alive"},
     )
 
 
@@ -919,7 +921,7 @@ def test_every_retained_value_stays_readable(monkeypatch: pytest.MonkeyPatch) ->
 
     assert [
         value.is_deleted() for _, (value, _) in sorted(observed.published.items())
-    ] == [False] * _N_PERIODS
+    ] == [False] * (_N_PERIODS - 1)  # `dead` is demanded from period 1 on
 
 
 @_skip_pytest_parallel
@@ -1069,17 +1071,17 @@ def donating_and_plain_values() -> tuple[dict[int, np.ndarray], dict[int, np.nda
     return (
         {
             period: np.asarray(donating.values[period]["dead"])
-            for period in range(_N_PERIODS)
+            for period in range(1, _N_PERIODS)
         },
         {
             period: np.asarray(plain.values[period]["dead"])
-            for period in range(_N_PERIODS)
+            for period in range(1, _N_PERIODS)
         },
     )
 
 
 @_skip_pytest_parallel
-@pytest.mark.parametrize("period", range(_N_PERIODS))
+@pytest.mark.parametrize("period", range(1, _N_PERIODS))
 def test_donation_leaves_every_terminal_value_unchanged(
     *,
     period: int,
