@@ -60,6 +60,9 @@ from lcm.execution import ExecutionConfig
 # plus four per simulated (regime, period) pair (mask, lookup, fallback, site
 # key) over the five pairs the witness simulates.
 _WITNESS_HELPER_OPERATIONS = 52
+# Regime selection also admits its user-law producers through the axis-free
+# plan before they run, outside the helper dispatch count.
+_WITNESS_PRODUCER_ADMISSIONS = 2
 
 _WITNESS_SEED = 6606
 
@@ -176,7 +179,9 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(
     recording["on"] = False
 
     assert counts["dispatch"] == _WITNESS_HELPER_OPERATIONS
-    assert counts["axis_free"] == _WITNESS_HELPER_OPERATIONS
+    assert (
+        counts["axis_free"] == _WITNESS_HELPER_OPERATIONS + _WITNESS_PRODUCER_ADMISSIONS
+    )
     assert counts["frontier"] == 0
 
 
