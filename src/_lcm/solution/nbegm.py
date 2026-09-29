@@ -114,7 +114,11 @@ from _lcm.solution.dcegm import (
     _carry_subset,
     _fail_if_exact_affine_kernel_unavailable,
 )
-from _lcm.solution.egm import _build_egm_period_kernel, declare_egm_carry_reads
+from _lcm.solution.egm import (
+    _build_egm_period_kernel,
+    declare_egm_carry_reads,
+    guard_regime_mass,
+)
 from _lcm.solution.periodization import (
     resolve_solver_build_context,
     solver_period_group_key,
@@ -652,11 +656,14 @@ class NBEGM(OneMarginSolver):
                 )
                 laws[group_key] = law
                 grouped_param_checks.extend(checks)
-                cores[group_key] = jax.jit(core) if context.enable_jit else core
+                cores[group_key] = guard_regime_mass(
+                    core=core, enable_jit=context.enable_jit
+                )
             period_group_keys[period] = group_key
             period_kernels[period] = _build_egm_period_kernel(
                 core=cores[group_key],
                 declared_law=laws[group_key],
+                compute_regime_transition_probs=context.compute_regime_transition_probs,
                 savings_grid=savings_grid,
                 regime_name=context.regime_name,
                 continuation_target=target,

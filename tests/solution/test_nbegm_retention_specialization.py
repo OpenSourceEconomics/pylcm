@@ -17,6 +17,7 @@ authority. Solver diagnostics keep following `log_level` alone.
 from collections.abc import Callable
 from typing import Any, cast
 
+import numpy as np
 import pytest
 
 from _lcm.egm.published_policy import NBEGMGridPolicy
@@ -38,12 +39,18 @@ from tests.test_models import n_nbegm_toy, nbegm_ride_along_toy
 
 _ROUTES = {"finite": None, "adaptive": _MESH}
 
+# The three-period toys are alive at ages 0 and 1 only, so their survival law
+# ends life after age 1; the toys' own default fits four periods.
+_THREE_PERIOD_FINAL_AGE_ALIVE = 2.0
+
 
 def _standalone() -> tuple[Any, Any]:
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm", n_periods=3, n_liquid=12, n_savings=16
     )
-    return model, nbegm_ride_along_toy.build_params()
+    return model, nbegm_ride_along_toy.build_params(
+        final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
+    )
 
 
 def _nested(route: str) -> tuple[Any, Any]:
@@ -160,6 +167,7 @@ def test_values_only_and_replay_solves_publish_the_same_values(*, route: str):
     for period, regime_to_value in values_only.values.items():
         assert regime_to_value.keys() == with_replay.values[period].keys()
         for regime_name, value in regime_to_value.items():
+            assert not np.isnan(np.asarray(value)).any(), (period, regime_name)
             assert_agrees_to_ulp(
                 got=value,
                 expected=with_replay.values[period][regime_name],

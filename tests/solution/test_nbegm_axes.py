@@ -41,6 +41,10 @@ from tests.test_models import (
     nbegm_tax_toy,
 )
 
+# The three-period toys are alive at ages 0 and 1 only, so their survival law
+# ends life after age 1; the toys' own default fits four periods.
+_THREE_PERIOD_FINAL_AGE_ALIVE = 2.0
+
 
 @pytest.mark.parametrize(
     "field",
@@ -150,7 +154,9 @@ def _small_model(
                 execution_config=config,
                 nbegm_overrides={"envelope_arithmetic": arithmetic},
             ),
-            nbegm_ride_along_toy.build_params(),
+            nbegm_ride_along_toy.build_params(
+                final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
+            ),
         )
     if route == INTERVAL_AXIS:
         return (
@@ -162,7 +168,9 @@ def _small_model(
                 execution_config=config,
                 envelope_arithmetic=arithmetic,
             ),
-            nbegm_next_asset_cliff_toy.build_params(),
+            nbegm_next_asset_cliff_toy.build_params(
+                final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
+            ),
         )
     if route == BRANCH_AXIS:
         return (
@@ -186,7 +194,9 @@ def _small_model(
             execution_config=config,
             envelope_arithmetic=arithmetic,
         ),
-        nbegm_stochastic_node_toy.build_params(),
+        nbegm_stochastic_node_toy.build_params(
+            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
+        ),
     )
 
 
@@ -222,7 +232,14 @@ def _assert_arrays_agree(*, actual: object, expected: object) -> None:
 def _assert_solutions_agree(
     *, actual: SolutionResult, expected: SolutionResult
 ) -> None:
-    """Values and every retained replay payload keep their addressed layout."""
+    """Values and every retained replay payload keep their addressed layout.
+
+    The reference solve carries no NaN value: two NaN arrays agree whatever the
+    solver computed, so a lost specimen would make the comparison vacuous.
+    """
+    for period, regimes in expected.values.items():
+        for regime, values in regimes.items():
+            assert not np.isnan(np.asarray(values)).any(), (period, regime)
     assert actual.values.keys() == expected.values.keys()
     for period, regimes in expected.values.items():
         assert actual.values[period].keys() == regimes.keys()
@@ -452,4 +469,5 @@ def test_default_interval_stream_preserves_the_dense_period(
     )
     dense_keywords = {**resolved.static_kwargs, "__lcm_interval_width__": 0}
     dense = jax.jit(partial(resolved.function, **dense_keywords))(**resolved.arguments)
+    assert not np.isnan(np.asarray(dense[0])).any()
     _assert_arrays_agree(actual=streamed, expected=dense)

@@ -4,7 +4,8 @@ Two tiny models expose a reduced axis whose extent (20) the power-of-two
 bootstrap width (16) does not divide:
 
 - the two-period NB-EGM multi-discrete toy with three discrete actions, whose
-  `branch` axis enumerates 2 x 2 x 5 = 20 action combinations;
+  `branch` axis enumerates 2 x 2 x 5 = 20 action combinations, and whose survival
+  law ends life after its single alive period;
 - the GridSearch work-and-consume regression model, whose streamed
   `action_product` axis holds 2 labor-supply x 10 consumption = 20 points.
 
@@ -35,8 +36,9 @@ simulated discrete actions vary across subjects:
 
 - the GridSearch model with a lower disutility of work, so that some subjects
   work and others retire;
-- the NB-EGM toy at its default sizes with a higher insurance premium, so that
-  some subjects buy private insurance and others do not.
+- the NB-EGM toy, at its two-period and its default sizes, with a higher
+  insurance premium, so that some subjects buy private insurance and others do
+  not.
 
 Each distinct solve runs once per worker and is shared across tests.
 """
@@ -81,21 +83,16 @@ _SMALL_CASES = tuple(
     for arm in (_UNBUDGETED, _BOUNDED)
 )
 _CASES = (*_SMALL_CASES, (_NBEGM, _DEFAULT_SIZE))
-# Simulation specimens, one per covered case that yields a non-degenerate panel.
-# The NB-EGM toy's two-period sizes are left out: forward simulation of its
-# single alive period returns a NaN value for every subject, and each discrete
-# action then sits at its first code, so the comparison would be vacuous.
-_SIMULATION_CASES = (
-    (_GRID_SEARCH, _UNBUDGETED),
-    (_GRID_SEARCH, _BOUNDED),
-    (_NBEGM, _DEFAULT_SIZE),
-)
 _SIMULATION_PARAMS: dict[str, dict[str, float]] = {
     _GRID_SEARCH: {"disutility_of_work": 0.25},
     _NBEGM: {"premium": 3.0},
 }
 _N_SUBJECTS = 400
 _SIMULATION_SEED = 1
+# The toy's survival law keeps an agent alive while `age + 1 < final_age_alive`.
+# Its two-period sizes have a single alive age, 0, so every agent must die into
+# age 1; its builder's default only fits three periods.
+_TWO_PERIOD_FINAL_AGE_ALIVE = 1.0
 _NON_FINITE_CLASSES: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "nan": np.isnan,
     "posinf": np.isposinf,
@@ -150,7 +147,14 @@ def _build(
             execution_config=execution,
             **sizes,
         )
-        params = nbegm_multi_discrete_toy.build_params(n_actions=3, **overrides)
+        survival = (
+            {}
+            if arm == _DEFAULT_SIZE
+            else {"final_age_alive": _TWO_PERIOD_FINAL_AGE_ALIVE}
+        )
+        params = nbegm_multi_discrete_toy.build_params(
+            n_actions=3, **survival, **overrides
+        )
     else:
         model = regression.get_model(
             n_periods=3,
@@ -396,7 +400,7 @@ def test_covering_moves_no_finite_value_beyond_the_dtype_ulp_bound(
     assert _ulp_excess(covered=covered, uncovered=uncovered) == {}
 
 
-@pytest.mark.parametrize("case", _SIMULATION_CASES, ids=_case_id)
+@pytest.mark.parametrize("case", _CASES, ids=_case_id)
 def test_covering_keeps_simulated_discrete_choices_identical(
     *, case: tuple[str, str]
 ) -> None:

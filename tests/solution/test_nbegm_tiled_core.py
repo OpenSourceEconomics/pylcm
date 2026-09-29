@@ -28,6 +28,10 @@ from tests.conftest import invariance_tolerances
 from tests.solution._nbegm_direct_oracle import ride_along_kernel as _ride_along_kernel
 from tests.test_models import nbegm_ride_along_toy
 
+# The three-period toys are alive at ages 0 and 1 only, so their survival law
+# ends life after age 1; the toys' own default fits four periods.
+_THREE_PERIOD_FINAL_AGE_ALIVE = 2.0
+
 
 def _assert_same_result(*, actual: object, expected: object) -> None:
     """Check exact structure and working-dtype numerical invariance separately."""
@@ -93,7 +97,10 @@ def test_tile_local_core_signature_has_no_materialized_continuation_stacks(
 ) -> None:
     """The stacks are compiler-local values, never core inputs; nor is any target V."""
     kernel, _ = _ride_along_kernel(
-        model=_ride_model(), params=nbegm_ride_along_toy.build_params()
+        model=_ride_model(),
+        params=nbegm_ride_along_toy.build_params(
+            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
+        ),
     )
     names = inspect.signature(
         core_program_graph(kernel=kernel)[name].function
@@ -108,9 +115,12 @@ def test_tile_local_core_signature_has_no_materialized_continuation_stacks(
 @pytest.mark.parametrize("cell_width", [1, 3])
 def test_tile_local_core_is_invariant_to_the_cell_width(*, cell_width: int) -> None:
     """The cell block is a memory window: which cells share a pass changes nothing."""
-    params = nbegm_ride_along_toy.build_params()
+    params = nbegm_ride_along_toy.build_params(
+        final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
+    )
     whole_kernel, whole_context = _ride_along_kernel(model=_ride_model(), params=params)
     whole = _run(kernel=whole_kernel, context=whole_context, name="replay")
+    assert not np.isnan(np.asarray(whole[0])).any()
     blocked = _run(
         kernel=whole_kernel, context=whole_context, name="replay", cell_width=cell_width
     )
@@ -125,7 +135,10 @@ def test_tile_local_core_arguments_are_exactly_the_declared_inputs() -> None:
     larger than all of them together, so its absence shows in the argument bytes.
     """
     kernel, context = _ride_along_kernel(
-        model=_ride_model(), params=nbegm_ride_along_toy.build_params()
+        model=_ride_model(),
+        params=nbegm_ride_along_toy.build_params(
+            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
+        ),
     )
     materialized = _materialize(kernel=kernel, context=context, name="main")
     declared_bytes = sum(

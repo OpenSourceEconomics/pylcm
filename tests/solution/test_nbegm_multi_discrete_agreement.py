@@ -7,6 +7,7 @@ joint choice by the upper envelope over those branches, so the solved value
 matches a dense brute solve that maximises over the same product.
 """
 
+import functools
 from collections.abc import Mapping
 
 import numpy as np
@@ -81,3 +82,60 @@ def test_nbegm_envelope_over_several_discrete_actions_matches_brute(
             atol=5e-3,
             err_msg=f"{n_branches} branches, income node {node}",
         )
+
+
+# Parameters under which the insured branch cannot afford an action at the lowest
+# liquid nodes: its cash-on-hand `liquid + base_income - premium` is negative
+# there, while the uninsured branches still afford one.
+_UNAFFORDABLE_BRANCH_OVERRIDES = {
+    "low_base_income": {"base_income": 0.5},
+    "high_premium": {"premium": 3.5},
+}
+# Worst node-wise gap measured against the dense brute solve over every liquid
+# node of both alive periods, at either precision, is 1.8e-2, at the lowest nodes
+# where the brute consumption grid is coarse relative to cash-on-hand.
+_EVERY_NODE_ATOL = 3e-2
+
+
+@functools.cache
+def _alive_values(
+    *, variant: str, overrides_name: str, envelope_arithmetic: str = "certified"
+) -> np.ndarray:
+    """Solve the three-action toy and stack the alive value of every alive period."""
+    model = toy.build_model(
+        variant=variant,
+        n_actions=3,
+        n_consumption=1200 if variant == "brute" else 120,
+        envelope_arithmetic=envelope_arithmetic,
+    )
+    params = toy.build_params(
+        n_actions=3, **_UNAFFORDABLE_BRANCH_OVERRIDES[overrides_name]
+    )
+    values = model.solve(params=params, log_level="off").values
+    return np.stack(
+        [np.asarray(values[p][_ALIVE]) for p in sorted(values) if _ALIVE in values[p]]
+    )
+
+
+@pytest.mark.parametrize(
+    "envelope_arithmetic",
+    ["ordinary", pytest.param("certified", marks=_REQUIRES_KERNEL)],
+)
+@pytest.mark.parametrize("overrides_name", tuple(_UNAFFORDABLE_BRANCH_OVERRIDES))
+def test_nbegm_matches_brute_where_a_branch_affords_no_action(
+    *, overrides_name: str, envelope_arithmetic: str
+) -> None:
+    """`V` agrees with a dense brute solve at every node, including the lowest
+    liquid nodes where the insured branch affords no action.
+
+    That branch publishes `-inf` there, so the joint choice falls to a branch
+    that affords an action and every value is finite and matches the oracle.
+    """
+    nbegm = _alive_values(
+        variant="nbegm",
+        overrides_name=overrides_name,
+        envelope_arithmetic=envelope_arithmetic,
+    )
+    brute = _alive_values(variant="brute", overrides_name=overrides_name)
+
+    np.testing.assert_allclose(nbegm, brute, rtol=0.0, atol=_EVERY_NODE_ATOL)
