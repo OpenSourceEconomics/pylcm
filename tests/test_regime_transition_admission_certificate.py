@@ -193,7 +193,7 @@ def _regime_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
     if (
         len(admitted) != 1
         or _keyword(call=admitted[0], name="memory") != "memory"
-        or _keyword(call=admitted[0], name="function") != "_regime_probability_flags"
+        or _keyword(call=admitted[0], name="function") != "regime_probability_flags"
     ):
         errors.append("serial regime diagnostics must use admitted flags")
     return errors
@@ -272,8 +272,8 @@ def test_regime_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_validate_regime_transition_probs",
-            "            memory=memory,\n            function=_regime_probability_flags,",
-            "            memory=None,\n            function=_regime_probability_flags,",
+            "            memory=memory,\n            function=regime_probability_flags,",
+            "            memory=None,\n            function=regime_probability_flags,",
             "serial regime diagnostics must use admitted flags",
         ),
         (

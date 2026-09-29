@@ -23,7 +23,7 @@ model = lcm.Model(
 
 Required arguments are `ages`, `regimes`, and a class created with
 `@categorical(ordered=False)` whose fields match the regime names. A model must contain
-at least one non-terminal and one terminal regime.
+at least one terminal regime; a model whose starts are all terminal needs no other.
 
 The mapping-valued slots `functions`, `constraints`, `states`, `state_transitions`,
 `actions`, and `derived_categoricals` broadcast declarations to regimes. A name is

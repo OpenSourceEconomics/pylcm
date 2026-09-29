@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "5ddc47f00d244e9cdb3be38d531a15aef475dbef1fd4823068e6f36aa1dda8c2",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "4ede9d2a3c403eeb6275fae728b8c1bc577c21f8840ca71df89836fd6c08962b",
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -353,7 +353,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_OPERATIONS_SOURCE: "82057a91e6cf149f750f90b71c9258cf33b310e0675044bf219d466e836614d1",
     COMBINED_CHUNK_PLANNING_SOURCE: "7b8ff3abda0b6f57bc6bf3901287bb8cbc6fe6ba741cdbec902d45fb4fabb047",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "f3b6b4e013eeedeed51455fd342332974077759dc8538c98c5f91eedcbe6eb35",
-    COMBINED_CHUNK_PROFILES_SOURCE: "406c10f1af4d5492c6d7520f45532cd9f0c5851799d54d93ae4bc1636caa1a36",
+    COMBINED_CHUNK_PROFILES_SOURCE: "cf10eafca997d6634b86f89a5cccc8db5d00675fc603cba07c5146a2312cd696",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "f7461de8c0f7bafdc3c44cc002b209df01fdae5a5de4186aa3f4ef65455e867e",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32",
@@ -419,7 +419,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "c5dc02694a8d42eda5933c3b100c7815a731a47f0b5c7c2d95cfb142b50c3e6b",
     SIMULATION_TRANSITIONS_SOURCE: "40e7cdafd5705640e90db5deb08cfa208d809bb50c20260befe12c849bd7891e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "41fce59563149d0c5cc0da8aad5559c78aa5a8927a49bb856141fd7cfb394c15",
+    MODEL_SOURCE: "5bd9b01deff8b4630babd88b78ababc6cebf4c13e9c9d962ea9fd8d019aef57e",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "66c367125b7b58e70d2a01084b807ff050417a25170c783d35617322e65c589e",
     PERIOD_REPLAY_SOURCE: "5a9a2d656233a6ec66bc8fa4c364244c9cf29702a0287e5481490ecbed7c2d28",
@@ -447,7 +447,7 @@ _SOURCE_SEALS = {
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
     PANDAS_UTILS_SOURCE: "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58",
-    MODEL_PROCESSING_SOURCE: "fc3f53440e314b5b3348a88a6fcdd35deb5d055eadd4a04910ae1940062641e0",
+    MODEL_PROCESSING_SOURCE: "cbc348aa83de36ac0799e63d1c5212dab0ae4dea62c107d85879075a3950ead3",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
@@ -3208,7 +3208,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
                 "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-                "Model.__init__": "47a9c388a5b215dc15bce8ea20755f627eb738d96944a0624ef20c91f73e5599",
+                "Model.__init__": "b9a8f45466539dc26ee0652827802ff60421c136674969d1888737e4f88411af",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "20d3f754e43eab78be776d62192b7a42eb879fa5399eec5ecae404fd55911589",
                 # Fixed caller owners flow through both private automatic-solve
@@ -3811,7 +3811,7 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/_lcm/simulation/chunk_profiles.py": (
-        "1ce0891793dae0997f1185f3d93ad0deb5b043ef70c251cb6491f7fed8f2b2ad",
+        "d5d1ec584f638ddb8ccf7edc175de1d3d53246784ec72703ef18bc7a43bd12e9",
         {
             "profile_simulation_chunk": "ce7b40dae432c7528a65fdb2b984bbb4823fd27b359582041bf5f611e8425365",
             "_compile_forward_units_in_parallel": "fb00a156b2b7e43153465e2066ad8be6a4fa47f09a119b291d98e08c57ffad11",
@@ -3861,7 +3861,7 @@ _FINITE_BUDGET_CONTRACTS = {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "47a9c388a5b215dc15bce8ea20755f627eb738d96944a0624ef20c91f73e5599",
+            "Model.__init__": "b9a8f45466539dc26ee0652827802ff60421c136674969d1888737e4f88411af",
             "Model.simulate": "20d3f754e43eab78be776d62192b7a42eb879fa5399eec5ecae404fd55911589",
         },
     ),
@@ -4108,12 +4108,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_CHUNK_PROFILES_SOURCE: (
-        "1ce0891793dae0997f1185f3d93ad0deb5b043ef70c251cb6491f7fed8f2b2ad",
+        "d5d1ec584f638ddb8ccf7edc175de1d3d53246784ec72703ef18bc7a43bd12e9",
         {
             "profile_simulation_chunk": "ce7b40dae432c7528a65fdb2b984bbb4823fd27b359582041bf5f611e8425365",
             "_compile_forward_units_in_parallel": "fb00a156b2b7e43153465e2066ad8be6a4fa47f09a119b291d98e08c57ffad11",
             "_compile_forward_unit_if_context_matches": "ebf6bfecb0b41357598f2854db7ba5673c28bfcee5260236c4a3c10194daf3a4",
-            "_profile_next_subjects": "de48a39aa6bbbbb495699d6fc399a470b1b733e1020a29268222f854bad513bc",
+            "_profile_next_subjects": "66669c014815357dea3a259dcaddb4125a9ea93b160f7bab20718cc9be0a3b00",
             "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
             "_profile_outer_storage": "654d9ed612edcf263c2eead952a5e5abbc11fef8b43af2670db23d0d098eefa1",
             "_record_core": "942d7b15dcf03da3a04ff12b14485b2e2aec2ca3c2f0f554faa9a78d1cbf6e67",
@@ -4233,7 +4233,7 @@ _COMBINED_INPUT_CONTRACTS = {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "47a9c388a5b215dc15bce8ea20755f627eb738d96944a0624ef20c91f73e5599",
+            "Model.__init__": "b9a8f45466539dc26ee0652827802ff60421c136674969d1888737e4f88411af",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "ada74ce5f724d2944b187c777fb43717cd574db5f64e992cad2a6c669b9d08fa",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4373,7 +4373,7 @@ _FINITE_REPLAY_CONTRACTS = {
         },
     ),
     MODEL_PROCESSING_SOURCE: (
-        "f53662bb4eb25fff405d417f36381be34f830a06d03a8c1525564a36474a2a21",
+        "d051c0333246eb886f4bc405bfda2e5880e436bf699f1b4a07feac3af8991d04",
         {
             "build_regimes_and_template": "c5610c5e6a4cf80dd9696685653ee05664ec7824ad45a7ec0455b4901ba70312",
         },
@@ -6390,7 +6390,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/transition_checks.py": (
-        "1b1aa5089745bdea62d4ff83beb7cb115c4a8cabb601100ce876e5ed909a7190",
+        "a5b8f1b8ad0ab9028ed8b7ddf3e7c88f2f3c6b55eef68c4591bf3cf5b0e0e27f",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
@@ -6400,7 +6400,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_evaluate_regime_probability_law": "c16f5612edb533d8f89d75d0c90fa903d723b4b4235dcc40b0a3e31dc3aecd42",
             "_regime_probability_law": "0af1c02dca10a6d00a10e67342b51996fb23a078886097a363a12935f7c0ab39",
             "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
-            "_validate_regime_transition_probs": "813afdec67f3fa31a6cfeee94db4f9780bc3b8605265eed181670e61605e1141",
+            "_validate_regime_transition_probs": "6362faa31c14941b6b92d5eb1dfbec6508e726d545b6dafb99b29b82c0430ee7",
             "validate_state_transitions_all_periods": "41c223ea8426a823b51d3eac44e3e81d5a86c1c21175030b5000793d82a8fcf1",
             "validate_joint_transitions_all_periods": "816ac82cc7f45fcdc06c169507fa8915ee597f83a672fefe31367b7bd213c6dc",
             "_own_transition_outputs": "29d4ac7f946991d9b73ecf8e8f9b49f5830e5266fbe1a2c006b45e8de8dec6c0",
@@ -6428,7 +6428,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_validate_sharded_state_capability": "28b011ffcf8d84213c9a3761b096911579ad00d3420c4f8b144b7e7e07681766",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "9cbca71ad9bfedcea404d2d5158003e21bdba41378578b37c7f3d3ed153bfe30",
-            "Model.__init__": "47a9c388a5b215dc15bce8ea20755f627eb738d96944a0624ef20c91f73e5599",
+            "Model.__init__": "b9a8f45466539dc26ee0652827802ff60421c136674969d1888737e4f88411af",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "1244c00c7a0c9e4b4286a39479b9685ef6ec0e9da157f13944b853d1b27c5cf6",
             "Model.solve": "b7447007287a2846e9f8ae2f42f307d6308b98d81b2d38bf7312053aeac4e9bc",

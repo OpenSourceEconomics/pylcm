@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.transition_checks import regime_probability_flags
 from lcm import (
     AgeGrid,
     ByAge,
@@ -456,3 +457,33 @@ def test_simulate_accepts_valid_law_rows_off_the_grid() -> None:
         log_level="off",
         seed=0,
     )
+
+
+@pytest.mark.parametrize(
+    ("probabilities", "expected"),
+    [
+        ((0.25, 0.75), [False, False, False]),
+        ((1.5, -0.5), [False, True, False]),
+        ((0.25, 0.25), [False, False, True]),
+    ],
+)
+def test_realized_regime_flags_check_a_subject_constant_law_on_every_row(
+    *, probabilities: tuple[float, float], expected: list[bool]
+) -> None:
+    """A law that is constant across subjects is checked against every row mask."""
+    flags = regime_probability_flags(
+        probabilities=tuple(jnp.asarray(value) for value in probabilities),
+        inactive_indices=(),
+        rows=jnp.array([True, False, True]),
+    )
+    assert np.asarray(flags).tolist() == expected
+
+
+def test_realized_regime_flags_ignore_rows_outside_the_mask() -> None:
+    """A violating row that is not marked does not raise a flag."""
+    flags = regime_probability_flags(
+        probabilities=(jnp.array([0.5, 2.0]), jnp.array([0.5, -1.0])),
+        inactive_indices=(),
+        rows=jnp.array([True, False]),
+    )
+    assert np.asarray(flags).tolist() == [False, False, False]

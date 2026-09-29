@@ -209,9 +209,8 @@ def _build_regimes_and_template_with_fixed_params(
     )
 
 
-def validate_model_inputs(  # noqa: C901
+def validate_model_inputs(
     *,
-    n_periods: int,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_id_class: type,
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
@@ -220,9 +219,8 @@ def validate_model_inputs(  # noqa: C901
 ) -> None:
     """Validate model constructor inputs.
 
-    `n_periods` is derived from `Model.__init__`'s `ages: AgeGrid` and
-    `regimes` is typed via beartype on `Model.__init__`; both reach this
-    function with their declared types. This function focuses on value and
+    `regimes` is typed via beartype on `Model.__init__` and reaches this
+    function with its declared type. This function focuses on value and
     cross-field rules.
 
     `ages` lets the used-variable check resolve `AgeSpecializedFunction` functions at
@@ -266,13 +264,8 @@ def validate_model_inputs(  # noqa: C901
 
     error_messages: list[str] = []
 
-    if n_periods <= 1:
-        error_messages.append("n_periods must be at least 2.")
-
     if not user_regimes:
-        error_messages.append(
-            "At least one non-terminal and one terminal regime must be provided."
-        )
+        error_messages.append("At least one terminal regime must be provided.")
 
     # Validate regime names don't contain separator
     invalid_names = [name for name in user_regimes if QNAME_DELIMITER in name]
@@ -286,12 +279,6 @@ def validate_model_inputs(  # noqa: C901
     terminal_regimes = [name for name, r in user_regimes.items() if r.terminal]
     if len(terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one terminal regime.")
-
-    non_terminal_regimes = {
-        name: r for name, r in user_regimes.items() if not r.terminal
-    }
-    if len(non_terminal_regimes) < 1:
-        error_messages.append("lcm.Model must have at least one non-terminal regime.")
 
     regime_id_fields = sorted(get_field_names_and_values(regime_id_class).keys())
     regime_names = sorted(user_regimes.keys())
