@@ -66,6 +66,7 @@ from _lcm.solution.backward_induction import (
     _lowering_key,
     _trace_settings_key,
 )
+from _lcm.solution.solve_phase_records import nested_phase
 from lcm.exceptions import ExecutionPlanningError
 
 # Narrowest inner tile an unbudgeted subject axis is lowered at, and the width it
@@ -567,9 +568,10 @@ class SimulationRuntime:
                     n_subjects,
                 ),
             )
-            compiled = dataclasses.replace(
-                compile_candidate(widths), widths=MappingProxyType(dict(widths))
-            )
+            with nested_phase(name="simulation_compilation"):
+                compiled = dataclasses.replace(
+                    compile_candidate(widths), widths=MappingProxyType(dict(widths))
+                )
             if isinstance(compiled.executable, jax.stages.Compiled):
                 # Read the compiler's report exactly once per compiled executable,
                 # not once per `plan_workspace` call that later admits it.

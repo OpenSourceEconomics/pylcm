@@ -1,9 +1,11 @@
-"""Host-phase records of one public solve, for a stamped log to time.
+"""Host-phase records of one public solve or simulate, for a stamped log to time.
 
 A phase is bracketed by two INFO records carrying the public call's id. The
 end record states the phase's outcome and its monotonic duration, so a log
-read afterwards can reconcile the children of `public_solve` to the whole
-call and keep the remainder as an explicit residual.
+read afterwards can reconcile the top-level children of the public bracket to
+the whole call and keep the remainder as an explicit residual. A phase opened
+inside another is nested one level deeper and is already part of its parent's
+time.
 
 A phase entered without a call id emits nothing, so an internal entry point
 reached outside a public call stays silent while its code path is shared.
@@ -23,14 +25,43 @@ inside `public_solve`:
 - `compilation_waves` — lowering and compiling each wave of candidates
 - `workspace_selection` — the planner's width choice per core
 - `backward_induction` — the period loop, as host wall including every wait
+- `solve_snapshot` — only when a diagnostic snapshot is written
 - `result_assembly` — binding the generated authority and building the result
 - `result_readiness` — waiting for the returned values' device work to finish
 
-A reader reconciles the children against `public_solve` and reports what is
-left over as an explicit residual rather than normalising it away.
+A public simulate is bracketed by `public_simulate`. Its top-level phases, in
+emission order:
+
+- `params_validation` — capturing the entry inputs, processing the user's
+  parameters and resolving process grids
+- `solution_resolution` — only with a supplied solution: validating and
+  projecting it
+- `simulation_inputs` — converting, canonicalising, padding and validating the
+  initial conditions
+- only without a supplied solution: the internal solve's phases,
+  `authority_fingerprint` through `result_assembly`, followed by
+  `solution_resolution` — resolving the solved result for simulation
+- `solution_handover` — checking the resolved inputs and handing them to the
+  entry allocations
+- `chunk_planning` — cohort and chunk planning, which in a budgeted run
+  compiles every profiled simulation candidate
+- `simulation_setup` — the simulation memory, call inputs and plan summary
+- `simulation_chunk` — one per subject chunk, the forward period loop
+- `simulation_completion` — concatenating the chunks and waiting for them
+- `simulation_result` — trimming padding and building the result
+- `result_finalization` — releasing entry allocations and writing a simulate
+  snapshot when one is due
+
+Each simulation executable compiled during the call is bracketed as a nested
+`simulation_compilation` phase inside whichever top-level phase compiled it.
+
+A reader reconciles the top-level children against the public bracket and
+reports what is left over as an explicit residual rather than normalising it
+away.
 """
 
 import contextlib
+import contextvars
 import logging
 import time
 import uuid
@@ -57,6 +88,12 @@ PHASE_NAMES = (
 
 # Name of the bracket every other phase is nested inside.
 PUBLIC_PHASE = "public_solve"
+
+# The innermost open phase's call, so code reached without a call id can still
+# bracket a nested phase of the call it runs under.
+_OPEN_CALL: contextvars.ContextVar[tuple[CallId, logging.Logger] | None] = (
+    contextvars.ContextVar("_OPEN_CALL", default=None)
+)
 
 
 def new_call_id() -> CallId:
@@ -85,12 +122,14 @@ def solve_phase(
     logger.info("solve call %s phase %s begin", call_id, name)
     start = time.monotonic()
     status = "ok"
+    token = _OPEN_CALL.set((call_id, logger))
     try:
         yield
     except BaseException:
         status = "error"
         raise
     finally:
+        _OPEN_CALL.reset(token)
         logger.info(
             "solve call %s phase %s end status=%s seconds=%.6f",
             call_id,
@@ -98,3 +137,26 @@ def solve_phase(
             status,
             time.monotonic() - start,
         )
+
+
+@contextlib.contextmanager
+def nested_phase(*, name: str) -> Iterator[None]:
+    """Bracket a phase inside whichever call's phase is open in this context.
+
+    Outside any open phase — and on a thread the call's context did not reach —
+    it emits nothing.
+
+    Args:
+        name: The phase's name in the record vocabulary.
+
+    Yields:
+        `None`, for the duration of the phase.
+
+    """
+    open_call = _OPEN_CALL.get()
+    if open_call is None:
+        yield
+        return
+    call_id, logger = open_call
+    with solve_phase(name=name, logger=logger, call_id=call_id):
+        yield

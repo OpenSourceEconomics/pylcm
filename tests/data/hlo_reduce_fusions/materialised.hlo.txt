@@ -1,0 +1,33 @@
+HloModule jit__unnamed_function, is_scheduled=true
+
+%region_65.65 (Arg_0.1: f32[], Arg_1.1: f32[]) -> f32[] {
+  %Arg_0.1 = f32[] parameter(0)
+  %Arg_1.1 = f32[] parameter(1)
+  ROOT %add.1 = f32[] add(%Arg_0.1, %Arg_1.1)
+}
+
+%fused_gather (param_0.1559: f32[1,3,5,24,38], param_1.8334: s32[945,3]) -> (f32[945,1,1,1,24,38]) {
+  %param_0.1559 = f32[1,3,5,24,38]{4,3,2,1,0} parameter(0)
+  %param_1.8334 = s32[945,3]{1,0} parameter(1)
+  %gather.3472.1 = f32[945,1,1,1,24,38]{5,4,3,2,1,0} gather(%param_0.1559, %param_1.8334), offset_dims={1,2,3,4,5}, collapsed_slice_dims={}, start_index_map={0,1,2}, index_vector_dim=1, slice_sizes={1,1,1,24,38}
+  ROOT %tuple.957 = (f32[945,1,1,1,24,38]{5,4,3,2,1,0}) tuple(%gather.3472.1)
+}
+
+%fused_reduce (param_0.6455: s32[13,7,2], param_4.3285: f32[945,1,1,1,24,38]) -> f32[13,38,7] {
+  %param_4.3285 = f32[945,1,1,1,24,38]{5,4,3,2,1,0} parameter(1)
+  %bitcast.264.60 = f32[1,7,135,24,38]{4,3,2,1,0} bitcast(%param_4.3285)
+  %param_0.6455 = s32[13,7,2]{2,1,0} parameter(0)
+  %gather.3473.15 = f32[13,7,1,24,38]{4,3,2,1,0} gather(%bitcast.264.60, %param_0.6455), offset_dims={2,3,4}, collapsed_slice_dims={}, start_index_map={1,2}, index_vector_dim=2, slice_sizes={1,1,1,24,38}
+  %bitcast.682.1 = f32[13,38,7,24]{3,2,1,0} bitcast(%gather.3473.15)
+  %constant_7772_clone_15 = f32[] constant(0)
+  ROOT %reduce.70.1 = f32[13,38,7]{2,1,0} reduce(%bitcast.682.1, %constant_7772_clone_15), dimensions={3}, to_apply=%region_65.65
+}
+
+ENTRY %main.1 (Arg_0.1: f32[1,3,5,24,38], Arg_1.2: s32[945,3], Arg_2.3: s32[13,7,2]) -> f32[13,38,7] {
+  %Arg_0.1 = f32[1,3,5,24,38]{4,3,2,1,0} parameter(0)
+  %Arg_1.2 = s32[945,3]{1,0} parameter(1)
+  %Arg_2.3 = s32[13,7,2]{2,1,0} parameter(2)
+  %loop_gather_fusion = (f32[945,1,1,1,24,38]{5,4,3,2,1,0}) fusion(%Arg_0.1, %Arg_1.2), kind=kLoop, calls=%fused_gather
+  %get-tuple-element.3547 = f32[945,1,1,1,24,38]{5,4,3,2,1,0} get-tuple-element(%loop_gather_fusion), index=0
+  ROOT %input_reduce_fusion = f32[13,38,7]{2,1,0} fusion(%Arg_2.3, %get-tuple-element.3547), kind=kInput, calls=%fused_reduce
+}

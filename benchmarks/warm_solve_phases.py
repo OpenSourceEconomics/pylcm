@@ -74,6 +74,9 @@ class PhaseOutcome:
     """`ok`, `error`, or `incomplete` for a phase whose end never arrived."""
     seconds: float | None
     """Monotonic duration, or `None` for an incomplete phase."""
+    depth: int = 0
+    """Phases of the same call open around this one: `0` for the public bracket,
+    `1` for its direct children, deeper for a phase nested inside a child."""
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -93,14 +96,20 @@ class CallPhases:
         return None
 
     def residual_seconds(self) -> float | None:
-        """Return what the public bracket holds beyond its timed children."""
-        public = self.seconds(name=PUBLIC_PHASE)
+        """Return what the public bracket holds beyond its timed direct children.
+
+        A nested phase's time is already inside its parent's, so only the
+        public bracket's direct children are subtracted.
+        """
+        public = next(
+            (phase.seconds for phase in self.phases if phase.depth == 0), None
+        )
         if public is None:
             return None
         children = [
             phase.seconds
             for phase in self.phases
-            if phase.name != PUBLIC_PHASE and phase.seconds is not None
+            if phase.depth == 1 and phase.seconds is not None
         ]
         return public - sum(children)
 
@@ -110,7 +119,8 @@ def parse_phase_records(*, lines: Sequence[str]) -> tuple[CallPhases, ...]:
 
     A phase whose `begin` has no matching `end` is reported as `incomplete`
     with no duration, so a run that died inside a phase still names where it
-    was. Calls come back in the order their first record appeared.
+    was. Each phase carries its nesting depth within the call. Calls come back
+    in the order their first record appeared.
 
     Args:
         lines: Log lines, in emission order.
@@ -129,12 +139,23 @@ def parse_phase_records(*, lines: Sequence[str]) -> tuple[CallPhases, ...]:
         name = match["name"]
         phases = by_call.setdefault(call_id, [])
         if match["edge"] == "begin":
+            depth = sum(open_call == call_id for open_call, _ in open_phases)
             open_phases[(call_id, name)] = len(phases)
-            phases.append(PhaseOutcome(name=name, status="incomplete", seconds=None))
+            phases.append(
+                PhaseOutcome(name=name, status="incomplete", seconds=None, depth=depth)
+            )
             continue
         position = open_phases.pop((call_id, name), None)
+        depth = (
+            sum(open_call == call_id for open_call, _ in open_phases)
+            if position is None
+            else phases[position].depth
+        )
         outcome = PhaseOutcome(
-            name=name, status=match["status"], seconds=float(match["seconds"])
+            name=name,
+            status=match["status"],
+            seconds=float(match["seconds"]),
+            depth=depth,
         )
         if position is None:
             phases.append(outcome)

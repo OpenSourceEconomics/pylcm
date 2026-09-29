@@ -134,6 +134,7 @@ from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.backward_induction import _states_for_period
 from _lcm.solution.continuation_reads import rekeyed_value_reads
+from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
 from _lcm.typing import (
     ActionName,
@@ -213,6 +214,7 @@ def simulate(  # noqa: C901, PLR0915
     retained_footprint: DeviceBufferFootprint | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    call_id: CallId | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -267,313 +269,333 @@ def simulate(  # noqa: C901, PLR0915
             and its automatic-solve path threads them through directly.
         device_ids: The model's device ids, ascending. Empty names every
             device JAX reports.
+        call_id: Identifier of the public call whose phase records the setup,
+            each chunk, the completion wait and the result assembly are
+            written under, or `None` to write none.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
 
     """
-    if seed is None:
-        seed = draw_random_seed()
+    with solve_phase(name="simulation_setup", logger=logger, call_id=call_id):
+        if seed is None:
+            seed = draw_random_seed()
 
-    taste_addresses = (
-        MappingProxyType({})
-        if taste_shock_seed is None
-        else build_taste_stream_addresses(
-            ages=ages,
-            discrete_actions_by_regime={
-                name: {
-                    action: grid
-                    for action in regime.solution.action_names
-                    if isinstance(grid := regime.solution.grids[action], DiscreteGrid)
-                }
-                for name, regime in regimes.items()
-                if regime.has_taste_shocks
-            },
+        taste_addresses = (
+            MappingProxyType({})
+            if taste_shock_seed is None
+            else build_taste_stream_addresses(
+                ages=ages,
+                discrete_actions_by_regime={
+                    name: {
+                        action: grid
+                        for action in regime.solution.action_names
+                        if isinstance(
+                            grid := regime.solution.grids[action], DiscreteGrid
+                        )
+                    }
+                    for name, regime in regimes.items()
+                    if regime.has_taste_shocks
+                },
+            )
         )
-    )
 
-    logger.info("Starting simulation")
-    total_start = time.monotonic()
+        logger.info("Starting simulation")
+        total_start = time.monotonic()
 
-    # Extract state arrays from initial conditions, which include the regime
-    # and each subject's role on top. Neither is a state of any regime.
-    initial_states = {
-        k: v
-        for k, v in initial_conditions.items()
-        if k not in {"regime_id", "own_stakeholder"}
-    }
+        # Extract state arrays from initial conditions, which include the regime
+        # and each subject's role on top. Neither is a state of any regime.
+        initial_states = {
+            k: v
+            for k, v in initial_conditions.items()
+            if k not in {"regime_id", "own_stakeholder"}
+        }
 
-    # Forward-simulate one subject chunk at a time. Subjects are independent across
-    # the forward path (no cross-subject reduction), so each chunk runs the full
-    # period loop on its own slice and the per-chunk results are concatenated on the
-    # subject axis. Chunking bounds the per-period device workspace; the chunk size
-    # is `subject_batch_size` (the whole population in one pass when zero).
-    n_subjects = int(initial_conditions["regime_id"].shape[0])
-    batch_size = (
-        n_subjects if subject_batch_size == 0 else min(subject_batch_size, n_subjects)
-    )
+        # Forward-simulate one subject chunk at a time. Subjects are independent across
+        # the forward path (no cross-subject reduction), so each chunk runs the full
+        # period loop on its own slice and the per-chunk results are concatenated on the
+        # subject axis. Chunking bounds the per-period device workspace; the chunk size
+        # is `subject_batch_size` (the whole population in one pass when zero).
+        n_subjects = int(initial_conditions["regime_id"].shape[0])
+        batch_size = (
+            n_subjects
+            if subject_batch_size == 0
+            else min(subject_batch_size, n_subjects)
+        )
 
-    runtime = next(iter(regimes.values())).simulation.programs.executor
-    memory = None
-    if (
-        isinstance(runtime, SimulationRuntime)
-        and runtime.execution.device_memory_bytes is not None
-    ):
-        if retained_footprint is None:
-            raise ExecutionPlanningError(
-                "Budgeted simulation requires retained solution residency."
-            )
-        if not runtime.enable_jit or any(
-            (regime.gated_edges and not gated_simulation_programs_ready(regime=regime))
-            or (
-                regime.simulation.replay_route.policy_applicable
-                and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
-            )
-            or regime.simulation.external_replay_route is not None
-            for regime in regimes.values()
+        runtime = next(iter(regimes.values())).simulation.programs.executor
+        memory = None
+        if (
+            isinstance(runtime, SimulationRuntime)
+            and runtime.execution.device_memory_bytes is not None
         ):
-            raise ExecutionPlanningError(
-                "Budgeted simulation currently requires compiled decision programs; "
-                "host gated/replay adapters require their own workspace accounting."
-            )
-        inputs = union_buffer_footprints(
-            footprints=(
-                retained_footprint,
-                measure_buffer_footprint(
-                    tree=(
-                        initial_conditions,
-                        flat_params,
-                        ages.values,  # noqa: PD011
-                        period_to_regime_to_V_arr,
-                        period_to_regime_to_dissolution_flags,
-                        period_to_regime_to_sim_policy,
-                    )
-                ),
-            )
-        )
-        memory = SimulationMemory(
-            budget_bytes=runtime.execution.device_memory_bytes,
-            axis_widths=MappingProxyType({})
-            if prepared_chunks is None
-            else prepared_chunks.plan.profile.axis_widths,
-            subject_devices=runtime.subject_devices,
-            operations=runtime.operations,
-            devices=resolve_budget_devices(
-                execution_devices=placed_devices_for_ids(
-                    submesh_device_ids=(), visible_device_ids=device_ids
-                ),
-                live=inputs,
-            ),
-            inputs=inputs,
-        )
-        memory.check_resident()
-
-    call_inputs = (
-        prepare_simulation_call_inputs(
-            flat_params=flat_params,
-            regimes=regimes,
-            device_ids=device_ids,
-            memory=memory,
-            process_grid_resolver=process_grid_resolver,
-        )
-        if prepared_chunks is None
-        else prepared_chunks.call_inputs
-    )
-    if memory is not None:
-        memory.inputs = union_buffer_footprints(
-            footprints=(
-                memory.inputs,
-                measure_buffer_footprint(tree=call_inputs.array_roots),
-            )
-        )
-        memory.close_unit()
-
-    initial_own_stakeholder = _initial_own_stakeholder(
-        initial_conditions=initial_conditions,
-        regimes=regimes,
-        regime_names_to_ids=regime_names_to_ids,
-        memory=memory,
-    )
-    starting_periods = _compute_starting_periods(
-        initial_ages=initial_states["age"], ages=ages, memory=memory
-    )
-    if memory is not None:
-        # These arrays survive every chunk. Transfer their metadata to the
-        # permanent inventory before releasing setup's temporary summaries.
-        memory.inputs = union_buffer_footprints(
-            footprints=(
-                memory.inputs,
-                measure_buffer_footprint(
-                    tree=(initial_own_stakeholder, starting_periods)
-                ),
-            )
-        )
-        memory.close_unit()
-    # Build reverse lookup for regime transition logging. `regime_names_to_ids`
-    # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict keys
-    # directly; `invert_regime_ids` coerces them to Python `int`.
-    regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
-
-    # Diagnostic only: report the resolved execution plan once per call, so a
-    # clean run carries evidence of which route (legacy/subjects), devices,
-    # widths and chunking actually engaged. Never consulted for dispatch — it
-    # is built from what the runtime already resolved above.
-    plan_summary = build_simulation_plan_summary(
-        regimes=regimes,
-        subject_devices=call_inputs.devices,
-        n_subjects=n_subjects,
-        batch_size=batch_size,
-        prepared_chunks=prepared_chunks,
-    )
-    _log_simulation_plan(logger=logger, plan_summary=plan_summary)
-
-    # When chunking, offload each chunk's results to host as it finishes so the
-    # device frees them before the next chunk's period loop allocates — bounding
-    # device residency to a single chunk. A single pass (batch_size == n_subjects)
-    # keeps results on the compute device (no memory pressure, and no host
-    # round-trip for downstream targets).
-    host_device = (
-        chunk_host_device(subject_devices=call_inputs.devices)
-        if batch_size < n_subjects
-        else None
-    )
-
-    chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
-    completed_setup = (
-        None
-        if prepared_chunks is None
-        else measure_buffer_footprint(
-            tree=(initial_conditions, initial_own_stakeholder, starting_periods)
-        )
-    )
-    for chunk_start in range(0, n_subjects, batch_size):
-        if prepared_chunks is not None:
-            if memory is None:
+            if retained_footprint is None:
                 raise ExecutionPlanningError(
-                    "A prepared chunk requires its live memory owner."
+                    "Budgeted simulation requires retained solution residency."
                 )
-            prepared_chunks.require_chunk(
-                memory=memory, completed_setup=completed_setup
+            if not runtime.enable_jit or any(
+                (
+                    regime.gated_edges
+                    and not gated_simulation_programs_ready(regime=regime)
+                )
+                or (
+                    regime.simulation.replay_route.policy_applicable
+                    and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+                )
+                or regime.simulation.external_replay_route is not None
+                for regime in regimes.values()
+            ):
+                raise ExecutionPlanningError(
+                    "Budgeted simulation currently requires compiled decision "
+                    "programs; host gated/replay adapters require their own "
+                    "workspace accounting."
+                )
+            inputs = union_buffer_footprints(
+                footprints=(
+                    retained_footprint,
+                    measure_buffer_footprint(
+                        tree=(
+                            initial_conditions,
+                            flat_params,
+                            ages.values,  # noqa: PD011
+                            period_to_regime_to_V_arr,
+                            period_to_regime_to_dissolution_flags,
+                            period_to_regime_to_sim_policy,
+                        )
+                    ),
+                )
             )
-        # `n_subjects` is padded up to a multiple of `batch_size` upstream (see
-        # `pad_initial_conditions_to_multiple`), so every chunk — including the
-        # last — is exactly `batch_size` rows; the trailing pad rows are dropped
-        # once, after the loop, by `trim_pad_from_raw_results`.
-        subject_slice = slice(chunk_start, chunk_start + batch_size)
-        chunk = _simulate_subject_chunk(
-            initial_states={
-                name: chunk_operations.slice_population(
-                    array=array, start=chunk_start, width=batch_size, memory=memory
+            memory = SimulationMemory(
+                budget_bytes=runtime.execution.device_memory_bytes,
+                axis_widths=MappingProxyType({})
+                if prepared_chunks is None
+                else prepared_chunks.plan.profile.axis_widths,
+                subject_devices=runtime.subject_devices,
+                operations=runtime.operations,
+                devices=resolve_budget_devices(
+                    execution_devices=placed_devices_for_ids(
+                        submesh_device_ids=(), visible_device_ids=device_ids
+                    ),
+                    live=inputs,
+                ),
+                inputs=inputs,
+            )
+            memory.check_resident()
+
+        call_inputs = (
+            prepare_simulation_call_inputs(
+                flat_params=flat_params,
+                regimes=regimes,
+                device_ids=device_ids,
+                memory=memory,
+                process_grid_resolver=process_grid_resolver,
+            )
+            if prepared_chunks is None
+            else prepared_chunks.call_inputs
+        )
+        if memory is not None:
+            memory.inputs = union_buffer_footprints(
+                footprints=(
+                    memory.inputs,
+                    measure_buffer_footprint(tree=call_inputs.array_roots),
                 )
-                for name, array in initial_states.items()
-            },
-            initial_regime_ids=chunk_operations.slice_population(
-                array=initial_conditions["regime_id"],
-                start=chunk_start,
-                width=batch_size,
-                memory=memory,
-            ),
-            initial_own_stakeholder=chunk_operations.slice_population(
-                array=initial_own_stakeholder,
-                start=chunk_start,
-                width=batch_size,
-                memory=memory,
-            ),
-            starting_periods=chunk_operations.slice_population(
-                array=starting_periods,
-                start=chunk_start,
-                width=batch_size,
-                memory=memory,
-            ),
-            n_subjects=n_subjects,
-            subject_slice=subject_slice,
-            original_n_subjects=original_n_subjects,
+            )
+            memory.close_unit()
+
+        initial_own_stakeholder = _initial_own_stakeholder(
+            initial_conditions=initial_conditions,
             regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
-            regime_ids_to_names=regime_ids_to_names,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
-            period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
-            period_to_regime_to_replay_reader=(period_to_regime_to_replay_reader),
-            flat_params=flat_params,
-            ages=ages,
-            seed=seed,
-            taste_shock_seed=taste_shock_seed,
-            taste_addresses=taste_addresses,
-            logger=logger,
-            device_ids=device_ids,
             memory=memory,
-            call_inputs=call_inputs,
-            process_grid_resolver=process_grid_resolver,
         )
-        if host_device is not None:
-            # `block_until_ready` forces the D2H copy to complete before the loop
-            # continues, so the chunk's device buffers become free for the next
-            # chunk; the host-resident copies stay `jax.Array` (CPU-backed).
-            chunk = offload_chunk(tree=chunk, host_device=host_device, memory=memory)
-        chunk_results.append(chunk)
+        starting_periods = _compute_starting_periods(
+            initial_ages=initial_states["age"], ages=ages, memory=memory
+        )
         if memory is not None:
+            # These arrays survive every chunk. Transfer their metadata to the
+            # permanent inventory before releasing setup's temporary summaries.
+            memory.inputs = union_buffer_footprints(
+                footprints=(
+                    memory.inputs,
+                    measure_buffer_footprint(
+                        tree=(initial_own_stakeholder, starting_periods)
+                    ),
+                )
+            )
             memory.close_unit()
-            memory.set_chunk_inputs(tree=())
-            memory.replace_outputs(tree=chunk_results)
+        # Build reverse lookup for regime transition logging. `regime_names_to_ids`
+        # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict keys
+        # directly; `invert_regime_ids` coerces them to Python `int`.
+        regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
-    simulation_results = _concatenate_chunk_results(
-        chunk_results=chunk_results, regimes=regimes, memory=memory
-    )
+        # Diagnostic only: report the resolved execution plan once per call, so a
+        # clean run carries evidence of which route (legacy/subjects), devices,
+        # widths and chunking actually engaged. Never consulted for dispatch — it
+        # is built from what the runtime already resolved above.
+        plan_summary = build_simulation_plan_summary(
+            regimes=regimes,
+            subject_devices=call_inputs.devices,
+            n_subjects=n_subjects,
+            batch_size=batch_size,
+            prepared_chunks=prepared_chunks,
+        )
+        _log_simulation_plan(logger=logger, plan_summary=plan_summary)
 
-    # Drain the per-period compute graph before returning. Mirrors solve's
-    # `_drain_V_arr_shards`: simulation_results carries per (regime, period)
-    # V_arrs / states / actions whose kernels may still be in flight when
-    # the Python loop exits, especially at `log_level="off"` where no
-    # per-period diagnostics force materialisation. `jax.block_until_ready`
-    # walks the pytree and blocks per-shard (no host transfer, no cross-
-    # device collective).
-    jax.block_until_ready(simulation_results)
-
-    total_elapsed = time.monotonic() - total_start
-    logger.info("Simulation complete  (%s)", format_duration(seconds=total_elapsed))
-
-    # Wrap results in MappingProxyType for immutability
-    wrapped_results = MappingProxyType(
-        {
-            regime_name: MappingProxyType(period_results)
-            for regime_name, period_results in simulation_results.items()
-        }
-    )
-
-    # Drop any subject-axis alignment pad rows so `SimulationResult` exposes only
-    # the user's real subjects (see `pad_initial_conditions_to_multiple`). No-op when
-    # `original_n_subjects` already matched the dispatched leading axis.
-    if original_n_subjects is not None:
-        wrapped_results = trim_pad_from_raw_results(
-            raw_results=wrapped_results,
-            original_n_subjects=original_n_subjects,
-            memory=memory,
+        # When chunking, offload each chunk's results to host as it finishes so the
+        # device frees them before the next chunk's period loop allocates — bounding
+        # device residency to a single chunk. A single pass (batch_size == n_subjects)
+        # keeps results on the compute device (no memory pressure, and no host
+        # round-trip for downstream targets).
+        host_device = (
+            chunk_host_device(subject_devices=call_inputs.devices)
+            if batch_size < n_subjects
+            else None
         )
 
-    # Which regimes can publish a nested continuous-outer read. Their declared
-    # route says so, so the `nested_policy_fallback` column it gates is a
-    # property of the model rather than of the payloads a solve retained.
-    nested_policy_regimes = frozenset(
-        regime_name
-        for regime_name, regime in regimes.items()
-        if regime.simulation.replay_route.consumer_route == "nnbegm_nested"
-    )
+        chunk_results: list[
+            dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
+        ] = []
+        completed_setup = (
+            None
+            if prepared_chunks is None
+            else measure_buffer_footprint(
+                tree=(initial_conditions, initial_own_stakeholder, starting_periods)
+            )
+        )
+    for chunk_start in range(0, n_subjects, batch_size):
+        with solve_phase(name="simulation_chunk", logger=logger, call_id=call_id):
+            if prepared_chunks is not None:
+                if memory is None:
+                    raise ExecutionPlanningError(
+                        "A prepared chunk requires its live memory owner."
+                    )
+                prepared_chunks.require_chunk(
+                    memory=memory, completed_setup=completed_setup
+                )
+            # `n_subjects` is padded up to a multiple of `batch_size` upstream (see
+            # `pad_initial_conditions_to_multiple`), so every chunk — including the
+            # last — is exactly `batch_size` rows; the trailing pad rows are dropped
+            # once, after the loop, by `trim_pad_from_raw_results`.
+            subject_slice = slice(chunk_start, chunk_start + batch_size)
+            chunk = _simulate_subject_chunk(
+                initial_states={
+                    name: chunk_operations.slice_population(
+                        array=array, start=chunk_start, width=batch_size, memory=memory
+                    )
+                    for name, array in initial_states.items()
+                },
+                initial_regime_ids=chunk_operations.slice_population(
+                    array=initial_conditions["regime_id"],
+                    start=chunk_start,
+                    width=batch_size,
+                    memory=memory,
+                ),
+                initial_own_stakeholder=chunk_operations.slice_population(
+                    array=initial_own_stakeholder,
+                    start=chunk_start,
+                    width=batch_size,
+                    memory=memory,
+                ),
+                starting_periods=chunk_operations.slice_population(
+                    array=starting_periods,
+                    start=chunk_start,
+                    width=batch_size,
+                    memory=memory,
+                ),
+                n_subjects=n_subjects,
+                subject_slice=subject_slice,
+                original_n_subjects=original_n_subjects,
+                regimes=regimes,
+                regime_names_to_ids=regime_names_to_ids,
+                regime_ids_to_names=regime_ids_to_names,
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
+                period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
+                period_to_regime_to_replay_reader=(period_to_regime_to_replay_reader),
+                flat_params=flat_params,
+                ages=ages,
+                seed=seed,
+                taste_shock_seed=taste_shock_seed,
+                taste_addresses=taste_addresses,
+                logger=logger,
+                device_ids=device_ids,
+                memory=memory,
+                call_inputs=call_inputs,
+                process_grid_resolver=process_grid_resolver,
+            )
+            if host_device is not None:
+                # `block_until_ready` forces the D2H copy to complete before the loop
+                # continues, so the chunk's device buffers become free for the next
+                # chunk; the host-resident copies stay `jax.Array` (CPU-backed).
+                chunk = offload_chunk(
+                    tree=chunk, host_device=host_device, memory=memory
+                )
+            chunk_results.append(chunk)
+            if memory is not None:
+                memory.close_unit()
+                memory.set_chunk_inputs(tree=())
+                memory.replace_outputs(tree=chunk_results)
 
-    result = SimulationResult(
-        raw_results=wrapped_results,
-        regimes=regimes,
-        flat_params=flat_params,
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-        ages=ages,
-        simulation_output_dtypes=simulation_output_dtypes,
-        subject_batch_size=subject_batch_size,
-        nested_policy_regimes=nested_policy_regimes,
-    )
-    # Diagnostic-only attribute, mirroring how `Model.simulate` attaches
-    # `_solution`: never part of the constructor's persisted fields, so it is
-    # not written by `SimulationResult.save` and is `None` after `load`.
-    result._plan_summary = plan_summary  # noqa: SLF001
+    with solve_phase(name="simulation_completion", logger=logger, call_id=call_id):
+        simulation_results = _concatenate_chunk_results(
+            chunk_results=chunk_results, regimes=regimes, memory=memory
+        )
+
+        # Drain the per-period compute graph before returning. Mirrors solve's
+        # `_drain_V_arr_shards`: simulation_results carries per (regime, period)
+        # V_arrs / states / actions whose kernels may still be in flight when
+        # the Python loop exits, especially at `log_level="off"` where no
+        # per-period diagnostics force materialisation. `jax.block_until_ready`
+        # walks the pytree and blocks per-shard (no host transfer, no cross-
+        # device collective).
+        jax.block_until_ready(simulation_results)
+
+        total_elapsed = time.monotonic() - total_start
+        logger.info("Simulation complete  (%s)", format_duration(seconds=total_elapsed))
+
+    with solve_phase(name="simulation_result", logger=logger, call_id=call_id):
+        # Wrap results in MappingProxyType for immutability
+        wrapped_results = MappingProxyType(
+            {
+                regime_name: MappingProxyType(period_results)
+                for regime_name, period_results in simulation_results.items()
+            }
+        )
+
+        # Drop any subject-axis alignment pad rows so `SimulationResult` exposes
+        # only the user's real subjects (see `pad_initial_conditions_to_multiple`).
+        # No-op when `original_n_subjects` already matched the dispatched leading
+        # axis.
+        if original_n_subjects is not None:
+            wrapped_results = trim_pad_from_raw_results(
+                raw_results=wrapped_results,
+                original_n_subjects=original_n_subjects,
+                memory=memory,
+            )
+
+        # Which regimes can publish a nested continuous-outer read. Their declared
+        # route says so, so the `nested_policy_fallback` column it gates is a
+        # property of the model rather than of the payloads a solve retained.
+        nested_policy_regimes = frozenset(
+            regime_name
+            for regime_name, regime in regimes.items()
+            if regime.simulation.replay_route.consumer_route == "nnbegm_nested"
+        )
+
+        result = SimulationResult(
+            raw_results=wrapped_results,
+            regimes=regimes,
+            flat_params=flat_params,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            ages=ages,
+            simulation_output_dtypes=simulation_output_dtypes,
+            subject_batch_size=subject_batch_size,
+            nested_policy_regimes=nested_policy_regimes,
+        )
+        # Diagnostic-only attribute, mirroring how `Model.simulate` attaches
+        # `_solution`: never part of the constructor's persisted fields, so it is
+        # not written by `SimulationResult.save` and is `None` after `load`.
+        result._plan_summary = plan_summary  # noqa: SLF001
     return result
 
 

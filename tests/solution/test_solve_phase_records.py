@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.solution import backward_induction
-from benchmarks.warm_solve_phases import parse_phase_records
+from benchmarks.warm_solve_phases import CallPhases, parse_phase_records
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -241,3 +241,149 @@ def test_parse_phase_records_reads_a_stamped_line() -> None:
     assert [(p.name, p.status, p.seconds) for p in call.phases] == [
         ("public_solve", "ok", 0.25)
     ]
+
+
+# The phases a simulate call passes through after its internal solve returns,
+# in emission order. A chunked run repeats `simulation_chunk` once per chunk.
+_POST_SOLVE_PHASES = (
+    "result_assembly",
+    "solution_resolution",
+    "solution_handover",
+    "chunk_planning",
+    "simulation_setup",
+    "simulation_chunk",
+    "simulation_completion",
+    "simulation_result",
+    "result_finalization",
+)
+
+
+def _simulate_calls(
+    *,
+    caplog: pytest.LogCaptureFixture,
+    log_level: str,
+    budget_bytes: int | None = None,
+) -> tuple[CallPhases, ...]:
+    model = get_model(budget_bytes=budget_bytes)
+    with caplog.at_level(logging.DEBUG, logger="lcm"):
+        model.simulate(
+            params=get_params(model=model),
+            initial_conditions={
+                "wealth": jnp.array([1.0, 1.5, 2.0]),
+                "age": jnp.zeros(3),
+                "regime_id": jnp.full(3, RegimeId.acting, dtype=jnp.int32),
+            },
+            log_level=log_level,  # ty: ignore[invalid-argument-type]
+            seed=0,
+        )
+    return parse_phase_records(lines=[r.getMessage() for r in caplog.records])
+
+
+@pytest.mark.parametrize("budget_bytes", [None, 2**30])
+@pytest.mark.parametrize("log_level", ["progress", "debug"])
+def test_simulate_names_its_post_solve_phases_under_one_call(
+    *, caplog: pytest.LogCaptureFixture, log_level: str, budget_bytes: int | None
+) -> None:
+    """One simulate call writes one call id whose top-level phases end the solve,
+    resolve and hand over the solution, plan the chunks, simulate and assemble
+    the result."""
+    (call,) = _simulate_calls(
+        caplog=caplog, log_level=log_level, budget_bytes=budget_bytes
+    )
+    top_level = [p.name for p in call.phases if p.depth == 1]
+    after_solve = top_level[top_level.index("backward_induction") + 1 :]
+    assert list(dict.fromkeys(after_solve)) == list(_POST_SOLVE_PHASES)
+
+
+def test_simulate_opens_with_the_public_bracket_and_the_solve_phases(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The call's outermost phase is `public_simulate`, and its internal solve
+    contributes the solve's own phases from the fingerprint through backward
+    induction."""
+    (call,) = _simulate_calls(caplog=caplog, log_level="progress")
+    top_level = [p.name for p in call.phases if p.depth == 1]
+    solve_phases = _PHASES[_PHASES.index("authority_fingerprint") : -2]
+    start = top_level.index("authority_fingerprint")
+    assert (
+        call.phases[0].name,
+        tuple(top_level[start : start + len(solve_phases)]),
+    ) == ("public_simulate", solve_phases)
+
+
+def test_simulate_phases_reconcile_to_the_public_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Top-level phases plus the explicit residual equal the public call's time.
+
+    Each duration is written with six decimals, so the sum is exact to half a
+    microsecond per phase; the residual itself is non-negative and small.
+    """
+    (call,) = _simulate_calls(caplog=caplog, log_level="progress")
+    public = call.seconds(name="public_simulate")
+    top_level = [p.seconds for p in call.phases if p.depth == 1]
+    residual = call.residual_seconds()
+    assert public is not None
+    assert residual is not None
+    tolerance = 1e-6 * (len(top_level) + 1)
+    assert abs(sum(s for s in top_level if s is not None) + residual - public) <= (
+        tolerance
+    )
+    assert -tolerance <= residual <= 0.05 * public + 0.05
+
+
+def test_budgeted_simulate_times_each_simulation_compilation_inside_a_phase(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every simulation executable compiled during a budgeted call is bracketed
+    as a `simulation_compilation` phase nested inside a top-level phase."""
+    (call,) = _simulate_calls(caplog=caplog, log_level="progress", budget_bytes=2**30)
+    depths = {p.depth for p in call.phases if p.name == "simulation_compilation"}
+    assert depths == {2}
+
+
+def test_simulate_at_off_carries_no_phase_records(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A simulate call with logging off emits no phase records at all."""
+    assert _simulate_calls(caplog=caplog, log_level="off") == ()
+
+
+def test_parse_phase_records_reports_each_phase_depth() -> None:
+    """A phase opened inside another is one level deeper than its parent."""
+    call_id = "0123456789ab"
+    lines = [
+        f"solve call {call_id} phase public_simulate begin",
+        f"solve call {call_id} phase chunk_planning begin",
+        f"solve call {call_id} phase simulation_compilation begin",
+        (
+            f"solve call {call_id} phase simulation_compilation end status=ok "
+            "seconds=0.100000"
+        ),
+        f"solve call {call_id} phase chunk_planning end status=ok seconds=0.300000",
+        f"solve call {call_id} phase public_simulate end status=ok seconds=0.500000",
+    ]
+    (call,) = parse_phase_records(lines=lines)
+    assert [(p.name, p.depth) for p in call.phases] == [
+        ("public_simulate", 0),
+        ("chunk_planning", 1),
+        ("simulation_compilation", 2),
+    ]
+
+
+def test_residual_counts_only_top_level_phases() -> None:
+    """A nested phase's time is already inside its parent and is not subtracted."""
+    call_id = "0123456789ab"
+    lines = [
+        f"solve call {call_id} phase public_simulate begin",
+        f"solve call {call_id} phase chunk_planning begin",
+        f"solve call {call_id} phase simulation_compilation begin",
+        (
+            f"solve call {call_id} phase simulation_compilation end status=ok "
+            "seconds=0.100000"
+        ),
+        f"solve call {call_id} phase chunk_planning end status=ok seconds=0.300000",
+        f"solve call {call_id} phase public_simulate end status=ok seconds=0.500000",
+    ]
+    (call,) = parse_phase_records(lines=lines)
+    assert call.residual_seconds() == pytest.approx(0.2, abs=1e-9)
