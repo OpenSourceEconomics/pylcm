@@ -697,6 +697,14 @@ class Model:
             ),
             label="axis_width_ceilings",
         )
+        fail_if_axis_widths_name_undeclared_axes(
+            axis_widths=execution_config.covered_axes,
+            program_collections=(
+                _solve_programs(regimes=self._regimes),
+                _simulation_programs(regimes=self._regimes),
+            ),
+            label="covered_axes",
+        )
         fail_if_per_regime_widths_name_non_solve_axes(
             axis_widths_by_regime=self._execution.axis_widths_by_regime,
             solve_programs=_solve_programs(regimes=self._regimes),
