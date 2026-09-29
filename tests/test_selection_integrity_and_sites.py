@@ -394,7 +394,7 @@ def _job_simulate(*, model: Model, log_level: LogLevel, n_subjects: int) -> Any:
 
 
 _DOUBLE_COUNTED = (
-    r"from 'unemployed_before_switch' at age 25 do not sum to 1\.0"
+    r"from 'unemployed_before_switch' between ages 25 and 35 do not sum to 1\.0"
     r"(.|\n)*1\.8"
 )
 
@@ -426,12 +426,12 @@ def test_two_targets_sharing_a_half_probability_callable_simulate() -> None:
     """Seed 0 splits 1000 subjects at 25 into the two targets of `_half`.
 
     The uniform draws depend on the float precision, so the split is pinned per
-    precision.
+    precision: 501 / 499 under x64, 487 / 513 under float32.
     """
     panel = _job_simulate(
         model=_job_model(_SHARED_HALF), log_level="warning", n_subjects=_N_SUBJECTS
     ).to_dataframe()
-    after_switch = -1 if jax.config.jax_enable_x64 else -2
+    after_switch = 501 if jax.config.jax_enable_x64 else 487
     assert panel.query("age == 35")["regime_name"].value_counts().to_dict() == {
         "unemployed_before_switch": 0,
         "unemployed_after_switch": after_switch,
