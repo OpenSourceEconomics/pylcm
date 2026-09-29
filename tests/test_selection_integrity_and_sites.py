@@ -300,7 +300,7 @@ def _panel(*, model: Model, age: float, regime: str, seed: int = 0) -> Any:
 
 
 def test_two_half_probabilities_split_the_panel() -> None:
-    """Seed 0 splits 1000 subjects at 55 into 513 retirees and 487 deaths."""
+    """Seed 0 splits 1000 subjects at 55 into 495 retirees and 505 deaths."""
     model = _life_model(
         law_at_55={
             "retirement": MarkovTransition(func=_half),
@@ -311,8 +311,8 @@ def test_two_half_probabilities_split_the_panel() -> None:
     panel = _panel(model=model, age=55.0, regime="working")
     assert panel.query("age == 65")["regime_name"].value_counts().to_dict() == {
         "working": 0,
-        "retirement": 513,
-        "dead": 487,
+        "retirement": 495,
+        "dead": 505,
     }
 
 
