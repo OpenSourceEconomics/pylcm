@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Any, no_type_check
 
 import jax
+import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
@@ -108,6 +109,12 @@ def get_next_state_function_for_simulation(
     """
     per_target_funcs: dict[RegimeName, Callable[..., dict[str, FloatND | IntND]]] = {}
     for target_regime_name, bundle in transitions.items():
+        # Sampling retains original zero slots and their cumulative-sum order.
+        original_weights = {
+            lottery.weight_name: lottery.original_layout.probabilities
+            for lottery in transition_plans[target_regime_name].lotteries.values()
+            if lottery.original_layout is not None
+        }
         extended = _extend_bundle_for_simulation(
             target_regime_name=target_regime_name,
             bundle=bundle,
@@ -115,7 +122,7 @@ def get_next_state_function_for_simulation(
             transition_plans=transition_plans,
         )
         per_target_funcs[target_regime_name] = concatenate_functions(
-            functions=dict(extended) | dict(functions),
+            functions=dict(extended) | dict(functions) | original_weights,
             targets=[
                 output.next_state_name
                 for output in transition_plans[target_regime_name].outputs.values()
@@ -326,10 +333,16 @@ def _extend_bundle_for_simulation(
                 all_grids=all_grids,
             )
         else:
+            # Repeated labels project the sampled original slot to its rest code.
+            labels = (
+                jnp.asarray(lottery.original_layout.rest_of_code, dtype=jnp.int32)
+                if lottery.original_layout is not None
+                else all_grids[target_regime_name][state_name].to_jax()
+            )
             extended[next_state_name] = _create_discrete_stochastic_next_func(
                 target_regime_name=target_regime_name,
                 next_state_name=next_state_name,
-                labels=all_grids[target_regime_name][state_name].to_jax(),
+                labels=labels,
             )
     return extended
 

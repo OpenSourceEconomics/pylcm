@@ -6,7 +6,8 @@ of the model in which `kind` is its own identity-law state, and carry the state 
 group axis and a within-group axis instead of one axis over every code.
 """
 
-import re
+import importlib
+from collections.abc import Callable, Mapping
 from typing import Literal, cast
 
 import jax
@@ -16,6 +17,7 @@ import pandas as pd
 import pytest
 
 from _lcm.regime_building.fixed_components import _restricted_law
+from _lcm.regime_building.next_state import _DiscreteStochasticNextState
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -23,6 +25,7 @@ from lcm import (
     Choose,
     DiscreteGrid,
     ExecutionConfig,
+    JointTransition,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -39,11 +42,11 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    IntND,
     ScalarFloat,
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_distributed import _compiled_solve_kernel_hlo
 from tests.test_models.schedules import until_exit
 
 
@@ -136,7 +139,7 @@ def _next_regime(age: float) -> ScalarInt:
 def _model(
     *,
     factored: bool,
-    fixed_component: tuple[int, ...] = (0, 0, 1, 1),
+    fixed_component: tuple[int, ...] | None = (0, 0, 1, 1),
     sharded: bool = False,
     law_dependency: Literal["direct", "helper", "chain"] = "direct",
     enable_jit: bool = True,
@@ -229,19 +232,29 @@ def test_fixed_component_rejects_unequal_groups():
         _model(factored=True, fixed_component=(0, 0, 0, 1))
 
 
-def _gather_shapes(model: Model) -> set[str]:
-    hlo = _compiled_solve_kernel_hlo(model=model, regime_name="alive", period=0)
-    return set(re.findall(r"= (\w+\[[\d,]*\])[^\n]*? gather\(", hlo))
+def test_fixed_component_preserves_original_lottery_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Linear expectation retains every original code slot, including zero weights."""
+    module = importlib.import_module("_lcm.regime_building.Q_and_F")
+    original = module.zero_safe_average
+    observed: set[tuple[int, ...]] = set()
 
+    def record_support(
+        *,
+        a: FloatND,
+        weights: FloatND,
+        shifts: IntND | None,
+        axis: int | None = None,
+    ) -> FloatND:
+        observed.add(weights.shape)
+        return original(a=a, weights=weights, shifts=shifts, axis=axis)
 
-def test_fixed_component_lowers_the_hand_split_gathers():
-    """The optimized kernel reads next-period values one group at a time.
-
-    Every gather of the hand-split kernel, including the continuation read whose
-    group axis is a size-1 slice, appears in the kernel of the annotated model.
-    """
-    split = _gather_shapes(_model(factored=False))
-    assert split <= _gather_shapes(_model(factored=True))
+    monkeypatch.setattr(module, "zero_safe_average", record_support)
+    _model(factored=True, enable_jit=False).solve(
+        params={"discount_factor": 0.95}, log_level="off"
+    )
+    assert observed == {(4,)}
 
 
 def test_fixed_component_is_shardable_like_the_hand_split_model():
@@ -910,3 +923,342 @@ def test_fixed_component_constant_law_preserves_single_group_probabilities(
         np.testing.assert_array_equal(
             law(kind_health=jnp.asarray(code)), np.full(4, 0.25)
         )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_fixed_component_simulation_preserves_original_sampling_support(
+    *, monkeypatch: pytest.MonkeyPatch, enable_jit: bool
+) -> None:
+    """Simulation samples original code slots and returns their within-group code."""
+    observed: set[tuple[tuple[int, ...], tuple[int, ...]]] = set()
+    original = _DiscreteStochasticNextState.__call__
+
+    def record_support(
+        self: _DiscreteStochasticNextState, **kwargs: FloatND
+    ) -> DiscreteState:
+        if self.qname == "alive__next_kind_health_rest":
+            observed.add((self.labels.shape, kwargs[f"weight_{self.qname}"].shape))
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(_DiscreteStochasticNextState, "__call__", record_support)
+    panels = []
+    for annotation in (None, (0, 0, 1, 1)):
+        model = _model(factored=True, fixed_component=annotation, enable_jit=enable_jit)
+        params = {"discount_factor": 0.95}
+        result = model.simulate(
+            params=params,
+            solution=model.solve(params=params, log_level="off"),
+            initial_conditions=_initial(factored=True, as_frame=False),
+            seed=1,
+            log_level="off",
+        )
+        frame = result.to_dataframe()
+        frame = frame.loc[frame["regime_name"] == "alive"].sort_values(
+            ["period", "subject_id"]
+        )
+        if annotation is None:
+            codes = frame["kind_health"].cat.codes.to_numpy()
+        else:
+            codes = (
+                2 * frame["kind_health_fixed"].cat.codes.to_numpy()
+                + frame["kind_health_rest"].cat.codes.to_numpy()
+            )
+        panels.append(codes)
+    np.testing.assert_array_equal(panels[0], panels[1])
+    assert observed == {((4,), (4,))}
+
+
+@categorical(ordered=False)
+class _NextOutputRegimeId:
+    source: ScalarInt
+    end: ScalarInt
+
+
+@categorical(ordered=False)
+class _NextOutputCode:
+    c0: ScalarInt
+    c1: ScalarInt
+    c2: ScalarInt
+    c3: ScalarInt
+
+
+def _next_output_utility(*, s: DiscreteState, y: DiscreteState) -> FloatND:
+    return 1.0 * (s + y)
+
+
+def _next_output_law(*, s: DiscreteState) -> FloatND:
+    groups = jnp.array([0, 0, 1, 1])
+    return jnp.where(groups == groups[s], 0.5, 0.0)
+
+
+def _next_output_copy(*, next_s: DiscreteState) -> DiscreteState:
+    return next_s
+
+
+def _next_output_from_landing(*, landing: DiscreteState) -> DiscreteState:
+    return landing
+
+
+def _next_output_to_end() -> ScalarFloat:
+    return jnp.asarray(1.0)
+
+
+def _next_output_parameter_leaves(
+    *, value: object, prefix: tuple[str, ...] = ()
+) -> list[tuple[str, ...]]:
+    if not isinstance(value, Mapping):
+        return []
+    found: list[tuple[str, ...]] = []
+    for name, child in value.items():
+        path = (*prefix, str(name))
+        if str(name) == "next_s" and not isinstance(child, Mapping):
+            found.append(path)
+        found.extend(_next_output_parameter_leaves(value=child, prefix=path))
+    return found
+
+
+@pytest.mark.parametrize("annotated", [False, True])
+@pytest.mark.parametrize("through_helper", [False, True])
+def test_fixed_component_preserves_a_transition_reading_its_next_code(
+    *, annotated: bool, through_helper: bool
+) -> None:
+    """A deterministic transition shares the original code of the same draw."""
+    grid = DiscreteGrid(_NextOutputCode)
+    functions: dict[str, Callable[..., object]] = {"utility": _next_output_utility}
+    if through_helper:
+        functions["landing"] = _next_output_copy
+    model = Model(
+        regimes={
+            "source": Regime(
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(start=0, stop=1): {
+                            "end": MarkovTransition(func=_next_output_to_end)
+                        }
+                    }
+                ),
+                states={"s": grid, "y": grid},
+                state_transitions={
+                    "s": MarkovTransition(
+                        func=_next_output_law,
+                        fixed_component=(0, 0, 1, 1) if annotated else None,
+                    ),
+                    "y": _next_output_from_landing
+                    if through_helper
+                    else _next_output_copy,
+                },
+                functions=functions,
+            ),
+            "end": Regime(
+                regime_transitions=None,
+                states={"s": grid, "y": grid},
+                functions={"utility": _next_output_utility},
+            ),
+        },
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        regime_id_class=_NextOutputRegimeId,
+        initial_regimes={0: "source"},
+    )
+    assert _next_output_parameter_leaves(value=model.get_params_template()) == []
+    params = {"discount_factor": 0.5}
+    solution = model.solve(params=params, log_level="off")
+    s = jnp.repeat(jnp.arange(4, dtype=jnp.int32), 4)
+    y = jnp.tile(jnp.arange(4, dtype=jnp.int32), 4)
+    panel = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "regime_id": jnp.zeros(16, dtype=jnp.int32),
+            "age": jnp.zeros(16),
+            "s": s,
+            "y": y,
+        },
+        seed=123,
+        log_level="off",
+    ).to_dataframe(use_labels=False)
+    if "period" not in panel.columns:
+        panel = panel.reset_index()
+    first = panel.loc[panel["period"] == 0].sort_values("subject_id")
+    expected = np.repeat([0.5, 1.5, 4.5, 5.5], 4) + np.tile(np.arange(4), 4)
+    np.testing.assert_array_equal(first["value"].to_numpy(), expected)
+    last = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    next_s = last["s_rest"] + 2 * last["s_fixed"] if annotated else last["s"]
+    np.testing.assert_array_equal(last["y"].to_numpy(), next_s.to_numpy())
+
+
+@categorical(ordered=False)
+class _ConsumerRegimeId:
+    source: ScalarInt
+    middle: ScalarInt
+    end: ScalarInt
+
+
+def _consumer_utility(*, s: DiscreteState, t: DiscreteState) -> FloatND:
+    return 1.0 * (s + t)
+
+
+def _consumer_identity_probabilities(s: DiscreteState) -> FloatND:
+    return jnp.where(jnp.arange(4) == s, 1.0, 0.0)
+
+
+def _consumer_probabilities(*, t: DiscreteState, next_s: DiscreteState) -> FloatND:
+    destination = 2 * (t // 2) + next_s % 2
+    return jnp.where(jnp.arange(4) == destination, 1.0, 0.0)
+
+
+def _consumer_joint_probabilities() -> FloatND:
+    return jnp.ones(1)
+
+
+def _consumer_joint_output(
+    *, draw: DiscreteState, next_s: DiscreteState
+) -> DiscreteState:
+    return next_s ^ draw
+
+
+@pytest.mark.parametrize("annotated", [False, True])
+@pytest.mark.parametrize("kind", ["probability", "joint"])
+def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
+    *, annotated: bool, kind: str
+) -> None:
+    """Probability laws and joint outputs consume the original next-state code."""
+    grid = DiscreteGrid(_NextOutputCode)
+    grouping = (0, 0, 1, 1) if annotated else None
+    if kind == "probability":
+        states = {"s": grid, "t": grid}
+        utility: Callable[..., FloatND] = _consumer_utility
+        regimes = {
+            "source": Regime(
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(start=0, stop=1): {
+                            "middle": MarkovTransition(func=_next_output_to_end)
+                        }
+                    }
+                ),
+                states=states,
+                state_transitions={
+                    "s": fixed_transition("s"),
+                    "t": MarkovTransition(
+                        func=_consumer_probabilities, fixed_component=grouping
+                    ),
+                },
+                functions={"utility": utility},
+            ),
+            "middle": Regime(
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(start=1, stop=2): {
+                            "end": MarkovTransition(func=_next_output_to_end)
+                        }
+                    }
+                ),
+                states=states,
+                state_transitions={
+                    "s": MarkovTransition(
+                        func=_consumer_identity_probabilities, fixed_component=grouping
+                    ),
+                    "t": fixed_transition("t"),
+                },
+                functions={"utility": utility},
+            ),
+        }
+        last_period = 2
+    else:
+        states = {"s": grid, "y": grid}
+        utility = _next_output_utility
+        regimes = {
+            "source": Regime(
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(start=0, stop=1): {
+                            "end": MarkovTransition(func=_next_output_to_end)
+                        }
+                    }
+                ),
+                states=states,
+                state_transitions={
+                    "s": MarkovTransition(
+                        func=_next_output_law, fixed_component=grouping
+                    )
+                },
+                joint_transitions={
+                    "end": {
+                        "draw": JointTransition(
+                            support_size=1,
+                            support=jnp.zeros(1, dtype=jnp.int32),
+                            probabilities=_consumer_joint_probabilities,
+                            outputs={"y": _consumer_joint_output},
+                        )
+                    },
+                },
+                functions={"utility": utility},
+            ),
+        }
+        last_period = 1
+    regimes["end"] = Regime(
+        regime_transitions=None, states=states, functions={"utility": utility}
+    )
+    model = Model(
+        regimes=regimes,
+        ages=AgeGrid(start=0, stop=last_period, step="Y"),
+        regime_id_class=_ConsumerRegimeId
+        if kind == "probability"
+        else _NextOutputRegimeId,
+        initial_regimes={0: "source"},
+    )
+    assert _next_output_parameter_leaves(value=model.get_params_template()) == []
+    s = np.repeat(np.arange(4, dtype=np.int32), 4)
+    second = np.tile(np.arange(4, dtype=np.int32), 4)
+    second_name = "t" if kind == "probability" else "y"
+    for beta in (0.5, 0.25):
+        params = {"discount_factor": beta}
+        solution = model.solve(params=params, log_level="off")
+        panel = model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "regime_id": np.zeros(16, dtype=np.int32),
+                "age": np.zeros(16),
+                "s": s,
+                second_name: second,
+            },
+            seed=123,
+            log_level="off",
+        ).to_dataframe(use_labels=False)
+        if "period" not in panel.columns:
+            panel = panel.reset_index()
+        first = panel.loc[panel["period"] == 0].sort_values("subject_id")
+        following = panel.loc[panel["period"] == 1].sort_values("subject_id")
+        next_s = (
+            following["s_rest"] + 2 * following["s_fixed"]
+            if annotated
+            else following["s"]
+        )
+        if kind == "probability":
+            expected_t = 2 * (second // 2) + s % 2
+            expected_value = s + second + (beta + beta**2) * (s + expected_t)
+            np.testing.assert_array_equal(next_s, s)
+            next_t = (
+                following["t_rest"] + 2 * following["t_fixed"]
+                if annotated
+                else following["t"]
+            )
+            np.testing.assert_array_equal(next_t, expected_t)
+            terminal = panel.loc[panel["period"] == 2].sort_values("subject_id")
+            terminal_s = (
+                terminal["s_rest"] + 2 * terminal["s_fixed"]
+                if annotated
+                else terminal["s"]
+            )
+            terminal_t = (
+                terminal["t_rest"] + 2 * terminal["t_fixed"]
+                if annotated
+                else terminal["t"]
+            )
+            np.testing.assert_array_equal(terminal_s, s)
+            np.testing.assert_array_equal(terminal_t, expected_t)
+        else:
+            expected_value = s + second + beta * (4 * (s // 2) + 1)
+            np.testing.assert_array_equal(following["y"], next_s)
+        np.testing.assert_array_equal(first["value"], expected_value)

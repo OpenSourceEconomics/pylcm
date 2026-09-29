@@ -588,6 +588,7 @@ class Model:
             fixed_params,
             states,
             state_transitions,
+            functions,
             self._fixed_component_splits,
         ) = factor_fixed_components(
             regimes=regimes,

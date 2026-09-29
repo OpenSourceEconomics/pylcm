@@ -6,6 +6,7 @@ original codes or labels until the simulation input boundary.
 """
 
 import dataclasses
+import functools
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, make_dataclass
@@ -16,17 +17,24 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+from dags import concatenate_functions
 
 from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.regime_building.broadcast import merge_model_slots
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
+from _lcm.transition_plans import OriginalLotteryLayout
 from _lcm.typing import RegimeNamesToIds
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime
-from lcm.transition import MarkovTransition, fixed_transition
+from lcm.transition import (
+    AgeSpecializedFunction,
+    JointTransition,
+    MarkovTransition,
+    fixed_transition,
+)
 from lcm.typing import (
     DiscreteState,
     FloatND,
@@ -55,6 +63,18 @@ class FixedComponentSplit:
 
     fixed_of_code: tuple[int, ...]
     """Group of each original code."""
+
+
+@dataclass(frozen=True)
+class FixedComponentLaw:
+    """Restricted storage law with explicit immutable original-slot provenance."""
+
+    restricted: Callable[..., FloatND]
+    original_layout: OriginalLotteryLayout
+
+    @no_type_check
+    def __call__(self, *args: object, **kwargs: object) -> FloatND:
+        return self.restricted(*args, **kwargs)
 
 
 def split_initial_conditions(
@@ -122,7 +142,7 @@ def split_initial_conditions(
     return out if isinstance(out, pd.DataFrame) else MappingProxyType(out)
 
 
-def factor_fixed_components(  # noqa: C901
+def factor_fixed_components(
     *,
     regimes: Mapping[str, Regime],
     fixed_params: UserParams,
@@ -137,12 +157,20 @@ def factor_fixed_components(  # noqa: C901
     UserParams,
     Mapping[str, object],
     Mapping[str, object],
+    Mapping[str, object],
     Mapping[str, FixedComponentSplit],
 ]:
     """Inventory declarations, then lower each grid and law in its original slot."""
     groups = _collect_groups(regimes=regimes, state_transitions=state_transitions)
     if not groups:
-        return regimes, fixed_params, states, state_transitions, MappingProxyType({})
+        return (
+            regimes,
+            fixed_params,
+            states,
+            state_transitions,
+            functions,
+            MappingProxyType({}),
+        )
     # Resolve masks and the exactly-one-level rule without changing ownership.
     merged, _ = merge_model_slots(
         user_regimes=regimes,
@@ -172,38 +200,41 @@ def factor_fixed_components(  # noqa: C901
             | set(regime.state_transitions)
         )
     splits, parts = _create_splits(regimes=merged, groups=groups, occupied=occupied)
+    next_outputs = {
+        f"next_{name}": _recombine(name=f"next_{name}", code_by_parts=parts[name])
+        for name in splits
+    }
     model_states = dict(states)
-    model_laws = dict(state_transitions)
+    # Renaming must keep the original insertion slot. Canonical edge lowering
+    # uses declaration order for lottery axes; pop-and-append permutes a mixed
+    # annotated/unannotated Cartesian reduction even after its sizes are restored.
+    model_laws = _lower_state_laws(
+        laws=state_transitions, splits=splits, parts=parts, next_outputs=next_outputs
+    )
     for name, split in splits.items():
         if name in model_states:
             del model_states[name]
             model_states[f"{name}_rest"] = split.rest_grid
         model_states[f"{name}_fixed"] = split.fixed_grid
-        if name in model_laws:
-            model_laws[f"{name}_rest"] = _lower_law(
-                law=model_laws.pop(name),
-                name=name,
-                split=split,
-                code_by_parts=parts[name],
-            )
         model_laws[f"{name}_fixed"] = fixed_transition(f"{name}_fixed")
     new_regimes: dict[str, Regime] = {}
     for regime_name, regime in regimes.items():
         regime_states = dict(regime.states)
-        laws: dict[str, object] = dict(regime.state_transitions)
-        regime_functions = dict(regime.functions)
+        laws = _lower_state_laws(
+            laws=regime.state_transitions,
+            splits=splits,
+            parts=parts,
+            next_outputs=next_outputs,
+        )
+        regime_functions = {
+            name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
+            for name, func in regime.functions.items()
+        }
         for name, split in splits.items():
             if name in regime_states:
                 grid = regime_states.pop(name)
                 regime_states[f"{name}_rest"] = (
                     None if grid is None else split.rest_grid
-                )
-            if name in laws:
-                laws[f"{name}_rest"] = _lower_law(
-                    law=laws.pop(name),
-                    name=name,
-                    split=split,
-                    code_by_parts=parts[name],
                 )
             if regime_name in split.grids:
                 regime_functions[name] = _recombine(
@@ -214,14 +245,123 @@ def factor_fixed_components(  # noqa: C901
             states=regime_states,
             state_transitions=laws,
             functions=regime_functions,
+            joint_transitions=_lower_next_output_reads(
+                node=regime.joint_transitions, next_outputs=next_outputs
+            ),
         )
     return (
         MappingProxyType(new_regimes),
         rename_split_params(params=fixed_params, splits=splits),
         MappingProxyType(model_states),
         MappingProxyType(model_laws),
+        MappingProxyType(
+            {
+                name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
+                for name, func in functions.items()
+            }
+        ),
         MappingProxyType(splits),
     )
+
+
+def _lower_state_laws(
+    *,
+    laws: Mapping[str, object],
+    splits: Mapping[str, FixedComponentSplit],
+    parts: Mapping[str, np.ndarray],
+    next_outputs: Mapping[str, Callable[..., DiscreteState]],
+) -> dict[str, object]:
+    """Normalize the original graph before decomposing any annotated producer.
+
+    Both the restricted law and its original-lottery descriptor must inherit
+    the same normalized callable. Annotation determines storage, not whether
+    a transition is allowed to consume an original next-state output.
+    """
+    lowered: dict[str, object] = {}
+    for name, law in laws.items():
+        normalized = _lower_next_output_reads(node=law, next_outputs=next_outputs)
+        lowered[f"{name}_rest" if name in splits else name] = (
+            _lower_law(
+                law=normalized,
+                name=name,
+                split=splits[name],
+                code_by_parts=parts[name],
+            )
+            if name in splits
+            else normalized
+        )
+    return lowered
+
+
+def _lower_next_output_reads(  # noqa: PLR0911 — one return per declaration kind
+    *, node: object, next_outputs: Mapping[str, Callable[..., DiscreteState]]
+) -> object:
+    """Substitute original next-state reads with their deterministic decode DAG.
+
+    The lowered arguments name the same target's realized transition outputs.
+    Parameter discovery and the target-local draw-dependency walk therefore see
+    the very dependencies evaluated by solve and simulation. Helpers keep their
+    names and parameter ownership; no alias becomes a persisted state or draw.
+    """
+    if isinstance(node, Phased):
+        return Phased(
+            solve=_lower_next_output_reads(node=node.solve, next_outputs=next_outputs),
+            simulate=_lower_next_output_reads(
+                node=node.simulate, next_outputs=next_outputs
+            ),
+        )
+    if isinstance(node, Mapping):
+        return MappingProxyType(
+            {
+                name: _lower_next_output_reads(node=child, next_outputs=next_outputs)
+                for name, child in node.items()
+            }
+        )
+    if isinstance(node, MarkovTransition):
+        return dataclasses.replace(
+            node,
+            func=_lower_next_output_reads(node=node.func, next_outputs=next_outputs),
+        )
+    if isinstance(node, JointTransition):
+        # Only output laws may consume already-resolved physical next outputs.
+        # Support and probability declarations keep their existing contracts;
+        # do not legalize a stochastic conditional probability here.
+        return dataclasses.replace(
+            node,
+            outputs={
+                name: _lower_next_output_reads(node=func, next_outputs=next_outputs)
+                for name, func in node.outputs.items()
+            },
+        )
+    if isinstance(node, AgeSpecializedFunction):
+        return dataclasses.replace(
+            node,
+            build=functools.partial(
+                _build_with_next_outputs, build=node.build, next_outputs=next_outputs
+            ),
+        )
+    if (
+        not callable(node)
+        or not next_outputs.keys() & inspect.signature(node).parameters.keys()
+    ):
+        return node
+    return concatenate_functions(
+        functions=dict(next_outputs) | {"__consumer": node},
+        targets="__consumer",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+
+
+# keyword-only-exempt: library-callback=AgeSpecializedFunction
+def _build_with_next_outputs(
+    age: float,
+    *,
+    build: Callable[[float], object],
+    next_outputs: Mapping[str, Callable[..., DiscreteState]],
+) -> object:
+    """Decode next-state reads in an age-specialized helper's concrete DAG."""
+    return _lower_next_output_reads(node=build(age), next_outputs=next_outputs)
 
 
 def rename_split_params(
@@ -417,14 +557,47 @@ def _lower_law(
             "or use fixed_transition; an unannotated/reset law cannot "
             "establish group preservation."
         )
-    return MarkovTransition(
-        func=_restricted_law(
+    provenance = FixedComponentLaw(
+        restricted=_restricted_law(
             func=law.func,
             state_name=name,
             fixed_of_code=np.asarray(split.fixed_of_code),
             code_by_parts=code_by_parts,
-        )
+        ),
+        original_layout=OriginalLotteryLayout(
+            state_name=name,
+            rest_of_code=split.rest_of_code,
+            fixed_of_code=split.fixed_of_code,
+            probabilities=law.func,
+        ),
     )
+    return MarkovTransition(func=_publish_fixed_component_law(provenance))
+
+
+def _publish_fixed_component_law(
+    provenance: FixedComponentLaw,
+) -> Callable[..., FloatND]:
+    """Publish an inspectable bound-method forwarder with the restricted signature.
+
+    The fingerprint guard rejects opaque callable-object dispatch. A Python bound
+    method instead exposes the exact receiver attributes it reads, without any
+    certificate exception. ``__wrapped__`` is the explicit lowering protocol read
+    by the canonical plan builder, never recovered from closure cell contents.
+    """
+    bound = provenance.__call__
+
+    @no_type_check
+    def forwarded(*args: object, **kwargs: object) -> FloatND:
+        return bound(*args, **kwargs)
+
+    forwarded.__wrapped__ = bound  # ty: ignore[unresolved-attribute]
+    signature = inspect.signature(provenance.restricted)
+    forwarded.__signature__ = signature  # ty: ignore[unresolved-attribute]
+    forwarded.__annotations__ = dict(
+        getattr(provenance.restricted, "__annotations__", {})
+    )
+    forwarded.__name__ = getattr(provenance.restricted, "__name__", "restricted")
+    return forwarded
 
 
 def _group_codes(

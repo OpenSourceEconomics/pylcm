@@ -129,6 +129,7 @@ from _lcm.regime_building.collective import (
 )
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
+from _lcm.regime_building.fixed_components import FixedComponentLaw
 from _lcm.regime_building.gated_edges import (
     CompiledEdgeFold,
     ResolvedGatedEdge,
@@ -211,6 +212,7 @@ from _lcm.transition_plans import (
     InterpolationBasisInfo,
     LotteryIndexCoordinate,
     LotteryLifetime,
+    OriginalLotteryLayout,
     OutputProducerRef,
     ParameterBinding,
     PhysicalCoordinate,
@@ -5174,6 +5176,7 @@ def _process_regime_core(
             names_key=names_key,
         )
 
+    original_lottery_layouts: dict[str, OriginalLotteryLayout] = {}
     for func_name, func in stochastic_transition_functions.items():
         _fail_if_a_markov_law_names_a_continuous_state(
             func_name=func_name,
@@ -5189,6 +5192,27 @@ def _process_regime_core(
                 func_name=func_name, regime_params_template=regime_params_template
             ),
         )
+        wrapped = (
+            getattr(func.func, "__wrapped__", None)
+            if isinstance(func, MarkovTransition)
+            else None
+        )
+        if inspect.ismethod(wrapped) and isinstance(
+            wrapped.__self__, FixedComponentLaw
+        ):
+            original = wrapped.__self__.original_layout
+            original_lottery_layouts[func_name] = dataclass_replace(
+                original,
+                probabilities=_rename_params_to_qnames(
+                    func=original.probabilities,
+                    regime_params_template=regime_params_template,
+                    param_key=func_name,
+                    names_key=_extract_template_names_key(
+                        func_name=func_name,
+                        regime_params_template=regime_params_template,
+                    ),
+                ),
+            )
         processed_functions[func_name] = _get_discrete_markov_next_function(
             func=func,
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
@@ -5420,6 +5444,7 @@ def _process_regime_core(
         ),
         joint_transitions=joint_transitions,
         phase_name=phase_name,
+        original_lottery_layouts=original_lottery_layouts,
     )
 
     fail_if_transition_namespaces_are_mixed(
@@ -5574,6 +5599,9 @@ def _build_transition_plans(
     support_index_processes: frozenset[tuple[RegimeName, ProcessName]],
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     phase_name: PhaseName,
+    original_lottery_layouts: Mapping[str, OriginalLotteryLayout] = MappingProxyType(
+        {}
+    ),
 ) -> TargetTransitionPlans:
     """Lower ordinary and joint declarations into complete target-edge plans."""
     plans: dict[RegimeName, TargetTransitionPlan] = {}
@@ -5681,6 +5709,7 @@ def _build_transition_plans(
                         public_path=(source_regime_name, target, next_state_name)
                     ),
                     weight_name=weight_name,
+                    original_layout=original_lottery_layouts.get(qualified_name),
                 )
 
             continuation_coordinate = (
