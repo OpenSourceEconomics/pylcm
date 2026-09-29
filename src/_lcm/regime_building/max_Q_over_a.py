@@ -634,12 +634,16 @@ class _StreamedMaxQOverA:
             if action_block_width >= n_actions:
                 # One block covers the product: map the named grids, as the dense
                 # route does, instead of decoding a flat index into each of them.
-                # The masked maximum is the streamed reduction's value contract.
+                # The streamed reduction's value contract is stated explicitly: a
+                # feasible NaN publishes NaN. XLA:CPU's vectorized maximum drops NaN
+                # once a mapped reduction spans a few thousand elements.
                 Q_arr, F_arr = self.whole_product_Q_and_F(
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     **q_and_f_params,
                 )
-                return Q_arr.max(where=F_arr, initial=-jnp.inf)
+                feasible_nan = F_arr & jnp.isnan(Q_arr)
+                best = Q_arr.max(where=F_arr & ~feasible_nan, initial=-jnp.inf)
+                return jnp.where(jnp.any(feasible_nan), jnp.nan, best)
             fixed_cell = build_streaming_max_Q_over_a(
                 Q_and_F=self.Q_and_F,
                 action_names=self.action_names,
