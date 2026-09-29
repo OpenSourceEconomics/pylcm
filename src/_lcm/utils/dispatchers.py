@@ -25,7 +25,6 @@ from lcm.exceptions import FunctionDispatchError
 from lcm.typing import BoolND, FloatND, IntND
 
 _MAX_FLAT_CELL_INDEX = 2**31 - 1
-_MAX_WHOLE_PRODUCT_COORDINATES = 2
 
 FunctionWithArrayReturn = TypeVar(
     "FunctionWithArrayReturn",
@@ -403,7 +402,7 @@ class _TiledProductMap:
                 if name not in self.variables
             }
         )
-        if width >= n_cells and len(self.variables) <= _MAX_WHOLE_PRODUCT_COORDINATES:
+        if width >= n_cells:
             return _map_whole_product(
                 func=self.func,
                 variables=self.variables,
@@ -517,9 +516,6 @@ def _map_whole_product(
     operand, which changes how the backend fuses the consumers that read it. A
     window covering the grid therefore maps the grid itself. The scalar cell sees
     the same values either way, so results are unchanged.
-
-    Only a product of at most `_MAX_WHOLE_PRODUCT_COORDINATES` coordinates takes
-    this route: a longer prefix is what the flat decode keeps on one batch axis.
     """
     mapped = productmap(
         func=func, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
