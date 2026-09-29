@@ -322,7 +322,11 @@ def test_a_state_read_only_by_an_undemanded_case_is_not_live(
     assert ("health" in model.pruned_variables["working"]) is expected
 
 
-def _gated_fold_model(initial_regimes: Any) -> Model:
+def _gated_fold_model(
+    *,
+    initial_regimes: Any,
+    later_source_law: object | None = None,
+) -> Model:
     fallback = ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     target_law = {
         "target": ValueDependentTransition(
@@ -344,7 +348,12 @@ def _gated_fold_model(initial_regimes: Any) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions=ByAge(cases={40: target_law}),
+                regime_transitions=ByAge(
+                    cases={
+                        40: target_law,
+                        **({} if later_source_law is None else {45: later_source_law}),
+                    }
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": _utility},
@@ -381,7 +390,18 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
 
 def test_a_gate_fold_exists_only_where_its_source_lands() -> None:
     """A target solved at a later age for another start gets no fold there."""
-    model = _gated_fold_model({40: "source", 50: "target"})
+    model = _gated_fold_model(initial_regimes={40: "source", 50: "target"})
+    folds = model._regimes["source"].gated_edges["target"].folds_by_period
+    assert set(folds) == {1}
+
+
+def test_a_gate_fold_exists_only_where_the_selected_case_declares_it() -> None:
+    """A source solved at a later age whose case there declares no gate adds no
+    fold and requires no gate reference at the next age."""
+    model = _gated_fold_model(
+        initial_regimes={40: "source", 45: "source", 50: "target"},
+        later_source_law="fallback",
+    )
     folds = model._regimes["source"].gated_edges["target"].folds_by_period
     assert set(folds) == {1}
 
@@ -389,7 +409,10 @@ def test_a_gate_fold_exists_only_where_its_source_lands() -> None:
 def test_a_gated_target_solved_where_its_source_never_stands_solves() -> None:
     """A target solved for another start is not folded for this source there."""
     model = _gated_fold_model(
-        {40: ("source", "target", "reference", "fallback"), 50: "target"}
+        initial_regimes={
+            40: ("source", "target", "reference", "fallback"),
+            50: "target",
+        }
     )
     values = model.solve(params={"discount_factor": 0.9}, log_level="off").values
     assert {(period, name) for period, by in values.items() for name in by} == {

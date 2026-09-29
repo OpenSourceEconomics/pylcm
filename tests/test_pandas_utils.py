@@ -12,6 +12,7 @@ from pandas.api.types import CategoricalDtype
 
 from _lcm.pandas_utils import (
     _build_discrete_grid_lookup,
+    _scheduled_consumer,
     array_from_series,
     convert_series_in_params,
     initial_conditions_from_dataframe,
@@ -29,6 +30,7 @@ from lcm import (
     Phased,
     categorical,
 )
+from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.simulation.initial_conditions._models import (
@@ -1715,3 +1717,10 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
     )["source"]["target__next_health__transition_matrix"]
 
     np.testing.assert_allclose(np.asarray(converted), [[0.9, 0.1], [0.2, 0.8]])
+
+
+def test_schedule_without_a_callable_law_cannot_consume_a_parameter() -> None:
+    """A parameter aimed at a schedule whose laws are all regime names raises a
+    parameter error naming the parameter."""
+    with pytest.raises(InvalidParamsError, match=r"'rate'.*no callable law"):
+        _scheduled_consumer(func=ByAge(cases={61: "a"}), param_name="rate")

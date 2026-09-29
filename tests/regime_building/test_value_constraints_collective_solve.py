@@ -814,14 +814,16 @@ def test_same_period_ref_to_unknown_regime_is_rejected():
         _process_ir_variant(regimes)
 
 
-def test_same_period_ref_cycle_is_rejected_at_build():
-    """Two collective regimes reading each other's same-period V form a cycle."""
+def _vc_a(*, Q_f: FloatND, V_b_ref: FloatND) -> BoolND:
+    return Q_f >= V_b_ref - 1000.0
 
-    def _vc_a(*, Q_f: FloatND, V_b_ref: FloatND) -> BoolND:
-        return Q_f >= V_b_ref - 1000.0
 
-    def _vc_b(*, Q_f: FloatND, V_a_ref: FloatND) -> BoolND:
-        return Q_f >= V_a_ref - 1000.0
+def _vc_b(*, Q_f: FloatND, V_a_ref: FloatND) -> BoolND:
+    return Q_f >= V_a_ref - 1000.0
+
+
+def _cycle_regimes() -> dict[str, Regime]:
+    """Two collective regimes reading each other's same-period V, and their exits."""
 
     def _make_couple(
         *,
@@ -885,15 +887,44 @@ def test_same_period_ref_cycle_is_rejected_at_build():
             )
         },
     )
+    return {
+        "couple_a": couple_a,
+        "terminal_a": terminal,
+        "couple_b": couple_b,
+        "terminal_b": terminal.replace(),
+    }
+
+
+def test_same_period_ref_cycle_is_rejected_at_build():
+    """Two collective regimes reading each other's same-period V form a cycle."""
     with pytest.raises(ModelInitializationError, match="form a cycle"):
-        _process_ir_variant(
-            {
-                "couple_a": couple_a,
-                "terminal_a": terminal,
-                "couple_b": couple_b,
-                "terminal_b": terminal.replace(),
-            }
-        )
+        _process_ir_variant(_cycle_regimes())
+
+
+@categorical(ordered=False)
+class CycleRegimeId:
+    single_f: ScalarInt
+    single_f_terminal: ScalarInt
+    couple_a: ScalarInt
+    terminal_a: ScalarInt
+    couple_b: ScalarInt
+    terminal_b: ScalarInt
+
+
+def test_same_period_ref_cycle_between_unrequired_regimes_does_not_fail():
+    """A reference cycle among regimes no required problem solves is not checked."""
+    ir_regimes = _make_ir_regimes()
+    model = Model(
+        regimes={
+            "single_f": ir_regimes["single_f"],
+            "single_f_terminal": ir_regimes["single_f_terminal"],
+            **_cycle_regimes(),
+        },
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=CycleRegimeId,
+        initial_regimes={0: "single_f"},
+    )
+    assert model.reachability.nodes == {(0, "single_f"), (1, "single_f_terminal")}
 
 
 def test_same_period_ref_to_collective_regime_requires_stakeholder():

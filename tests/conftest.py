@@ -26,6 +26,7 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.regime_building.schedules import (
     RegimeSchedules,
+    gated_source_periods,
     lower_demanded_transitions,
     resolve_regime_schedules,
 )
@@ -640,6 +641,7 @@ def build_prepared_structure(
         ages=ages,
         active_periods_by_regime=schedules.coverage_by_regime,
         support_by_phase=schedules.support_by_phase,
+        gated_source_periods=gated_source_periods(schedules=schedules),
     )
 
 

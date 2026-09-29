@@ -673,10 +673,9 @@ def _age_specialized_scope_errors(
         for node in _iter_transition_nodes(transition)
     ):
         error_messages.append(
-            "A regime `regime_transitions` cannot be `AgeSpecializedFunction` (bare or "
-            "wrapped in `MarkovTransition`): policy-specialized regime transitions "
-            "are not "
-            "supported. Specialize `functions` or `constraints` instead.",
+            "`regime_transitions` cannot be an `AgeSpecializedFunction`, bare or "
+            "wrapped in `MarkovTransition`: age-specialized regime transitions are "
+            "not supported. Specialize `functions` or `constraints` instead.",
         )
 
     specialized_ancestor = _first_age_specialized_ancestor_of_transition(
@@ -684,8 +683,7 @@ def _age_specialized_scope_errors(
     )
     if specialized_ancestor is not None:
         error_messages.append(
-            f"The regime's `regime_transitions` depends on the "
-            f"`AgeSpecializedFunction` function "
+            f"`regime_transitions` depends on the `AgeSpecializedFunction` "
             f"'{specialized_ancestor}'. Regime-transition probabilities are built "
             f"once, not per period, so a policy-specialized value flowing into "
             f"them would silently reuse one age's policy closure across all "
@@ -712,7 +710,7 @@ def _age_specialized_scope_errors(
 
 
 def _regime_transition_grammar_errors(transition: object) -> list[str]:
-    """Validate the regime `regime_transitions` value vocabulary.
+    """Validate the vocabulary of a regime's `regime_transitions`.
 
     A `Phased` container's sides are each held to the bare vocabulary
     (callable, `MarkovTransition`, or a per-target dict); per-target cells

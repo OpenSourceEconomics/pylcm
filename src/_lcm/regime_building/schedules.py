@@ -16,7 +16,7 @@ Availability alone solves nothing. `resolve_demand` expands the declared starts
 into two sets of `(period, regime)` pairs:
 
 - H, the visited pairs: those a subject can physically visit;
-- S, the valued pairs: those whose values the problems in H read, recursively.
+- S, the valued pairs: H and every pair whose value a problem in S reads.
 
 S is the coverage every later stage reads. Support comes only from the
 declarations. A bare callable or a vector `MarkovTransition` without `targets`
@@ -63,6 +63,7 @@ type NonterminalLaw = str | Choose | MarkovTransition | Mapping[str, Any] | Phas
 
 
 _PHASES: tuple[PhaseKey, PhaseKey] = ("solution", "simulation")
+_SIDES: tuple[Side, Side] = ("solve", "simulate")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -404,6 +405,31 @@ def resolve_demand(
         ),
         valued_nodes=frozenset(valued),
         visited_nodes=frozenset(visited),
+    )
+
+
+def gated_source_periods(
+    *, schedules: RegimeSchedules
+) -> MappingProxyType[tuple[RegimeName, RegimeName], tuple[int, ...]]:
+    """Per `(source, target)` edge, the valued source periods that declare a gate.
+
+    A source period counts when the law its schedule selects there — on either
+    phase side — holds a `ValueDependentTransition` into the target. A gated
+    edge folds and reads its references only after those periods.
+    """
+    periods: dict[tuple[RegimeName, RegimeName], set[int]] = {}
+    for source, law_by_period in schedules.law_by_period_by_regime.items():
+        for period in schedules.coverage_by_regime[source]:
+            law = law_by_period[period]
+            for side in _SIDES:
+                cells = _phase_side(law=law, side=side)
+                if not isinstance(cells, Mapping):
+                    continue
+                for target, cell in cells.items():
+                    if isinstance(cell, ValueDependentTransition):
+                        periods.setdefault((source, target), set()).add(period)
+    return MappingProxyType(
+        {edge: tuple(sorted(by_edge)) for edge, by_edge in periods.items()}
     )
 
 

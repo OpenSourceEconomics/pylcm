@@ -30,6 +30,7 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 from _lcm.typing import RegimeName
+from lcm.transition import MarkovTransition
 
 type PhaseName = Literal["solution", "simulation"]
 
@@ -170,7 +171,9 @@ def candidate_targets_from_transition(
 
     * `None`: terminal, no targets.
     * per-target mapping: its keys are the declared candidate universe.
-    * lowered callable / Markov transition: all regimes are candidates.
+    * vector `MarkovTransition` with `targets`: its declared targets.
+    * any other lowered callable or Markov transition: all regimes are
+      candidates.
 
     This reads an engine law, whose period-specific support lives in the model
     graph; pylcm does not infer structural zeros by executing a transition at
@@ -184,6 +187,8 @@ def candidate_targets_from_transition(
         # regime names by construction.
         per_target = cast("Mapping[RegimeName, object]", transition)
         return tuple(sorted(per_target))
+    if isinstance(transition, MarkovTransition) and transition.targets is not None:
+        return tuple(sorted(transition.targets))
     return tuple(sorted(all_regime_names))
 
 
