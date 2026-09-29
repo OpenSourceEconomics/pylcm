@@ -239,6 +239,8 @@ def test_value_array_indexed_in_state_names_order_matches_lookup(solved):
     got = _lookup(
         solved,
         period=0,
-        states={name: nodes[name][[i]] for name, i in zip(nodes, index, strict=True)},
+        states={
+            name: nodes[name][i : i + 1] for name, i in zip(nodes, index, strict=True)
+        },
     )
     np.testing.assert_allclose(got.value, V[index], rtol=1e-6)
