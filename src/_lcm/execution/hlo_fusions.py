@@ -2,6 +2,13 @@
 
 The GridSearch solve planner reads it to keep a continuation lookup fused into its
 reduction, and the execution-settings tuner reads it to prune candidates untimed.
+
+The reading targets one specific pattern, observed on an NVIDIA A40: an input
+(`kInput`) reduce fusion whose gather reads a table another gather wrote to memory.
+It is a structural match on HLO text, not a general materialisation analysis.
+Equivalent layouts expressed through other fusion kinds or operations escape it,
+and future JAX/XLA releases may change the HLO it recognises. `FUSED_GATHER`
+therefore means "this pattern was not found", not "nothing is materialised".
 """
 
 import dataclasses
