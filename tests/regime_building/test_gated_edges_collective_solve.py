@@ -994,6 +994,7 @@ def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
             target_name="married_terminal",
             edge=edge,
             regimes_to_active_periods=regimes_to_active_periods,
+            gated_periods=(0,),
         )
 
 
@@ -1019,6 +1020,7 @@ def test_gated_edge_references_covered_in_every_consumed_period_pass():
         target_name="married_terminal",
         edge=edge,
         regimes_to_active_periods=regimes_to_active_periods,
+        gated_periods=(0,),
     )
 
 
@@ -1051,4 +1053,5 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
         target_name="src",
         edge=edge,
         regimes_to_active_periods=regimes_to_active_periods,
+        gated_periods=(0, 1),
     )

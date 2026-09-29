@@ -308,6 +308,12 @@ class PreparedModelStructure:
     active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
     """Periods in which each regime is locally active."""
 
+    gated_source_periods: MappingProxyType[
+        tuple[RegimeName, RegimeName], tuple[int, ...]
+    ]
+    """Per `(source, target)` gated edge, the source periods whose selected law
+    declares the gate."""
+
 
 def prepare_model_structure(
     *,
@@ -317,12 +323,16 @@ def prepare_model_structure(
     support_by_phase: Mapping[
         str, Mapping[RegimeName, Mapping[int, tuple[RegimeName, ...]]]
     ],
+    gated_source_periods: MappingProxyType[
+        tuple[RegimeName, RegimeName], tuple[int, ...]
+    ],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
 
-    `active_periods_by_regime` and `support_by_phase` are the coverage and the
-    per-period targets resolved once from the declarations by the caller;
+    `active_periods_by_regime`, `support_by_phase` and `gated_source_periods`
+    are the coverage, the per-period targets and the per-edge gated source
+    periods resolved once from the declarations by the caller;
     `visited_periods_by_regime` are the periods a subject can occupy, where the
     simulate graph is active.
     """
@@ -354,6 +364,7 @@ def prepare_model_structure(
         grid_schedule=age_normalization.grid_schedule,
         reachability=reachability,
         active_periods_by_regime=active_periods_by_regime,
+        gated_source_periods=gated_source_periods,
     )
 
 
@@ -582,7 +593,10 @@ def process_regimes(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         regimes_to_active_periods=regimes_to_active_periods,
     )
-    _fail_if_same_period_ref_cycle(user_regimes=user_regimes)
+    _fail_if_same_period_ref_cycle(
+        user_regimes=user_regimes,
+        regimes_to_active_periods=regimes_to_active_periods,
+    )
 
     # Gated-edge declarations are a cross-regime
     # contract — validate endpoints, stakeholder layout, and projection coverage
@@ -592,6 +606,7 @@ def process_regimes(
         representative_user_regimes=representative_user_regimes,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         regimes_to_active_periods=regimes_to_active_periods,
+        gated_source_periods=prepared_structure.gated_source_periods,
     )
 
     # `fold=True` on a regime that another regime's gate reads nodewise (as a
@@ -735,6 +750,7 @@ def process_regimes(
     # it can only be built after all regimes exist.
     canonical_regimes = _attach_gated_edge_folds(
         canonical_regimes=canonical_regimes,
+        gated_source_periods=prepared_structure.gated_source_periods,
         user_regimes=user_regimes,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         period_to_regime_v_interp=period_to_regime_v_interp,
@@ -755,6 +771,7 @@ def process_regimes(
             canonical_regimes=build_canonical_regimes(
                 gated_continuations_by_source=gated_continuations_by_source
             ),
+            gated_source_periods=prepared_structure.gated_source_periods,
             user_regimes=user_regimes,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             period_to_regime_v_interp=period_to_regime_v_interp,
@@ -1390,6 +1407,7 @@ def _gated_continuation_specs(
 def _attach_gated_edge_folds(
     *,
     canonical_regimes: dict[RegimeName, Regime],
+    gated_source_periods: Mapping[tuple[RegimeName, RegimeName], tuple[int, ...]],
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     period_to_regime_v_interp: (
@@ -1472,13 +1490,16 @@ def _attach_gated_edge_folds(
                     target_name
                 ].discrete_states.values()
             )
-            # The periods the edge can ever fold at: those this source lands
-            # in, where its target holds a value. Backward induction folds at
-            # the target's own period and forward simulation at the source's
-            # `period + 1`, which is the same period seen from the consumer's
-            # side. A target solved at other periods for other sources owes
-            # this edge no fold there.
-            source_periods = frozenset(canonical_regimes[source_name].active_periods)
+            # The periods the edge can ever fold at: those after a source
+            # period whose selected law declares this gate, where the target
+            # holds a value. Backward induction folds at the target's own
+            # period and forward simulation at the source's `period + 1`,
+            # which is the same period seen from the consumer's side. A target
+            # solved at other periods for other sources, or after a source
+            # period whose case declares no gate, owes this edge no fold there.
+            source_periods = frozenset(
+                gated_source_periods.get((source_name, target_name), ())
+            )
             fold_periods = tuple(
                 period
                 for period in canonical_regimes[target_name].active_periods
@@ -2145,6 +2166,7 @@ def _fail_if_gated_edges_invalid(
     representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    gated_source_periods: Mapping[tuple[RegimeName, RegimeName], tuple[int, ...]],
 ) -> None:
     """Validate every `gated_edges` declaration against the other regimes.
 
@@ -2227,6 +2249,7 @@ def _fail_if_gated_edges_invalid(
                 target_name=target_name,
                 edge=edge,
                 regimes_to_active_periods=regimes_to_active_periods,
+                gated_periods=gated_source_periods.get((regime_name, target_name), ()),
             )
             _fail_if_off_grid_landing_is_possible(
                 prefix=prefix,
@@ -2277,6 +2300,7 @@ def _fail_if_gated_edge_references_inactive(
     target_name: RegimeName,
     edge: GatedEdge,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    gated_periods: tuple[int, ...],
 ) -> None:
     """Reject a gated edge whose fallback / gate reference is not co-active with
     its target on every period whose `Wbar` is actually consumed.
@@ -2289,10 +2313,11 @@ def _fail_if_gated_edge_references_inactive(
     the previous period's `Wbar` would feed the source a STALE later-period value.
 
     Which target-active periods are consumed is `source_reads_folded_wbar`'s
-    question, and this validator asks it rather than restating it — a period
-    whose `Wbar` no source reads may legitimately reference an unsolved
-    regime, and rejecting those would rule out an ordinary self-loop edge at the
-    target's earliest active period. Require every referenced regime to be
+    question, asked of `gated_periods` — the source periods whose selected law
+    declares this gate. A period whose `Wbar` no source reads may legitimately
+    reference an unsolved regime, and rejecting those would rule out an
+    ordinary self-loop edge at the target's earliest active period, or a
+    source case that declares no gate. Require every referenced regime to be
     active on every consumed period, so the roll is well defined wherever its
     result is used.
     """
@@ -2301,7 +2326,7 @@ def _fail_if_gated_edge_references_inactive(
         | {leg.simulate_fallback.regime for leg in edge.legs.values()}
         | {ref.regime for ref in edge.gate_refs.values()}
     )
-    source_active_periods = set(regimes_to_active_periods[source_name])
+    source_active_periods = set(gated_periods)
     consumed_periods = {
         period
         for period in regimes_to_active_periods[target_name]
@@ -2480,23 +2505,33 @@ def _fail_if_ref_invalid(
 def _fail_if_same_period_ref_cycle(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
 ) -> None:
-    """Reject cyclic `same_period_refs` declarations at model build.
+    """Reject cyclic `same_period_refs` among the regimes solved in one period.
 
-    Within one period, a regime's value constraints
-    read reference regimes solved EARLIER in that period, so the reference
-    graph must be acyclic (a self-reference is a one-node cycle). Depth-first
-    three-color search; the error names one offending cycle.
+    Within one period, a regime's value constraints read reference regimes
+    solved EARLIER in that period, so the references among the regimes solved
+    in that period must be acyclic (a self-reference is a one-node cycle). A
+    regime no required problem solves at a period adds no reference there.
+    Depth-first three-color search; the error names one offending cycle.
     """
-    graph = {
+    references = {
         regime_name: tuple(
             dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
         )
         for regime_name, user_regime in user_regimes.items()
     }
-    search = _SamePeriodRefSearch(graph=graph)
-    for regime_name in graph:
-        search.visit(regime_name)
+    for period in sorted(
+        {p for periods in regimes_to_active_periods.values() for p in periods}
+    ):
+        graph = {
+            regime_name: successors
+            for regime_name, successors in references.items()
+            if period in regimes_to_active_periods.get(regime_name, ())
+        }
+        search = _SamePeriodRefSearch(graph=graph)
+        for regime_name in graph:
+            search.visit(regime_name)
 
 
 @dataclass(frozen=True)
@@ -3253,7 +3288,12 @@ def _build_solution_phase(  # noqa: PLR0915
     # Set by whichever branch below builds the decision kernels, to the key
     # their periods were grouped by; `None` where one closure serves every period.
     decision_group_key: _PeriodGroupKey | None = None
-    if not spec.terminal and not regimes_to_active_periods[regime_name]:
+    zero_node = _is_zero_node_regime(
+        spec=spec,
+        regime_name=regime_name,
+        regimes_to_active_periods=regimes_to_active_periods,
+    )
+    if zero_node:
         # A nonterminal regime no required problem solves runs nothing, so it
         # gets no transition program, kernel or diagnostic.
         compute_regime_transition_probs = None
@@ -3302,7 +3342,7 @@ def _build_solution_phase(  # noqa: PLR0915
             flat_param_names=flat_param_names,
             is_stochastic=spec.solution.stochastic_regime_transition,
             enable_jit=enable_jit,
-            phase="solve",
+            shape="grid",
             next_regime_cells=(
                 core.next_regime_cells
                 if core.next_regime_func is not None
@@ -3453,7 +3493,7 @@ def _build_solution_phase(  # noqa: PLR0915
         regime_name=regime_name,
         transition_plans=core.transition_plans,
     )
-    if not spec.terminal and not regimes_to_active_periods[regime_name]:
+    if zero_node:
         # No required problem solves this regime, so its solver builds nothing
         # and simulation never enters it.
         solver_kernels = SolutionKernels(
@@ -3617,6 +3657,16 @@ class _PerPeriodGroupKey:
     def __call__(self, *, period: int) -> Hashable:
         """Return a key putting every period in a group of its own."""
         return (self.label, period)
+
+
+def _is_zero_node_regime(
+    *,
+    spec: PhasedRegimeSpec,
+    regime_name: RegimeName,
+    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
+) -> bool:
+    """Whether `regime_name` is nonterminal and no required problem solves it."""
+    return not spec.terminal and not regimes_to_active_periods[regime_name]
 
 
 def _build_period_signatures(
@@ -4336,7 +4386,11 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # collective branch (below) recomputes the household argmax and gathers
     # each stakeholder's own value at it.
     collective = stakeholders is not None
-    if not spec.terminal and not regimes_to_active_periods[regime_name]:
+    if _is_zero_node_regime(
+        spec=spec,
+        regime_name=regime_name,
+        regimes_to_active_periods=regimes_to_active_periods,
+    ):
         # A nonterminal regime no required problem solves is never simulated.
         compute_regime_transition_probs = None
         per_subject_route = None
@@ -4376,7 +4430,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             flat_param_names=flat_param_names,
             is_stochastic=spec.simulation.stochastic_regime_transition,
             enable_jit=enable_jit,
-            phase="simulate",
+            shape="per_subject",
             next_regime_cells=(
                 core.next_regime_cells
                 if core.next_regime_func is not None
@@ -4395,7 +4449,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 flat_param_names=flat_param_names,
                 is_stochastic=spec.simulation.stochastic_regime_transition,
                 enable_jit=enable_jit,
-                phase="solve",
+                shape="grid",
                 next_regime_cells=(
                     core.next_regime_cells
                     if core.next_regime_func is not None
@@ -5874,7 +5928,7 @@ def _build_validation_regime_transition_probs(
         flat_param_names=flat_param_names,
         is_stochastic=True,
         enable_jit=enable_jit,
-        phase="solve",
+        shape="grid",
         next_regime_cells=declared_cells,
     )
 
@@ -7064,10 +7118,10 @@ def build_regime_transition_probs_functions(
     flat_param_names: frozenset[str],
     is_stochastic: bool,
     enable_jit: bool,
-    phase: Literal["solve", "simulate"],
+    shape: Literal["grid", "per_subject"],
     next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None,
 ) -> RegimeTransitionFunction | VmappedRegimeTransitionFunction:
-    """Build a regime transition probability function for the given phase.
+    """Build a regime transition probability function in the given shape.
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
@@ -7079,7 +7133,9 @@ def build_regime_transition_probs_functions(
             binding vocabulary.
         is_stochastic: Whether the regime transition is stochastic.
         enable_jit: Whether to JIT-compile the functions.
-        phase: Which phase to build for.
+        shape: How the function is evaluated, whichever phase's law it holds:
+            - `"grid"` ⇒ on grid arguments, as the solve step and validation do;
+            - `"per_subject"` ⇒ vmapped over subjects, as simulation does.
         next_regime_cells: Per-target regime transition probability functions;
             `None` for coarse regime transitions.
 
@@ -7091,7 +7147,7 @@ def build_regime_transition_probs_functions(
         is_stochastic=is_stochastic,
         next_regime_cells=next_regime_cells,
     )
-    if phase == "solve":
+    if shape == "grid":
         return jax.jit(next_regime) if enable_jit else next_regime
 
     per_subject = per_subject_regime_transition_probs(

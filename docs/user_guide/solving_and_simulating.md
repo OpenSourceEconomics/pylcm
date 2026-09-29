@@ -117,16 +117,13 @@ trusted.
 **Run every model at `log_level="debug"` at least once, with the parameters you
 intend to use, before trusting any output.**
 
-`"off"` skips runtime validation entirely, and some of what it skips cannot be
-reconstructed from the result. If a regime transition puts probability on a target
-that is not active in the next period, that mass is dropped and the surviving
-targets are renormalized — which would otherwise make the value function come back
-finite, plausible, and *independent of the mass that went missing*.
-
-A gross departure from unit mass is caught in the arithmetic at every log level and
-turns the continuation into NaN. But that is a backstop, not a diagnosis: it names
-no regime, no target, and no age. Smaller mass errors pass it and still reverse the
-optimal action. Only the validation that `"off"` skips tells you what is wrong. See
+Regime-transition probabilities are checked at every log level: each regime-law row a
+solve reads on the grid and each row a simulation draws from must be finite, in
+$[0, 1]$, of unit mass and zero outside the law's declared targets, and a violation
+raises. `"off"` skips the remaining runtime validation — state-transition
+probabilities and the value-function diagnostics — and some of what it skips cannot be
+reconstructed from the result. A NaN value function names no regime, no state and no
+age; only the validation that `"off"` skips tells you what is wrong. See
 [Debugging](debugging.md#run-every-production-model-at-debug-at-least-once).
 ```
 
@@ -134,7 +131,7 @@ optimal action. Only the validation that `"off"` skips tells you what is wrong. 
 # Debug — validation runs and raises on the first failure
 solution = model.solve(params=params, log_level="debug")
 
-# Silent — no logging, no validation
+# Silent — no logging; only the regime-transition checks run
 solution = model.solve(params=params, log_level="off")
 
 # Validation runs but only warns; the run continues
@@ -398,9 +395,9 @@ fingerprints.
 ### Heterogeneous initial ages
 
 `"age"` must always be provided in `initial_conditions`. Each value must be a valid
-point on the model's `AgeGrid`, and each subject's initial regime must be active at
-their starting age. The most common case is that all subjects start at the initial age —
-just pass a constant array.
+point on the model's `AgeGrid`, and each subject's `(age, regime)` pair must be a
+declared start in `model.initial_nodes`. The most common case is that all subjects start
+at the initial age — just pass a constant array.
 
 Subjects can start at different ages:
 

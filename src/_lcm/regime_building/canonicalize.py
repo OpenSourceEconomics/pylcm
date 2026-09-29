@@ -436,7 +436,8 @@ def _declared_target_errors(
     """Read declared target support and report unknown mapping keys.
 
     - per-target dict ⇒ its key set (unknown regime names are errors)
-    - coarse callable / `MarkovTransition` ⇒ all regimes
+    - vector `MarkovTransition` with `targets` ⇒ its declared targets
+    - any other coarse callable or `MarkovTransition` ⇒ all regimes
 
     Return the declared targets and the violations found along the way.
     """

@@ -12,6 +12,7 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
+from _lcm.reachability import candidate_targets_from_transition
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -437,3 +438,16 @@ def test_an_unreached_regime_with_an_age_specialized_grid_builds_and_solves() ->
         (period, name) for period, by_regime in values.items() for name in by_regime
     }
     assert solved == {(2, "single_f_terminal")}
+
+
+def _probabilities() -> FloatND:
+    return jnp.array([1.0, 0.0, 0.0])
+
+
+def test_candidate_targets_of_a_vector_law_are_its_declared_targets() -> None:
+    """A vector `MarkovTransition` names its candidates by `targets`, not by the
+    whole regime vocabulary."""
+    law = MarkovTransition(func=_probabilities, targets=("retirement",))
+    assert candidate_targets_from_transition(
+        transition=law, all_regime_names=("working", "retirement", "dead")
+    ) == ("retirement",)

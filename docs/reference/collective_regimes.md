@@ -151,7 +151,7 @@ stakeholder: str | None = None
 
 Another regime's **current-period** value, read at mapped state coordinates. The
 reference regime is solved earlier in the same period — the solver orders each period's
-active regimes topologically by these declarations — and its value function is
+solved regimes topologically by these declarations — and its value function is
 interpolated at the projected coordinates: linear on continuous axes, lookup on discrete
 axes.
 
@@ -159,9 +159,10 @@ Reading the current period rather than the continuation is what a within-period
 participation constraint needs: a couple's period-$t$ decision is checked against the
 values its members would have as singles in that same period $t$.
 
-`regime` names another regime of the model, active in every period the declaring regime
-is active. No transition edge between the two is required — a reference read works
-across otherwise unconnected regime islands.
+`regime` names another regime of the model. A reference read requires its value in every
+period the declaring regime is solved, so the reference regime is solved there too
+without being declared as a start. No transition edge between the two is required — a
+reference read works across otherwise unconnected regime islands.
 
 `stakeholder` names whose value to read from a **collective** reference regime. It is
 required there and must be `None` for a singleton reference.

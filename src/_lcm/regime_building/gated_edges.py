@@ -2755,9 +2755,9 @@ def edge_may_fold_at_period(
     """
     if edge.target not in solved_regimes:
         return False
-    if not source_reads_wbar and fold_period not in edge.folds_by_period:
-        # The target is solved here for another start; this source never
-        # stands at `fold_period - 1`, so the edge owes no fold.
+    if fold_period not in edge.folds_by_period:
+        # The target is solved here for another start, or this source's law
+        # at `fold_period - 1` declares no gate into it: the edge owes no fold.
         return False
     missing = tuple(
         regime_name

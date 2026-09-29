@@ -46,6 +46,7 @@ from dags.tree import tree_path_from_qname
 
 from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
 from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
@@ -73,7 +74,7 @@ from lcm.exceptions import (
     InvalidStateTransitionProbabilitiesError,
     RegimeInitializationError,
 )
-from lcm.typing import BoolND, FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import Bool1D, BoolND, FloatND, IntND, ScalarFloat, ScalarInt
 
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
 type _RegimeProbabilityOutput = tuple[
@@ -173,16 +174,31 @@ def _pack_validation_flags(*, flags: tuple[jax.Array, ...]) -> jax.Array:
 
 @partial(jax.jit, static_argnames=("inactive_indices",))
 def _regime_probability_flags(
-    *, probabilities: tuple[jax.Array, ...], inactive_indices: tuple[int, ...]
+    *,
+    probabilities: tuple[jax.Array, ...],
+    inactive_indices: tuple[int, ...],
+    rows: jax.Array | None = None,
 ) -> jax.Array:
-    """Use exactly the regime validator's existing numerical predicates."""
+    """Use exactly the regime validator's existing numerical predicates.
+
+    `rows` restricts every predicate to the rows it marks — the subjects a
+    realized law is evaluated for; `None` checks every row.
+    """
     all_probs = jnp.stack(probabilities)
+    counted = (
+        jnp.ones(all_probs.shape[1:], dtype=bool)
+        if rows is None
+        else jnp.broadcast_to(rows, all_probs.shape[1:])
+    )
     return jnp.stack(
         (
-            jnp.any(~jnp.isfinite(all_probs)),
-            jnp.any((all_probs < 0) | (all_probs > 1)),
-            jnp.any(_unit_mass_violations(jnp.sum(all_probs, axis=0))),
-            *(jnp.any(probabilities[index] > 0) for index in inactive_indices),
+            jnp.any(~jnp.isfinite(all_probs) & counted),
+            jnp.any(((all_probs < 0) | (all_probs > 1)) & counted),
+            jnp.any(_unit_mass_violations(jnp.sum(all_probs, axis=0)) & counted),
+            *(
+                jnp.any((probabilities[index] > 0) & counted)
+                for index in inactive_indices
+            ),
         )
     )
 
@@ -385,12 +401,6 @@ def _params_callable_for_state_transition(
     )
 
 
-_REGIME_SELECTION_LOGGER = logging.getLogger("_lcm.regime_selection")
-_REGIME_SELECTION_LOGGER.setLevel(logging.DEBUG)
-_REGIME_SELECTION_LOGGER.propagate = False
-_REGIME_SELECTION_LOGGER.addHandler(logging.NullHandler())
-
-
 def validate_regime_selection(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -415,7 +425,7 @@ def validate_regime_selection(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
-        logger=_REGIME_SELECTION_LOGGER,
+        logger=None,
         process_grid_resolver=process_grid_resolver,
         memory=memory,
     )
@@ -426,7 +436,7 @@ def validate_regime_transitions_all_periods(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
-    logger: logging.Logger,
+    logger: logging.Logger | None,
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
@@ -443,11 +453,12 @@ def validate_regime_transitions_all_periods(
         ages: Age grid for the model.
         logger: Logger carrying the runtime-validation policy. `log_level="off"`
             returns immediately; `"warning"` / `"progress"` log each failure and
-            continue; `"debug"` raises on the first failure.
+            continue; `"debug"` raises on the first failure. `None` validates
+            regardless of the log level and raises on the first failure.
 
     Raises:
         InvalidRegimeTransitionProbabilitiesError: If a regime transition produces
-            invalid probabilities and the logger implies raise mode.
+            invalid probabilities and `logger` is `None` or implies raise mode.
 
     """
     # Skipped entirely at `log_level="off"`. What that costs is the diagnosis
@@ -456,31 +467,16 @@ def validate_regime_transitions_all_periods(
     # is negative, so a misspecification survives as a NaN rather than as a
     # plausible number. These checks name the regime, the period and the
     # offending target instead, which a NaN cannot.
-    if not validation_enabled(logger):
+    if logger is not None and not validation_enabled(logger):
         return
 
     for period in range(ages.n_periods - 1):
         for regime_name, regime in regimes.items():
             if regime.terminal:
                 continue
-            # Solved periods check the solve law against its own targets;
-            # visited periods of a `Phased` regime also check the realized law.
-            laws = []
-            if period in regime.active_periods:
-                laws.append(
-                    (
-                        regime.solution.validation_regime_transition_probs,
-                        regime.solution.reachability,
-                    )
-                )
-            realized = regime.simulation.validation_regime_transition_probs
-            simulation_reachability = regime.simulation.reachability
-            if (
-                realized is not None
-                and regime_name
-                in simulation_reachability.active_regimes_by_period[period]
-            ):
-                laws.append((realized, simulation_reachability))
+            laws = _regime_laws_at_period(
+                regime=regime, regime_name=regime_name, period=period
+            )
             for law, reachability in laws:
                 try:
                     _validate_regime_transition_single(
@@ -500,7 +496,31 @@ def validate_regime_transitions_all_periods(
                 except InvalidRegimeTransitionProbabilitiesError as error:
                     if summary is not None:
                         raise _SerialValidationRequired from error
+                    if logger is None:
+                        raise
                     raise_or_warn(logger=logger, error=error)
+
+
+def _regime_laws_at_period(
+    *, regime: Regime, regime_name: RegimeName, period: int
+) -> list[tuple[RegimeTransitionFunction, PhaseReachability]]:
+    """The regime laws to validate at one period, with the graph of each.
+
+    Solved periods check the solve law against its own targets; visited periods
+    of a `Phased` regime also check the realized law.
+    """
+    laws = []
+    solved = regime.solution.validation_regime_transition_probs
+    if solved is not None and period in regime.active_periods:
+        laws.append((solved, regime.solution.reachability))
+    realized = regime.simulation.validation_regime_transition_probs
+    simulation_reachability = regime.simulation.reachability
+    if (
+        realized is not None
+        and regime_name in simulation_reachability.active_regimes_by_period[period]
+    ):
+        laws.append((realized, simulation_reachability))
+    return laws
 
 
 def _validate_regime_transition_single(
@@ -514,19 +534,16 @@ def _validate_regime_transition_single(
     summary: _ValidationSummary | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
-    law: RegimeTransitionFunction | None = None,
+    law: RegimeTransitionFunction,
 ) -> None:
-    """Validate regime transition probabilities for a single regime and period.
+    """Validate `law`, one phase's regime transition of one regime, at one period.
 
     Evaluate the regime transition function on the Cartesian product of all grid
     variables it accepts, using `jax.vmap` for vectorised evaluation.
 
     """
     regime = regimes[regime_name]
-    # Non-None guaranteed: only called for non-terminal regimes
-    regime_transition_func = (
-        regime.solution.validation_regime_transition_probs if law is None else law
-    )
+    regime_transition_func = law
 
     state_action_space = (
         regime.solution.state_action_space(
@@ -537,7 +554,7 @@ def _validate_regime_transition_single(
     )
 
     # Filter params to only those accepted by the transition function
-    accepted_params = set(inspect.signature(regime_transition_func).parameters)  # ty: ignore[invalid-argument-type]
+    accepted_params = set(inspect.signature(regime_transition_func).parameters)
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted_params}
 
     # Collect only grid variables the transition function accepts
@@ -666,17 +683,19 @@ def _validate_regime_transition_probs(
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
     age: float | ScalarInt | ScalarFloat,
-    next_age: float | ScalarInt | ScalarFloat,
+    next_age: float | ScalarInt | ScalarFloat | None,
     period: int | None = None,
     state_action_values: MappingProxyType[StateOrActionName, FloatND | IntND]
     | None = None,
     summary: _ValidationSummary | None = None,
     memory: SimulationMemory | None = None,
+    rows: Bool1D | None = None,
 ) -> None:
     """Validate regime transition probabilities.
 
     Check that probabilities are finite, sum to 1 across all regimes, and that
-    inactive regimes have zero probability.
+    inactive regimes have zero probability. `rows` restricts the check to the
+    rows it marks; `None` checks every row.
 
     Args:
         regime_transition_probs: Immutable mapping of regime names to probability
@@ -684,23 +703,30 @@ def _validate_regime_transition_probs(
         active_regimes_next_period: Tuple of regime names active in the next period.
         regime_name: Name of the source regime (for error messages).
         age: Current age (for error messages).
-        next_age: Next age (for error messages).
+        next_age: Next age (for error messages), or `None` if unknown.
         period: Optional source-period index for graph diagnostics.
         state_action_values: Optional immutable mapping of state/action names to arrays,
             included in error messages to help diagnose which inputs cause violations.
 
     Raises:
         InvalidRegimeTransitionProbabilitiesError: If probabilities are non-finite,
-            outside [0, 1], don't sum to 1, or assign positive probability to unsolved
-            regimes.
+            outside [0, 1], don't sum to 1, or assign positive probability to a
+            regime outside the declared targets.
 
     """
     names = tuple(regime_transition_probs)
     inactive = tuple(set(names) - set(active_regimes_next_period))
-    flag_arguments = {"probabilities": tuple(regime_transition_probs.values())}
+    flag_arguments: dict[str, object] = {
+        "probabilities": tuple(regime_transition_probs.values())
+    }
+    if rows is not None:
+        flag_arguments["rows"] = rows
     static_arguments = {
         "inactive_indices": tuple(names.index(name) for name in inactive)
     }
+    span = (
+        f"after age {age}" if next_age is None else f"between ages {age} and {next_age}"
+    )
     if summary is not None:
         summary.append(
             function=_regime_probability_flags,
@@ -724,14 +750,14 @@ def _validate_regime_transition_probs(
     if nonfinite:
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Non-finite values in regime transition probabilities from "
-            f"'{regime_name}' between ages {age} and {next_age}. Check the "
+            f"'{regime_name}' {span}. Check the "
             f"'next_regime' function of the '{regime_name}' regime."
         )
 
     if outside_bounds:
         raise InvalidRegimeTransitionProbabilitiesError(
-            f"Regime transition probabilities from '{regime_name}' between ages {age} "
-            f"and {next_age} contain values outside [0, 1]. Check the 'next_regime' "
+            f"Regime transition probabilities from '{regime_name}' {span} contain "
+            f"values outside [0, 1]. Check the 'next_regime' "
             f"function of the '{regime_name}' regime."
         )
 
@@ -742,8 +768,8 @@ def _validate_regime_transition_probs(
             state_action_values=state_action_values,
         )
         raise InvalidRegimeTransitionProbabilitiesError(
-            f"Regime transition probabilities from '{regime_name}' between ages {age} "
-            f"and {next_age} do not sum to 1.0. {detail}\n"
+            f"Regime transition probabilities from '{regime_name}' {span} do not "
+            f"sum to 1.0. {detail}\n"
             f"Check the 'next_regime' function of the '{regime_name}' regime."
         )
 
@@ -753,13 +779,47 @@ def _validate_regime_transition_probs(
             raise InvalidRegimeTransitionProbabilitiesError(
                 f"Regime '{r}' is outside the declared targets of '{regime_name}' "
                 f"at age {age} but has positive "
-                f"transition probability from '{regime_name}' between ages {age} and "
-                f"{next_age}{period_detail}. Its mass is not represented in the "
+                f"transition probability from '{regime_name}' "
+                f"{span}{period_detail}. Its mass is not represented in the "
                 f"continuation, so what the remaining targets carry is less than "
                 f"unit mass and the solve returns NaN rather than a value that "
                 f"does not depend on '{r}' at all. Either declare '{r}' as a target "
                 f"at that age or give it probability 0 there."
             )
+
+
+def validate_realized_regime_transition_probs(
+    *,
+    regime_transition_probs: MappingProxyType[RegimeName, FloatND],
+    rows: Bool1D,
+    active_regimes_next_period: tuple[RegimeName, ...],
+    regime_name: RegimeName,
+    age: float | ScalarInt | ScalarFloat,
+    period: int,
+    memory: SimulationMemory | None,
+) -> None:
+    """Validate a realized regime law on the subjects it moves, at every log level.
+
+    Runs on the full output of the law, before any projection onto the
+    retained targets and before the draw, over exactly the `rows` of subjects
+    standing in the source regime. Every predicate of the grid validation
+    applies: finite values, values in [0, 1], unit mass and zero mass outside
+    the declared targets.
+
+    Raises:
+        InvalidRegimeTransitionProbabilitiesError: On the first violated predicate.
+
+    """
+    _validate_regime_transition_probs(
+        regime_transition_probs=regime_transition_probs,
+        active_regimes_next_period=active_regimes_next_period,
+        regime_name=regime_name,
+        age=age,
+        next_age=None,
+        period=period,
+        memory=memory,
+        rows=rows,
+    )
 
 
 def _format_sum_violation(

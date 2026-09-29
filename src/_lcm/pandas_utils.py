@@ -29,6 +29,7 @@ from _lcm.typing import (
 from _lcm.utils.ast_inspection import _get_func_indexing_params
 from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidParamsError
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
@@ -1179,8 +1180,13 @@ def _scheduled_consumer(*, func: object, param_name: str) -> Callable[..., Any]:
         if callable(variant)
     )
     if not laws:
-        msg = f"No law of the schedule reads parameter {param_name!r}."
-        raise KeyError(msg)
+        msg = (
+            f"Parameter {param_name!r} is given for a `ByAge` schedule with no "
+            "callable law: each of its laws is a regime name or a per-target "
+            "mapping, so none can read a parameter."
+        )
+        raise InvalidParamsError(msg)
+
     return _variant_declaring(variants=laws, param_name=param_name)
 
 

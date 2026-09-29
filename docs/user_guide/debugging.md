@@ -52,29 +52,23 @@ solution = model.solve(params=params, log_level="debug", log_path="./debug/")
 
 ### Run every production model at `"debug"` at least once
 
-`"off"` skips runtime validation entirely, and some of what it skips cannot be
-reconstructed from the output afterwards. The clearest case is regime-transition
-probabilities that do not represent unit mass.
+`"off"` skips most runtime validation, and some of what it skips cannot be reconstructed
+from the output afterwards.
 
-Every aggregation route normalizes the continuation by the mass it actually receives. So
-if a regime transition puts probability on a target that is not active in the next
-period, that target is dropped from the continuation and the remaining targets are
-renormalized. Left alone, that would make the solved value function come back finite,
-plausible, and *independent of the missing mass*: a model whose survival probability
-ranges from 0.999999 to 0.000001 would produce bit-identical values, because in each
-case the surviving branch renormalizes to one.
+Regime-transition probabilities are the exception. Every aggregation route normalizes
+the continuation by the mass it actually receives, so a regime transition putting
+probability on a regime outside its declared targets would otherwise drop that regime
+from the continuation and renormalize the rest: a model whose survival probability
+ranges from 0.999999 to 0.000001 would produce bit-identical values. pylcm therefore
+checks every regime-law row a solve reads on the grid, and every row a simulation draws
+from, at every log level, `"off"` included: each must be finite, in $[0, 1]$, of unit
+mass and zero outside its declared targets, and the error names the source regime, the
+age and, for mass outside the targets, the target regime.
 
-The arithmetic itself carries a backstop against that, at every log level, `"off"`
-included: a represented regime mass more than `1e-3` away from one turns the
-continuation into NaN, so a grossly misspecified transition cannot return a plausible
-number. The tolerance is deliberately loose — it catches a wrong *model*, not a
-numerical inaccuracy. Smaller mass errors still pass silently, and at the top of the
-validator's own tolerance they are already large enough to reverse the optimal action.
-
-A NaN is also not a diagnosis. It tells you the model is wrong; it does not tell you
-which regime, which target, or which age. Run the model once at `log_level="debug"`,
-with the parameters you intend to use, and the transition check reports the offending
-`(source regime, target regime, age)` directly.
+What `"off"` does skip — state-transition probabilities and the value-function
+diagnostics — surfaces at best as a NaN, which tells you the model is wrong but not
+which regime, which state, or which age. Run the model once at `log_level="debug"`, with
+the parameters you intend to use, and those checks report the offending inputs directly.
 
 ```python
 # Do this once per model and parameter regime, before trusting any output.
