@@ -154,7 +154,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "4731fa8c86defbc7f8cbe56046ae38945bb033b7d0596fe1081df18ecc1cf275"
+            "sha256": "1dd9b5df1ca7a9cfd9276e5faf6bda2b4181a934c6a924619e34462266b822ff"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "fcbaa6a32c13f8282547716b429cd0e249f2a3ef01f170abcec35ad8cafa2403"
+        "source_inventory_sha256": "95c7b738c215dab614c8250240ad7aff88ec9bf7235cfded48cf5a7fd1d328bc"
       },
       "fast": {
         "candidate_sources": [
@@ -624,7 +624,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "4731fa8c86defbc7f8cbe56046ae38945bb033b7d0596fe1081df18ecc1cf275"
+            "sha256": "1dd9b5df1ca7a9cfd9276e5faf6bda2b4181a934c6a924619e34462266b822ff"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "fcbaa6a32c13f8282547716b429cd0e249f2a3ef01f170abcec35ad8cafa2403"
+        "source_inventory_sha256": "95c7b738c215dab614c8250240ad7aff88ec9bf7235cfded48cf5a7fd1d328bc"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "fcbaa6a32c13f8282547716b429cd0e249f2a3ef01f170abcec35ad8cafa2403",
+  "source_inventory_sha256": "95c7b738c215dab614c8250240ad7aff88ec9bf7235cfded48cf5a7fd1d328bc",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1098,7 +1098,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "4731fa8c86defbc7f8cbe56046ae38945bb033b7d0596fe1081df18ecc1cf275"
+      "sha256": "1dd9b5df1ca7a9cfd9276e5faf6bda2b4181a934c6a924619e34462266b822ff"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",

@@ -8419,7 +8419,7 @@ def _route_constraints(
         context=ConstraintRouteContext(
             regime_name=regime_name,
             phase=phase,
-            functions=functions,
+            functions=_routing_pool(functions=functions, active_periods=active_periods),
             variables=variables,
             flat_param_names=flat_param_names,
             active_periods=active_periods,
@@ -8443,6 +8443,23 @@ def _route_constraints(
     _fail_if_a_constraint_cannot_be_met(plan=plan)
     evaluated = _names_every_route_evaluates(plan=plan, regime_name=regime_name)
     return _ConstraintRoutingResult(plan=plan, evaluated_names=evaluated)
+
+
+def _routing_pool(
+    *, functions: EconFunctionsMapping, active_periods: tuple[int, ...]
+) -> EconFunctionsMapping:
+    """The pool constraint routing resolves leaves through.
+
+    Routing reads argument names only. An age-specialized function exposes the
+    same parameters at every age, so its first active period's callable stands
+    for all of them.
+    """
+    if not active_periods:
+        return functions
+    return cast(
+        "EconFunctionsMapping",
+        resolve_periodized_nodes(mapping=functions, period=active_periods[0]),
+    )
 
 
 def _fail_if_a_constraint_cannot_be_met(*, plan: ConstraintPlan) -> None:
@@ -8534,7 +8551,7 @@ def _fail_if_a_synthesized_constraint_is_unmet(
         context=ConstraintRouteContext(
             regime_name=regime_name,
             phase="simulate",
-            functions=functions,
+            functions=_routing_pool(functions=functions, active_periods=active_periods),
             variables=variables,
             flat_param_names=flat_param_names,
             active_periods=active_periods,
