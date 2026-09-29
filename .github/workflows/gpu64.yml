@@ -73,5 +73,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - uses: actions/checkout@v7.0.1
+        if: contains(needs.*.result, 'cancelled')
+        with:
+          sparse-checkout: .github/actions
+      - id: superseded
+        if: contains(needs.*.result, 'cancelled')
+        uses: ./.github/actions/superseded
       - name: Fail unless the fp64 policy succeeded
+        if: steps.superseded.outputs.superseded != 'true'
         run: test "${{ needs.tests.result }}" = "success"
