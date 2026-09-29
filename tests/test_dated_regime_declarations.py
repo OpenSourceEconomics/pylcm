@@ -1,6 +1,8 @@
 """Dated regime declarations: exact age selectors, schedules and declared support."""
 
+import inspect
 from fractions import Fraction
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -69,18 +71,18 @@ def test_default_fills_every_remaining_age() -> None:
     ("grid", "expected_exit"),
     [(ANNUAL, 61), (QUARTERLY, Fraction(247, 4))],
 )
-def test_until_exits_on_the_grid_predecessor_of_the_boundary(
+def test_until_exits_on_the_grid_predecessor_of_the_stop_age(
     *, grid: AgeGrid, expected_exit: int | Fraction
 ) -> None:
-    """`until` applies `then` on the predecessor of `boundary` and the law before."""
+    """`until` selects `then` at the grid predecessor of `stop_age_exclusive`."""
     schedule = ByAge.until(
         stop_age_exclusive=62, law="work", then="retire", start_age_inclusive=61
     ).resolve(grid)
     assert schedule.at(expected_exit) == "retire"
 
 
-def test_until_covers_start_up_to_the_boundary() -> None:
-    """`until` covers `start <= age < boundary`."""
+def test_until_covers_start_up_to_the_stop_age() -> None:
+    """`until` covers `start_age_inclusive <= age < stop_age_exclusive`."""
     schedule = ByAge.until(
         stop_age_exclusive=63, law="work", then="retire", start_age_inclusive=61
     ).resolve(ANNUAL)
@@ -103,21 +105,24 @@ def test_resolved_schedule_rejects_an_uncovered_age() -> None:
 
 
 @pytest.mark.parametrize(
-    "cases",
+    ("cases", "match"),
     [
-        {63.5: "a"},
-        {(61, 61.25): "a"},
-        {True: "a"},
-        {float("nan"): "a"},
-        {AgeRange(start=63, stop=62): "a"},
-        {AgeRange(start=60.1, stop=60.9): "a"},
-        {AgeRange(stop=62): "a", 61: "b"},
+        ({63.5: "a"}, r"Age 63\.5 in selector .* is not an age of the model"),
+        ({(61, 61.25): "a"}, r"Age 61\.25 in selector .* is not an age"),
+        ({True: "a"}, "must name numeric ages, not True"),
+        ({float("nan"): "a"}, "contains a nonfinite age"),
+        ({AgeRange(start=63, stop=62): "a"}, "start 63 must be below stop 62"),
+        ({AgeRange(start=60.1, stop=60.9): "a"}, "selects no age of the model"),
+        (
+            {AgeRange(stop=62): "a", 61: "b"},
+            r"overlaps another case at age\(s\) \[61\]",
+        ),
     ],
 )
-def test_invalid_selectors_are_rejected_at_resolution(cases) -> None:
+def test_invalid_selectors_are_rejected_at_resolution(*, cases, match: str) -> None:
     """Off-grid, boolean, nonfinite, reversed, empty and overlapping selections
     raise instead of being rounded, dropped or truncated."""
-    with pytest.raises(RegimeInitializationError):
+    with pytest.raises(RegimeInitializationError, match=match):
         ByAge(cases=cases).resolve(ANNUAL)
 
 
@@ -132,31 +137,43 @@ def test_a_law_at_the_final_age_resolves_as_available(
     assert ByAge(cases=cases).resolve(ANNUAL).covered_ages == expected_ages
 
 
+_TERMINAL_INSIDE = "marks a terminal regime only as the top-level"
+
+
 @pytest.mark.parametrize(
-    "build",
+    ("build", "match"),
     [
-        lambda: ByAge(cases={61: None}),
-        lambda: ByAge(cases={61: "a"}, default=None),
-        lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),
-        lambda: ByAge(cases={61: Phased(solve=None, simulate="a")}),
-        lambda: ByAge(cases={61: ByAge(cases={61: "a"})}),
-        lambda: ByAge(cases={}),
+        (lambda: ByAge(cases={61: None}), _TERMINAL_INSIDE),
+        (lambda: ByAge(cases={61: "a"}, default=None), _TERMINAL_INSIDE),
+        (
+            lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),
+            _TERMINAL_INSIDE,
+        ),
+        (
+            lambda: ByAge(cases={61: Phased(solve=None, simulate="a")}),
+            _TERMINAL_INSIDE,
+        ),
+        (lambda: ByAge(cases={61: ByAge(cases={61: "a"})}), "cannot be nested"),
+        (lambda: ByAge(cases={}), "needs at least one case"),
     ],
 )
-def test_none_and_nested_schedules_are_rejected_inside_a_schedule(build) -> None:
+def test_none_and_nested_schedules_are_rejected_inside_a_schedule(
+    *, build, match: str
+) -> None:
     """Only a top-level `regime_transitions=None` is terminal; wrappers cannot be."""
-    with pytest.raises(RegimeInitializationError):
+    with pytest.raises(RegimeInitializationError, match=match):
         build()
 
 
-def test_until_rejects_a_boundary_without_a_predecessor() -> None:
+def test_until_rejects_a_stop_age_without_a_predecessor() -> None:
     """The first grid age has no predecessor on which to exit."""
     with pytest.raises(RegimeInitializationError, match="predecessor"):
         ByAge.until(stop_age_exclusive=60, law="a", then="b").resolve(ANNUAL)
 
 
-def test_until_rejects_an_off_grid_boundary() -> None:
-    """`until` boundaries are exact grid coordinates."""
+def test_until_rejects_an_off_grid_stop_age() -> None:
+    """`until` bounds are exact grid coordinates."""
+
     with pytest.raises(RegimeInitializationError, match=r"61\.5"):
         ByAge.until(stop_age_exclusive=61.5, law="a", then="b").resolve(ANNUAL)
 
@@ -167,10 +184,15 @@ def test_markov_transition_records_declared_targets() -> None:
     assert law.targets == ("a", "b")
 
 
-@pytest.mark.parametrize("targets", [(), ("a", "a")])
-def test_markov_transition_rejects_empty_or_duplicate_targets(targets) -> None:
+@pytest.mark.parametrize(
+    ("targets", "match"),
+    [((), "must name a regime"), (("a", "a"), "names a regime more than once")],
+)
+def test_markov_transition_rejects_empty_or_duplicate_targets(
+    *, targets, match: str
+) -> None:
     """Declared support is nonempty and names each target once."""
-    with pytest.raises(RegimeInitializationError):
+    with pytest.raises(RegimeInitializationError, match=match):
         MarkovTransition(func=_probs, targets=targets)
 
 
@@ -186,7 +208,7 @@ def test_choose_records_declared_targets() -> None:
 
 def test_choose_rejects_empty_targets() -> None:
     """A deterministic selector must name at least one target."""
-    with pytest.raises(RegimeInitializationError):
+    with pytest.raises(RegimeInitializationError, match="must name a regime"):
         Choose(func=_code, targets=())
 
 
@@ -197,3 +219,49 @@ def test_choose_exposes_the_wrapped_signature() -> None:
         return work
 
     assert Choose(func=select, targets=("a",)).__wrapped__ is select  # ty: ignore[unresolved-attribute]
+
+
+def test_by_age_constructor_takes_only_cases_and_default() -> None:
+    """The public constructor exposes `cases` and `default`, nothing private."""
+    assert tuple(inspect.signature(ByAge).parameters) == ("cases", "default")
+
+
+def test_until_schedule_resolves_like_its_declaration() -> None:
+    """A schedule built by `until` resolves to its legs without a constructor
+    argument of its own."""
+    schedule = ByAge.until(stop_age_exclusive=62, law="work", then="retire")
+    assert dict(schedule.resolve(ANNUAL).law_by_period) == {0: "work", 1: "retire"}
+
+
+def test_with_mapped_laws_calls_func_once_per_law() -> None:
+    """Mapping the laws evaluates `func` exactly once for each declared law."""
+    calls: list[object] = []
+
+    def rename(law: object) -> object:
+        calls.append(law)
+        return f"{law}_x"
+
+    ByAge(cases={61: "a", 62: "b"}, default="c").with_mapped_laws(func=rename)
+    assert calls == ["a", "b", "c"]
+
+
+def test_with_mapped_laws_returns_self_when_no_law_changes() -> None:
+    """An identity mapping keeps the schedule object itself."""
+    schedule = ByAge(cases={61: "a"})
+    assert schedule.with_mapped_laws(func=lambda law: law) is schedule
+
+
+@pytest.mark.parametrize(
+    ("grid", "age", "expected"),
+    [(ANNUAL, 61.0, "a"), (QUARTERLY, 61.25, "a"), (QUARTERLY, Fraction(5, 4), None)],
+)
+def test_resolved_schedule_at_matches_exact_ages(
+    *, grid: AgeGrid, age: Any, expected: str | None
+) -> None:
+    """`at` finds a law at an age equal to a grid age and raises for any other."""
+    schedule = ByAge(cases={AgeRange(start=61, stop=62): "a"}).resolve(grid)
+    if expected is None:
+        with pytest.raises(KeyError):
+            schedule.at(age)
+    else:
+        assert schedule.at(age) == expected

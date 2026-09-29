@@ -45,7 +45,6 @@ from _lcm.regime_building.processing import (
     Regime,
     process_regimes,
 )
-from _lcm.regime_building.schedules import resolve_regime_schedules
 from _lcm.simulation.policy_programs import declare_finite_replay_programs
 from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
@@ -215,9 +214,9 @@ def validate_model_inputs(  # noqa: C901
     n_periods: int,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_id_class: type,
-    broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
-    ages: AgeGrid | None = None,
-    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    broadcast_variables: Mapping[RegimeName, frozenset[str]],
+    ages: AgeGrid,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> None:
     """Validate model constructor inputs.
 
@@ -338,8 +337,8 @@ def validate_model_inputs(  # noqa: C901
 def _representative_for_validation(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
-    ages: AgeGrid | None,
-    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    ages: AgeGrid,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> Mapping[RegimeName, UserRegime]:
     """Resolve age markers to their representatives, for solver-contract validation.
 
@@ -349,29 +348,16 @@ def _representative_for_validation(
     input to age-invariant validation.
 
     Returns the input unchanged when no regime carries a marker, so an age-invariant
-    model neither pays for the walk nor changes behaviour, and when `ages` is absent,
-    since age specialization cannot be resolved without it.
+    model neither pays for the walk nor changes behaviour.
     """
-    if ages is None or not any(
-        _regime_has_markers(regime) for regime in user_regimes.values()
-    ):
+    if not any(_regime_has_markers(regime) for regime in user_regimes.values()):
         return user_regimes
     phased_specs = normalize_all_regime_phases(user_regimes=user_regimes)
     return normalize_age_specialization(
         user_regimes=user_regimes,
         phased_specs=phased_specs,
         ages=ages,
-        active_periods_by_regime=(
-            resolve_regime_schedules(
-                user_regimes=user_regimes,
-                ages=ages,
-                regime_names_to_ids={
-                    name: code for code, name in enumerate(user_regimes)
-                },
-            ).coverage_by_regime
-            if active_periods_by_regime is None
-            else active_periods_by_regime
-        ),
+        active_periods_by_regime=active_periods_by_regime,
     ).representative_user_regimes
 
 
@@ -402,9 +388,9 @@ def _model_wide_conditioning_names(
 def _validate_all_variables_used(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
-    broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
-    ages: AgeGrid | None = None,
-    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    broadcast_variables: Mapping[RegimeName, frozenset[str]],
+    ages: AgeGrid,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -444,8 +430,7 @@ def _validate_all_variables_used(
 
     for regime_name, user_regime in user_regimes.items():
         variable_names = set(user_regime.states) | set(user_regime.actions)
-        if broadcast_variables is not None:
-            variable_names -= broadcast_variables.get(regime_name, frozenset())
+        variable_names -= broadcast_variables.get(regime_name, frozenset())
         user_functions = dict(user_regime.get_all_functions(phase="solve"))
         # `root_functions` is the single definition of what a root computation
         # is, shared with the broadcast pruning walk so the two cannot disagree
@@ -473,36 +458,31 @@ def _validate_all_variables_used(
             if solve_roots.get(key) is not func
         }
         user_functions |= roots
-        if ages is not None:
-            active_periods = (
-                ()
-                if active_periods_by_regime is None
-                else active_periods_by_regime.get(regime_name, ())
+        active_periods = active_periods_by_regime.get(regime_name, ())
+        if not active_periods and _regime_has_markers(user_regime):
+            # Without coverage the markers cannot be resolved, and
+            # `get_ancestors` would see only `AgeSpecializedFunction.__call__`'s
+            # generic `(*args, **kwargs)` signature, misreporting a variable
+            # used only through a marker as unused — so skip this regime's
+            # variable-usage check.
+            continue
+        if active_periods:
+            # Resolve any `AgeSpecializedFunction` marker to its concrete
+            # function at a representative active age so `get_ancestors` sees
+            # the real argument dependencies. The dependency structure is
+            # age-invariant, so any active age serves; a stateful factory
+            # could in principle be validated as one object and installed as
+            # another (see the `_AgeSpecialized` docstring), so this relies on
+            # `build` being pure — its result is not cached or reused
+            # elsewhere.
+            representative_age = float(ages.period_to_age(active_periods[0]))
+            user_functions = cast(
+                "dict[str, Callable[..., object]]",
+                {
+                    name: resolve_node(node=func, age=representative_age)
+                    for name, func in user_functions.items()
+                },
             )
-            if not active_periods and _regime_has_markers(user_regime):
-                # Without coverage the markers cannot be resolved, and
-                # `get_ancestors` would see only `AgeSpecializedFunction.__call__`'s
-                # generic `(*args, **kwargs)` signature, misreporting a variable
-                # used only through a marker as unused — so skip this regime's
-                # variable-usage check.
-                continue
-            if active_periods:
-                # Resolve any `AgeSpecializedFunction` marker to its concrete
-                # function at a representative active age so `get_ancestors` sees
-                # the real argument dependencies. The dependency structure is
-                # age-invariant, so any active age serves; a stateful factory
-                # could in principle be validated as one object and installed as
-                # another (see the `_AgeSpecialized` docstring), so this relies on
-                # `build` being pure — its result is not cached or reused
-                # elsewhere.
-                representative_age = float(ages.period_to_age(active_periods[0]))
-                user_functions = cast(
-                    "dict[str, Callable[..., object]]",
-                    {
-                        name: resolve_node(node=func, age=representative_age)
-                        for name, func in user_functions.items()
-                    },
-                )
 
         targets = [
             *roots,
@@ -611,8 +591,8 @@ def _is_solve_proved_post_decision_lower_bound(
 def _validate_constraint_phase_invariance(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
-    ages: AgeGrid | None = None,
-    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    ages: AgeGrid,
+    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> list[str]:
     """Reject a constraint whose dependency ancestry contains a phase-varying node.
 
@@ -639,8 +619,7 @@ def _validate_constraint_phase_invariance(
 
     Args:
         user_regimes: Mapping of finalized regime names to `Regime` instances.
-        ages: The model's age grid, or `None` when no age-specialized function
-            needs resolving before the ancestry is walked.
+        ages: The model's age grid.
         active_periods_by_regime: Immutable mapping of regime names to their
             active periods, as resolved from the declarations.
 
@@ -684,24 +663,19 @@ def _validate_constraint_phase_invariance(
         # phase-varying helper reached below it would escape this check. The
         # dependency structure is age-invariant, so any active age serves.
         ancestry_funcs = solve_funcs
-        if ages is not None:
-            # Read the PREPARED coverage rather than recomputing it: the
-            # schedules resolved once at model construction are the single
-            # canonical source.
-            active_periods = (
-                ()
-                if active_periods_by_regime is None
-                else active_periods_by_regime.get(regime_name, ())
+        # Read the prepared coverage rather than recomputing it: the schedules
+        # resolved once at model construction are the single canonical source.
+        active_periods = active_periods_by_regime.get(regime_name, ())
+        if active_periods:
+            representative_age = float(ages.period_to_age(active_periods[0]))
+            ancestry_funcs = cast(
+                "dict[str, Callable[..., object]]",
+                {
+                    name: resolve_node(node=func, age=representative_age)
+                    for name, func in solve_funcs.items()
+                },
             )
-            if active_periods:
-                representative_age = float(ages.period_to_age(active_periods[0]))
-                ancestry_funcs = cast(
-                    "dict[str, Callable[..., object]]",
-                    {
-                        name: resolve_node(node=func, age=representative_age)
-                        for name, func in solve_funcs.items()
-                    },
-                )
+
         for constraint_name in user_regime.decomposed_constraints:
             ancestors = get_ancestors(
                 ancestry_funcs, targets=[constraint_name], include_targets=False

@@ -617,10 +617,11 @@ class Model:
         self._gather_checks: GatherChecks = {}
 
         # The declared starts, then each regime's available laws and support,
-        # read once from the raw `regime_transitions` and lowered to the
-        # engine's period-independent vocabulary. The single canonical coverage
-        # schedule threaded through pruning, validation and model-structure
-        # preparation is the solve demand of the starts, resolved below.
+        # read once from the raw `regime_transitions`. The single canonical
+        # coverage schedule threaded through pruning, validation and
+        # model-structure preparation is the solve demand of the starts,
+        # resolved below; only the laws it selects are lowered to the engine's
+        # period-independent vocabulary.
         initial_nodes = resolve_initial_nodes(
             initial_regimes=initial_regimes, regime_names=tuple(regimes), ages=ages
         )
@@ -628,17 +629,9 @@ class Model:
             name: int(code)
             for name, code in get_field_names_and_values(regime_id_class).items()
         }
-        schedules = resolve_regime_schedules(
-            user_regimes=regimes,
-            ages=ages,
-            regime_names_to_ids=regime_names_to_ids,
-        )
+        schedules = resolve_regime_schedules(user_regimes=regimes, ages=ages)
         declared_transitions = {
             name: regime.regime_transitions for name, regime in regimes.items()
-        }
-        regimes = {
-            name: regime.replace(regime_transitions=schedules.transitions[name])
-            for name, regime in regimes.items()
         }
 
         model_slots = {
@@ -672,7 +665,9 @@ class Model:
         # Lowering reads only the demanded periods, so a case no required
         # problem selects contributes no argument, parameter or kernel.
         demanded_transitions = lower_demanded_transitions(
-            schedules=schedules, code_by_name=regime_names_to_ids
+            schedules=schedules,
+            declared_transitions=declared_transitions,
+            code_by_name=regime_names_to_ids,
         )
         merged_regimes = {
             name: regime.replace(regime_transitions=demanded_transitions[name])
@@ -751,16 +746,13 @@ class Model:
             ages=self.ages,
             active_periods_by_regime=active_periods_by_regime,
             support_by_phase=schedules.support_by_phase,
-            visited_periods_by_regime={
-                name: tuple(sorted(p for p, n in schedules.visited_nodes if n == name))
-                for name in active_periods_by_regime
-            },
+            visited_periods_by_regime=schedules.visited_periods_by_regime,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
             nodes=frozenset(
                 (self.ages.exact_values[period], name)
-                for period, name in schedules.nodes
+                for period, name in schedules.valued_nodes
             ),
             visited_nodes=frozenset(
                 (self.ages.exact_values[period], name)

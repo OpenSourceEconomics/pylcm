@@ -8,6 +8,7 @@ model build.
 
 """
 
+import copy
 import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -447,21 +448,6 @@ class Regime:
         """Whether this is a terminal regime: `regime_transitions is None`."""
         return self.regime_transitions is None
 
-    @property
-    def stochastic_regime_transition(self) -> bool:
-        """Whether the regime transition is stochastic.
-
-        A `MarkovTransition` and a per-target dict are both stochastic.
-        `Phased` variants must have matching forms, so the solve variant is
-        representative.
-        """
-        transition = (
-            self.regime_transitions.solve
-            if isinstance(self.regime_transitions, Phased)
-            else self.regime_transitions
-        )
-        return isinstance(transition, MarkovTransition | Mapping)
-
     def _make_field_immutable(self, *, name: str) -> None:
         """Replace the named mapping field with its immutable form."""
         value = ensure_containers_are_immutable(getattr(self, name))
@@ -472,13 +458,20 @@ class Regime:
         if not uses_declaration_vocabulary(transition):
             self._post_init_engine_view()
             return
-        # Validate the declaration through its period-independent engine
-        # view, then keep the declaration itself for the model to resolve.
-        object.__setattr__(self, "regime_transitions", declaration_view(transition))
-        try:
-            self._post_init_engine_view()
-        finally:
-            object.__setattr__(self, "regime_transitions", transition)
+        # Validate a copy that holds the declaration's period-independent
+        # engine view, then take over every field it derived except the
+        # transition: this regime keeps the declaration for the model to resolve.
+        view = copy.copy(self)
+        object.__setattr__(view, "regime_transitions", declaration_view(transition))
+        view._post_init_engine_view()  # noqa: SLF001
+
+        vars(self).update(
+            {
+                name: value
+                for name, value in vars(view).items()
+                if name != "regime_transitions"
+            }
+        )
 
     def _post_init_engine_view(self) -> None:
         self._lower_value_dependent_declarations()
