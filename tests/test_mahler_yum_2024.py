@@ -251,6 +251,46 @@ def mahler_gpu_model(*, request: pytest.FixtureRequest) -> Model:
     )
 
 
+# Sum of the solved value function over all state nodes, by (period, regime).
+# Computed on CPU at float64 under jax 0.11.1 (Marvin jobs 27963541 and
+# 27963372), where every value array the pull request's base commit and its head
+# both solve agrees bit for bit.
+_EXPECTED_V_SUMS = {
+    (0, "working"): 265404544.8688668,
+    (10, "working"): 211638140.41507253,
+    (19, "working"): 143963708.5204066,
+    (20, "retirement"): 13507992.7483361,
+    (30, "retirement"): 6106725.67137574,
+    (37, "retirement"): 1869762.1062872498,
+}
+
+
+@pytest.fixture(scope="module")
+def value_function_sums(*, mahler_gpu_model: Model) -> dict[tuple[int, str], float]:
+    """Solve once with START_PARAMS and sum each checked value array."""
+    model_params, _ = create_inputs(
+        seed=32, n_simulation_subjects=4, params=START_PARAMS
+    )
+    values = mahler_gpu_model.solve(params=model_params, log_level="off").values
+    return {
+        (period, regime): float(np.sum(np.asarray(values[period][regime])))
+        for period, regime in _EXPECTED_V_SUMS
+    }
+
+
+@_gpu_x64
+@pytest.mark.parametrize(("period", "regime"), list(_EXPECTED_V_SUMS))
+def test_value_function_sums(
+    *, value_function_sums: dict[tuple[int, str], float], period: int, regime: str
+) -> None:
+    """The solved value function sums to its pinned value in each checked slot."""
+    np.testing.assert_allclose(
+        value_function_sums[(period, regime)],
+        _EXPECTED_V_SUMS[(period, regime)],
+        rtol=1e-9,
+    )
+
+
 @_gpu_x64
 def test_model_solves_and_simulates(*, mahler_gpu_model: Model) -> None:
     """Smoke test: model runs end-to-end with small n."""
