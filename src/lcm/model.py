@@ -2615,8 +2615,10 @@ class Model:
                         inputs=entry_allocations.snapshot(),
                     )
                     selection_memory.check_resident()
-                    self._validate_regime_selection(
+                    validate_regime_selection(
+                        regimes=self._regimes,
                         flat_params=flat_params,
+                        ages=self.ages,
                         process_grid_resolver=process_grid_resolver,
                         memory=selection_memory,
                     )
@@ -3116,23 +3118,17 @@ class Model:
             regime.solution.sharded_state_names for regime in self._regimes.values()
         )
 
-    def _validate_regime_selection(
-        self,
-        *,
-        flat_params: FlatParams,
-        process_grid_resolver: ProcessGridResolver | None = None,
-        memory: SimulationMemory | None = None,
-    ) -> None:
-        """Validate regime selection once per distinct canonical params."""
+    def _validate_regime_selection(self, *, flat_params: FlatParams) -> None:
+        """Validate regime selection once per distinct canonical params.
+
+        Serves only the unadmitted route. Entry admission validates on every
+        call, because its law producers are admitted against that call's memory.
+        """
         digest = fingerprint_flat_params(flat_params)
         if digest in self._validated_selection_params:
             return
         validate_regime_selection(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-            process_grid_resolver=process_grid_resolver,
-            memory=memory,
+            regimes=self._regimes, flat_params=flat_params, ages=self.ages
         )
         self._validated_selection_params.add(digest)
 
