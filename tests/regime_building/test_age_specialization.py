@@ -122,7 +122,7 @@ def test_tree_signature_wrappers_share_recursive_semantics():
 
 
 def test_age_specialized_regime_transition_is_rejected(binary_category_class):
-    """A policy-specialized regime `transition` is rejected for v1."""
+    """An age-specialized `regime_transitions` is rejected."""
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
@@ -134,7 +134,10 @@ def test_age_specialized_regime_transition_is_rejected(binary_category_class):
         functions={"utility": lambda a, b: None},  # noqa: ARG005
     )
 
-    with pytest.raises(RegimeInitializationError):
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"`regime_transitions` cannot be an `AgeSpecializedFunction`",
+    ):
         _validate_logical_consistency(regime)
 
 

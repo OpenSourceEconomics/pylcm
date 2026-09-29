@@ -824,7 +824,7 @@ def _simulate_subject_chunk(
                     age,
                 ),
             )
-            result, new_states, new_subject_regime_ids, new_own_stakeholder, _ = (
+            result, new_states, new_subject_regime_ids, new_own_stakeholder = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
                     regime=dispatched_regime,
@@ -1395,7 +1395,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0915
     replay_reader: PreparedReplayReader | ReplayReader | None = None,
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
-) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
+) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -1458,7 +1458,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0915
         - Updated state carrier
         - Updated new_subject_regime_ids array
         - Updated new_own_stakeholder array
-        - Updated JAX random key
 
     """
     # Select subjects in the current regime
@@ -1816,7 +1815,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0915
         states,
         new_subject_regime_ids,
         new_own_stakeholder,
-        key,
     )
 
 

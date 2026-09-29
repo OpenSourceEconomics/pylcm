@@ -533,9 +533,7 @@ def _closure_arguments() -> dict[str, Any]:
         "all_regime_names": frozenset(merged_regimes),
         "ages": _CHAIN_AGES,
         "active_periods_by_regime": resolve_regime_schedules(
-            user_regimes=regimes,
-            ages=_CHAIN_AGES,
-            regime_names_to_ids={name: code for code, name in enumerate(regimes)},
+            user_regimes=regimes, ages=_CHAIN_AGES
         ).coverage_by_regime,
     }
 

@@ -80,6 +80,7 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.regime_building.schedules import (
+    gated_source_periods,
     lower_demanded_transitions,
     resolve_demand,
     resolve_initial_nodes,
@@ -617,10 +618,11 @@ class Model:
         self._gather_checks: GatherChecks = {}
 
         # The declared starts, then each regime's available laws and support,
-        # read once from the raw `regime_transitions` and lowered to the
-        # engine's period-independent vocabulary. The single canonical coverage
-        # schedule threaded through pruning, validation and model-structure
-        # preparation is the solve demand of the starts, resolved below.
+        # read once from the raw `regime_transitions`. The single canonical
+        # coverage schedule threaded through pruning, validation and
+        # model-structure preparation is the solve demand of the starts,
+        # resolved below; only the laws it selects are lowered to the engine's
+        # period-independent vocabulary.
         initial_nodes = resolve_initial_nodes(
             initial_regimes=initial_regimes, regime_names=tuple(regimes), ages=ages
         )
@@ -628,17 +630,9 @@ class Model:
             name: int(code)
             for name, code in get_field_names_and_values(regime_id_class).items()
         }
-        schedules = resolve_regime_schedules(
-            user_regimes=regimes,
-            ages=ages,
-            regime_names_to_ids=regime_names_to_ids,
-        )
+        schedules = resolve_regime_schedules(user_regimes=regimes, ages=ages)
         declared_transitions = {
             name: regime.regime_transitions for name, regime in regimes.items()
-        }
-        regimes = {
-            name: regime.replace(regime_transitions=schedules.transitions[name])
-            for name, regime in regimes.items()
         }
 
         model_slots = {
@@ -672,7 +666,9 @@ class Model:
         # Lowering reads only the demanded periods, so a case no required
         # problem selects contributes no argument, parameter or kernel.
         demanded_transitions = lower_demanded_transitions(
-            schedules=schedules, code_by_name=regime_names_to_ids
+            schedules=schedules,
+            declared_transitions=declared_transitions,
+            code_by_name=regime_names_to_ids,
         )
         merged_regimes = {
             name: regime.replace(regime_transitions=demanded_transitions[name])
@@ -751,16 +747,14 @@ class Model:
             ages=self.ages,
             active_periods_by_regime=active_periods_by_regime,
             support_by_phase=schedules.support_by_phase,
-            visited_periods_by_regime={
-                name: tuple(sorted(p for p, n in schedules.visited_nodes if n == name))
-                for name in active_periods_by_regime
-            },
+            gated_source_periods=gated_source_periods(schedules=schedules),
+            visited_periods_by_regime=schedules.visited_periods_by_regime,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
             nodes=frozenset(
                 (self.ages.exact_values[period], name)
-                for period, name in schedules.nodes
+                for period, name in schedules.valued_nodes
             ),
             visited_nodes=frozenset(
                 (self.ages.exact_values[period], name)
@@ -2541,6 +2535,9 @@ class Model:
         with solve_phase(name="public_simulate", logger=log, call_id=call_id):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
                 self._fail_if_simulation_is_unsupported()
+                self._fail_if_declared_entry_is_not_permitted(
+                    initial_conditions=initial_conditions
+                )
                 entry_inputs = capture_simulation_entry_inputs(
                     execution=self._execution,
                     params=params,
@@ -2971,6 +2968,9 @@ class Model:
     ) -> tuple[InitialConditions, FlatParams]:
         """Canonicalize public feasibility inputs without allocation accounting."""
         self._sealed_bindings.fail_if_moved()
+        self._fail_if_declared_entry_is_not_permitted(
+            initial_conditions=initial_conditions
+        )
         flat_params = self._process_params(params)
         initial_conditions = split_initial_conditions(
             initial_conditions=initial_conditions,
@@ -2990,8 +2990,48 @@ class Model:
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         return canonical, flat_params
 
+    def _fail_if_declared_entry_is_not_permitted(
+        self, *, initial_conditions: UserInitialConditions | pd.DataFrame
+    ) -> None:
+        """Reject declared starts outside `initial_nodes` before anything else runs.
+
+        Reads only the `age` and regime columns as the caller supplied them —
+        `regime_id` codes in a mapping, `regime_name` labels in a frame — so
+        admission precedes parameter processing, every user law and padding.
+        Rows this cannot read are admitted again from the canonical inputs.
+        """
+        if isinstance(initial_conditions, pd.DataFrame):
+            if not {"age", "regime_name"} <= set(initial_conditions.columns):
+                return
+            names = initial_conditions["regime_name"].to_numpy()
+            known = np.isin(names, list(self.regime_names_to_ids))
+            self._fail_if_start_pairs_are_not_permitted(
+                codes=np.asarray(
+                    [self.regime_names_to_ids[name] for name in names[known]],
+                    dtype=np.int64,
+                ),
+                ages=initial_conditions["age"].to_numpy()[known],
+            )
+        else:
+            self._fail_if_start_pairs_are_not_permitted(
+                codes=initial_conditions.get("regime_id"),
+                ages=initial_conditions.get("age"),
+            )
+
     def _fail_if_entry_is_not_permitted(
         self, *, initial_conditions: InitialConditions
+    ) -> None:
+        """Reject canonical starts outside `initial_nodes`."""
+        self._fail_if_start_pairs_are_not_permitted(
+            codes=initial_conditions.get("regime_id"),
+            ages=initial_conditions.get("age"),
+        )
+
+    def _fail_if_start_pairs_are_not_permitted(
+        self,
+        *,
+        codes: jax.Array | np.ndarray | None,
+        ages: jax.Array | np.ndarray | None,
     ) -> None:
         """Reject subjects starting at any pair outside `initial_nodes`.
 
@@ -3001,9 +3041,11 @@ class Model:
         terms, as are a missing `age` or `regime_id` column and columns of
         unequal length.
         """
-        codes = initial_conditions.get("regime_id")
-        ages = initial_conditions.get("age")
-        if codes is None or ages is None or np.size(codes) != np.size(ages):
+        if codes is None or ages is None:
+            return
+        code_values = np.ravel(np.asarray(codes))
+        age_values = np.ravel(np.asarray(ages, dtype=np.float64))
+        if code_values.size != age_values.size:
             return
         ids_to_names = {
             int(code): name for name, code in self.regime_names_to_ids.items()
@@ -3011,11 +3053,7 @@ class Model:
         age_by_float = {float(age): age for age in self.ages.exact_values}
         pairs = {
             (age_by_float[age], ids_to_names[code])
-            for code, age in zip(
-                np.asarray(codes).tolist(),
-                np.asarray(ages, dtype=np.float64).tolist(),
-                strict=True,
-            )
+            for code, age in zip(code_values.tolist(), age_values.tolist(), strict=True)
             if code in ids_to_names and age in age_by_float
         }
         refused = sorted(pairs - self.initial_nodes, key=repr)
@@ -3117,8 +3155,9 @@ class Model:
             validate_regime_selection(
                 regimes=self._regimes, flat_params=flat_params, ages=self.ages
             )
-        if array_writer is not None:
+        else:
             array_writer.publish(stage="params", tree=flat_params)
+
         return flat_params
 
 

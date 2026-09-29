@@ -9,6 +9,7 @@ all import it without an import cycle.
 
 """
 
+import dataclasses
 import math
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -61,18 +62,21 @@ class MarkovTransition:
         # Stochastic state transition (in Regime.state_transitions)
         state_transitions={"health": MarkovTransition(func=health_probs)}
 
-        # Stochastic regime transition
-        Regime(transition=MarkovTransition(func=regime_probs), ...)
+        # Stochastic regime transition over the full regime-ID vector
+        Regime(
+            regime_transitions=MarkovTransition(
+                func=regime_probs, targets=("work", "retired")
+            ),
+            ...,
+        )
 
-    A bare callable (without the wrapper) is deterministic at both levels.
+    A bare callable (without the wrapper) is a deterministic state law.
 
-    At the regime level, a bare callable or a bare `MarkovTransition` (as
-    opposed to a per-target dict) declares conservative support over every
-    regime active in the next period: every temporally compatible candidate
-    must have a valid state handoff, and the check runs regardless of what
-    probability the transition function happens to return at runtime. Use a
-    per-target dict on `Regime.regime_transitions` to declare narrower, structural
-    support — a runtime-zero probability does not narrow it.
+    At the regime level, `targets` is required and names the support: every
+    named target needs a valid state handoff, and every other entry of the
+    returned vector must be exactly zero. A runtime-zero probability for a
+    named target does not narrow the support. A per-target mapping on
+    `Regime.regime_transitions` declares its support by its keys instead.
 
     """
 
@@ -127,7 +131,10 @@ class Choose:
     deterministic transition returns — and `targets` names every regime it may
     select. It is evaluated on the deterministic route and adds no random draw.
 
-        Regime(transition=Choose(func=next_regime, targets=("work", "retired")), ...)
+        Regime(
+            regime_transitions=Choose(func=next_regime, targets=("work", "retired")),
+            ...,
+        )
 
     Returning a code outside `targets` is an error; a target that is never
     selected at runtime remains a declared edge.
@@ -491,19 +498,25 @@ class ByAge:
         *,
         cases: Mapping[AgeSelector, object],
         default: object = _MISSING,
-        _until: tuple[object, object, object, object] | None = None,
     ) -> None:
-        if not cases and default is _MISSING and _until is None:
+        if not cases and default is _MISSING:
             raise RegimeInitializationError("`ByAge` needs at least one case.")
         for law in (*cases.values(), *(() if default is _MISSING else (default,))):
             _fail_if_not_a_nonterminal_law(law)
-        self._cases: tuple[tuple[object, object], ...] = tuple(
-            (_freeze_selector(selector), law) for selector, law in cases.items()
-        )
-        # Stored as `None` rather than the signature sentinel: a schedule's state
-        # stays plain data that fingerprints and compares by value.
+        for selector in cases:
+            _fail_if_invalid_age_selector(selector)
+        self._cases: tuple[tuple[object, object], ...] = tuple(cases.items())
+        # Stored as `None` rather than the signature sentinel, so the model
+        # fingerprint sees plain data.
         self._default = None if default is _MISSING else default
-        self._until = _until
+        self._until: _Until | None = None
+
+    @classmethod
+    def _from_until(cls, *, until: _Until) -> ByAge:
+        """A schedule that resolves through `until` instead of cases."""
+        schedule = cls.__new__(cls)
+        vars(schedule).update(_cases=(), _default=None, _until=until)
+        return schedule
 
     @classmethod
     def until(
@@ -526,8 +539,13 @@ class ByAge:
         """
         _fail_if_not_a_nonterminal_law(law)
         _fail_if_not_a_nonterminal_law(then)
-        return cls(
-            cases={}, _until=(stop_age_exclusive, law, then, start_age_inclusive)
+        return cls._from_until(
+            until=_Until(
+                stop_age_exclusive=stop_age_exclusive,
+                law=law,
+                then=then,
+                start_age_inclusive=start_age_inclusive,
+            )
         )
 
     def with_mapped_laws(self, *, func: Callable[[object], object]) -> ByAge:
@@ -536,24 +554,30 @@ class ByAge:
         The selectors are kept. Returns `self` when `func` leaves every law
         unchanged, so identity comparisons of declarations stay meaningful.
         """
-        if all(func(law) is law for law in self.laws):
+        mapped = tuple(func(law) for law in self.laws)
+        if all(new is old for new, old in zip(mapped, self.laws, strict=True)):
             return self
         if self._until is not None:
-            stop, law, then, start = self._until
-            return ByAge(cases={}, _until=(stop, func(law), func(then), start))
+            law, then = mapped
+            return ByAge._from_until(
+                until=dataclasses.replace(self._until, law=law, then=then)
+            )
         cases = cast(
             "Mapping[AgeSelector, object]",
-            {selector: func(law) for selector, law in self._cases},
+            {
+                selector: law
+                for (selector, _), law in zip(self._cases, mapped, strict=False)
+            },
         )
         if self._default is None:
             return ByAge(cases=cases)
-        return ByAge(cases=cases, default=func(self._default))
+        return ByAge(cases=cases, default=mapped[-1])
 
     @property
     def laws(self) -> tuple[object, ...]:
         """Every law the schedule may select, in declaration order."""
         if self._until is not None:
-            return (self._until[1], self._until[2])
+            return (self._until.law, self._until.then)
         return (
             *(law for _, law in self._cases),
             *(() if self._default is None else (self._default,)),
@@ -615,11 +639,30 @@ class ResolvedSchedule:
         return tuple(self.law_by_period)
 
     def at(self, age: UserAge | float) -> object:
-        """Return the law selected at `age`; raise `KeyError` if it is uncovered."""
-        for period, exact in enumerate(self.ages.exact_values):
-            if exact == age and period in self.law_by_period:
-                return self.law_by_period[period]
-        raise KeyError(age)
+        """Return the law selected at `age`; raise `KeyError` if it is uncovered.
+
+        `age` must equal a grid age exactly, as a selector does; a float that
+        only approximates a grid age is uncovered.
+        """
+        period = {exact: p for p, exact in enumerate(self.ages.exact_values)}.get(age)
+        if period is None or period not in self.law_by_period:
+            raise KeyError(age)
+
+        return self.law_by_period[period]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Until:
+    """The declaration of a `ByAge.until` schedule."""
+
+    stop_age_exclusive: UserAge | float
+    """The exact source age at and after which no law is supplied."""
+    law: object
+    """The law at the earlier source ages."""
+    then: object
+    """The law at the last source age below the stop."""
+    start_age_inclusive: UserAge | float | None
+    """The first source age with a law, or `None` for the first grid age."""
 
 
 def _declared_targets(*, targets: Sequence[str], owner: str) -> tuple[str, ...]:
@@ -656,8 +699,8 @@ def _fail_if_not_a_nonterminal_law(law: object) -> None:
             )
 
 
-def _freeze_selector(selector: object) -> object:
-    """Freeze a selector and reject values that can never be grid ages."""
+def _fail_if_invalid_age_selector(selector: object) -> None:
+    """Reject selectors whose values can never be grid ages."""
     values = selector if isinstance(selector, tuple | range) else (selector,)
     if isinstance(selector, AgeRange):
         values = tuple(v for v in (selector.start, selector.stop) if v is not None)
@@ -679,7 +722,6 @@ def _freeze_selector(selector: object) -> object:
         raise RegimeInitializationError(
             f"`AgeRange` start {selector.start} must be below stop {selector.stop}."
         )
-    return selector
 
 
 def _select_periods(
@@ -707,12 +749,12 @@ def _select_periods(
 
 def _resolve_until(
     *,
-    until: tuple[object, object, object, object],
+    until: _Until,
     ages: AgeGrid,
     period_by_age: Mapping[object, int],
 ) -> dict[int, object]:
     """Resolve `ByAge.until` into per-period laws."""
-    boundary, law, then, start = until
+    boundary, start = until.stop_age_exclusive, until.start_age_inclusive
     for name, value in (
         ("stop_age_exclusive", boundary),
         ("start_age_inclusive", start),
@@ -734,4 +776,4 @@ def _resolve_until(
             f"`ByAge.until` start_age_inclusive {start} is not before "
             f"stop_age_exclusive {boundary}."
         )
-    return dict.fromkeys(range(first, stop - 1), law) | {stop - 1: then}
+    return dict.fromkeys(range(first, stop - 1), until.law) | {stop - 1: until.then}

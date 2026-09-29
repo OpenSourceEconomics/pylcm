@@ -11,6 +11,7 @@ from typing import Any
 import cloudpickle
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import (
@@ -319,4 +320,139 @@ def test_identical_models_share_the_durable_identity() -> None:
     """The control: two builds of the same model agree on the digest."""
     assert _durable_digest(model=_law_model(law=_laws(die=_die)), params=_PARAMS) == (
         _durable_digest(model=_law_model(law=_laws(die=_die)), params=_PARAMS)
+    )
+
+
+@pytest.mark.parametrize("initial_frame", [False, True], ids=["mapping", "frame"])
+@pytest.mark.parametrize("log_level", ["off", "warning"])
+def test_refused_start_raises_before_any_regime_law_is_evaluated(
+    *, log_level: str, initial_frame: bool
+) -> None:
+    """Admission runs first: a refused start never reaches a user regime law."""
+    calls: list[None] = []
+
+    def counting_stay() -> FloatND:
+        calls.append(None)
+        return jnp.asarray(0.5)
+
+    model = Model(
+        regimes={
+            "island": _island(),
+            "working": Regime(
+                regime_transitions=ByAge.until(
+                    stop_age_exclusive=75,
+                    law={
+                        "working": MarkovTransition(func=counting_stay),
+                        "dead": MarkovTransition(func=_die),
+                    },
+                    then="dead",
+                ),
+                states={"wealth": _WEALTH},
+                state_transitions={"wealth": fixed_transition("wealth")},
+                functions={"utility": _utility},
+            ),
+            "dead": Regime(
+                regime_transitions=None,
+                states={"wealth": _WEALTH},
+                functions={"utility": _utility},
+            ),
+        },
+        ages=_AGES,
+        regime_id_class=_Life,
+        initial_regimes={25: "working"},
+    )
+    initial_conditions: Any = {
+        "wealth": np.zeros(2),
+        "age": np.full(2, 35.0),
+        "regime_id": np.full(2, model.regime_names_to_ids["working"]),
+    }
+    if initial_frame:
+        initial_conditions = pd.DataFrame(
+            {"wealth": [0.0, 0.0], "age": [35.0, 35.0], "regime_name": ["working"] * 2}
+        )
+    with pytest.raises(InvalidInitialConditionsError, match=r"\(35, 'working'\)"):
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions=initial_conditions,
+            log_level=log_level,  # ty: ignore[invalid-argument-type]
+            seed=0,
+        )
+    assert calls == []
+
+
+def _stay_with_wealth(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _die_with_wealth(wealth: ContinuousState) -> FloatND:
+    return 1 - wealth
+
+
+def _drift(wealth: ContinuousState) -> ContinuousState:
+    return wealth + 0.75
+
+
+def _drifting_model() -> Model:
+    """Valid regime-law rows on the wealth grid [0, 1]; simulated wealth leaves it."""
+    return Model(
+        regimes={
+            "island": _island(),
+            "working": Regime(
+                regime_transitions=ByAge.until(
+                    stop_age_exclusive=75,
+                    law={
+                        "working": MarkovTransition(func=_stay_with_wealth),
+                        "dead": MarkovTransition(func=_die_with_wealth),
+                    },
+                    then="dead",
+                ),
+                states={"wealth": _WEALTH},
+                state_transitions={"wealth": _drift},
+                functions={"utility": _utility},
+            ),
+            "dead": Regime(
+                regime_transitions=None,
+                states={"wealth": _WEALTH},
+                functions={"utility": _utility},
+            ),
+        },
+        ages=_AGES,
+        regime_id_class=_Life,
+        initial_regimes={25: "working"},
+    )
+
+
+@pytest.mark.parametrize("log_level", ["off", "warning"])
+def test_simulate_refuses_an_invalid_law_row_off_the_grid(*, log_level: str) -> None:
+    """A realized row outside every grid row with mass outside [0, 1] raises."""
+    model = _drifting_model()
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match="outside \\[0, 1\\]"
+    ):
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions={
+                "wealth": jnp.full(_N_SUBJECTS, 0.5),
+                "age": jnp.full(_N_SUBJECTS, 25.0),
+                "regime_id": jnp.full(
+                    _N_SUBJECTS, model.regime_names_to_ids["working"]
+                ),
+            },
+            log_level=log_level,  # ty: ignore[invalid-argument-type]
+            seed=0,
+        )
+
+
+def test_simulate_accepts_valid_law_rows_off_the_grid() -> None:
+    """The control: the same model starting where every row stays valid."""
+    model = _drifting_model()
+    model.simulate(
+        params=_PARAMS,
+        initial_conditions={
+            "wealth": jnp.full(2, 0.0),
+            "age": jnp.full(2, 25.0),
+            "regime_id": jnp.full(2, model.regime_names_to_ids["working"]),
+        },
+        log_level="off",
+        seed=0,
     )

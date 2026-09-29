@@ -22,6 +22,7 @@ from _lcm.simulation.program_arguments import transition_arguments
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.simulation.runtime import execute_simulation_program
 from _lcm.state_action_space import _validate_all_states_present
+from _lcm.transition_checks import validate_realized_regime_transition_probs
 from _lcm.typing import (
     ActionName,
     FlatRegimeParams,
@@ -275,6 +276,18 @@ def calculate_next_regime_membership(
                 params=regime_params,
             ),
         ),
+    )
+    # The realized rows are checked on the law's full output, before the
+    # projection below could hide mass outside the targets and before the draw,
+    # regardless of the log level.
+    validate_realized_regime_transition_probs(
+        regime_transition_probs=regime_transition_probs,
+        rows=subjects_in_regime,
+        active_regimes_next_period=active_regimes_next_period,
+        regime_name=regime.name,
+        age=age,
+        period=period,
+        memory=memory,
     )
     # A per-target regime transition's probs dict covers only its declared
     # targets — anything else is structurally unreachable (zero probability).

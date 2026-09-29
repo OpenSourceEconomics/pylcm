@@ -24,7 +24,12 @@ from _lcm.regime_building.processing import (
     PreparedModelStructure,
     prepare_model_structure,
 )
-from _lcm.regime_building.schedules import RegimeSchedules, resolve_regime_schedules
+from _lcm.regime_building.schedules import (
+    RegimeSchedules,
+    gated_source_periods,
+    lower_demanded_transitions,
+    resolve_regime_schedules,
+)
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt
@@ -636,6 +641,7 @@ def build_prepared_structure(
         ages=ages,
         active_periods_by_regime=schedules.coverage_by_regime,
         support_by_phase=schedules.support_by_phase,
+        gated_source_periods=gated_source_periods(schedules=schedules),
     )
 
 
@@ -647,10 +653,16 @@ def lower_declarations(
 
     Regime codes follow the mapping's order.
     """
-    schedules = _resolve_schedules(user_regimes=user_regimes, ages=ages)
+    lowered = lower_demanded_transitions(
+        schedules=_resolve_schedules(user_regimes=user_regimes, ages=ages),
+        declared_transitions={
+            name: regime.regime_transitions for name, regime in user_regimes.items()
+        },
+        code_by_name={name: code for code, name in enumerate(user_regimes)},
+    )
     return MappingProxyType(
         {
-            name: regime.replace(regime_transitions=schedules.transitions[name])
+            name: regime.replace(regime_transitions=lowered[name])
             for name, regime in user_regimes.items()
         }
     )
@@ -659,11 +671,7 @@ def lower_declarations(
 def _resolve_schedules(
     *, user_regimes: Mapping[RegimeName, FinalizedUserRegime], ages: AgeGrid
 ) -> RegimeSchedules:
-    return resolve_regime_schedules(
-        user_regimes=user_regimes,
-        ages=ages,
-        regime_names_to_ids={name: code for code, name in enumerate(user_regimes)},
-    )
+    return resolve_regime_schedules(user_regimes=user_regimes, ages=ages)
 
 
 @pytest.fixture(scope="session")

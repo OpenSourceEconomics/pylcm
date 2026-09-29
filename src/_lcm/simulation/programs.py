@@ -261,8 +261,8 @@ def attach_gated_simulation_programs(
                 continue
             folded_targets = tuple(
                 target
-                for target in regime.gated_edges
-                if period + 1 in regimes[target].active_periods
+                for target, edge in regime.gated_edges.items()
+                if period + 1 in edge.folds_by_period
             )
             if not folded_targets:
                 continue
