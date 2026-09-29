@@ -975,10 +975,10 @@ def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
     )
     regimes_to_active_periods = MappingProxyType(
         {
-            "single_f": (0,),  # source active in period 0
-            "married_terminal": (1,),  # target active in period 1 -> consumed
-            "single_f_terminal": (1,),  # co-active — fine
-            "single_m_terminal": (2,),  # NOT active in consumed period 1
+            "single_f": (0,),  # source solved in period 0
+            "married_terminal": (1,),  # target solved in period 1 -> consumed
+            "single_f_terminal": (1,),  # also solved in period 1
+            "single_m_terminal": (2,),  # not solved in consumed period 1
         }
     )
     with pytest.raises(
@@ -1031,8 +1031,8 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
     ``test_collective_regime_simulate.py::
     test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age``).
     """
-    # Self-loop: source == target == "src", active in periods {0, 1}; the
-    # fallback is active in {1, 2}, i.e. NOT in target-active period 0 — but
+    # Self-loop: source == target == "src", solved in periods {0, 1}; the
+    # fallback is solved in {1, 2}, i.e. not in target-solved period 0 — but
     # period 0's Wbar is unconsumed (no source at period -1), so it is legal.
     edge = _edge_with_refs(
         fallback_regime="src_fallback", gate_ref_regime="src_fallback"
@@ -1043,8 +1043,8 @@ def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
             "src_fallback": (1, 2),
         }
     )
-    # Consumed = {t in {0,1} : t-1 in {0,1}} = {1}; fallback active {1,2} covers
-    # it. No raise, even though the fallback is absent in target-active period 0.
+    # Consumed = {t in {0,1} : t-1 in {0,1}} = {1}; fallback solved {1,2} covers
+    # it. No raise, even though the fallback is absent in target-solved period 0.
     _fail_if_gated_edge_references_inactive(
         prefix="Regime 'src', value-dependent transition into 'src': ",
         source_name="src",

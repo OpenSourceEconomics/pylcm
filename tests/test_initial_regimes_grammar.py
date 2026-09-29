@@ -87,25 +87,41 @@ def test_model_initial_regimes_has_no_default() -> None:
     assert parameter.default is inspect.Parameter.empty
 
 
+_NOT_A_MAPPING = r"parameter initial_regimes=.* violates type hint InitialRegimes"
+
+
 @pytest.mark.parametrize(
-    "initial_regimes",
-    [None, {}, "working", ("working", "retirement"), {25: ()}, {25: "unknown"}],
+    ("initial_regimes", "match"),
+    [
+        (None, _NOT_A_MAPPING),
+        ({}, r"^`initial_regimes` must be a nonempty mapping .*; got \{\}\.$"),
+        ("working", _NOT_A_MAPPING),
+        (("working", "retirement"), _NOT_A_MAPPING),
+        ({25: ()}, r"a nonempty sequence of names; got \(\)\.$"),
+        ({25: "unknown"}, r"names unknown regime\(s\) \['unknown'\]"),
+    ],
     ids=["none", "empty", "bare-name", "bare-sequence", "empty-rule", "unknown"],
 )
-def test_model_rejects_malformed_initial_regimes(initial_regimes: Any) -> None:
+def test_model_rejects_malformed_initial_regimes(
+    *, initial_regimes: Any, match: str
+) -> None:
     """`None`, empty, bare-name and unknown-name roots all fail at construction."""
-    with pytest.raises(ModelInitializationError):
+    with pytest.raises(ModelInitializationError, match=match):
         _model(initial_regimes=initial_regimes)
 
 
 @pytest.mark.parametrize(
-    "initial_regimes",
-    [{61: "working"}, {True: "working"}, {"25": "working"}],
+    ("initial_regimes", "match"),
+    [
+        ({61: "working"}, r"^Age 61 in selector 61 is not an age of the model"),
+        ({True: "working"}, r"^Age selector True must name numeric ages"),
+        ({"25": "working"}, r"^Age selector '25' must name numeric ages"),
+    ],
     ids=["off-grid", "boolean-age", "string-age"],
 )
-def test_model_rejects_malformed_root_ages(initial_regimes: Any) -> None:
+def test_model_rejects_malformed_root_ages(*, initial_regimes: Any, match: str) -> None:
     """Root ages are exact grid coordinates; nothing is rounded onto the clock."""
-    with pytest.raises(ModelInitializationError):
+    with pytest.raises(ModelInitializationError, match=match):
         _model(initial_regimes=initial_regimes)
 
 

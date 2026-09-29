@@ -100,7 +100,7 @@ def _dated_model(**overrides: Regime) -> Model:
     )
 
 
-def _legacy_model() -> Model:
+def _hand_masked_model() -> Model:
     def stay(*, period: Period, health: DiscreteState) -> FloatND:
         return jnp.where(period < 3, _stay(health), 0.0)
 
@@ -142,21 +142,32 @@ def _legacy_model() -> Model:
     )
 
 
-def test_dated_model_values_equal_the_hand_masked_legacy_model() -> None:
-    """A schedule solves to exactly the values of its hand-written masked law.
-
-    The masked law also names death as a zero-mass target of the exit at 55, so
-    only it demands the dead problem at 65.
-    """
+def _solve_dated_and_hand_masked() -> tuple[Any, Any]:
     params = {"discount_factor": 0.95}
     dated = _dated_model().solve(params=params, log_level="off").values
-    legacy = _legacy_model().solve(params=params, log_level="off").values
-    legacy_keys = {(p, r) for p, by_regime in legacy.items() for r in by_regime}
+    masked = _hand_masked_model().solve(params=params, log_level="off").values
+    return dated, masked
+
+
+def test_hand_masked_model_additionally_solves_only_the_dead_problem_at_65() -> None:
+    """The masked law names death as a zero-mass target of the exit at 55.
+
+    Only that zero-mass target demands the dead problem at 65, so it is the one
+    (period, regime) pair the masked model solves beyond the dated model.
+    """
+    dated, masked = _solve_dated_and_hand_masked()
+    masked_keys = {(p, r) for p, by_regime in masked.items() for r in by_regime}
     dated_keys = {(p, r) for p, by_regime in dated.items() for r in by_regime}
-    assert legacy_keys - dated_keys == {(4, "dead")}
-    for period, by_regime in dated.items():
-        for regime, values in by_regime.items():
-            np.testing.assert_array_equal(legacy[period][regime], values)
+    assert masked_keys - dated_keys == {(4, "dead")}
+
+
+def test_dated_model_values_equal_the_hand_masked_model() -> None:
+    """A schedule solves to exactly the values of its hand-written masked law."""
+    dated, masked = _solve_dated_and_hand_masked()
+    np.testing.assert_equal(
+        {(p, r): np.asarray(v) for p, by in dated.items() for r, v in by.items()},
+        {(p, r): np.asarray(masked[p][r]) for p, by in dated.items() for r in by},
+    )
 
 
 def test_dated_model_solves_exactly_the_problems_demanded_from_its_root() -> None:
@@ -187,22 +198,28 @@ def test_dated_model_edges_are_the_declared_support_at_each_period(
 
 
 @pytest.mark.parametrize(
-    "override",
+    ("override", "match"),
     [
-        {"retirement": _regime(regime_transitions=lambda: RegimeId.dead)},
-        {
-            "retirement": _regime(
-                regime_transitions=MarkovTransition(
-                    func=lambda: jnp.array([0.0, 0.0, 1.0])
+        (
+            {"retirement": _regime(regime_transitions=lambda: RegimeId.dead)},
+            r"^Regime 'retirement' declares a bare deterministic transition\.",
+        ),
+        (
+            {
+                "retirement": _regime(
+                    regime_transitions=MarkovTransition(
+                        func=lambda: jnp.array([0.0, 0.0, 1.0])
+                    )
                 )
-            )
-        },
+            },
+            r"^Regime 'retirement' declares a vector `MarkovTransition` without",
+        ),
     ],
     ids=["bare-callable", "targetless-vector"],
 )
-def test_dated_model_rejects_legacy_declarations(override: dict) -> None:
+def test_dated_model_rejects_undeclared_support(*, override: dict, match: str) -> None:
     """A dated model reads coverage and support only from the declarations."""
-    with pytest.raises(ModelInitializationError):
+    with pytest.raises(ModelInitializationError, match=match):
         _dated_model(**override)
 
 
@@ -292,15 +309,26 @@ def test_initial_nodes_are_the_permitted_covered_pairs(
 
 
 @pytest.mark.parametrize(
-    "initial_regimes",
-    [{25: "retirement"}, "unknown", {61: "working"}, {AgeRange(start=80): "dead"}],
+    ("initial_regimes", "match"),
+    [
+        (
+            {25: "retirement"},
+            r"requires 'retirement' at age 25, where 'retirement' supplies no law",
+        ),
+        ({25: "unknown"}, r"names unknown regime\(s\) \['unknown'\]"),
+        ({61: "working"}, r"^Age 61 in selector 61 is not an age of the model"),
+        (
+            {AgeRange(start=80): "dead"},
+            r"selector AgeRange\(start=80, stop=None\) selects no age of the model",
+        ),
+    ],
     ids=["uncovered-pair", "unknown-regime", "off-grid-age", "empty-selector"],
 )
 def test_initial_regimes_rejects_pairs_that_are_not_declared_problems(
-    initial_regimes: Any,
+    *, initial_regimes: Any, match: str
 ) -> None:
     """Entry rules name covered pairs; nothing is filtered away."""
-    with pytest.raises(ModelInitializationError):
+    with pytest.raises(ModelInitializationError, match=match):
         _model_with_entries(initial_regimes)
 
 

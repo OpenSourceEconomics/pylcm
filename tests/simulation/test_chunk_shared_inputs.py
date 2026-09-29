@@ -18,11 +18,19 @@ from tests.simulation.test_population_allocation_budget import (
 )
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
+_N_SUBJECTS = 7
 
-def _space_completions(
+
+@pytest.mark.parametrize("subject_width", [1, 3, 7])
+def test_complete_spaces_are_call_local_across_subject_chunks(
     *, monkeypatch: pytest.MonkeyPatch, subject_width: int
-) -> tuple[int, ...]:
-    """Count each regime's state-action space completions in one simulate call."""
+) -> None:
+    """Each regime's space is completed a fixed number of times per simulate call.
+
+    The count does not depend on the subject-chunk width: `working_life` is
+    completed once for the regime-selection check and once for the simulation
+    inputs, `dead` once for the simulation inputs.
+    """
     model = get_model(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
@@ -31,11 +39,12 @@ def _space_completions(
     )
     params = get_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")
-    counts: dict[int, int] = {}
+    names = {id(regime.solution): name for name, regime in model._regimes.items()}
+    counts: dict[str, int] = {}
     original = SolutionPhase.state_action_space
 
     def observe(self: SolutionPhase, **kwargs: Any) -> object:
-        counts[id(self)] = counts.get(id(self), 0) + 1
+        counts[names[id(self)]] = counts.get(names[id(self)], 0) + 1
         return original(self, **kwargs)
 
     with monkeypatch.context() as patch:
@@ -53,21 +62,10 @@ def _space_completions(
             seed=17,
             log_level="off",
         )
-    assert result.n_subjects == _N_SUBJECTS
-    assert len(counts) == len(model._regimes)
-    return tuple(sorted(counts.values()))
-
-
-_N_SUBJECTS = 7
-
-
-def test_complete_spaces_are_call_local_across_subject_chunks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Three subject chunks complete each space as often as a single chunk does."""
-    assert _space_completions(
-        monkeypatch=monkeypatch, subject_width=3
-    ) == _space_completions(monkeypatch=monkeypatch, subject_width=_N_SUBJECTS)
+    assert (result.n_subjects, counts) == (
+        _N_SUBJECTS,
+        {"working_life": 2, "dead": 1},
+    )
 
 
 @pytest.mark.parametrize("scalar", [False, True])

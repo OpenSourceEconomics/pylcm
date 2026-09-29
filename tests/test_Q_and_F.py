@@ -954,7 +954,7 @@ def _model_emitting_total_regime_mass(
     )
 
 
-def _solve_alive_without_validation(
+def _solve_alive_at_log_level_off(
     *, total_mass: float, certainty_equivalent: CertaintyEquivalent
 ) -> FloatND:
     """Solve the model at `log_level="off"` and return `alive`'s first V array."""
@@ -985,7 +985,7 @@ def test_solve_at_log_level_off_refuses_a_regime_transition_that_drops_mass(
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError, match=r"do not sum to 1\.0"
     ):
-        _solve_alive_without_validation(
+        _solve_alive_at_log_level_off(
             total_mass=0.977, certainty_equivalent=certainty_equivalent
         )
 
@@ -1024,7 +1024,7 @@ def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
     adds no arithmetic is a separate, backend-independent claim, tested against
     the predicate rather than against a solve.
     """
-    V_arr = _solve_alive_without_validation(
+    V_arr = _solve_alive_at_log_level_off(
         total_mass=1.0, certainty_equivalent=certainty_equivalent
     )
     np.testing.assert_allclose(

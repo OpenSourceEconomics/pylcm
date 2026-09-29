@@ -5,8 +5,9 @@ the regime-transition probabilities. Two properties hold whether or not the
 regime carries stakeholders:
 
 - A unit mass on the single target prices each stakeholder as its singleton twin.
-- Regime selection refuses a non-unit mass and a negative probability at every
-  log level, including probabilities that sum to one only because one is negative.
+- Regime selection refuses a non-unit mass and a negative probability at the
+  `off`, `warning` and `debug` log levels, including probabilities that sum to one
+  only because one is negative.
 
 Every model here pairs a two-stakeholder regime with singleton twins carrying one
 stakeholder's utility each. The husband's payoff is twice the wife's, so the
@@ -21,6 +22,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
+from _lcm.utils.logging import LogLevel
 from lcm import CollectiveUtility, DiscreteGrid, MarkovTransition, Model, Regime
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import (
@@ -48,7 +50,7 @@ STAKEHOLDERS = ("f", "m")
 # A regime-transition mass just above one, which regime selection refuses.
 INFLATED_MASS = 1.0 + 1e-4
 
-# Probabilities of the two-target source regime's targets while it is active.
+# Probabilities of the two-target source regime's targets at age 0.
 # They sum to one, so only the sign disqualifies them as a distribution.
 STAY_PROBABILITY = 1.5
 LEAVE_PROBABILITY = -0.5
@@ -98,29 +100,59 @@ def test_collective_continuation_prices_each_stakeholder_as_its_singleton_twin()
     assert_allclose(collective_V, expected_V, rtol=rtol)
 
 
-@pytest.mark.parametrize("mass", [INFLATED_MASS, 1.0 - 1e-4])
-def test_collective_regime_selection_refuses_a_non_unit_mass(*, mass: float) -> None:
-    """A regime-transition mass other than one is refused at every log level."""
+_OUTSIDE_UNIT_INTERVAL = (
+    r"^Regime transition probabilities from 'couple' between ages 0 and 1 "
+    r"contain values outside \[0, 1\]\. "
+)
+_NOT_SUMMING_TO_ONE = (
+    r"^Regime transition probabilities from 'couple' between ages 0 and 1 "
+    r"do not sum to 1\.0\. 1 of 1 probability vectors do not sum to 1\.0\."
+)
+
+
+@pytest.mark.parametrize("log_level", ["off", "warning", "debug"])
+@pytest.mark.parametrize(
+    ("mass", "match"),
+    [(INFLATED_MASS, _OUTSIDE_UNIT_INTERVAL), (1.0 - 1e-4, _NOT_SUMMING_TO_ONE)],
+)
+def test_collective_regime_selection_refuses_a_non_unit_mass(
+    *, mass: float, match: str, log_level: LogLevel
+) -> None:
+    """A regime-transition mass other than one is refused at the source's age 0."""
     collective = _build_single_target_model(household=STAKEHOLDERS)
-    with pytest.raises(
-        InvalidRegimeTransitionProbabilitiesError, match=r"outside|do not sum to 1\.0"
-    ):
-        collective.solve(params=_single_target_params(mass=mass), log_level="off")
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match=match):
+        collective.solve(params=_single_target_params(mass=mass), log_level=log_level)
 
 
+@pytest.mark.parametrize("log_level", ["off", "warning", "debug"])
 @pytest.mark.parametrize("household", [STAKEHOLDERS, None])
 def test_collective_regime_selection_refuses_a_negative_probability(
-    *, household: tuple[str, ...] | None
+    *, household: tuple[str, ...] | None, log_level: LogLevel
 ) -> None:
-    """Probabilities 1.5 and -0.5 sum to one but are refused at every log level.
+    """Probabilities 1.5 and -0.5 sum to one but are refused at the source's age 0.
 
     The collective regime and its singleton twin refuse them alike.
     """
     model = _build_two_target_model(household=household)
     with pytest.raises(
-        InvalidRegimeTransitionProbabilitiesError, match=r"outside \[0, 1\]"
+        InvalidRegimeTransitionProbabilitiesError, match=_OUTSIDE_UNIT_INTERVAL
     ):
-        model.solve(params=_two_target_params(), log_level="off")
+        model.solve(params=_two_target_params(), log_level=log_level)
+
+
+def test_two_target_model_with_a_distribution_has_a_finite_last_source_period():
+    """With probabilities 0.5 and 0.5 the source's last period solves to finite values.
+
+    At age 1 the source reaches its terminal target with probability one, so the
+    refusal above is about the age-0 probabilities alone.
+    """
+    params = _two_target_params(stay_probability=0.5, leave_probability=0.5)
+    values = (
+        _build_two_target_model(household=STAKEHOLDERS)
+        .solve(params=params, log_level="off")
+        .values
+    )
+    assert bool(jnp.isfinite(values[1]["couple"]).all())
 
 
 def _build_single_target_model(
@@ -128,9 +160,9 @@ def _build_single_target_model(
 ) -> Model:
     """Build a source regime whose only target carries the whole declared mass.
 
-    `couple` is active at age 0 and reaches `couple_terminal` — active from age 1
-    — with the probability named by the `regime_mass` parameter, which is the
-    regime's entire transition mass.
+    `couple` has a transition law at age 0 and reaches `couple_terminal` — solved
+    from age 1 — with the probability named by the `regime_mass` parameter, which
+    is the regime's entire transition mass.
 
     Args:
         household: Stakeholder names of both regimes, or `None` for the
@@ -157,9 +189,10 @@ def _build_two_target_model(
 ) -> Model:
     """Build a source regime reaching two targets, one of them itself.
 
-    `couple` is active at ages 0 and 1 and `couple_terminal` from age 1 on, so at
-    age 0 both are reachable and the transition splits its mass between them,
-    while at age 1 only the terminal regime is left and takes all of it.
+    `couple` has a transition law at ages 0 and 1 and `couple_terminal` is solved
+    from age 1 on, so at age 0 both are reachable and the transition splits its
+    mass between them, while at age 1 only the terminal regime is left and takes
+    all of it.
 
     Args:
         household: Stakeholder names of both regimes, or `None` for the
@@ -270,14 +303,18 @@ def _single_target_params(*, mass: float) -> UserParams:
     }
 
 
-def _two_target_params() -> UserParams:
+def _two_target_params(
+    *,
+    stay_probability: float = STAY_PROBABILITY,
+    leave_probability: float = LEAVE_PROBABILITY,
+) -> UserParams:
     """Return the two-target model's params, with the split probabilities."""
     return {
         "couple": {
             "koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR},
-            "couple": {"next_regime": {"stay_probability": STAY_PROBABILITY}},
+            "couple": {"next_regime": {"stay_probability": stay_probability}},
             "couple_terminal": {
-                "next_regime": {"leave_probability": LEAVE_PROBABILITY}
+                "next_regime": {"leave_probability": leave_probability}
             },
         },
         "couple_terminal": {},

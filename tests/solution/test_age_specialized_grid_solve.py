@@ -34,6 +34,7 @@ from _lcm.regime_building.age_specialization import _TRAIT_DESCRIPTIONS, _GridTr
 from lcm import (
     AgeGrid,
     AgeRange,
+    AgeSpecializedFunction,
     AgeSpecializedGrid,
     ByAge,
     Choose,
@@ -96,14 +97,16 @@ _ALIVE_TRANSITIONS = until_exit(
 )
 
 
-def _alive_regime(*, wealth_grid, regime_transitions=_ALIVE_TRANSITIONS):
+def _alive_regime(
+    *, wealth_grid, regime_transitions=_ALIVE_TRANSITIONS, functions=None
+):
     return Regime(
         states={"wealth": wealth_grid},
         actions={"consumption": _CGRID},
         state_transitions={"wealth": _next_wealth},
         regime_transitions=regime_transitions,
         constraints={"bc": _bc},
-        functions={"utility": _utility},
+        functions={"utility": _utility} if functions is None else functions,
     )
 
 
@@ -482,22 +485,35 @@ def test_grid_mode_switch_across_ages_is_rejected():
         _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
-def test_age_specialized_grid_on_never_solved_regime_is_rejected():
+@pytest.mark.parametrize("marker", ["grid", "function"])
+def test_age_specialized_marker_on_never_solved_regime_is_rejected(
+    *, marker: str
+) -> None:
     """A regime whose schedule covers no model age is a modelling error.
 
-    There is no age at which to resolve the grid builder, so the model is
-    rejected up front, rather than the marker travelling unresolved into the
-    ordinary grid machinery it does not satisfy.
+    There is no age at which to resolve a grid or function builder, so the model
+    is rejected up front, rather than the marker travelling unresolved into the
+    ordinary machinery it does not satisfy.
     """
-    grid = AgeSpecializedGrid(
-        build=lambda _age: LinSpacedGrid(start=0.5, stop=25.0, n_points=15),
-        signature=lambda _age: 0,
-    )
+    plain_grid = LinSpacedGrid(start=0.5, stop=25.0, n_points=15)
+    if marker == "grid":
+        grid = AgeSpecializedGrid(
+            build=lambda _age: plain_grid, signature=lambda _age: 0
+        )
+        functions = {"utility": _utility}
+    else:
+        grid = plain_grid
+        functions = {
+            "utility": AgeSpecializedFunction(
+                build=lambda _age: _utility, signature=lambda _age: 0
+            )
+        }
     with pytest.raises(ModelInitializationError, match="no age of the model"):
         Model(
             regimes={
                 "alive": _alive_regime(
                     wealth_grid=grid,
+                    functions=functions,
                     regime_transitions=ByAge(
                         cases={
                             AgeRange(start=100): Choose(

@@ -232,6 +232,12 @@ def _law_model(*, law: Any, n_wealth: int = 2) -> Model:
     )
 
 
+_MASS_1_4 = (
+    r"^Regime transition probabilities from 'working' between ages 25 and 35 "
+    r"do not sum to 1\.0\.(.|\n)* 1\.4\n"
+)
+
+
 def _simulate_off(model: Model) -> None:
     model.simulate(
         params=_PARAMS,
@@ -248,7 +254,7 @@ def _simulate_off(model: Model) -> None:
 def test_solve_refuses_an_invalid_regime_law_with_logging_off() -> None:
     """A selection row with mass 1.4 raises even at `log_level="off"`."""
     model = _law_model(law=_laws(die=_overweight_death))
-    with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match=_MASS_1_4):
         model.solve(params=_PARAMS, log_level="off")
 
 
@@ -257,7 +263,7 @@ def test_simulate_refuses_an_invalid_realized_law_with_logging_off() -> None:
     model = _law_model(
         law=Phased(solve=_laws(die=_die), simulate=_laws(die=_overweight_death))
     )
-    with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match=_MASS_1_4):
         _simulate_off(model)
 
 

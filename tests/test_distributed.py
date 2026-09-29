@@ -1447,10 +1447,9 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
     )
     for period, regime_to_value in distributed.items():
         for regime_name, value in regime_to_value.items():
-            assert_agrees_to_ulp(
-                got=np.asarray(value),
-                expected=np.asarray(single[period][regime_name]),
-                n_ulp=4,
+            np.testing.assert_array_equal(
+                value,
+                single[period][regime_name],
                 err_msg=f"regime {regime_name!r}, period {period}",
             )
 
