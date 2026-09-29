@@ -1211,13 +1211,16 @@ def test_public_model_solve_retains_both_replay_artifact_kinds():
     )
 
 
-def test_public_model_solve_returns_labelled_values_for_every_period():
-    """The public solve result labels the same value-function periods."""
+def test_public_model_solve_returns_labelled_values_for_every_demanded_period():
+    """The public solve result labels exactly the periods holding a demanded node.
+
+    The age-0 root reaches no node in the final period, so it has no key.
+    """
     model = _make_dissolution_model()
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
     assert isinstance(solution, SolutionResult)
     assert isinstance(solution.values, ValueStore)
-    assert set(solution.values) == {0, 1, 2, 3}
+    assert set(solution.values) == {0, 1, 2}
 
 
 def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():

@@ -398,13 +398,9 @@ def test_late_root_with_an_empty_first_period_simulates() -> None:
 
 
 def test_first_period_of_a_late_root_has_no_values() -> None:
-    """Periods keep their global index; those before the start hold no values."""
+    """Periods keep their global index; those before the start publish no key."""
     values = _life_model({65: "retirement"}).solve(params=_PARAMS, log_level="off")
     assert {period: set(by) for period, by in values.values.items()} == {
-        0: set(),
-        1: set(),
-        2: set(),
-        3: set(),
         4: {"retirement"},
         5: {"dead"},
     }
