@@ -7,7 +7,10 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
-from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
+from _lcm.solution.action_streaming import (
+    build_streaming_max_Q_over_a,
+    build_streaming_prefix_max_Q_over_a,
+)
 
 
 def _direct_scalar_oracle(
@@ -232,4 +235,76 @@ def test_streaming_rejects_non_positive_block_width(block_width: int):
             Q_and_F=lambda: (jnp.float32(0), jnp.ones((), dtype=bool)),
             action_names=(),
             block_width=block_width,
+        )
+
+
+def _exact_prefix_Q_and_F(*, work, hours, saving, state):
+    """Exactly representable values with a tie, a signed zero, NaN and -inf."""
+    value = 4.0 * saving - 3.0 * hours * (1.0 + work) + state
+    value = jnp.where((work == 1) & (hours == 0) & (saving == 2), 8.0 + state, value)
+    value = jnp.where((work == 0) & (hours == 0) & (saving == 0), -0.0, value)
+    value = jnp.where((work == 1) & (hours == 2) & (state > 10), jnp.nan, value)
+    value = jnp.where((work == 0) & (hours == 1) & (saving == 3), -jnp.inf, value)
+    feasible = (saving <= hours + 1) & (state >= 0)
+    return value, feasible
+
+
+@pytest.mark.parametrize("block_width", [4, 5, 7, 11, 23, 24])
+@pytest.mark.parametrize("state", [-1.0, 0.0, 2.0, 11.0])
+def test_prefix_streaming_matches_flat_streaming_bitwise(
+    *, block_width: int, state: float
+) -> None:
+    """Named continuous suffixes keep identities, padding and the value contract.
+
+    Widths cover one whole suffix, non-divisors, one short of the product and the
+    whole product; states cover an empty feasible set, a signed-zero winner, a
+    tie across prefixes and a feasible NaN.
+    """
+    grids = {
+        "work": jnp.array([0.0, 1.0]),
+        "hours": jnp.array([0.0, 1.0, 2.0]),
+        "saving": jnp.array([0.0, 1.0, 2.0, 3.0]),
+    }
+    action_names = ("work", "hours", "saving")
+    flat = build_streaming_max_Q_over_a(
+        Q_and_F=_exact_prefix_Q_and_F,
+        action_names=action_names,
+        block_width=block_width,
+    )(**grids, state=jnp.asarray(state))
+    prefix = build_streaming_prefix_max_Q_over_a(
+        Q_and_F=_exact_prefix_Q_and_F,
+        action_names=action_names,
+        n_prefix_axes=2,
+        block_width=block_width,
+    )(**grids, state=jnp.asarray(state))
+    for name in flat._fields:
+        assert np.asarray(getattr(prefix, name)).tobytes() == (
+            np.asarray(getattr(flat, name)).tobytes()
+        ), name
+
+
+def test_prefix_streaming_rejects_a_block_narrower_than_the_suffix() -> None:
+    streamed = build_streaming_prefix_max_Q_over_a(
+        Q_and_F=_exact_prefix_Q_and_F,
+        action_names=("work", "hours", "saving"),
+        n_prefix_axes=2,
+        block_width=3,
+    )
+    with pytest.raises(ValueError, match="complete action suffix"):
+        streamed(
+            work=jnp.array([0.0, 1.0]),
+            hours=jnp.array([0.0, 1.0]),
+            saving=jnp.array([0.0, 1.0, 2.0, 3.0]),
+            state=jnp.asarray(0.0),
+        )
+
+
+@pytest.mark.parametrize("n_prefix_axes", [-1, 3])
+def test_prefix_streaming_requires_a_proper_leading_prefix(n_prefix_axes: int) -> None:
+    with pytest.raises(ValueError, match="non-empty action suffix"):
+        build_streaming_prefix_max_Q_over_a(
+            Q_and_F=_exact_prefix_Q_and_F,
+            action_names=("work", "hours", "saving"),
+            n_prefix_axes=n_prefix_axes,
+            block_width=4,
         )

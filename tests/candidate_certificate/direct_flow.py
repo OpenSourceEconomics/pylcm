@@ -397,7 +397,7 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "638d2221edb659daf75f928fe4dfb61e0fbc824844f0e93dd6ea1b56b066cb76",
+    MAX_Q_SOURCE: "818b81ac0a699f2591d4c9897a1cb94c8617e208213f4b34f046a80c1c20a681",
     PROCESSING_SOURCE: "6f328dba0894c60c0a7283513eb384a681e2a6b62395a9c8fc03406be47e8cbf",
     GRID_SEARCH_SOURCE: "7e5bc279645bc2945b822e672e88f1101a14ff56d8359ba54b654df35b88d30a",
     CORE_PROGRAM_SOURCE: "6b96b777960bfdbf6aad394a5c635bebea976a4f6461c24ebe36f80699736924",
@@ -405,7 +405,7 @@ _SOURCE_SEALS = {
     VALUE_TRANSFER_SOURCE: "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6",
     FOOTPRINT_SOURCE: "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
-    ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
+    ACTION_STREAMING_SOURCE: "f1c5832e29da5105deaa782e7dd9e6cd304c88c9d6ea5c297af885a3b7790db4",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
     DISPATCHERS_SOURCE: "d829b3c54d9ad664efb23eadff525f287b2ef5f280450b1346b342c3808f1766",
@@ -1807,7 +1807,7 @@ Q_and_F = productmap(
                     "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout"
                 ),
                 (
-                    "from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a"
+                    "from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a, build_streaming_prefix_max_Q_over_a"
                 ),
                 "from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d",
                 "from _lcm.utils.functools import allow_args, allow_only_kwargs",
@@ -1882,7 +1882,7 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
                 "a586674124f90ff862f64458b40d6a6f8bbf6586e9772d9bdb4d31bf68c9c34c"
             ),
             "_StreamedMaxQOverA.__call__": (
-                "ea66e9b7ae2d060f1768fdbbfb5b81ce750ccb91d3fe6cfd9d06000891529ea3"
+                "8ef92ff1619bfe9c6adc22c3d253f95961a706d883005ca818b5866c9047b32d"
             ),
         },
     )

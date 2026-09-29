@@ -32,6 +32,7 @@ from _lcm.solution.action_streaming import (
     build_streaming_collective_max_Q_over_a,
     build_streaming_ev1_max_Q_over_a,
     build_streaming_max_Q_over_a,
+    build_streaming_prefix_max_Q_over_a,
 )
 from _lcm.typing import (
     ActionName,
@@ -575,7 +576,8 @@ class _StreamedMaxQOverA:
     """Action variable names, discrete first, spanning the streamed product."""
 
     n_discrete_action_axes: int
-    """Number of leading discrete-action axes an EV1 route log-sums over."""
+    """Number of leading discrete-action axes: an EV1 route log-sums over them, and
+    a hard-max block holding whole continuous suffixes streams only them."""
 
     has_taste_shocks: bool
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
@@ -640,10 +642,26 @@ class _StreamedMaxQOverA:
                     **q_and_f_params,
                 )
                 return Q_arr.max(where=F_arr, initial=-jnp.inf)
-            fixed_cell = build_streaming_max_Q_over_a(
-                Q_and_F=self.Q_and_F,
-                action_names=self.action_names,
-                block_width=action_block_width,
+            suffix_extent = math.prod(
+                jnp.shape(states_actions_params[name])[0]
+                for name in self.action_names[self.n_discrete_action_axes :]
+            )
+            # A block holding whole continuous suffixes streams only the discrete
+            # prefix and maps the continuous grids by name inside each block.
+            fixed_cell = (
+                build_streaming_prefix_max_Q_over_a(
+                    Q_and_F=self.Q_and_F,
+                    action_names=self.action_names,
+                    n_prefix_axes=self.n_discrete_action_axes,
+                    block_width=action_block_width,
+                )
+                if self.n_discrete_action_axes < len(self.action_names)
+                and action_block_width >= suffix_extent
+                else build_streaming_max_Q_over_a(
+                    Q_and_F=self.Q_and_F,
+                    action_names=self.action_names,
+                    block_width=action_block_width,
+                )
             )
             result = fixed_cell(
                 next_regime_to_V_arr=next_regime_to_V_arr,

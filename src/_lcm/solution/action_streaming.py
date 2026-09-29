@@ -35,6 +35,7 @@ from _lcm.solution.action_reduction import (
 from _lcm.solution.logsumexp_action_reduction import (
     BoundLogSumExpReduction,
 )
+from _lcm.utils.dispatchers import productmap
 
 _INT32_MAX = 2_147_483_647
 _COLLECTIVE_BLOCK_NDIM = 2
@@ -109,6 +110,43 @@ def build_streaming_max_Q_over_a(
     return _StreamingHardMax(
         Q_and_F=Q_and_F,
         action_names=action_names,
+        block_width=block_width,
+    )
+
+
+def build_streaming_prefix_max_Q_over_a(
+    *,
+    Q_and_F: Callable[..., tuple[Any, Any]],
+    action_names: tuple[str, ...],
+    n_prefix_axes: int,
+    block_width: int,
+) -> Callable[..., HardMaxResult]:
+    """Build a fixed-state hard max that streams only a leading action prefix.
+
+    The trailing ``action_names[n_prefix_axes:]`` coordinates are mapped whole by
+    name inside every block, so a block holds complete suffix products for as many
+    consecutive prefix combinations as fit in ``block_width``. Only the prefix is
+    decoded from a flat index. Candidate identities, padding of a ragged final
+    block as infeasible, and the reduction are those of
+    `build_streaming_max_Q_over_a`, so the published value is identical.
+
+    Raises:
+        ValueError: The prefix is not a proper leading subset of the actions, or
+            the block cannot hold one complete suffix product.
+    """
+    _validate_streaming_configuration(
+        action_names=action_names, block_width=block_width
+    )
+    if not 0 <= n_prefix_axes < len(action_names):
+        raise ValueError("n_prefix_axes must leave a non-empty action suffix")
+    return _StreamingPrefixHardMax(
+        suffix_Q_and_F=productmap(
+            func=Q_and_F,
+            variables=action_names[n_prefix_axes:],
+            batch_sizes=dict.fromkeys(action_names[n_prefix_axes:], 0),
+        ),
+        action_names=action_names,
+        n_prefix_axes=n_prefix_axes,
         block_width=block_width,
     )
 
@@ -226,6 +264,48 @@ class _StreamingHardMax:
             n_actions=n_actions,
             block_width=self.block_width,
             block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
+        )
+        first_block = evaluate_block(block_index=jnp.asarray(0, dtype=jnp.int32))
+        accumulator = _start_reduction(block=first_block)
+        accumulator = _scan_remaining_blocks(
+            accumulator=accumulator,
+            evaluate_block=evaluate_block,
+            n_remaining=n_blocks - 1,
+        )
+        return HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
+
+
+@dataclass(frozen=True)
+class _StreamingPrefixHardMax:
+    """Configured hard max streaming prefix blocks over whole named suffixes."""
+
+    suffix_Q_and_F: Callable[..., tuple[Any, Any]]
+    action_names: tuple[str, ...]
+    n_prefix_axes: int
+    block_width: int
+
+    def __call__(self, **kwargs: Any) -> HardMaxResult:  # noqa: ANN401
+        action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
+            action_names=self.action_names,
+            kwargs=kwargs,
+        )
+        suffix_extent = math.prod(action_sizes[self.n_prefix_axes :])
+        if self.block_width < suffix_extent:
+            raise ValueError("block_width must hold one complete action suffix")
+        n_prefixes = n_actions // suffix_extent
+        prefixes_per_block = min(n_prefixes, self.block_width // suffix_extent)
+        n_blocks = (n_prefixes + prefixes_per_block - 1) // prefixes_per_block
+        evaluate_block = partial(
+            _evaluate_prefix_block,
+            suffix_Q_and_F=self.suffix_Q_and_F,
+            action_names=self.action_names,
+            action_grids=action_grids,
+            action_sizes=action_sizes,
+            fixed_kwargs=fixed_kwargs,
+            n_prefix_axes=self.n_prefix_axes,
+            n_prefixes=n_prefixes,
+            prefix_offsets=jnp.arange(prefixes_per_block, dtype=jnp.int32),
+            suffix_offsets=jnp.arange(suffix_extent, dtype=jnp.int32),
         )
         first_block = evaluate_block(block_index=jnp.asarray(0, dtype=jnp.int32))
         accumulator = _start_reduction(block=first_block)
@@ -419,6 +499,81 @@ def _evaluate_block(
     feasible = jnp.asarray(feasible)
     _validate_block_Q_and_F(values=values, feasible=feasible)
     return values, feasible & valid, global_ids
+
+
+def _evaluate_prefix_block(
+    *,
+    block_index: jax.Array,
+    suffix_Q_and_F: Callable[..., tuple[Any, Any]],
+    action_names: tuple[str, ...],
+    action_grids: tuple[jax.Array, ...],
+    action_sizes: tuple[int, ...],
+    fixed_kwargs: dict[str, Any],
+    n_prefix_axes: int,
+    n_prefixes: int,
+    prefix_offsets: jax.Array,
+    suffix_offsets: jax.Array,
+) -> _Block:
+    """Evaluate consecutive prefix combinations, each over its whole named suffix."""
+    prefix_start = block_index * prefix_offsets.shape[0]
+    remaining = n_prefixes - prefix_start
+    valid = prefix_offsets < remaining
+    prefix_ids = prefix_start + jnp.minimum(prefix_offsets, remaining - 1)
+    evaluate_prefix = partial(
+        _evaluate_one_prefix,
+        suffix_Q_and_F=suffix_Q_and_F,
+        prefix_names=action_names[:n_prefix_axes],
+        prefix_grids=action_grids[:n_prefix_axes],
+        prefix_sizes=action_sizes[:n_prefix_axes],
+        suffix_kwargs=dict(
+            zip(
+                action_names[n_prefix_axes:],
+                action_grids[n_prefix_axes:],
+                strict=True,
+            )
+        ),
+        fixed_kwargs=fixed_kwargs,
+    )
+    values, feasible = jax.vmap(evaluate_prefix)(prefix_ids)
+    values = jnp.asarray(values)
+    feasible = jnp.asarray(feasible)
+    block_shape = (prefix_offsets.shape[0], *action_sizes[n_prefix_axes:])
+    if values.shape != block_shape or feasible.shape != block_shape:
+        raise ValueError(
+            "Ordinary-singleton action streaming requires scalar Q and "
+            "feasibility outputs at each action cell"
+        )
+    global_ids = (
+        prefix_ids[:, jnp.newaxis] * suffix_offsets.shape[0]
+        + suffix_offsets[jnp.newaxis, :]
+    ).reshape(-1)
+    values = values.reshape(-1)
+    feasible = (feasible.reshape(block_shape[0], -1) & valid[:, jnp.newaxis]).reshape(
+        -1
+    )
+    _validate_block_Q_and_F(values=values, feasible=feasible)
+    return values, feasible, global_ids
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _evaluate_one_prefix(
+    prefix_id: jax.Array,
+    *,
+    suffix_Q_and_F: Callable[..., tuple[Any, Any]],
+    prefix_names: tuple[str, ...],
+    prefix_grids: tuple[jax.Array, ...],
+    prefix_sizes: tuple[int, ...],
+    suffix_kwargs: dict[str, jax.Array],
+    fixed_kwargs: dict[str, Any],
+) -> tuple[Any, Any]:
+    """Evaluate one decoded prefix combination over the whole named suffix."""
+    prefix_kwargs = _decode_action(
+        global_id=prefix_id,
+        action_names=prefix_names,
+        action_grids=prefix_grids,
+        action_sizes=prefix_sizes,
+    )
+    return suffix_Q_and_F(**fixed_kwargs, **prefix_kwargs, **suffix_kwargs)
 
 
 def _evaluate_ev1_branch_block(
