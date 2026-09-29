@@ -133,6 +133,18 @@ def test_persistence_roundtrip_preserves_the_exact_sparse_domain(
         )
 
 
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_solve_publishes_only_periods_that_hold_a_demanded_node(
+    *, enable_jit: bool
+) -> None:
+    """The unrequired final period is absent from the published value periods."""
+    model, params = _build_tiny_model(enable_jit=enable_jit)
+
+    solution = model.solve(params=params, log_level="off")
+
+    assert set(solution.values) == {0, 1, 2}
+
+
 def _initial_conditions():
     return {
         "wealth": jnp.array([2.0, 3.0]),
