@@ -1026,19 +1026,24 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         next_regime_to_continuation=next_regime_to_continuation,
                     )
                 )
-                solution[period] = MappingProxyType(period_solution)
-                # Publish each collective regime's dissolution
-                # flag D alongside V, where a reader exists. Kept as a plain per-period
-                # mapping (not rolled like `next_regime_to_V_arr`): nothing consumes a
-                # NEXT-period D — a gated edge's gate reads the still-live per-period
-                # flags at each period's end, before the roll (above). The period keys
-                # match `solution`'s either way; only the arrays behind them differ.
-                dissolution_flags[period] = (
-                    MappingProxyType(period_dissolution_flags)
-                    if publish_dissolution_flags
-                    else _NO_DISSOLUTION_FLAGS
-                )
-                if retain_replay or period_simulation_policies:
+                # A period with no demanded node publishes no key in any of the
+                # period mappings below, so readers see exactly the periods of the
+                # root-derived domain, as persisted archives do.
+                if period_solution:
+                    solution[period] = MappingProxyType(period_solution)
+                    # Publish each collective regime's dissolution flag D alongside
+                    # V, where a reader exists. Kept as a plain per-period mapping
+                    # (not rolled like `next_regime_to_V_arr`): nothing consumes a
+                    # NEXT-period D — a gated edge's gate reads the still-live
+                    # per-period flags at each period's end, before the roll
+                    # (above). The period keys match `solution`'s either way; only
+                    # the arrays behind them differ.
+                    dissolution_flags[period] = (
+                        MappingProxyType(period_dissolution_flags)
+                        if publish_dissolution_flags
+                        else _NO_DISSOLUTION_FLAGS
+                    )
+                if period_solution and (retain_replay or period_simulation_policies):
                     assert host_device is not None  # noqa: S101
                     simulation_policies[period] = MappingProxyType(
                         {
