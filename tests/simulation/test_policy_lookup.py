@@ -7,6 +7,10 @@ import pytest
 from lcm import PolicyLookup
 from lcm.exceptions import InvalidSimulationInputError
 from lcm_examples.mortality import LaborSupply
+from tests.test_models.deterministic.discrete import get_model as get_discrete_model
+from tests.test_models.deterministic.discrete import (
+    get_params as get_discrete_params,
+)
 from tests.test_models.deterministic.regression import (
     DEFAULT_CONSUMPTION_GRID,
     RegimeId,
@@ -134,9 +138,18 @@ def test_lookup_policy_rejects_missing_state(solved):
         _lookup(solved, period=0, states={})
 
 
-def test_lookup_policy_rejects_state_off_the_grid(solved):
+def test_lookup_policy_rejects_a_discrete_state_code_off_the_grid():
+    model = get_discrete_model(n_periods=4)
+    params = get_discrete_params(n_periods=4)
+    solution = model.solve(params=params, log_level="off")
     with pytest.raises(InvalidSimulationInputError, match="wealth"):
-        _lookup(solved, period=0, states={"wealth": jnp.array([5.0, 1000.0])})
+        model.lookup_policy(
+            params=params,
+            solution=solution,
+            period=0,
+            regime_name="working_life",
+            states={"wealth": jnp.array([0, 7], dtype=jnp.int32)},
+        )
 
 
 def test_lookup_policy_rejects_an_unknown_action_grid(solved):
