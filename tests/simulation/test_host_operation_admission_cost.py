@@ -55,10 +55,11 @@ from lcm.execution import ExecutionConfig
 
 # The dissolution witness runs this many pure helper operations in one warm
 # forward call. The count is a property of the fixture's regimes and periods,
-# not of the admission route, and must not move when the route changes: 30
-# per-call operations plus four per simulated (regime, period) pair (mask,
-# lookup, fallback, site key) over the five pairs the witness simulates.
-_WITNESS_HELPER_OPERATIONS = 50
+# not of the admission route, and must not move when the route changes: 32
+# per-call operations (two of them the regime-selection law and its flags)
+# plus four per simulated (regime, period) pair (mask, lookup, fallback, site
+# key) over the five pairs the witness simulates.
+_WITNESS_HELPER_OPERATIONS = 52
 
 _WITNESS_SEED = 6606
 

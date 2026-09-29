@@ -75,18 +75,24 @@ def budgeted_case() -> tuple[Any, Any, Any, Any]:
 def _executable_cache_size(*, model: Any) -> int:
     """Read the number of distinct compiled executables every cache retains.
 
-    A dispatch reads the compiler report from two independent caches: the
+    A dispatch reads the compiler report from independent caches: the
     core/forward-program cache on `SimulationRuntime` (`executor.cache`,
     `CompiledSimulationProgram.memory`) and the pure-host-operation cache on
     `ProfiledSimulationOperations` (`executor.operations.cache`,
-    `_ProfiledOperation.memory`). Both are exact-executable-identity caches;
-    summing their sizes gives the total distinct-executable count a complete
-    cold dispatch reads memory for exactly once.
+    `_ProfiledOperation.memory`), plus the model's user-law producer cache
+    (`_simulate_entry_operations`), which regime selection fills under entry
+    admission. All are exact-executable-identity caches; summing their sizes
+    gives the total distinct-executable count a complete cold dispatch reads
+    memory for exactly once.
     """
     (regimes,) = model._simulate_runtime_regimes.values()
     regime = next(iter(regimes.values()))
     executor = regime.simulation.programs.executor
-    return len(executor.cache) + len(executor.operations.cache)
+    return (
+        len(executor.cache)
+        + len(executor.operations.cache)
+        + len(model._simulate_entry_operations.cache)
+    )
 
 
 def _simulate(

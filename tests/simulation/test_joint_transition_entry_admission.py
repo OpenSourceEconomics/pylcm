@@ -254,11 +254,12 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
         for executable in compiled
         for sharding in jax.tree.leaves(executable.output_shardings)
     ]
-    # The shared compiler also sees the valid regime producer in summary and serial.
+    # The shared compiler also sees the valid regime producer in regime selection,
+    # summary and serial.
     assert (weight_devices, support_devices, output_devices) == (
         expected_weights,
         expected_supports,
-        [(selected_id,)] * 11,
+        [(selected_id,)] * 12,
     ), (weight_devices, support_devices, output_devices)
     print("JOINT-PRODUCER-PLACEMENT-OK")
     """
