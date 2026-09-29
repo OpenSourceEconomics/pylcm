@@ -58,8 +58,9 @@ from lcm.execution import ExecutionConfig
 # not of the admission route, and must not move when the route changes: 32
 # per-call operations (two of them the regime-selection law and its flags)
 # plus four per simulated (regime, period) pair (mask, lookup, fallback, site
-# key) over the five pairs the witness simulates.
-_WITNESS_HELPER_OPERATIONS = 52
+# key) over the five pairs the witness simulates, plus one realized regime-law
+# check for each of the two pairs that draw a next regime.
+_WITNESS_HELPER_OPERATIONS = 54
 # Regime selection also admits its user-law producers through the axis-free
 # plan before they run, outside the helper dispatch count.
 _WITNESS_PRODUCER_ADMISSIONS = 2

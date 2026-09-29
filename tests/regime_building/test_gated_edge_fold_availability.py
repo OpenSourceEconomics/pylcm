@@ -22,6 +22,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building.gated_edges import (
+    CompiledEdgeFold,
     ResolvedGatedEdge,
     ResolvedStakeholderRoute,
     edge_may_fold_at_period,
@@ -53,9 +54,17 @@ def _gate(V_target: FloatND) -> BoolND:
 
 
 def _edge(
-    *, target: str, fallback: str, gate_ref: str | None = None
+    *,
+    target: str,
+    fallback: str,
+    gate_ref: str | None = None,
+    fold_periods: tuple[int, ...] = (0, 1, 2),
 ) -> ResolvedGatedEdge:
-    """A minimal resolved edge whose fold reads `fallback` (and maybe `gate_ref`)."""
+    """A minimal resolved edge whose fold reads `fallback` (and maybe `gate_ref`).
+
+    It carries a compiled fold at each of `fold_periods`; the availability
+    question reads only which periods have one.
+    """
     gate_refs = (
         {}
         if gate_ref is None
@@ -87,6 +96,9 @@ def _edge(
             ),
         ),
         reference_regimes=references,
+        folds_by_period=MappingProxyType(
+            dict.fromkeys(fold_periods, cast("CompiledEdgeFold", None))
+        ),
     )
 
 
@@ -110,6 +122,20 @@ def test_edge_does_not_fold_when_its_target_is_unsolved():
             source_name="src",
             fold_period=2,
             solved_regimes={"src_fallback"},
+            source_reads_wbar=True,
+        )
+        is False
+    )
+
+
+def test_edge_does_not_fold_at_a_period_without_a_compiled_fold():
+    """A period where no gated case owes a fold keeps the value already held."""
+    assert (
+        edge_may_fold_at_period(
+            edge=_edge(target="src", fallback="src_fallback", fold_periods=(2,)),
+            source_name="src",
+            fold_period=1,
+            solved_regimes={"src"},
             source_reads_wbar=True,
         )
         is False

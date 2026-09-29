@@ -102,6 +102,10 @@ from _lcm.solution.backward_induction import (
     _resolve_compilation_workers,
     _trace_settings_key,
 )
+from _lcm.transition_checks import (
+    regime_probability_flags,
+    regime_probability_inactive_indices,
+)
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
 from lcm.ages import AgeGrid
@@ -613,6 +617,15 @@ def _profile_next_subjects(
         _record_core(inventory=inventory, profile=cores["route"], family="route"),
     )
     targets = regime.simulation.reachability.targets(period=period, source=name)
+    inventory.operation(
+        function=regime_probability_flags,
+        arguments={"probabilities": tuple(route.values()), "rows": mask},
+        static_arguments={
+            "inactive_indices": regime_probability_inactive_indices(
+                names=tuple(route), active_regimes_next_period=targets
+            )
+        },
+    )
     names = sorted(
         (target for target in targets if target in route),
         key=lambda target: int(regime_names_to_ids[target]),
