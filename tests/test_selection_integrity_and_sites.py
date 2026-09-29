@@ -300,7 +300,11 @@ def _panel(*, model: Model, age: float, regime: str, seed: int = 0) -> Any:
 
 
 def test_two_half_probabilities_split_the_panel() -> None:
-    """Seed 0 splits 1000 subjects at 55 into 495 retirees and 505 deaths."""
+    """Seed 0 splits 1000 subjects at 55 about evenly into retirees and deaths.
+
+    The uniform draws depend on the float precision, so the exact split is
+    pinned per precision: 495 / 505 under x64, 513 / 487 under float32.
+    """
     model = _life_model(
         law_at_55={
             "retirement": MarkovTransition(func=_half),
@@ -309,10 +313,11 @@ def test_two_half_probabilities_split_the_panel() -> None:
         initial_regimes={55: "working"},
     )
     panel = _panel(model=model, age=55.0, regime="working")
+    retirees = 495 if jax.config.jax_enable_x64 else 513
     assert panel.query("age == 65")["regime_name"].value_counts().to_dict() == {
         "working": 0,
-        "retirement": 495,
-        "dead": 505,
+        "retirement": retirees,
+        "dead": 1000 - retirees,
     }
 
 

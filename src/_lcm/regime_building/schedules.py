@@ -430,7 +430,22 @@ def resolve_demand(
                 )
                 for reference in same_period_refs_by_regime.get(name, ())
             )
-        work.extend((False, period + 1, target, here) for target in reads)
+        law = _phase_side(
+            law=schedules.law_by_period_by_regime.get(name, {}).get(period),
+            side="simulate" if physical else "solve",
+        )
+        pair = f"({ages.exact_values[period]}, '{name}')"
+        kinds = {
+            **dict.fromkeys(reads, f"a fallback of {pair}"),
+            **dict.fromkeys(_gate_references(law), f"a gate reference of {pair}"),
+            **dict.fromkeys(
+                support["simulation" if physical else "solution"]
+                .get(name, {})
+                .get(period, ()),
+                here,
+            ),
+        }
+        work.extend((False, period + 1, target, kinds[target]) for target in reads)
 
     return dataclasses.replace(
         schedules,
