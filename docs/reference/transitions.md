@@ -60,11 +60,12 @@ These forms declare which law a regime uses at each age:
   `ByAge.until` uses `law` at source ages in `[start_age_inclusive, stop_age_exclusive)`
   except the last one, which uses `then`.
 
-A plain law is available at every age; a `ByAge` is available exactly at the ages it
-selects, or at every age with a `default`. Availability does not mark a problem as
-solved: the solved problems are derived from the model's required `initial_regimes`. A
-model that uses any of these forms rejects `active`, bare callables and vector laws
-without `targets`. See [Age-indexed regimes](../user_guide/dated_regime_graph.md).
+A plain law is available at every non-final age; a `ByAge` is available exactly at the
+non-final ages it selects, or at every non-final age with a `default`. Availability does
+not mark a problem as solved: the solved problems are derived from the model's required
+`initial_regimes`. Every model rejects a bare callable as a regime transition and a
+vector law without `targets`. See
+[Age-indexed regimes](../user_guide/dated_regime_graph.md).
 
 (api-joint-transitions)=
 
@@ -210,9 +211,9 @@ differ by phase:
 - `joint_transitions[target][kernel]` accepts `Phased` around the whole
   `JointTransition`.
 
-Constraints, actions, `active`, and derived categoricals are phase-invariant and reject
-`Phased`. Ordinary nested phase wrappers and wrappers inside per-target transition
-mappings are invalid. Structured declarations own two additional, explicit seams:
+Constraints, actions and derived categoricals are phase-invariant and reject `Phased`.
+Ordinary nested phase wrappers and wrappers inside per-target transition mappings are
+invalid. Structured declarations own two additional, explicit seams:
 `CollectiveUtility.utilities[stakeholder]` may hold a phase-specific utility, and a
 `StakeholderRoute` may use a phase-specific `fallback`. These field-specific seams and
 the whole-joint-kernel seam above are not permission to place `Phased` arbitrarily

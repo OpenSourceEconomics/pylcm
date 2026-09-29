@@ -222,7 +222,7 @@
           },
           {
             "path": "src/_lcm/simulation/gated_routing.py",
-            "sha256": "89d5e4ca767d09417d6da5f9bd4bbe9faf7bd864368b8854f4b77028975508e5"
+            "sha256": "59e0484eb64674ca11f10af14420c3cdc550488884b6683784538c0469eef3ce"
           },
           {
             "path": "src/_lcm/simulation/host_operations.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "b34f95d7ef9874ddfa782615e8f0e55b8f5f83ffecf4775ea1385d58c2b1605a"
+        "source_inventory_sha256": "90d73f871f066d69d83cc6c4faaa65d42dd8cb88589d5a0ebda885898517db89"
       },
       "fast": {
         "candidate_sources": [
@@ -692,7 +692,7 @@
           },
           {
             "path": "src/_lcm/simulation/gated_routing.py",
-            "sha256": "89d5e4ca767d09417d6da5f9bd4bbe9faf7bd864368b8854f4b77028975508e5"
+            "sha256": "59e0484eb64674ca11f10af14420c3cdc550488884b6683784538c0469eef3ce"
           },
           {
             "path": "src/_lcm/simulation/host_operations.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "b34f95d7ef9874ddfa782615e8f0e55b8f5f83ffecf4775ea1385d58c2b1605a"
+        "source_inventory_sha256": "90d73f871f066d69d83cc6c4faaa65d42dd8cb88589d5a0ebda885898517db89"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "b34f95d7ef9874ddfa782615e8f0e55b8f5f83ffecf4775ea1385d58c2b1605a",
+  "source_inventory_sha256": "90d73f871f066d69d83cc6c4faaa65d42dd8cb88589d5a0ebda885898517db89",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1166,7 +1166,7 @@
     },
     {
       "path": "src/_lcm/simulation/gated_routing.py",
-      "sha256": "89d5e4ca767d09417d6da5f9bd4bbe9faf7bd864368b8854f4b77028975508e5"
+      "sha256": "59e0484eb64674ca11f10af14420c3cdc550488884b6683784538c0469eef3ce"
     },
     {
       "path": "src/_lcm/simulation/host_operations.py",

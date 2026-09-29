@@ -385,7 +385,7 @@ def substitute_gated_edge_continuations(
     single "one-shot" period) folds at every period it is active, including
     the source's own last active period — whose `period + 1` may not include
     the target at all, e.g. a self-looping edge whose target IS the source,
-    past the source's own `active` boundary.
+    past the last period at which the source is solved.
 
     Whether each edge fires is `edge_may_fold_at_period`'s answer, the same
     one backward induction's roll consults. A target not solved at
@@ -674,9 +674,9 @@ def _route_gated_edges_with_closed_masks(
         # an entry for a target `substitute_gated_edge_continuations`
         # actually folded this period — absent for a REPEATING edge's target
         # that is not itself solved at `period + 1` (e.g. a self-looping
-        # edge past the source's own `active` boundary; see that function's
-        # docstring). The edge cannot possibly gate into a target that does
-        # not exist next period, so it is a no-op here too: the ordinary
+        # edge past the last period at which the source is solved; see that
+        # function's docstring). The edge cannot possibly gate into a target
+        # that does not exist next period, so it is a no-op here too: the ordinary
         # (ungated) transition draw and candidate states already computed
         # upstream stand, unrouted and unoverridden. Byte-identical for
         # every one-shot edge, whose target is always present at

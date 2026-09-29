@@ -391,19 +391,22 @@ The numerical checks fired at solve / simulate time live outside `regime_buildin
 ## Reachability: `_lcm/reachability.py`
 
 `build_model_reachability` builds the model's static solve and simulate graphs once, at
-model construction, from the single canonical `active_periods_by_regime` mapping
-(`regime_building.processing.compute_active_periods_by_regime`) and the declared regime
-transitions. There is no runtime topology pass — the graph never changes after
-construction, and no runtime probability value narrows or widens it.
+model construction, from the demanded coverage and the declared per-period support.
+`regime_building.schedules.resolve_regime_schedules` reads each regime's available laws
+and their declared targets; `resolve_demand` expands the declared `initial_regimes` into
+the pairs a subject can visit and the pairs whose values those problems read, and that
+coverage is the `active_periods_by_regime` mapping every later stage reads. There is no
+runtime topology pass — the graph never changes after construction, and no runtime
+probability value narrows or widens it.
 
 Every retained edge is `EdgeStatus.CONDITIONAL`; there is no `TRUE` status, because no
 declaration form (not even a per-target dict with one key) proves unconditional positive
-probability independently of state, action, and free runtime parameters. A coarse (bare
-callable / bare `MarkovTransition`) regime transition is therefore conservative: it
-retains an edge to every regime active in the next period, and every such edge's state
-handoff is checked at model build — a carried state, a deterministic/stochastic law, or
-an explicit target-local/entry law must supply each target state's next-period value. A
-per-target dict narrows support to its declared key set instead.
+probability independently of state, action, and free runtime parameters. Each edge is a
+target the source's law declares at that period — a regime name, a `Choose` or vector
+`MarkovTransition`'s `targets`, or a per-target dict's keys — and every such edge's
+state handoff is checked at model build: a carried state, a deterministic/stochastic
+law, or an explicit target-local/entry law must supply each target state's next-period
+value.
 
 The solve and simulate phases build independent graphs (`ModelReachability.solution` /
 `.simulation`), because a regime transition's `Phased` sides can differ between them —

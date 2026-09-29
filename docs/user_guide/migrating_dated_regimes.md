@@ -128,13 +128,13 @@ The claimed-couple and widow problems are reached from these roots. A separate q
 that genuinely starts at the age-62 claimed-couple or age-66 widow problems adds those
 pairs in its own model; that is not the paper factory's starting universe.
 
-ACA admits mixed-age starts at ages 51–61 in five living regimes, and later ages are
+ACA admits mixed-age starts at ages 51–60 in five living regimes, and later ages are
 reached only through transitions:
 
 ```python
 # fragment
 initial_regimes = {
-    AgeRange(start=51, stop=62): (
+    AgeRange(start=51, stop=61): (
         "retiree_nomc_inelig_canwork",
         "tied_nomc_inelig_canwork",
         "nongroup_nomc_inelig_canwork",
@@ -146,7 +146,7 @@ initial_regimes = {
 
 `dead` is never an ACA root. Its values are solved as continuations, and an empirical
 start in `dead` — at any age, including ages where that value is solved — or at an age
-of 62 or above is rejected. Terminal roots are shown in a separate synthetic model in
+of 61 or above is rejected. Terminal roots are shown in a separate synthetic model in
 [the interface guide](dated_regime_graph.md), not by admitting death in an application.
 
 ## 9. Parameter paths and random sites
@@ -155,6 +155,13 @@ Roots and schedules add no parameter level: paths, per-target cells, regime IDs 
 vector packing keep their meaning. A string exit declares determinism; check downstream
 RNG-site stability before converting a stochastic exit, since equal probability vectors
 do not certify equal seeded panels. A singleton Markov mapping stays stochastic.
+
+Simulation draws are keyed by site: a subject's draws at a `(period, regime)` pair
+derive from the seed folded with that period and the regime's registered code, so they
+do not move when the declared starts make other pairs visitable. This key derivation is
+new with age-indexed declarations, so a panel simulated with a given seed differs once
+from the one the same seed produced before; re-record seeded panel fixtures once, and
+compare them afterwards across root changes.
 
 ## 10. Approved consumer key changes
 
