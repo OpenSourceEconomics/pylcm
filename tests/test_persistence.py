@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import h5py
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import lcm
@@ -87,11 +88,49 @@ def _build_tiny_model(*, enable_jit: bool):
         ages=ages,
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
-        # A retired start at the last age gives every period a solved problem.
-        initial_regimes={0: "working", 3: "retired"},
+        # The simulation starts at age zero; an empty later period is intentional.
+        initial_regimes={0: "working"},
     )
     params = {"discount_factor": 0.95}
     return model, params
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_persistence_fixture_does_not_fill_an_unrequired_final_period(
+    *, enable_jit: bool
+) -> None:
+    """Archive round trips use the declared entry domain, including its empty tail."""
+    model, _params = _build_tiny_model(enable_jit=enable_jit)
+    expected = frozenset(
+        {(0, "working"), (1, "working"), (1, "retired"), (2, "retired")}
+    )
+    assert model.initial_nodes == frozenset({(0, "working")})
+    assert model.reachability.visited_nodes == expected
+    assert model.reachability.nodes == expected
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_persistence_roundtrip_preserves_the_exact_sparse_domain(
+    *, tmp_path: Path, enable_jit: bool
+) -> None:
+    """A saved and reloaded solution holds exactly the demanded pairs, same values."""
+    model, params = _build_tiny_model(enable_jit=enable_jit)
+    expected = {(0, "working"), (1, "working"), (1, "retired"), (2, "retired")}
+    solution = model.solve(params=params, log_level="debug", log_path=tmp_path)
+    path = tmp_path / "sparse-solution.lcm"
+    save_solution(solution=solution, path=path)
+
+    loaded = load_solution(path=path)
+
+    for store in (solution.values, loaded.values):
+        assert {
+            (period, name) for period in store for name in store[period]
+        } == expected
+    for period, name in expected:
+        np.testing.assert_array_equal(
+            np.asarray(loaded.value(period=period, regime=name)),
+            np.asarray(solution.value(period=period, regime=name)),
+        )
 
 
 def _initial_conditions():
