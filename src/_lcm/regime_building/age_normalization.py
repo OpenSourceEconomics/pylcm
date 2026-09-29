@@ -211,6 +211,35 @@ def resolve_periodized_nodes(
     )
 
 
+def resolve_periodized_pools_by_period(
+    *,
+    functions: Mapping[str, object],
+    constraints: Mapping[str, object],
+    periods: tuple[int, ...],
+) -> MappingProxyType[int, tuple[Mapping[str, object], Mapping[str, object]]]:
+    """Resolve a function pool and a constraint pool at each of `periods`.
+
+    Periods whose explicit signatures agree on both pools share one resolved
+    pair, so a consumer keyed by object identity builds once per signature.
+    """
+    pools_by_signature: dict[
+        Hashable, tuple[Mapping[str, object], Mapping[str, object]]
+    ] = {}
+    pools_by_period = {}
+    for period in periods:
+        signature = (
+            periodized_tree_signature(tree=functions, period=period),
+            periodized_tree_signature(tree=constraints, period=period),
+        )
+        if signature not in pools_by_signature:
+            pools_by_signature[signature] = (
+                resolve_periodized_nodes(mapping=functions, period=period),
+                resolve_periodized_nodes(mapping=constraints, period=period),
+            )
+        pools_by_period[period] = pools_by_signature[signature]
+    return MappingProxyType(pools_by_period)
+
+
 def resolve_periodized_tree(
     *, tree: Mapping[str, object], period: int
 ) -> Mapping[str, object]:

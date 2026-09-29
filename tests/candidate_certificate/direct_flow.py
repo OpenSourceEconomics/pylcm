@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "fc4e0883bd96996f6eaaa697c72dca9a844248f5ccf6dcac494c6879bd0d2403",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "9fc1634f7eaf183773b6d6936aa54bc29b60594f6b3c9fea01870f1c73ad1297",
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -398,7 +398,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "a69ea643eba0d6b98ea9b4e0fc5f036a721e79f5703ea9fbc7a21a6a02841b9a",
-    PROCESSING_SOURCE: "dd3726e33783d754351d850165084dac80c8239a4a663c4f249c0a34bf881896",
+    PROCESSING_SOURCE: "4731fa8c86defbc7f8cbe56046ae38945bb033b7d0596fe1081df18ecc1cf275",
     GRID_SEARCH_SOURCE: "a56619a7d0e5a60fc2b4bd4e1bc75131dc0525ea4b22b9acad41082497bee8ed",
     CORE_PROGRAM_SOURCE: "6b96b777960bfdbf6aad394a5c635bebea976a4f6461c24ebe36f80699736924",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -414,7 +414,7 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "63405dc657ecccdc51f61b4798c730c2dce4f2777c99083f5a35243f323b3ffe",
+    ENGINE_SOURCE: "2df29da38df9135b80a27e8669aae1c3ec6c96d5bb6bf12ae60839c9b3a00df5",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
     SIMULATION_SOURCE: "c5dc02694a8d42eda5933c3b100c7815a731a47f0b5c7c2d95cfb142b50c3e6b",
     SIMULATION_TRANSITIONS_SOURCE: "40e7cdafd5705640e90db5deb08cfa208d809bb50c20260befe12c849bd7891e",
@@ -3022,7 +3022,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
             expected_imports=[
                 "from types import MappingProxyType",
                 (
-                    "from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime, SimulationPhase, SolutionPhase, StateActionSpace, Variables, _fail_if_template_is_misplaced, placed_devices_for_ids"
+                    "from _lcm.engine import EGMPolicyRead, FeasibilityPoolsByPeriod, NNBEGMPolicyRead, Regime, SimulationPhase, SolutionPhase, StateActionSpace, Variables, _fail_if_template_is_misplaced, placed_devices_for_ids"
                 ),
                 "from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a",
                 "from _lcm.simulation.programs import attach_gated_simulation_programs, build_simulation_programs",
@@ -3234,7 +3234,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         ENGINE_SOURCE: (
-            "25fd6c3f83029ea6ad556350fffa70b6439d784d49038e9cbc56f5a70a06c9fc",
+            "ab8c60a676fcbb65164564ad75b4720b83e9fdf98596471c06777ebe8914d51d",
             {},
         ),
     }
@@ -6282,7 +6282,7 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
 # Runtime tests establish numerical support, budget refusal and ownership lifetimes.
 _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
     "src/_lcm/engine.py": (
-        "25fd6c3f83029ea6ad556350fffa70b6439d784d49038e9cbc56f5a70a06c9fc",
+        "ab8c60a676fcbb65164564ad75b4720b83e9fdf98596471c06777ebe8914d51d",
         {
             "SolutionPhase.resolve_process_grids": "a55dc3105166d3a9ab413e6abaf302335fdf8eb7bffc5fe3ff7157ab27ac5b55",
             "SolutionPhase.state_action_space": "40ce37d189b00879e93e4aacb8352dee685c0db751601379e4bbd7adecbed85a",

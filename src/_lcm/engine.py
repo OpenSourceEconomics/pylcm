@@ -328,6 +328,12 @@ class StateActionSpace:
         )
 
 
+# Per-period function and constraint pools a phase's feasibility reads.
+type FeasibilityPoolsByPeriod = MappingProxyType[
+    int, tuple[EconFunctionsMapping, ConstraintFunctionsMapping]
+]
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SolutionPhase:
     """Solve-phase view of a canonical regime.
@@ -358,6 +364,14 @@ class SolutionPhase:
     concrete function, not the one belonging to a particular period. Pricing a
     continuation does need the period's own age; that reads
     `continuation_functions` instead.
+    """
+
+    feasibility_pools_by_period: FeasibilityPoolsByPeriod
+    """Function and constraint pools resolved at each of the phase's periods.
+
+    Economic feasibility at a period is the conjunction of that period's
+    constraints, evaluated with that period's functions. Periods with equal
+    age signatures share one pair.
     """
 
     _continuation_functions: EconFunctionsMapping | None = None
@@ -1010,6 +1024,14 @@ class SimulationPhase:
 
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of constraint names to feasibility predicates."""
+
+    feasibility_pools_by_period: FeasibilityPoolsByPeriod
+    """Function and constraint pools resolved at each of the phase's periods.
+
+    Economic feasibility at a period is the conjunction of that period's
+    constraints, evaluated with that period's functions. Periods with equal
+    age signatures share one pair.
+    """
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""

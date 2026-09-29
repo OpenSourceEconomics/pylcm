@@ -671,17 +671,18 @@ def _validate_regime_law_on_feasible_rows(
 ) -> None:
     """Validate a regime law on the rows where the regime's constraints hold.
 
-    The law and the conjunction of the phase's constraints are evaluated on one
+    The constraints and the functions they read are the phase's own at
+    `period`, so an age-specialized feasibility predicate masks the rows of the
+    law's age. The law and the conjunction of those constraints are evaluated on one
     Cartesian grid over the variables either reads, so a row is counted exactly
     when its state-action combination is economically feasible.
     """
+    functions, constraints = phase.feasibility_pools_by_period[period]
     feasibility = (
-        _get_feasibility(functions=phase.functions, constraints=phase.constraints)
+        _get_feasibility(functions=functions, constraints=constraints)
         if memory is None
         else memory.producers.built(
-            builder=_get_feasibility,
-            functions=phase.functions,
-            constraints=phase.constraints,
+            builder=_get_feasibility, functions=functions, constraints=constraints
         )
     )
     law_names = frozenset(inspect.signature(law).parameters)

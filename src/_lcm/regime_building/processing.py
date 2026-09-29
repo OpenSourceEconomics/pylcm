@@ -59,6 +59,7 @@ from _lcm.egm.terminal import (
 from _lcm.egm.validation import savings_stage_reads_euler_state
 from _lcm.engine import (
     EGMPolicyRead,
+    FeasibilityPoolsByPeriod,
     NNBEGMPolicyRead,
     Regime,
     SimulationPhase,
@@ -120,6 +121,7 @@ from _lcm.regime_building.age_normalization import (
     normalize_age_specialization,
     periodized_tree_signature,
     resolve_periodized_nodes,
+    resolve_periodized_pools_by_period,
 )
 from _lcm.regime_building.canonicalize import canonicalize_phased_regimes
 from _lcm.regime_building.collective import (
@@ -3593,6 +3595,14 @@ def _build_solution_phase(  # noqa: PLR0915
         # continuation can resolve each at the age of the period it prices.
         _continuation_functions=core.functions,
         constraints=core.constraints,
+        feasibility_pools_by_period=cast(
+            "FeasibilityPoolsByPeriod",
+            resolve_periodized_pools_by_period(
+                functions=core.functions,
+                constraints=core.constraints,
+                periods=tuple(solution_active_periods),
+            ),
+        ),
         has_compiled_constraint_boundaries=(
             routing.plan is not None and bool(routing.plan.compiled_boundaries)
         ),
@@ -4845,6 +4855,14 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         carried_only_state_names=frozenset(carried_grids),
         functions=published_simulate_functions,
         constraints=published_simulate_constraints,
+        feasibility_pools_by_period=cast(
+            "FeasibilityPoolsByPeriod",
+            resolve_periodized_pools_by_period(
+                functions=simulate_functions,
+                constraints=constraints,
+                periods=tuple(simulation_active_periods),
+            ),
+        ),
         age_specialized_function_names=age_specialized_function_names,
         transitions=core.transitions,
         reachability=simulation_reachability,
