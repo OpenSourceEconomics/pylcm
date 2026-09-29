@@ -57,6 +57,7 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
+from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.contract import (
@@ -269,12 +270,7 @@ class GridSearch(Solver):
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
-        untiled_state_names = tuple(
-            name
-            for name in context.state_action_space.state_names
-            if name in context.sharded_state_names
-            and name not in context.co_map_state_names
-        )
+        untiled_state_names = _select_untiled_state_names(context=context)
         inner_state_names = tuple(
             name
             for name in context.state_action_space.state_names
@@ -399,6 +395,49 @@ class GridSearch(Solver):
                 _core_programs=MappingProxyType({"main": program})
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
+
+
+def _select_untiled_state_names(
+    *, context: SolverBuildContext
+) -> tuple[StateName, ...]:
+    """Return the inner states mapped whole by name outside the cell tiles.
+
+    Sharded states stay outside the cell loop so their device axes are never
+    decoded. Deterministic continuous states also map whole whenever the
+    remaining states still span more than one cell: work that depends on a
+    continuous coordinate, such as continuation-value interpolation, then sees
+    that grid as a named axis the compiler can fuse across. The cell width then
+    counts cells of the remaining states, and one tile evaluates that many cells
+    times the product of the continuous extents.
+    """
+    state_names = context.state_action_space.state_names
+    sharded = frozenset(
+        name
+        for name in state_names
+        if name in context.sharded_state_names
+        and name not in context.co_map_state_names
+    )
+    tiled = tuple(
+        name
+        for name in state_names
+        if name not in context.co_map_state_names and name not in sharded
+    )
+    continuous = frozenset(
+        name
+        for name in tiled
+        if isinstance(context.grids[name], ContinuousGrid)
+        and not isinstance(context.grids[name], _ContinuousStochasticProcess)
+    )
+    remaining_extent = math.prod(
+        context.state_action_space.states[name].shape[0]
+        for name in tiled
+        if name not in continuous
+    )
+    # ponytail: with no discrete cells left the continuous states stay tiled, so a
+    # purely continuous product keeps its narrow tiles. A continuous product too
+    # wide for one discrete cell has no narrower fallback here.
+    named_whole = sharded | continuous if remaining_extent > 1 else sharded
+    return tuple(name for name in state_names if name in named_whole)
 
 
 def _classify_action_streaming(

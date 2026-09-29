@@ -26,6 +26,7 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
+    DiscreteState,
     FloatND,
     ScalarInt,
 )
@@ -263,3 +264,90 @@ def test_trivial_state_product_does_not_declare_a_cell_axis(
     )["main"]
     model.solve(params={"discount_factor": 0.5}, log_level="off")
     assert program.requirements.tiled_axes == ()
+
+
+@categorical(ordered=False)
+class _Kind:
+    low: ScalarInt
+    mid: ScalarInt
+    high: ScalarInt
+
+
+def _mixed_utility(
+    *,
+    first: ContinuousState,
+    second: ContinuousState,
+    kind: DiscreteState,
+    work: DiscreteAction,
+    effort: ContinuousAction,
+) -> FloatND:
+    return 10.0 * first + second + 20.0 * work * kind - (effort - first) ** 2
+
+
+def _mixed_model(*, widths: dict[str, int]) -> Model:
+    """Continuous states around a discrete one, plus discrete and continuous actions."""
+    states = {
+        "first": LinSpacedGrid(start=1.0, stop=3.0, n_points=2),
+        "kind": DiscreteGrid(category_class=_Kind),
+        "second": LinSpacedGrid(start=2.0, stop=6.0, n_points=3),
+    }
+    common: dict[str, Any] = {
+        "states": states,
+        "actions": {
+            "work": DiscreteGrid(category_class=_Work),
+            "effort": LinSpacedGrid(start=0.0, stop=3.0, n_points=4),
+        },
+        "functions": {"utility": _mixed_utility},
+    }
+    return Model(
+        regimes={
+            "acting": Regime(
+                transition=_next_regime,
+                active=lambda age: age < 1,
+                state_transitions={name: fixed_transition(name) for name in states},
+                **common,
+            ),
+            "done": Regime(transition=None, active=lambda age: age >= 1, **common),
+        },
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        regime_id_class=_RegimeId,
+        execution_config=ExecutionConfig(axis_widths=widths),
+    )
+
+
+def test_continuous_states_map_whole_outside_discrete_cell_tiles() -> None:
+    """The cell axis counts discrete cells once a discrete state remains."""
+    model = _mixed_model(widths={"cell": 2})
+    program = core_program_graph(
+        kernel=model._regimes["acting"].solution.period_kernels[0]
+    )["main"]
+    assert tuple(
+        (axis.name, axis.state_names, axis.extent)
+        for axis in program.requirements.tiled_axes
+    ) == (("cell", ("kind",), 3),)
+
+
+@pytest.mark.parametrize(
+    "widths",
+    [
+        {"cell": 1, "action_product": 1},
+        {"cell": 2, "action_product": 4},
+        {"cell": 2, "action_product": 5},
+        {"cell": 3, "action_product": 7},
+    ],
+)
+def test_named_continuous_axes_preserve_public_values(
+    *, widths: dict[str, int]
+) -> None:
+    """Discrete cell tiles and discrete action blocks keep the full-width values."""
+    reference = _mixed_model(widths={"cell": 3, "action_product": 8}).solve(
+        params=_params("singleton"), log_level="off"
+    )
+    candidate = _mixed_model(widths=widths).solve(
+        params=_params("singleton"), log_level="off"
+    )
+    assert_agrees_to_ulp(
+        got=np.asarray(candidate.values[0]["acting"]),
+        expected=np.asarray(reference.values[0]["acting"]),
+        n_ulp=4,
+    )
