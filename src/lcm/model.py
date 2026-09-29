@@ -2908,7 +2908,8 @@ class Model:
             period: Period index of the queried node.
             regime_name: Regime of the queried node; it must be active in `period`.
             states: One 1-D array per state of the regime, all of equal length.
-                Values must lie on the regime's declared state space.
+                Discrete values must be grid codes; continuous values off the grid
+                are extrapolated exactly as in `simulate`.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
@@ -2955,6 +2956,7 @@ class Model:
                 {name: base.states[name] for name in regime.solution.state_names}
             ),
             require_all=True,
+            check_range=False,
         )
         grids = dict(base.actions)
         _fail_if_off_grid(
@@ -2962,6 +2964,7 @@ class Model:
             given=action_grids or {},
             declared=MappingProxyType(grids),
             require_all=False,
+            check_range=True,
         )
         grids.update({name: jnp.asarray(g) for name, g in (action_grids or {}).items()})
         space = create_regime_state_action_space(
@@ -3023,6 +3026,27 @@ class Model:
             ),
             value=value,
         )
+
+    def state_grid(
+        self, *, params: UserParams, regime_name: RegimeName, state_name: StateName
+    ) -> jax.Array:
+        """Return one state's grid node values under `params`.
+
+        Covers grids whose nodes depend on runtime parameters, such as a shock
+        process with a runtime `sigma`.
+        """
+        regime = self._regimes.get(regime_name)
+        if regime is None:
+            msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
+            raise InvalidSimulationInputError(msg)
+        states = regime.solution.state_action_space(
+            regime_params=self._process_params(params)[regime_name]
+        ).states
+        if state_name not in states:
+            msg = f"Regime {regime_name!r} has no state {state_name!r}; known: "
+            msg += f"{tuple(states)}."
+            raise InvalidSimulationInputError(msg)
+        return states[state_name]
 
     @beartype(conf=PARAMS_CONF)
     def validate_initial_conditions(
@@ -3360,10 +3384,12 @@ def _fail_if_off_grid(
     given: Mapping[str, object],
     declared: Mapping[str, jax.Array],
     require_all: bool,
+    check_range: bool,
 ) -> None:
     """Raise if names are unknown or missing, or values leave the declared grid.
 
-    Integer grids require membership; float grids require the closed range.
+    Integer grids require membership. Float grids require the closed range only
+    when `check_range` is set; otherwise they are extrapolated as in simulation.
     """
     unknown = sorted(set(given) - set(declared))
     missing = sorted(set(declared) - set(given)) if require_all else []
@@ -3378,6 +3404,8 @@ def _fail_if_off_grid(
         arr = np.asarray(values)
         if np.issubdtype(grid.dtype, np.integer):
             off = ~np.isin(arr, grid)
+        elif not check_range:
+            continue
         else:
             off = (arr < grid.min()) | (arr > grid.max())
         if off.any():

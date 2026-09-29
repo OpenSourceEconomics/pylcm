@@ -13,6 +13,10 @@ from tests.test_models.deterministic.regression import (
     get_model,
     get_params,
 )
+from tests.test_models.nbegm_multi_discrete_toy import build_model as build_shock_model
+from tests.test_models.nbegm_multi_discrete_toy import (
+    build_params as build_shock_params,
+)
 
 N_PERIODS = 5
 LAST_ALIVE_PERIOD = N_PERIODS - 2
@@ -155,3 +159,43 @@ def test_lookup_policy_rejects_params_the_solution_was_not_solved_with(solved):
             regime_name="working_life",
             states={"wealth": WEALTH},
         )
+
+
+def test_lookup_policy_above_range_continuous_state_equals_simulate(solved):
+    """A continuous state above its grid is extrapolated as simulate does."""
+    model, params, solution = solved
+    wealth = jnp.array([450.0, 600.0])
+    df = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "wealth": wealth,
+            "age": jnp.full(wealth.shape, 18.0),
+            "regime_id": jnp.full(wealth.shape, RegimeId.working_life),
+        },
+        log_level="off",
+        seed=0,
+    ).to_dataframe(use_labels=False)
+    first = df.query("period == 0")
+    got = _lookup(solved, period=0, states={"wealth": wealth})
+    np.testing.assert_allclose(
+        np.column_stack([got.actions["consumption"], got.value]),
+        first[["consumption", "value"]].to_numpy(dtype=float),
+    )
+
+
+@pytest.mark.parametrize("sigma", [0.5, 2.0])
+def test_state_grid_scales_shock_nodes_with_runtime_sigma(sigma):
+    """Gauss-Hermite income nodes are the unit-sigma nodes times the runtime sigma."""
+    model = build_shock_model()
+    params = build_shock_params()
+    unit = model.state_grid(params=params, regime_name="alive", state_name="income")
+    params["alive"]["income"] = {"mu": 0.0, "sigma": sigma}
+    got = model.state_grid(params=params, regime_name="alive", state_name="income")
+    np.testing.assert_allclose(got, sigma * np.asarray(unit), rtol=1e-6)
+
+
+def test_state_grid_rejects_an_unknown_state(solved):
+    model, params, _ = solved
+    with pytest.raises(InvalidSimulationInputError, match="income"):
+        model.state_grid(params=params, regime_name="working_life", state_name="income")
