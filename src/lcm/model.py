@@ -706,7 +706,6 @@ class Model:
             fixed_params=self.fixed_params,
         )
         validate_model_inputs(
-            n_periods=self.n_periods,
             user_regimes=self._engine_user_regimes,
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,

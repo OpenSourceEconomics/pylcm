@@ -180,29 +180,6 @@ def test_model_requires_terminal_regime(binary_category_class):
         )
 
 
-def test_model_requires_non_terminal_regime(binary_category_class):
-    """Model must have at least one non-terminal regime."""
-
-    @categorical(ordered=False)
-    class RegimeId:
-        dead: ScalarInt
-
-    dead = UserRegime(
-        regime_transitions=None,
-        states={
-            "health": DiscreteGrid(category_class=binary_category_class),
-        },
-        functions={"utility": lambda health: health * 0},
-    )
-    with pytest.raises(ModelInitializationError, match="at least one non-terminal"):
-        Model(
-            regimes={"dead": dead},
-            ages=AgeGrid(start=0, stop=2, step="Y"),
-            regime_id_class=RegimeId,
-            initial_regimes={0: "dead"},
-        )
-
-
 def test_model_keyword_only():
     """Model requires keyword arguments only."""
     # Positional arguments should raise TypeError

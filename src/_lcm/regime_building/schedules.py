@@ -237,6 +237,14 @@ def lower_demanded_transitions(
     for name, law_by_period in schedules.law_by_period_by_regime.items():
         solve_periods = schedules.coverage_by_regime[name] or (min(law_by_period),)
         visited = tuple(sorted(p for p, n in schedules.visited_nodes if n == name))
+        if schedules.coverage_by_regime[name]:
+            _fail_if_conflicting_annotations(
+                regime_name=name,
+                laws=tuple(
+                    law_by_period[period]
+                    for period in sorted({*solve_periods, *visited})
+                ),
+            )
         lowered[name] = _lower(
             law_by_period=law_by_period,
             solve_periods=solve_periods,
@@ -244,6 +252,43 @@ def lower_demanded_transitions(
             code_by_name=code_by_name,
         )
     return MappingProxyType(lowered)
+
+
+def _fail_if_conflicting_annotations(
+    *, regime_name: RegimeName, laws: tuple[object, ...]
+) -> None:
+    """Refuse one argument name annotated differently by two required laws."""
+    annotations: dict[str, object] = {}
+    for func in _distinct(func for law in laws for func in _law_functions(law)):
+        for name, parameter in inspect.signature(func).parameters.items():
+            annotation = parameter.annotation
+            if annotation is inspect.Parameter.empty:
+                continue
+            existing = annotations.setdefault(name, annotation)
+            if existing != annotation:
+                raise ModelInitializationError(
+                    f"Argument '{name}' of regime '{regime_name}' is annotated as "
+                    f"{_annotation_name(existing)} by one required law and as "
+                    f"{_annotation_name(annotation)} by another. An argument name "
+                    "has one schema across the laws a regime requires."
+                )
+
+
+def _law_functions(law: object) -> tuple[Callable[..., Any], ...]:
+    """The user callables a regime law evaluates to select targets."""
+    if isinstance(law, Phased):
+        return (*_law_functions(law.solve), *_law_functions(law.simulate))
+    if isinstance(law, Mapping):
+        return tuple(func for cell in law.values() for func in _law_functions(cell))
+    if isinstance(law, ValueDependentTransition):
+        return _law_functions(law.probability)
+    if isinstance(law, Choose | MarkovTransition):
+        return (law.func,)
+    return ()
+
+
+def _annotation_name(annotation: object) -> str:
+    return getattr(annotation, "__name__", repr(annotation))
 
 
 def _lower(
