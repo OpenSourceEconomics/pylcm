@@ -356,7 +356,7 @@ def get_params(
 
     """
     final_age_alive = 40 + (n_periods - 2) * 10
-    return {
+    params = {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
         "final_age_alive": final_age_alive,
@@ -364,10 +364,12 @@ def get_params(
             "utility": {"disutility_of_work": disutility_of_work},
             "labor_income": {"wage": wage},
         },
-        "retirement": {
-            "next_wealth": {"labor_income": 0.0},
-        },
     }
+    # With a single decision period every worker dies next, so retirement is
+    # never reached and has no parameters to fill.
+    if n_periods > 2:  # noqa: PLR2004
+        params["retirement"] = {"next_wealth": {"labor_income": 0.0}}
+    return params
 
 
 __all__ = [

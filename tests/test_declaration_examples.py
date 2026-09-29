@@ -135,17 +135,17 @@ def _contradictory_endpoint_text(*, text: str) -> tuple[str, ...]:
 def _code_units() -> list[tuple[Path, str]]:
     units: list[tuple[Path, str]] = []
     for path in _python_files():
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         units.append((path, source))
         units.extend((path, span) for span in _string_code_spans(source=source))
     for path in sorted((_ROOT / "docs").rglob("*.md")):
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         units.extend(
             (path, unit.source) for unit in _markdown_source_units(source=source)
         )
         units.extend((path, span) for span in _INLINE_CODE.findall(source))
     for path in sorted((_ROOT / "docs").rglob("*.ipynb")):
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         units.extend(
             (path, unit.source) for unit in _notebook_source_units(source=source)
         )
@@ -159,17 +159,18 @@ def _code_units() -> list[tuple[Path, str]]:
 
 def _prose_units() -> list[tuple[Path, str]]:
     units: list[tuple[Path, str]] = [
-        (path, path.read_text()) for path in sorted((_ROOT / "docs").rglob("*.md"))
+        (path, path.read_text(encoding="utf-8"))
+        for path in sorted((_ROOT / "docs").rglob("*.md"))
     ]
     units.extend(
         (path, text)
         for path in sorted((_ROOT / "docs").rglob("*.ipynb"))
-        for text in _notebook_markdown(source=path.read_text())
+        for text in _notebook_markdown(source=path.read_text(encoding="utf-8"))
     )
     units.extend(
         (path, text)
         for path in sorted((_ROOT / "src").rglob("*.py"))
-        for text in _string_constants(source=path.read_text())
+        for text in _string_constants(source=path.read_text(encoding="utf-8"))
     )
     return units
 

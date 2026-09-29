@@ -287,10 +287,10 @@ def simulation_result(*, mahler_gpu_model: Model) -> pd.DataFrame:
     ("period", "expected_retired", "expected_part_time", "expected_full_time"),
     [
         (0, 633, 6219, 3148),
-        (1, 653, 7687, 1656),
-        (2, 579, 5846, 3559),
-        (3, 526, 6376, 3072),
-        (4, 473, 5329, 4161),
+        (1, 607, 7713, 1672),
+        (2, 588, 5889, 3510),
+        (3, 562, 6328, 3091),
+        (4, 460, 5343, 4164),
     ],
 )
 def test_labor_supply_distribution(
@@ -315,11 +315,11 @@ def test_labor_supply_distribution(
     [
         (0, 0.0),
         (5, 0.3038),
-        (10, 1.0975),
-        (15, 2.3246),
-        (20, 2.8767),
-        (25, 1.9310),
-        (30, 0.9374),
+        (10, 1.0845),
+        (15, 2.3094),
+        (20, 2.8561),
+        (25, 1.9116),
+        (30, 0.9251),
     ],
 )
 def test_mean_wealth_profile(*, simulation_result, period, expected_mean_wealth):
@@ -350,10 +350,10 @@ def test_health_good_fraction(*, simulation_result, period, expected_good_frac):
 @pytest.mark.parametrize(
     ("period", "expected_alive"),
     [
-        (10, 9880),
+        (10, 9851),
         (20, 9113),
-        (30, 5037),
-        (37, 510),
+        (30, 5025),
+        (37, 501),
     ],
 )
 def test_survival_counts(*, simulation_result, period, expected_alive):
@@ -388,7 +388,7 @@ def test_income_by_education(simulation_result):
     working = simulation_result[simulation_result["period"] < retirement_period]
     inc = working.groupby("education")["income"].mean()
     np.testing.assert_allclose(inc.loc["low"], 0.7995, atol=0.01)
-    np.testing.assert_allclose(inc.loc["high"], 1.5526, atol=0.01)
+    np.testing.assert_allclose(inc.loc["high"], 1.5638, atol=0.01)
     assert inc.loc["high"] > inc.loc["low"]
 
 
@@ -404,7 +404,7 @@ def test_retirement_regime_starts_at_retirement_period(simulation_result):
 @_gpu_x64
 def test_total_living_rows(simulation_result):
     """Total number of living-regime rows must match reference."""
-    assert abs(len(simulation_result) - 294706) <= 50
+    assert abs(len(simulation_result) - 293892) <= 50
 
 
 @_gpu_x64

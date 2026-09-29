@@ -123,7 +123,7 @@ def test_value_dependent_transition_keeps_the_ordinary_transition_entry():
     """The target still carries its selection probability, gate or no gate."""
     regime = _new_vocabulary_regimes()["married"]
 
-    (transition,) = cast("ByAge", regime.decomposed_transition).laws
+    transition = regime.decomposed_transition
     assert isinstance(transition, Mapping)
     assert set(transition) == {"married_ir"}
     assert isinstance(transition["married_ir"], MarkovTransition)
@@ -430,7 +430,7 @@ def test_an_edge_declared_inside_a_phased_transition_is_derived_once():
     assert edge.gate is _no_dissolution_gate
     assert set(edge.legs) == {"f", "m"}
 
-    (transition,) = cast("ByAge", regime.decomposed_transition).laws
+    transition = regime.decomposed_transition
     assert isinstance(transition, Phased)
     assert transition.solve["married_ir"].func is _prob_one
     assert transition.simulate["married_ir"].func is _prob_half
@@ -494,7 +494,7 @@ def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
         },
     )
 
-    (transition,) = cast("ByAge", regime.decomposed_transition).laws
+    transition = regime.decomposed_transition
     assert isinstance(transition, Mapping)
     cell = transition["married_ir"]
     assert isinstance(cell, MarkovTransition)
