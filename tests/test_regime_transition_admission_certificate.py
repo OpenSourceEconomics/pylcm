@@ -188,6 +188,66 @@ def _regime_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
     ):
         errors.append("regime mapping owners must expose every array leaf")
 
+    feasible_calls = _calls(node=single, name="_validate_regime_law_on_feasible_rows")
+    if (
+        len(feasible_calls) != 1
+        or _keyword(call=feasible_calls[0], name="memory") != "current_memory"
+    ):
+        errors.append("feasible-row regime check must receive current memory")
+
+    feasible_owner = _definition(
+        tree=tree, name="_validate_regime_law_on_feasible_rows"
+    )
+    feasible_evaluations = _calls(node=feasible_owner, name="_evaluate_feasible_rows")
+    if (
+        len(feasible_evaluations) != 1
+        or _keyword(call=feasible_evaluations[0], name="memory") != "memory"
+    ):
+        errors.append("feasible-row regime law must receive current memory")
+    feasible_outputs = {
+        (_keyword(call=call, name="memory"), _keyword(call=call, name="outputs"))
+        for call in _calls(node=feasible_owner, name="_set_transition_outputs")
+    }
+    if ("memory", "(regime_transition_probs, feasible, point)") not in feasible_outputs:
+        errors.append("feasible-row outputs must become temporary owners")
+    if ("memory", "()") not in feasible_outputs:
+        errors.append("temporary feasible-row outputs must be released")
+    feasible_validations = _calls(
+        node=feasible_owner, name="_validate_regime_transition_probs"
+    )
+    if (
+        len(feasible_validations) != 1
+        or _keyword(call=feasible_validations[0], name="memory") != "memory"
+        or _keyword(call=feasible_validations[0], name="rows") != "feasible"
+    ):
+        errors.append("feasible-row diagnostics must count only feasible rows")
+
+    feasible_evaluator = _definition(tree=tree, name="_evaluate_feasible_rows")
+    feasible_evaluator_source = ast.unparse(feasible_evaluator)
+    for message, expression in {
+        "feasible-row evaluator must bind the complete producer": (
+            "function = partial(_feasible_rows_law, grid_names=tuple(grid_args), "
+            "law=law, feasibility=feasibility)"
+        ),
+        "budgeted feasible-row evaluator must use admitted producer": (
+            "_evaluate_admitted_transition_producer(function=function, "
+            "arguments=arguments, memory=memory)"
+        ),
+    }.items():
+        if expression not in feasible_evaluator_source:
+            errors.append(message)
+
+    feasible_law = ast.unparse(_definition(tree=tree, name="_feasible_rows_law"))
+    if (
+        "jnp.meshgrid(" not in feasible_law
+        or "indexing='ij'" not in feasible_law
+        or "jax.vmap(" not in feasible_law
+        or "dict(zip(grid_names, flat_arrays, strict=True))" not in feasible_law
+    ):
+        errors.append(
+            "Cartesian feasible-row production and diagnostic order must remain fused"
+        )
+
     validator = _definition(tree=tree, name="_validate_regime_transition_probs")
     admitted = _calls(node=validator, name="run_simulation_operation")
     if (
@@ -230,8 +290,8 @@ def test_regime_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_validate_regime_transition_single",
-            "        memory=current_memory,\n    )\n    _check_and_release_regime_probability(",
-            "        memory=None,\n    )\n    _check_and_release_regime_probability(",
+            "        memory=current_memory,\n    )\n    try:\n        _check_and_release_regime_probability(",
+            "        memory=None,\n    )\n    try:\n        _check_and_release_regime_probability(",
             "regime law must receive current memory",
         ),
         (
@@ -275,6 +335,48 @@ def test_regime_transition_admission_contract_is_complete() -> None:
             "            memory=memory,\n            function=regime_probability_flags,",
             "            memory=None,\n            function=regime_probability_flags,",
             "serial regime diagnostics must use admitted flags",
+        ),
+        (
+            "_validate_regime_transition_single",
+            "            ages=ages,\n            memory=current_memory,\n        )",
+            "            ages=ages,\n            memory=None,\n        )",
+            "feasible-row regime check must receive current memory",
+        ),
+        (
+            "_validate_regime_law_on_feasible_rows",
+            "            | dict(scalar_kwargs)\n        ),\n        memory=memory,",
+            "            | dict(scalar_kwargs)\n        ),\n        memory=None,",
+            "feasible-row regime law must receive current memory",
+        ),
+        (
+            "_validate_regime_law_on_feasible_rows",
+            "        memory=memory, outputs=(regime_transition_probs, feasible, point)",
+            "        memory=memory, outputs=()",
+            "feasible-row outputs must become temporary owners",
+        ),
+        (
+            "_validate_regime_law_on_feasible_rows",
+            "        _set_transition_outputs(memory=memory, outputs=())",
+            "        _set_transition_outputs(memory=memory, outputs=feasible)",
+            "temporary feasible-row outputs must be released",
+        ),
+        (
+            "_validate_regime_law_on_feasible_rows",
+            "            rows=feasible,",
+            "            rows=None,",
+            "feasible-row diagnostics must count only feasible rows",
+        ),
+        (
+            "_evaluate_feasible_rows",
+            "            function=function, arguments=arguments, memory=memory",
+            "            function=function, arguments=arguments, memory=None",
+            "budgeted feasible-row evaluator must use admitted producer",
+        ),
+        (
+            "_feasible_rows_law",
+            'mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")',
+            'mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="xy")',
+            "Cartesian feasible-row production and diagnostic order must remain fused",
         ),
         (
             "_regime_probability_law",

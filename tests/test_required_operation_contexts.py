@@ -423,8 +423,28 @@ def _age_signature(age: float) -> float:
     return float(age)
 
 
-def _age_grid_model(*, earlier_root: bool, enable_jit: bool = True) -> Model:
-    """Wealth lives on {age, age + 1}; the age-1 law is `(wealth, 1 - wealth)`."""
+def _shifted_left_from_wealth(*, wealth: ContinuousState) -> FloatND:
+    return wealth - 1.0
+
+
+def _shifted_right_from_wealth(*, wealth: ContinuousState) -> FloatND:
+    return 2.0 - wealth
+
+
+def _age_grid_model(
+    *, earlier_root: bool, valid_late_law: bool = False, enable_jit: bool = True
+) -> Model:
+    """Wealth lives on {age, age + 1}; age 0 exits left.
+
+    The age-1 law is `(wealth, 1 - wealth)`, invalid at wealth=2, or with
+    `valid_late_law` it is `(wealth - 1, 2 - wealth)`, valid on {1, 2} and
+    invalid on the age-0 grid {0, 1}.
+    """
+    left, right = (
+        (_shifted_left_from_wealth, _shifted_right_from_wealth)
+        if valid_late_law
+        else (_left_from_wealth, _right_from_wealth)
+    )
     roots: dict[object, str] = {(0, 1): "working"} if earlier_root else {1: "working"}
     return Model(
         enable_jit=enable_jit,
@@ -437,8 +457,8 @@ def _age_grid_model(*, earlier_root: bool, enable_jit: bool = True) -> Model:
                     cases={
                         0: "left",
                         1: {
-                            "left": MarkovTransition(func=_left_from_wealth),
-                            "right": MarkovTransition(func=_right_from_wealth),
+                            "left": MarkovTransition(func=left),
+                            "right": MarkovTransition(func=right),
                         },
                     }
                 ),
@@ -467,6 +487,17 @@ def test_probability_validation_uses_each_required_age_grid(
         model.solve(params={"discount_factor": 0.5}, log_level=log_level)
 
 
+@pytest.mark.parametrize("earlier_root", [False, True])
+def test_probability_validation_accepts_a_law_valid_on_its_own_age_grid(
+    *, earlier_root: bool
+) -> None:
+    """On {1, 2} the age-1 law routes wealth 1 right and 2 left: `V = (0, 5)`."""
+    solution = _age_grid_model(earlier_root=earlier_root, valid_late_law=True).solve(
+        params={"discount_factor": 0.5}, log_level="off"
+    )
+    np.testing.assert_array_equal(np.asarray(solution.values[1]["working"]), [0, 5])
+
+
 def _half() -> FloatND:
     return jnp.asarray(0.5)
 
@@ -479,7 +510,15 @@ def _carried_right(*, carried_share: ContinuousState) -> FloatND:
     return 1.0 - carried_share
 
 
-def _carried_model(*, enable_jit: bool = True) -> Model:
+def _stray_carried_left(*, carried_share: ContinuousState) -> FloatND:
+    return 2.0 * carried_share - 0.5
+
+
+def _stray_carried_right(*, carried_share: ContinuousState) -> FloatND:
+    return 1.0 - _stray_carried_left(carried_share=carried_share)
+
+
+def _carried_model(*, enable_jit: bool = True, stray: bool = False) -> Model:
     """The solve law is (1/2, 1/2); the realized law reads the carried share."""
     return Model(
         enable_jit=enable_jit,
@@ -494,8 +533,12 @@ def _carried_model(*, enable_jit: bool = True) -> Model:
                         "right": MarkovTransition(func=_half),
                     },
                     simulate={
-                        "left": MarkovTransition(func=_carried_left),
-                        "right": MarkovTransition(func=_carried_right),
+                        "left": MarkovTransition(
+                            func=_stray_carried_left if stray else _carried_left
+                        ),
+                        "right": MarkovTransition(
+                            func=_stray_carried_right if stray else _carried_right
+                        ),
                     },
                 ),
                 states={
@@ -553,6 +596,16 @@ def test_realized_routing_reads_the_actual_carried_state(
     assert list(last["regime_name"]) == [
         "right" if subject % 2 == 0 else "left" for subject in range(n_subjects)
     ]
+
+
+@pytest.mark.parametrize("log_level", ["off", "warning", "debug"])
+def test_realized_law_is_rejected_at_a_carried_state_node(
+    *, log_level: LogLevel
+) -> None:
+    """At carried share 0 the realized law gives probabilities (-0.5, 1.5)."""
+    model = _carried_model(stray=True)
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match="outside "):
+        model.solve(params={"discount_factor": 0.5}, log_level=log_level)
 
 
 def _feasible(*, wealth: ContinuousState, consumption: ContinuousState) -> BoolND:
@@ -665,3 +718,22 @@ def test_probability_check_rejects_a_bad_feasible_row_on_a_refined_grid(
     )
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match="outside "):
         model.solve(params={"discount_factor": 0.5}, log_level="off")
+
+
+def test_simulation_admits_a_law_that_is_nan_only_at_infeasible_rows() -> None:
+    """Each subject consumes its whole wealth, the feasible maximum."""
+    model = _feasibility_model(bad_feasible=False)
+    params = {"discount_factor": 0.5}
+    panel = model.simulate(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        initial_conditions={
+            "age": jnp.zeros(2),
+            "regime_id": jnp.full(2, model.regime_names_to_ids["working"]),
+            "wealth": jnp.asarray([0.0, 1.0]),
+        },
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
+    first = panel.query("period == 0").sort_values("subject_id")
+    np.testing.assert_array_equal(first["consumption"].to_numpy(), [0.0, 1.0])

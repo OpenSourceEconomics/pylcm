@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "4ede9d2a3c403eeb6275fae728b8c1bc577c21f8840ca71df89836fd6c08962b",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "fc4e0883bd96996f6eaaa697c72dca9a844248f5ccf6dcac494c6879bd0d2403",
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -6390,13 +6390,13 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/transition_checks.py": (
-        "a5b8f1b8ad0ab9028ed8b7ddf3e7c88f2f3c6b55eef68c4591bf3cf5b0e0e27f",
+        "00c8c0f264e269216f6508a5f80da2438fa887123d47719c9c121f644cde33f4",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
             "_validate_transition_sequence": "e0dfef9bad2eaad6f33ad7729841c6d813913c85cb3c5977ad3650292be4f98a",
-            "validate_regime_transitions_all_periods": "ed9dbd72891c41a380886424b7d4075012782570cdb037ac1883bc1ba1fea9da",
-            "_validate_regime_transition_single": "b14ec93d4a9a5e0255beeb76ee20388386692d4cdc7f5ed6c7b1cefbc1ac40b4",
+            "validate_regime_transitions_all_periods": "7fb17014051ab54f47b56332129ef2faff1d1d1d26304de95d271b46096e395c",
+            "_validate_regime_transition_single": "5eb2087055a66fdd2a21ce952cabe0d0f1f78971960fbd59ca5c4a654449d604",
             "_evaluate_regime_probability_law": "c16f5612edb533d8f89d75d0c90fa903d723b4b4235dcc40b0a3e31dc3aecd42",
             "_regime_probability_law": "0af1c02dca10a6d00a10e67342b51996fb23a078886097a363a12935f7c0ab39",
             "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",

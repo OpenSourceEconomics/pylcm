@@ -44,10 +44,17 @@ import numpy as np
 import pandas as pd
 from dags.tree import tree_path_from_qname
 
-from _lcm.engine import Regime, StateActionSpace, _StochasticStateTransition
+from _lcm.engine import (
+    Regime,
+    SimulationPhase,
+    SolutionPhase,
+    StateActionSpace,
+    _StochasticStateTransition,
+)
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
+from _lcm.regime_building.Q_and_F import _get_feasibility
 from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -63,6 +70,7 @@ from _lcm.typing import (
     FlatRegimeParams,
     RegimeName,
     RegimeTransitionFunction,
+    StateName,
     StateOrActionName,
 )
 from _lcm.utils.logging import raise_or_warn, validation_enabled
@@ -74,11 +82,23 @@ from lcm.exceptions import (
     InvalidStateTransitionProbabilitiesError,
     RegimeInitializationError,
 )
-from lcm.typing import Bool1D, BoolND, FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    Bool1D,
+    BoolND,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+)
 
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
 type _RegimeProbabilityOutput = tuple[
     Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]
+]
+type _FeasibleRowsOutput = tuple[
+    Mapping[RegimeName, FloatND], BoolND, Mapping[StateOrActionName, FloatND | IntND]
 ]
 type _SupportSchema = tuple[str, int, object, tuple[tuple[tuple[int, ...], str], ...]]
 
@@ -492,7 +512,7 @@ def validate_regime_transitions_all_periods(
             laws = _regime_laws_at_period(
                 regime=regime, regime_name=regime_name, period=period
             )
-            for law, reachability in laws:
+            for law, reachability, realized in laws:
                 try:
                     _validate_regime_transition_single(
                         regimes=regimes,
@@ -507,6 +527,7 @@ def validate_regime_transitions_all_periods(
                         process_grid_resolver=process_grid_resolver,
                         memory=memory,
                         law=law,
+                        realized=realized,
                     )
                 except InvalidRegimeTransitionProbabilitiesError as error:
                     if summary is not None:
@@ -518,23 +539,24 @@ def validate_regime_transitions_all_periods(
 
 def _regime_laws_at_period(
     *, regime: Regime, regime_name: RegimeName, period: int
-) -> list[tuple[RegimeTransitionFunction, PhaseReachability]]:
+) -> list[tuple[RegimeTransitionFunction, PhaseReachability, bool]]:
     """The regime laws to validate at one period, with the graph of each.
 
     Solved periods check the solve law against its own targets; visited periods
-    of a `Phased` regime also check the realized law.
+    of a `Phased` regime also check the realized law. The flag marks the
+    realized law.
     """
     laws = []
     solved = regime.solution.validation_regime_transition_probs
     if solved is not None and period in regime.active_periods:
-        laws.append((solved, regime.solution.reachability))
+        laws.append((solved, regime.solution.reachability, False))
     realized = regime.simulation.validation_regime_transition_probs
     simulation_reachability = regime.simulation.reachability
     if (
         realized is not None
         and regime_name in simulation_reachability.active_regimes_by_period[period]
     ):
-        laws.append((realized, simulation_reachability))
+        laws.append((realized, simulation_reachability, True))
     return laws
 
 
@@ -550,64 +572,228 @@ def _validate_regime_transition_single(
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
     law: RegimeTransitionFunction,
+    realized: bool = False,
 ) -> None:
     """Validate `law`, one phase's regime transition of one regime, at one period.
 
-    Evaluate the regime transition function on the Cartesian product of all grid
-    variables it accepts, using `jax.vmap` for vectorised evaluation.
+    Evaluate the law with `jax.vmap` on the Cartesian product of the grid
+    variables it accepts, taken from the rows its operation evaluates:
+
+    - the period's own nodes of an age-specialized state;
+    - for a realized law, also the simulate grid of each carried-only state.
+
+    A failing law is checked once more on the economically feasible rows alone,
+    where the regime's constraints hold, because the operation masks the
+    others. The mask comes from the constraints only, never from the
+    probabilities, so a bad law at a feasible row still raises.
 
     """
     regime = regimes[regime_name]
-    regime_transition_func = law
-
-    state_action_space = (
+    base_space = (
         regime.solution.state_action_space(
             regime_params=regime_params, process_grid_resolver=process_grid_resolver
         )
         if summary is None
         else summary.state_action_space(regime=regime, params=regime_params)
     )
-
-    # Filter params to only those accepted by the transition function
-    accepted_params = set(inspect.signature(regime_transition_func).parameters)
-    filtered_params = {k: v for k, v in regime_params.items() if k in accepted_params}
-
-    # Collect only grid variables the transition function accepts
-    grids: dict[StateOrActionName, FloatND | IntND] = {
-        k: v for k, v in state_action_space.states.items() if k in accepted_params
-    } | {k: v for k, v in state_action_space.actions.items() if k in accepted_params}
-
+    state_action_space = _state_action_space_for_period(
+        regime=regime, base=base_space, period=period
+    )
+    available_grids: dict[StateOrActionName, FloatND | IntND] = {
+        **state_action_space.states,
+        **state_action_space.actions,
+    }
+    if realized:
+        available_grids |= {
+            name: regime.simulation.grids[name].to_jax()
+            for name in sorted(regime.simulation.carried_only_state_names)
+        }
+    law_names = frozenset(inspect.signature(law).parameters)
     # Pin to int32: a Python-int `period` traced through `jax.vmap` becomes
     # int64 under x64, breaking any int32 `period` contract downstream.
-    period_int32 = jnp.int32(period)
+    period_kwargs = {"period": jnp.int32(period), "age": ages.values[period]}  # noqa: PD011
     current_memory = (
         summary.memory if summary is not None and summary.memory is not None else memory
     )
     regime_transition_probs, point = _evaluate_regime_probability_law(
-        func=cast(
-            "Callable[..., Mapping[RegimeName, FloatND]]", regime_transition_func
+        func=cast("Callable[..., Mapping[RegimeName, FloatND]]", law),
+        grid_args=MappingProxyType(
+            {k: v for k, v in available_grids.items() if k in law_names}
         ),
-        grid_args=MappingProxyType(grids),
         scalar_kwargs=MappingProxyType(
-            {
-                **filtered_params,
-                "period": period_int32,
-                "age": ages.values[period],  # noqa: PD011
-            }
+            {k: v for k, v in regime_params.items() if k in law_names} | period_kwargs
         ),
         memory=current_memory,
     )
-    _check_and_release_regime_probability(
-        regime_transition_probs=regime_transition_probs,
-        active_regimes_next_period=active_regimes_next_period,
-        regime_name=regime_name,
-        age=ages.values[period],  # noqa: PD011
-        next_age=ages.values[period + 1],  # noqa: PD011
-        period=period,
-        state_action_values=point,
-        summary=summary,
-        memory=current_memory,
+    try:
+        _check_and_release_regime_probability(
+            regime_transition_probs=regime_transition_probs,
+            active_regimes_next_period=active_regimes_next_period,
+            regime_name=regime_name,
+            age=ages.values[period],  # noqa: PD011
+            next_age=ages.values[period + 1],  # noqa: PD011
+            period=period,
+            state_action_values=point,
+            summary=summary,
+            memory=current_memory,
+        )
+    except InvalidRegimeTransitionProbabilitiesError:
+        phase = regime.simulation if realized else regime.solution
+        if not phase.constraints:
+            raise
+        del regime_transition_probs, point
+        _validate_regime_law_on_feasible_rows(
+            law=cast("Callable[..., Mapping[RegimeName, FloatND]]", law),
+            phase=phase,
+            available_grids=MappingProxyType(available_grids),
+            regime_params=regime_params,
+            scalar_kwargs=MappingProxyType(period_kwargs),
+            active_regimes_next_period=active_regimes_next_period,
+            regime_name=regime_name,
+            period=period,
+            ages=ages,
+            memory=current_memory,
+        )
+
+
+def _validate_regime_law_on_feasible_rows(
+    *,
+    law: Callable[..., Mapping[RegimeName, FloatND]],
+    phase: SolutionPhase | SimulationPhase,
+    available_grids: Mapping[StateOrActionName, FloatND | IntND],
+    regime_params: FlatRegimeParams,
+    scalar_kwargs: Mapping[str, object],
+    active_regimes_next_period: tuple[RegimeName, ...],
+    regime_name: RegimeName,
+    period: int,
+    ages: AgeGrid,
+    memory: SimulationMemory | None,
+) -> None:
+    """Validate a regime law on the rows where the regime's constraints hold.
+
+    The law and the conjunction of the phase's constraints are evaluated on one
+    Cartesian grid over the variables either reads, so a row is counted exactly
+    when its state-action combination is economically feasible.
+    """
+    feasibility = (
+        _get_feasibility(functions=phase.functions, constraints=phase.constraints)
+        if memory is None
+        else memory.producers.built(
+            builder=_get_feasibility,
+            functions=phase.functions,
+            constraints=phase.constraints,
+        )
     )
+    law_names = frozenset(inspect.signature(law).parameters)
+    feasibility_names = frozenset(inspect.signature(feasibility).parameters)
+    read_names = law_names | feasibility_names
+    regime_transition_probs, feasible, point = _evaluate_feasible_rows(
+        law=_NamedArgumentsCall(func=law, names=law_names),
+        feasibility=_NamedArgumentsCall(func=feasibility, names=feasibility_names),
+        grid_args=MappingProxyType(
+            {k: v for k, v in available_grids.items() if k in read_names}
+        ),
+        scalar_kwargs=MappingProxyType(
+            {k: v for k, v in regime_params.items() if k in read_names}
+            | dict(scalar_kwargs)
+        ),
+        memory=memory,
+    )
+    _set_transition_outputs(
+        memory=memory, outputs=(regime_transition_probs, feasible, point)
+    )
+    try:
+        _validate_regime_transition_probs(
+            regime_transition_probs=regime_transition_probs,
+            active_regimes_next_period=active_regimes_next_period,
+            regime_name=regime_name,
+            age=ages.values[period],  # noqa: PD011
+            next_age=ages.values[period + 1],  # noqa: PD011
+            period=period,
+            state_action_values=point,
+            memory=memory,
+            rows=feasible,
+        )
+    finally:
+        _set_transition_outputs(memory=memory, outputs=())
+
+
+def _state_action_space_for_period(
+    *, regime: Regime, base: StateActionSpace, period: int
+) -> StateActionSpace:
+    """Overlay the period's nodes of each age-specialized state on `base`."""
+    axes = regime.solution.period_state_axes
+    period_states = None if axes is None else axes.get(period)
+    if not period_states:
+        return base
+    return base.replace(
+        states=cast(
+            "MappingProxyType[StateName, ContinuousState | DiscreteState]",
+            MappingProxyType(dict(base.states) | dict(period_states)),
+        )
+    )
+
+
+def _evaluate_feasible_rows(
+    *,
+    law: Callable[..., Mapping[RegimeName, FloatND]],
+    feasibility: Callable[..., BoolND],
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: Mapping[str, object],
+    memory: SimulationMemory | None,
+) -> tuple[
+    MappingProxyType[RegimeName, FloatND],
+    Bool1D,
+    MappingProxyType[StateOrActionName, FloatND | IntND],
+]:
+    """Admit one regime law and the regime's feasibility on one shared grid."""
+    function = partial(
+        _feasible_rows_law,
+        grid_names=tuple(grid_args),
+        law=law,
+        feasibility=feasibility,
+    )
+    arguments = MappingProxyType(
+        {"grid_args": grid_args, "scalar_kwargs": scalar_kwargs}
+    )
+    produced = (
+        function(grid_args=grid_args, scalar_kwargs=scalar_kwargs)
+        if memory is None
+        else _evaluate_admitted_transition_producer(
+            function=function, arguments=arguments, memory=memory
+        )
+    )
+    probabilities, feasible, point = cast("_FeasibleRowsOutput", produced)
+    return (
+        MappingProxyType(probabilities),
+        jnp.atleast_1d(feasible),
+        MappingProxyType(point),
+    )
+
+
+def _feasible_rows_law(
+    *,
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    scalar_kwargs: Mapping[str, object],
+    grid_names: tuple[StateOrActionName, ...],
+    law: Callable[..., Mapping[RegimeName, FloatND]],
+    feasibility: Callable[..., BoolND],
+) -> tuple[
+    Mapping[RegimeName, FloatND], BoolND, Mapping[StateOrActionName, FloatND | IntND]
+]:
+    """Evaluate a regime law and feasibility at every point of one Cartesian grid."""
+    point_call = _GridPointCall(
+        names=grid_names,
+        scalar_kwargs=scalar_kwargs,
+        func=_LawAndFeasibility(law=law, feasibility=feasibility),
+    )
+    if not grid_names:
+        probabilities, feasible = point_call()
+        return probabilities, feasible, {}
+    mesh = jnp.meshgrid(*(grid_args[name] for name in grid_names), indexing="ij")
+    flat_arrays = tuple(array.ravel() for array in mesh)
+    probabilities, feasible = jax.vmap(point_call)(*flat_arrays)
+    return probabilities, feasible, dict(zip(grid_names, flat_arrays, strict=True))
 
 
 def _evaluate_regime_probability_law(
@@ -1983,6 +2169,34 @@ def _unit_mass_violations(sum_all: FloatND) -> BoolND:
     """
     tolerance = 16.0 * float(jnp.finfo(sum_all.dtype).eps)
     return jnp.abs(sum_all - 1.0) > tolerance
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _NamedArgumentsCall:
+    """Call a function with the keyword arguments it declares, only."""
+
+    func: Callable[..., Any] = field(repr=False)
+    """The function."""
+    names: frozenset[str]
+    """The argument names the function declares."""
+
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        return self.func(**{k: v for k, v in kwargs.items() if k in self.names})
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _LawAndFeasibility:
+    """Evaluate a regime law and the regime's feasibility at one point."""
+
+    law: Callable[..., Any] = field(repr=False)
+    """The regime law."""
+    feasibility: Callable[..., Any] = field(repr=False)
+    """The conjunction of the regime's constraints."""
+
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        return self.law(**kwargs), self.feasibility(**kwargs)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
