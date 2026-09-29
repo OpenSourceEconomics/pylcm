@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, cast, runtime_checkable
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from beartype import beartype
@@ -102,9 +103,17 @@ from _lcm.simulation.initial_conditions import (
     validate_initial_conditions as validate_canonical_initial_conditions,
 )
 from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.program_arguments import decision_arguments
+from _lcm.simulation.program_types import SimulationProgramExecutor
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.result_metadata import _get_output_dtypes
-from _lcm.simulation.simulate import simulate
+from _lcm.simulation.simulate import (
+    _lookup_values_from_indices,
+    _referenced_value_kwargs,
+    _require_next_period_values,
+    simulate,
+)
+from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
     build_solution_result,
@@ -162,6 +171,7 @@ from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_regime_selection, validate_transitions
 from _lcm.typing import (
+    ActionName,
     FlatParams,
     FunctionName,
     InitialConditions,
@@ -199,7 +209,7 @@ from lcm.exceptions import (
 from lcm.execution import ExecutionConfig
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
-from lcm.result import SimulationResult
+from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -232,7 +242,9 @@ from lcm.solver_api import (
 from lcm.solvers import GridSearch
 from lcm.typing import (
     Bool1D,
+    FloatND,
     InitialRegimes,
+    IntND,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -2872,6 +2884,146 @@ class Model:
                     )
             return result
 
+    def lookup_policy(
+        self,
+        *,
+        params: UserParams,
+        solution: _SolutionResultBoundary,
+        period: int,
+        regime_name: RegimeName,
+        states: Mapping[StateName, jax.Array],
+        action_grids: Mapping[ActionName, jax.Array] | None = None,
+    ) -> PolicyLookup:
+        """Return the optimal actions and value at given states of one regime-period.
+
+        Evaluates the same decision program `simulate` runs, so a subject standing
+        at one of `states` in `(period, regime_name)` chooses exactly the returned
+        actions and attains the returned value. Repeated calls with the same number
+        of rows reuse one compiled program.
+
+        Args:
+            params: The parameters `solution` was solved with; checked against its
+                params fingerprint exactly as `simulate` does.
+            solution: Complete result returned by `solve()`.
+            period: Period index of the queried node.
+            regime_name: Regime of the queried node; it must be active in `period`.
+            states: One 1-D array per state of the regime, all of equal length.
+                Values must lie on the regime's declared state space.
+            action_grids: Optional replacement grids for some actions, e.g. a
+                single code of a discrete action to obtain the conditional argmax
+                and value of that branch. Values must lie on the declared grid.
+
+        Returns:
+            The argmax action value per action name and the max of Q over the
+            (possibly restricted) action grid, one entry per state row.
+
+        """
+        self._sealed_bindings.fail_if_moved()
+        regime = self._regimes.get(regime_name)
+        if regime is None:
+            msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
+            raise InvalidSimulationInputError(msg)
+        if period not in regime.simulation.programs.decision:
+            msg = f"Regime {regime_name!r} makes no decision in period {period}."
+            raise InvalidSimulationInputError(msg)
+        if regime.has_taste_shocks or regime.gated_edges:
+            msg = (
+                "Policy lookup supports regimes without taste shocks or gated "
+                f"edges; {regime_name!r} declares one."
+            )
+            raise InvalidSimulationInputError(msg)
+        flat_params = self._process_params(params)
+        V_arrs, sim_policies, _, replay_readers = self._resolve_solution_result(
+            solution=solution, flat_params=flat_params
+        )
+        if (
+            sim_policies.get(period, {}).get(regime_name) is not None
+            or replay_readers.get(period, {}).get(regime_name) is not None
+        ):
+            msg = (
+                f"Regime {regime_name!r} replays a published policy in period "
+                f"{period}; policy lookup supports the grid argmax only."
+            )
+            raise InvalidSimulationInputError(msg)
+        base = _build_base_state_action_spaces(
+            regimes=self._regimes, flat_params=flat_params, process_grid_resolver=None
+        )[regime_name]
+        _fail_if_off_grid(
+            kind="state",
+            given=states,
+            declared=MappingProxyType(
+                {name: base.states[name] for name in regime.solution.state_names}
+            ),
+            require_all=True,
+        )
+        grids = dict(base.actions)
+        _fail_if_off_grid(
+            kind="action",
+            given=action_grids or {},
+            declared=MappingProxyType(grids),
+            require_all=False,
+        )
+        grids.update({name: jnp.asarray(g) for name, g in (action_grids or {}).items()})
+        space = create_regime_state_action_space(
+            regime=regime,
+            regime_states=MappingProxyType(
+                {name: jnp.asarray(s) for name, s in states.items()}
+            ),
+            base=base,
+        )
+        n_rows = len(next(iter(space.states.values()))) if space.states else 1
+        runtime_regime = self._runtime_regimes_for_shape(compile_batch_size=n_rows)[
+            regime_name
+        ]
+        next_V = _require_next_period_values(
+            next_period_values=V_arrs.get(period + 1, MappingProxyType({})),
+            required_targets=(
+                ()
+                if period == self.ages.n_periods - 1
+                else regime.solution.reachability.targets(
+                    period=period, source=regime_name
+                )
+            ),
+            source_regime_name=regime_name,
+            source_period=period,
+        )
+        programs = runtime_regime.simulation.programs
+        executor = cast("SimulationProgramExecutor", programs.executor)
+        indices, value = cast(
+            "tuple[IntND, FloatND]",
+            executor.dispatch(
+                program=_with_action_extents(
+                    program=programs.decision[period],
+                    extents=tuple(len(grids[n]) for n in space.action_names),
+                ),
+                period=period,
+                n_subjects=n_rows,
+                arguments=decision_arguments(
+                    states=space.states,
+                    discrete_actions={n: grids[n] for n in space.discrete_actions},
+                    continuous_actions={n: grids[n] for n in space.continuous_actions},
+                    taste_keys={},
+                    next_values=next_V,
+                    references=_referenced_value_kwargs(
+                        regime=regime,
+                        period_to_regime_to_V_arr=V_arrs,
+                        flat_params=flat_params,
+                        period=period,
+                    ),
+                    params=flat_params[regime_name],
+                    period=jnp.int32(period),
+                    age=self.ages.values[period],  # noqa: PD011
+                ),
+            ),
+        )
+        return PolicyLookup(
+            actions=_lookup_values_from_indices(
+                flat_indices=indices,
+                grids=MappingProxyType({n: grids[n] for n in space.actions}),
+            ),
+            value=value,
+        )
+
     @beartype(conf=PARAMS_CONF)
     def validate_initial_conditions(
         self,
@@ -3166,6 +3318,74 @@ class Model:
             array_writer.publish(stage="params", tree=flat_params)
 
         return flat_params
+
+
+# Keyed by the source program's identity; the source is held alongside so the
+# identity cannot be recycled while its entry lives.
+# ponytail: unbounded, one small entry per (decision program, restricted extents).
+_ACTION_EXTENT_PROGRAMS: dict[
+    tuple[int, tuple[int, ...]], tuple[CoreProgram, CoreProgram]
+] = {}
+
+
+def _with_action_extents(
+    *, program: CoreProgram, extents: tuple[int, ...]
+) -> CoreProgram:
+    """Return `program` with its streamed action axis declared at `extents`.
+
+    A dense decision program declares no action axis and is returned unchanged.
+    One object per extents keeps the executor's compiled-route cache warm.
+    """
+    reduced = program.requirements.reduced_axes
+    if not reduced or reduced[0].coordinate_extents == extents:
+        return program
+    key = (id(program), extents)
+    if key not in _ACTION_EXTENT_PROGRAMS:
+        axis = dataclasses.replace(reduced[0], coordinate_extents=extents)
+        _ACTION_EXTENT_PROGRAMS[key] = (
+            program,
+            dataclasses.replace(
+                program,
+                requirements=dataclasses.replace(
+                    program.requirements, reduced_axes=(axis, *reduced[1:])
+                ),
+            ),
+        )
+    return _ACTION_EXTENT_PROGRAMS[key][1]
+
+
+def _fail_if_off_grid(
+    *,
+    kind: str,
+    given: Mapping[str, object],
+    declared: Mapping[str, jax.Array],
+    require_all: bool,
+) -> None:
+    """Raise if names are unknown or missing, or values leave the declared grid.
+
+    Integer grids require membership; float grids require the closed range.
+    """
+    unknown = sorted(set(given) - set(declared))
+    missing = sorted(set(declared) - set(given)) if require_all else []
+    if unknown or missing:
+        msg = (
+            f"Policy lookup {kind}s must match the declared {kind}s "
+            f"{sorted(declared)}; unknown: {unknown}, missing: {missing}."
+        )
+        raise InvalidSimulationInputError(msg)
+    for name, values in given.items():
+        grid = np.asarray(declared[name])
+        arr = np.asarray(values)
+        if np.issubdtype(grid.dtype, np.integer):
+            off = ~np.isin(arr, grid)
+        else:
+            off = (arr < grid.min()) | (arr > grid.max())
+        if off.any():
+            msg = (
+                f"Policy lookup {kind} {name!r} has values off the declared "
+                f"grid: {arr[off].tolist()}."
+            )
+            raise InvalidSimulationInputError(msg)
 
 
 def _fail_if_invalid_taste_shock_seed(*, taste_shock_seed: int | None) -> None:

@@ -172,7 +172,7 @@ from lcm.processes import (  # noqa: E402
     UniformIIDProcess,
 )
 from lcm.regime import Regime  # noqa: E402
-from lcm.result import SimulationResult  # noqa: E402
+from lcm.result import PolicyLookup, SimulationResult  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
     AgeRange,
@@ -236,6 +236,7 @@ __all__ = [
     "Phased",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
+    "PolicyLookup",
     "PowerMean",
     "ProjectedRegimeValue",
     "QuasiArithmeticMean",

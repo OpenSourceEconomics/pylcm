@@ -462,15 +462,15 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "fe42221bfaa97f2644dc9a2384dfcfa7cdaa74f2dfdbde16d4db12f0f2d30939"
+            "sha256": "d8dd7667359b3de52d79f79bbad5d4e5a4952d313d7dd5ceb7328d180575121d"
           },
           {
             "path": "src/lcm/result.py",
-            "sha256": "91c68715bf99ffc941dec7fccffadfb644c7f27292d8e538cd8ecc5f90462f20"
+            "sha256": "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31"
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "95c7b738c215dab614c8250240ad7aff88ec9bf7235cfded48cf5a7fd1d328bc"
+        "source_inventory_sha256": "f1d38eef0904def690db2c95282ce584dea14fbeb7cc9297aeb164d30182f686"
       },
       "fast": {
         "candidate_sources": [
@@ -932,21 +932,21 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "fe42221bfaa97f2644dc9a2384dfcfa7cdaa74f2dfdbde16d4db12f0f2d30939"
+            "sha256": "d8dd7667359b3de52d79f79bbad5d4e5a4952d313d7dd5ceb7328d180575121d"
           },
           {
             "path": "src/lcm/result.py",
-            "sha256": "91c68715bf99ffc941dec7fccffadfb644c7f27292d8e538cd8ecc5f90462f20"
+            "sha256": "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31"
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "95c7b738c215dab614c8250240ad7aff88ec9bf7235cfded48cf5a7fd1d328bc"
+        "source_inventory_sha256": "f1d38eef0904def690db2c95282ce584dea14fbeb7cc9297aeb164d30182f686"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "95c7b738c215dab614c8250240ad7aff88ec9bf7235cfded48cf5a7fd1d328bc",
+  "source_inventory_sha256": "f1d38eef0904def690db2c95282ce584dea14fbeb7cc9297aeb164d30182f686",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1406,11 +1406,11 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "fe42221bfaa97f2644dc9a2384dfcfa7cdaa74f2dfdbde16d4db12f0f2d30939"
+      "sha256": "d8dd7667359b3de52d79f79bbad5d4e5a4952d313d7dd5ceb7328d180575121d"
     },
     {
       "path": "src/lcm/result.py",
-      "sha256": "91c68715bf99ffc941dec7fccffadfb644c7f27292d8e538cd8ecc5f90462f20"
+      "sha256": "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31"
     }
   ]
 }
