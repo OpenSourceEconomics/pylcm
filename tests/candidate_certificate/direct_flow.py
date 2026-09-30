@@ -333,7 +333,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "d2e4da7853ae02d4b4b00d4ea2fc36c57fda043aa716aa939cc2faf82196fc5d",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "e26c58802dd899b46003601a2e541933eee74fefd47e5e538aca2b8e7b8e36d0",
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -6390,7 +6390,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/transition_checks.py": (
-        "b89e9b6ffca2fc8d888b78b89ebce414e33032925fc49ee62e25682126f1abe3",
+        "9932c3c0f1e3330c0bc58371ad490ef527e19470fa18acbb2e449712c9e19db7",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
@@ -6413,13 +6413,13 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
             "_evaluate_joint_weights": "8f772f549ba1c742f81a32792b89e61f4bdd92f75ef9300053681e1301664e8f",
             "_joint_weight_law": "2e388ad1cf1799cf701f0ce29ad53eded7130cf14896b2b6feac46605adb3d5b",
-            "_validate_state_transition_single": "f921dc60816dc77adc95a9a543bf3b3c60950836604e657cbf79a10aaf8e9253",
-            "_check_and_release_state_probability": "8479b8303c3958300ec8cf224c9f117541745c5fc9a8ac971ed83951043c7f2e",
+            "_validate_state_transition_single": "7b020b30f0b8d0dfcb510f3610281a88de7362eb5d4530b7de6a5715ccf5f381",
+            "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
             "_evaluate_state_probability_law": "174978de10330b5e88f558dcbde10a8d3a614fb2529a7f24a70bf8e704319804",
             "_evaluate_admitted_transition_producer": "47e8bdf3105132b7311b2128556ed8705d612679faef4cc3661c3d44b030e031",
             "_state_probability_law": "d058c6e928b67b7c8a30380cdd92b0eb76811c17e5fbf3fd85e36716221c3f3d",
             "_abstract_transition_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
-            "_check_state_probs": "3f2776c94e388e764769f3342ad7191aa5697952b5d6aa3a38e62c49d96abccd",
+            "_check_state_probs": "06eeaf665f584431c94681be57a943ebb0a58a55c9e81a8dbf91bebf31701d58",
         },
     ),
     "src/lcm/model.py": (
