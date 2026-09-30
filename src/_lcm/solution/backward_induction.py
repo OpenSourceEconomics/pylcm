@@ -126,9 +126,9 @@ from _lcm.execution.workspace_planning import (
     BoundedWidthSelector,
     CompilerMemoryReservation,
     WorkspacePlan,
-    _admissible_width,
     compiler_memory_reservation,
     plan_workspace,
+    proposed_width,
     workspace_width_candidates,
 )
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -4063,7 +4063,7 @@ def _halve_while_gather_materialises(
     while check.materialised is not None:
         fusion = check.materialised
         width = widths[axis.name]
-        narrower = _admissible_width(
+        narrower = proposed_width(
             axis=axis, width=width // 2, ceiling=width_ceilings.get(axis.name)
         )
         if narrower >= width:

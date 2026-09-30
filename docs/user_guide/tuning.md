@@ -316,11 +316,6 @@ period's residency and each required executable variant's compiler reservation. 
 need not be monotone in frontier rank: a refused neighbour does not prove that all
 earlier candidates also refuse.
 
-`WidthSearchPolicy(carry_across_periods=True)` is accepted for compatibility and has no
-effect. Every period follows the full ranked walk; independent cores share compilation
-waves, and identical lowering keys still reuse compiled programs. There is no
-cross-period candidate-skipping or compilation-saving guarantee.
-
 ## Batch forward simulation
 
 Set `ExecutionConfig(axis_widths={"subject": k})` on the model to process subjects in

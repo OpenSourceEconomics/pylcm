@@ -159,7 +159,9 @@ def workspace_width_candidates(
     the lexicographically greatest width tuple in axis declaration order.  A fixed
     axis contributes one width.  Every width an axis contributes satisfies the
     width policy it declares: it is the full extent, or a multiple of its
-    `alignment` at or above its `minimum_width`.  Names no axis declares are ignored
+    `alignment` at or above its `minimum_width`; an unfixed tiled axis also
+    follows its `preferred_alignment` (see `proposed_width`).  Names no axis
+    declares are ignored
     here; a name no program of the solve declares is refused before planning starts.
 
     `width_ceilings` is an opt-in upper bound per axis name. It intersects the
@@ -665,7 +667,7 @@ class BoundedWidthSelector:
             return _fixed_width(
                 axis=axis, fixed_widths=self.fixed_widths, ceiling=ceiling
             )
-        return _admissible_width(axis=axis, width=width, ceiling=ceiling)
+        return proposed_width(axis=axis, width=width, ceiling=ceiling)
 
     def _shrink_from(
         self, *, widths: MappingProxyType[str, int]
@@ -1204,7 +1206,7 @@ def bootstrap_widths(
                 if isinstance(axis, TiledOutputAxis)
                 else BOOTSTRAP_WIDTH_CAP
             )
-            width = _admissible_width(
+            width = proposed_width(
                 axis=axis,
                 width=(
                     axis.extent
@@ -1274,7 +1276,7 @@ def _axis_frontier(
         power *= 2
     widths.append(axis.extent)
     admissible = {
-        _admissible_width(axis=axis, width=width, ceiling=ceiling) for width in widths
+        proposed_width(axis=axis, width=width, ceiling=ceiling) for width in widths
     }
     return tuple(sorted(admissible))
 
@@ -1354,6 +1356,29 @@ def _admissible_width(
     if aligned >= axis.minimum_width:
         return aligned
     return _smallest_admissible_width(axis=axis)
+
+
+def proposed_width(
+    *,
+    axis: ReducedAxis | TiledOutputAxis,
+    width: int,
+    ceiling: int | None = None,
+) -> int:
+    """Return the width the planner proposes for an unpinned axis.
+
+    The admissible width nearest the proposal (see `_admissible_width`), rounded
+    down onto the multiples of a tiled axis's `preferred_alignment` when it is at
+    or above that alignment. A narrower width, the full extent, and every width
+    under a ceiling that does not itself fall on such a multiple are kept as
+    they are, so a preference never lifts a width or overrides a ceiling.
+    """
+    admitted = _admissible_width(axis=axis, width=width, ceiling=ceiling)
+    step = axis.preferred_alignment if isinstance(axis, TiledOutputAxis) else 1
+    if step == 1 or admitted == axis.extent or admitted < step:
+        return admitted
+    if ceiling is not None and min(ceiling, axis.extent) % step != 0:
+        return admitted
+    return admitted - admitted % step
 
 
 def _smallest_admissible_width(*, axis: ReducedAxis | TiledOutputAxis) -> int:

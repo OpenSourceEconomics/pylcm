@@ -99,7 +99,8 @@ def _state_transition_admission_errors(  # noqa: C901, PLR0912
         "completed state law must enter its owner": (
             "_check_and_release_state_probability(probs=probs, "
             "transition=transition, regime_name=regime_name, age=age, "
-            "summary=summary, memory=current_memory)"
+            "summary=summary, memory=current_memory, source_codes=source_codes, "
+            "fixed_of_code=fixed_of_code)"
         ),
     }
     for message, expression in required_single.items():
@@ -122,7 +123,8 @@ def _state_transition_admission_errors(  # noqa: C901, PLR0912
         ),
         "state probability checks must receive current memory": (
             "_check_state_probs(probs=probs, transition=transition, "
-            "regime_name=regime_name, age=age, summary=summary, memory=memory)"
+            "regime_name=regime_name, age=age, summary=summary, memory=memory, "
+            "source_codes=source_codes, fixed_of_code=fixed_of_code)"
         ),
         "temporary state probabilities must be released": (
             "finally:\n        if memory is not None:\n            "

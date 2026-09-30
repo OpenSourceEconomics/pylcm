@@ -303,11 +303,14 @@ def tiled_productmap(
     Two kinds of variables stay out of the flat cell and use ordinary outer vmaps:
 
     - untiled variables, whose extent the width does not count;
-    - broadcast variables, whose extent the width does count: each window covers
+    - broadcast variables, whose extent the width does count: at a width that
+      is a multiple of their product extent, each window covers
       `width // prod(extents)` cells, so a window holds `width` points of the
       whole product. Any computation of `func` that does not read a broadcast
       variable is then evaluated once per cell and broadcast along it, where a
-      flat index would batch it along that variable as well.
+      flat index would batch it along that variable as well. At any other
+      width the broadcast variables join the flat cell, so a window still holds
+      exactly `width` points.
 
     Their axes are restored to their original positions before the result leaves
     this boundary.
@@ -360,7 +363,15 @@ def tiled_productmap(
             mapped = cast("FunctionWithArrayReturn", restored)
     if broadcast_variables:
         counted = _CountBroadcastExtentInWidth(
-            func=mapped, variables=broadcast_variables, width_keyword=width_keyword
+            func=mapped,
+            plain=tiled_productmap(
+                func=func,
+                variables=variables,
+                width_keyword=width_keyword,
+                untiled_variables=untiled_variables,
+            ),
+            variables=broadcast_variables,
+            width_keyword=width_keyword,
         )
         publish_signature(target=counted, signature=mapped_signature)
         mapped = cast("FunctionWithArrayReturn", counted)
@@ -369,10 +380,17 @@ def tiled_productmap(
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _CountBroadcastExtentInWidth:
-    """Shrink the cell window so each window still holds `width` product points."""
+    """Hold `width` product points per window, broadcasting where the width allows.
+
+    A width that is a multiple of the broadcast variables' product extent runs
+    the broadcast mapper on `width // extent` cells; any other width runs the
+    plain mapper, whose flat cell includes the broadcast variables.
+    """
 
     func: Callable[..., Any]
     """Mapper whose outer vmaps run over the broadcast variables."""
+    plain: Callable[..., Any]
+    """Mapper over the same product whose cell includes the broadcast variables."""
     variables: tuple[str, ...]
     """Broadcast variables, each mapped whole around every cell window."""
     width_keyword: str
@@ -385,7 +403,9 @@ class _CountBroadcastExtentInWidth:
             extent = math.prod(
                 jnp.atleast_1d(kwargs[name]).shape[0] for name in self.variables
             )
-            kwargs[self.width_keyword] = max(1, width // extent)
+            if width % extent != 0:
+                return self.plain(**kwargs)
+            kwargs[self.width_keyword] = width // extent
         return self.func(**kwargs)
 
 
