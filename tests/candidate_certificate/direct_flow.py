@@ -397,7 +397,7 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "a69ea643eba0d6b98ea9b4e0fc5f036a721e79f5703ea9fbc7a21a6a02841b9a",
+    MAX_Q_SOURCE: "1292cc6030c26e5aeec7610683cef1f322ebaa992eca4ecdfee0bfc01c3a352a",
     PROCESSING_SOURCE: "1dd9b5df1ca7a9cfd9276e5faf6bda2b4181a934c6a924619e34462266b822ff",
     GRID_SEARCH_SOURCE: "b5d54bb472953e20d2a3997767c9e5cd024d5aa8261446064f91d5fb82e4d42f",
     CORE_PROGRAM_SOURCE: "fb62eeac677be64171c0a17e3478afbd09110ff2b6bafe7000edfef4bced4d7e",
@@ -408,7 +408,7 @@ _SOURCE_SEALS = {
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
-    DISPATCHERS_SOURCE: "aed253af836d93a8b0bec211ffad30ddcbbb1a2a8ba448e07c232d574ae4e5db",
+    DISPATCHERS_SOURCE: "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "cc6fb60ba679598349fb49d1ea4a14068889d81f57c9293728b88dd9c7173b50",
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
@@ -1871,7 +1871,7 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="streamed max-Q builder",
         contracts={
-            "get_streaming_max_Q_over_a": "533d0a4b8777f5a464d715a2e20953801c5a28e64a16076172e401b671cfb284",
+            "get_streaming_max_Q_over_a": "f6049aafdb1361ab3dc07245c3e201f35719fe199c7278fb748c7658ac5f8a63",
             "_fail_if_action_width_keyword_collides": (
                 "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4"
             ),
@@ -1885,7 +1885,7 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
                 "a586674124f90ff862f64458b40d6a6f8bbf6586e9772d9bdb4d31bf68c9c34c"
             ),
             "_StreamedMaxQOverA.__call__": (
-                "b4865fc0cc966b6f49e58923347328ada708be3cacb4ab5897a87e2d8bc13fda"
+                "33ce3d55caed7206385b8bb20c93dcd387f2c7eaf1f6127b71476811595e85d4"
             ),
         },
     )
@@ -1934,6 +1934,7 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "pareto_weights: ParetoWeights | None",
                 "q_and_f_arg_names: frozenset[str]",
                 "action_width_keyword: str",
+                "whole_product_Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
             ),
         ),
         (
@@ -6515,13 +6516,13 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
 
 _GROUPED_MAPPER_CONTRACTS = {
     "src/_lcm/utils/dispatchers.py": (
-        "3c13d57d2f93d9a1951956cd6a1d4f51e89c8499d19adbd34048210e581676da",
+        "aec3119e69b285cbbd12eb713a05ab1d9583723473e2a0d66577578d8bb6fc00",
         {
             "tiled_productmap": "f9abfc940c4ade124483a286bdb5ab6eec4aac4c928680b2f685b859e673d104",
             "_CountBroadcastExtentInWidth.__call__": (
                 "9edca2667a1015b9fe2f8b3e0b11b385f7f2aa71e8022be63324014d81819781"
             ),
-            "_TiledProductMap.__call__": "b398eff34df6867799a9dd877766bd16a6e784263e8de139ba6c136e20bb75de",
+            "_TiledProductMap.__call__": "11dc5d9d31dddc72ad93e90cad1729d179d179b15b7ff1ab044fa24038553dc5",
             "_map_grouped_product": "5aa01e79393201769fc79d10a00ee264b9083ad40a0a23462e4170327e25bc20",
             "_MapOverFinalCoordinate.__call__": "d4934af255cab7f3583631ee376e18eabc6bb6f7742ff945f1e95a260fdf3ece",
             "_map_whole_product": "14c2d1b0508346f247a30494b0b4983bca7046216f467318eeaf0ade75bb5f4b",
