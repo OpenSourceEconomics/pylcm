@@ -330,26 +330,39 @@ def _without_widths(note: str) -> str:
     return re.sub(r", widths=\{[^}]*\}", "", note)
 
 
+class _LoweringRefusedError(Exception):
+    """Lowering a forward program failed."""
+
+
+def _refuse_forward_lowerings() -> object:
+    """Return a `Traced.lower` that fails for every forward simulation program.
+
+    Forward programs are traced as the planner's subject-tiled body; host
+    operations keep their own function names and lower normally.
+    """
+    lower_body = jax.stages.Traced.lower
+
+    def lower_or_fail(
+        self: jax.stages.Traced, *args: object, **kwargs: object
+    ) -> object:
+        if self.fun_name == "subject_tiled":
+            raise _LoweringRefusedError("the forward program refused to lower")
+        return lower_body(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    return lower_or_fail
+
+
 @pytest.mark.parametrize("workers", [1, 2])
 def test_a_lowering_error_is_raised_on_the_caller_naming_the_program(
-    workers: int,
+    *, monkeypatch: pytest.MonkeyPatch, workers: int
 ) -> None:
-    """A forward program that fails to trace raises its own error, noted with the
-    program being lowered.
-
-    The alive utility adds a strongly typed int32 operand, so it traces under
-    standard promotion only: the solve succeeds under it and simulation, under
-    strict promotion, fails to trace the alive decision.
-    """
+    """A forward program that fails to lower raises its own error, noted with the
+    first program of the forward inventory."""
     model = _model()
     solution = model.solve(params=_PARAMS, log_level="off", max_compilation_workers=1)
-    previous = jax.config.jax_numpy_dtype_promotion
-    jax.config.update("jax_numpy_dtype_promotion", "strict")
-    try:
-        with pytest.raises(jax.dtypes.TypePromotionError) as raised:
-            _simulate_two_subjects(model=model, solution=solution, workers=workers)
-    finally:
-        jax.config.update("jax_numpy_dtype_promotion", previous)
+    monkeypatch.setattr(jax.stages.Traced, "lower", _refuse_forward_lowerings())
+    with pytest.raises(_LoweringRefusedError) as raised:
+        _simulate_two_subjects(model=model, solution=solution, workers=workers)
     notes = _program_notes(raised.value)
     assert list(map(_without_widths, notes)) == [
         "while lowering alive decision (period 0)"
