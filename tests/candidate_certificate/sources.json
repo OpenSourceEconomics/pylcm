@@ -150,7 +150,7 @@
           },
           {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
-            "sha256": "c4bb7f9af43f3ea634f909a93624705136f324e64317046d5b156a71d772b6b4"
+            "sha256": "2fa4ddcbe5bf66cb2295be7bf824c2abfeba03fb3395a723870d7572a8ef3479"
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "23bb9053afa94ed1dfca7be4699dd8d3f3a6e4ec265bdefecb2a916f3b435acd"
+        "source_inventory_sha256": "34df93c9b1d309f23198730f78749f01c969ae50dc6fefe7e74719b20c7e2550"
       },
       "fast": {
         "candidate_sources": [
@@ -620,7 +620,7 @@
           },
           {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
-            "sha256": "c4bb7f9af43f3ea634f909a93624705136f324e64317046d5b156a71d772b6b4"
+            "sha256": "2fa4ddcbe5bf66cb2295be7bf824c2abfeba03fb3395a723870d7572a8ef3479"
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "23bb9053afa94ed1dfca7be4699dd8d3f3a6e4ec265bdefecb2a916f3b435acd"
+        "source_inventory_sha256": "34df93c9b1d309f23198730f78749f01c969ae50dc6fefe7e74719b20c7e2550"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "23bb9053afa94ed1dfca7be4699dd8d3f3a6e4ec265bdefecb2a916f3b435acd",
+  "source_inventory_sha256": "34df93c9b1d309f23198730f78749f01c969ae50dc6fefe7e74719b20c7e2550",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1094,7 +1094,7 @@
     },
     {
       "path": "src/_lcm/regime_building/max_Q_over_a.py",
-      "sha256": "c4bb7f9af43f3ea634f909a93624705136f324e64317046d5b156a71d772b6b4"
+      "sha256": "2fa4ddcbe5bf66cb2295be7bf824c2abfeba03fb3395a723870d7572a8ef3479"
     },
     {
       "path": "src/_lcm/regime_building/processing.py",

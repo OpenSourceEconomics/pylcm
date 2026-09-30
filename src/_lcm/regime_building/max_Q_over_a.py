@@ -641,9 +641,22 @@ class _StreamedMaxQOverA:
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     **q_and_f_params,
                 )
-                feasible_nan = F_arr & jnp.isnan(Q_arr)
-                best = Q_arr.max(where=F_arr & ~feasible_nan, initial=-jnp.inf)
-                return jnp.where(jnp.any(feasible_nan), jnp.nan, best)
+                # One variadic reduce yields the maximum and the NaN flag, so the
+                # backend fuses Q into a single pass instead of materialising it
+                # for two consumers.
+                best, any_feasible_nan = jax.lax.reduce(
+                    (
+                        jnp.where(F_arr, Q_arr, -jnp.inf),
+                        F_arr & jnp.isnan(Q_arr),
+                    ),
+                    (jnp.asarray(-jnp.inf, Q_arr.dtype), jnp.zeros((), dtype=bool)),
+                    lambda left, right: (
+                        jax.lax.max(left[0], right[0]),
+                        jax.lax.bitwise_or(left[1], right[1]),
+                    ),
+                    tuple(range(jnp.ndim(Q_arr))),
+                )
+                return jnp.where(any_feasible_nan, jnp.nan, best)
             fixed_cell = build_streaming_max_Q_over_a(
                 Q_and_F=self.Q_and_F,
                 action_names=self.action_names,
