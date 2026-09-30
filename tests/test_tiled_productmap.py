@@ -508,3 +508,14 @@ def test_broadcast_axis_counts_toward_the_window(*, width: int) -> None:
     assert (
         _max_operand_size(width=width, broadcast=("first",), primitive="sqrt") <= width
     )
+
+
+@pytest.mark.parametrize("width", [1, 3, 5])
+def test_broadcast_mapper_fills_a_window_that_is_not_a_broadcast_multiple(
+    *, width: int
+) -> None:
+    """At a width that is not a multiple of the broadcast extent, the window holds
+    exactly `width` points, with the broadcast coordinate in the flat cell."""
+    assert (
+        _max_operand_size(width=width, broadcast=("first",), primitive="sqrt") == width
+    )

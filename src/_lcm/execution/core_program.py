@@ -143,6 +143,15 @@ class TiledOutputAxis:
     alignment: int = 1
     """Multiple a proposed tile width below the extent is rounded down to."""
 
+    preferred_alignment: int = 1
+    """Multiple the core runs a faster program at; every other width stays legal.
+
+    A width the planner proposes at or above it is rounded down onto its
+    multiples, and a narrower one is kept as it is. A pinned width is never
+    rounded, and neither is a width under a ceiling that is not itself such a
+    multiple. Requires the default `minimum_width` and `alignment`.
+    """
+
     halve_on_materialised_gather: bool = False
     """Whether the planner halves this axis while a compiled reduce fusion reads a
     gather table another fusion wrote to memory."""
@@ -160,6 +169,23 @@ class TiledOutputAxis:
             minimum_width=self.minimum_width,
             alignment=self.alignment,
         )
+        if type(self.preferred_alignment) is not int or self.preferred_alignment < 1:
+            msg = (
+                f"TiledOutputAxis {self.name!r} preferred_alignment must be a "
+                f"positive int, got {self.preferred_alignment!r}."
+            )
+            raise ExecutionPlanningError(msg)
+        if self.preferred_alignment > 1 and (self.minimum_width, self.alignment) != (
+            1,
+            1,
+        ):
+            msg = (
+                f"TiledOutputAxis {self.name!r} declares preferred_alignment "
+                f"{self.preferred_alignment} beside minimum_width "
+                f"{self.minimum_width} and alignment {self.alignment}; a preferred "
+                "alignment needs both at their default of 1."
+            )
+            raise ExecutionPlanningError(msg)
 
 
 @dataclass(frozen=True, kw_only=True)
