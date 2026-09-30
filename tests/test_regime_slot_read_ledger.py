@@ -26,10 +26,10 @@ _LEDGER = pathlib.Path(__file__).parent / "regime_slot_read_ledger.csv"
 _SLOT_OF_ACCESSOR = {
     "functions": "functions",
     "constraints": "constraints",
-    "transition": "transition",
+    "regime_transitions": "regime_transitions",
     "decomposed_functions": "functions",
     "decomposed_constraints": "constraints",
-    "decomposed_transition": "transition",
+    "decomposed_transition": "regime_transitions",
 }
 
 # Receivers that name a regime. `self` counts only inside the class itself.

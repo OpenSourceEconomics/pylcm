@@ -10,6 +10,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     Model,
     categorical,
@@ -26,6 +27,7 @@ from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=8)
 ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=4.0, n_points=3)
@@ -109,7 +111,9 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
         resources="resources",
         post_decision_state="liquid_savings",
     )
-    active = lambda age: age <= 20  # noqa: E731
+    transitions = until_exit(
+        25, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+    )
     states = {"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID}
     state_transitions = {"wealth": next_wealth, "illiquid": durable_transition}
     actions = {
@@ -131,11 +135,10 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
     # differently, and neither distinction survives a `**kwargs` splat.
     if isinstance(solver, NNBEGM):
         alive = NestedConsumptionSavingsRegime(
-            active=active,
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=next_regime,
+            regime_transitions=transitions,
             functions=functions,
             solver=solver,
             liquid=liquid,
@@ -148,18 +151,16 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
         )
     else:
         alive = ConsumptionSavingsRegime(
-            active=active,
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=next_regime,
+            regime_transitions=transitions,
             functions=functions,
             solver=solver,
             liquid=liquid,
         )
     dead = Regime(
-        transition=None,
-        active=lambda age: age > 20,
+        regime_transitions=None,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": terminal_utility},
     )
@@ -168,6 +169,7 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, stop=25, step="5Y"),
         fixed_params={"means_test": 5.0, "medical_expense": 1.0},
+        initial_regimes={20: "alive"},
     )
 
 

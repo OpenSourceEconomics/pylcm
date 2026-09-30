@@ -244,15 +244,55 @@ def assert_the_shared_continuation_builder_reads_its_own_pool(
     weights against something else -- a SINGLE-role bypass, the harder half of the
     counterexample class.
 
-    `_build_target_continuation` receives exactly one pool, so the rule here is
-    that both roles name that parameter and nothing else.
+    The weight pool may overlay the target lotteries' original probability laws
+    when restoring their reduction layout. Every other law retains its phase pool.
     """
     builder = qdefs["_build_target_continuation"]
     next_calls = call_named(node=builder, name="get_next_state_function_for_solution")
     weight_calls = call_named(node=builder, name="get_next_stochastic_weights_function")
     assert len(next_calls) == len(weight_calls) == 1
     assert_name(node=keyword_map(next_calls[0])["functions"], expected="functions")
-    assert_name(node=keyword_map(weight_calls[0])["functions"], expected="functions")
+    assert_name(
+        node=keyword_map(weight_calls[0])["functions"], expected="weight_functions"
+    )
+    expected_layouts = ast.parse(
+        """{
+            name: layout for name in lottery_variables
+            if restore_original_layout and
+            (layout := transition_plans[target_regime_name]
+                .lotteries[name].original_layout)
+            is not None
+        }""",
+        mode="eval",
+    ).body
+    assert ast.dump(assignment_value(node=builder, target_name="original_layouts")) == (
+        ast.dump(expected_layouts)
+    )
+    expected_pool = ast.parse(
+        """weight_functions = functions
+if original_layouts:
+    weight_functions = MappingProxyType(
+        dict(functions) | {
+            transition_plans[target_regime_name].lotteries[name].weight_name:
+                layout.probabilities
+            for name, layout in original_layouts.items()
+        }
+    )
+"""
+    )
+    pool_statements = [
+        statement
+        for statement in builder.body
+        if any(
+            isinstance(node, ast.Name)
+            and node.id == "weight_functions"
+            and isinstance(node.ctx, ast.Store)
+            for node in ast.walk(statement)
+        )
+    ]
+    assert [ast.dump(node) for node in pool_statements] == [
+        ast.dump(node) for node in expected_pool.body
+    ]
 
 
 def assert_every_dispatch_threads_every_role(
@@ -371,18 +411,25 @@ def remove_call_keyword(*, callee: str, keyword: str, occurrence: int = 0) -> Ca
     return mutate
 
 
-def replace_assignment(*, name: str, expression: str) -> Callable:
+def replace_assignment(
+    *,
+    name: str,
+    expression: str,
+    func_name: str = "get_Q_and_F_collective",
+    occurrence: int = 0,
+) -> Callable:
     def mutate(*, q_tree, p_tree, others):
         _ = p_tree, others
-        func = functions(q_tree)["get_Q_and_F_collective"]
+        func = functions(q_tree)[func_name]
         replacement = ast.parse(expression, mode="eval").body
-        for node in ast.walk(func):
-            if isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == name for t in node.targets
-            ):
-                node.value = replacement
-                return
-        raise AssertionError(name)
+        matches = [
+            node
+            for node in ast.walk(func)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
+        ]
+        assert len(matches) > occurrence, name
+        matches[occurrence].value = replacement
 
     return mutate
 
@@ -515,6 +562,40 @@ def mutation_catalog() -> list[Mutation]:
                     func_name="_build_target_continuation",
                     callee="get_next_stochastic_weights_function",
                     keyword="functions",
+                    expression="bundle",
+                ),
+            ),
+            Mutation(
+                "bypass_original_layout_weight_overlay",
+                replace_call_keyword_in(
+                    func_name="_build_target_continuation",
+                    callee="get_next_stochastic_weights_function",
+                    keyword="functions",
+                    expression="functions",
+                ),
+            ),
+            Mutation(
+                "replace_weight_pool_base",
+                replace_assignment(
+                    func_name="_build_target_continuation",
+                    name="weight_functions",
+                    expression="bundle",
+                ),
+            ),
+            Mutation(
+                "replace_weight_pool_overlay",
+                replace_assignment(
+                    func_name="_build_target_continuation",
+                    name="weight_functions",
+                    occurrence=1,
+                    expression="MappingProxyType(dict(bundle))",
+                ),
+            ),
+            Mutation(
+                "replace_original_layout_origin",
+                replace_assignment(
+                    func_name="_build_target_continuation",
+                    name="original_layouts",
                     expression="bundle",
                 ),
             ),

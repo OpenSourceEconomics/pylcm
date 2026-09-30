@@ -48,6 +48,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -179,10 +180,6 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _active(age: int) -> bool:
-    return age < 40 + (N_PERIODS - 1) * 10
-
-
 def _shared_functions() -> dict:
     return {
         "utility": utility,
@@ -212,11 +209,14 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
     working = regime_type(
-        transition={
-            "working_life": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "working_life": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
@@ -255,6 +255,7 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         ages=_ages(),
         regime_id_class=PassiveAssetRowRegimeId,
         execution_config=config,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -413,11 +414,14 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
     working = regime_type(
-        transition={
-            "working_life": MarkovTransition(stay_prob_share),
-            "dead": MarkovTransition(death_prob_share),
-        },
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "working_life": MarkovTransition(func=stay_prob_share),
+                "dead": MarkovTransition(func=death_prob_share),
+            },
+            exits=("dead",),
+        ),
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
@@ -465,6 +469,7 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         ages=_ages(),
         regime_id_class=PassiveAssetRowRegimeId,
         fixed_params=fixed_params,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -605,7 +610,7 @@ def test_passive_aime_cell_width_leaves_value_function_unchanged(cell_width: int
     reference = _model(solver="dcegm").solve(params=_params(), log_level="debug").values
     tiled = _solve_at_cell_width(cell_width)
     # `working_life` is the asset-row regime whose cells the width tiles;
-    # it is inactive in the terminal period, so exclude that period.
+    # it is not solved in the terminal period, so exclude that period.
     for period in sorted(reference)[:-1]:
         got = _euler_last_flat(np.asarray(tiled[period]["working_life"]))
         want = _euler_last_flat(np.asarray(reference[period]["working_life"]))

@@ -8,6 +8,7 @@ import pytest
 _ROOT = Path(__file__).parents[1]
 _INITIAL_CONDITIONS = "src/_lcm/simulation/initial_conditions.py"
 _TRANSITION_CHECKS = "src/_lcm/transition_checks.py"
+_HOST_OPERATIONS = "src/_lcm/simulation/host_operations.py"
 
 
 def _definition(*, tree: ast.Module, name: str) -> ast.FunctionDef:
@@ -55,10 +56,11 @@ def _keyword(*, call: ast.Call, name: str) -> str | None:
 
 
 def _state_transition_admission_errors(  # noqa: C901, PLR0912
-    *, initial_conditions: str, transition_checks: str
+    *, initial_conditions: str, transition_checks: str, host_operations: str
 ) -> list[str]:
     initial_tree = ast.parse(initial_conditions)
     transition_tree = ast.parse(transition_checks)
+    host_tree = ast.parse(host_operations)
     errors: list[str] = []
 
     entry = _definition(tree=initial_tree, name="validate_simulation_inputs")
@@ -140,12 +142,14 @@ def _state_transition_admission_errors(  # noqa: C901, PLR0912
         ),
         "caller and placed buffers must be unioned": "union_buffer_footprints(",
         "external residency must be measured": "resident_bytes_by_device(",
-        "compiler reservation must govern admission": "plan_workspace(",
+        "compiler reservation must govern admission": (
+            "memory.producers.admit_producer("
+        ),
         "largest device residency must be charged": (
             "resident_bytes=max(external.values())"
         ),
         "only the admitted program may dispatch": (
-            "plan.compiled(**placed).block_until_ready()"
+            "executable(**placed).block_until_ready()"
         ),
         "state law output must use the first selected subject device": (
             "output_sharding = simulation_value_sharding("
@@ -165,19 +169,25 @@ def _state_transition_admission_errors(  # noqa: C901, PLR0912
     if "jnp.meshgrid(" not in law_source or "jax.vmap(" not in law_source:
         errors.append("Cartesian state-law production must remain inside the producer")
 
-    compile_call = _calls(
+    admit = _method(
+        tree=host_tree, class_name="ProfiledSimulationOperations", name="admit_producer"
+    )
+    compile_calls = _calls(
         node=_method(
-            tree=transition_tree,
-            class_name="_TransitionLawCompiler",
-            name="__call__",
+            tree=host_tree,
+            class_name="ProfiledSimulationOperations",
+            name="compile_candidate",
         ),
         name="jit",
     )
     if (
-        len(compile_call) != 1
-        or _keyword(call=compile_call[0], name="keep_unused") != "True"
-        or _keyword(call=compile_call[0], name="out_shardings")
-        != "self.output_sharding"
+        "output_sharding=output_sharding" not in ast.unparse(admit)
+        or len(compile_calls) != 2
+        or any(
+            _keyword(call=call, name="keep_unused") != "True" for call in compile_calls
+        )
+        or [_keyword(call=call, name="out_shardings") for call in compile_calls]
+        != [None, "output_sharding"]
     ):
         errors.append("transition compiler must retain inputs and place every output")
 
@@ -198,6 +208,7 @@ def test_state_transition_admission_contract_is_complete() -> None:
     errors = _state_transition_admission_errors(
         initial_conditions=(_ROOT / _INITIAL_CONDITIONS).read_text(),
         transition_checks=(_ROOT / _TRANSITION_CHECKS).read_text(),
+        host_operations=(_ROOT / _HOST_OPERATIONS).read_text(),
     )
     assert not errors, errors
 
@@ -276,20 +287,20 @@ def test_state_transition_admission_contract_is_complete() -> None:
         ),
         (
             _TRANSITION_CHECKS,
-            "plan.compiled(**placed).block_until_ready()",
-            "plan.compiled(**placed)",
+            "executable(**placed).block_until_ready()",
+            "executable(**placed)",
             "only the admitted program may dispatch",
         ),
         (
-            _TRANSITION_CHECKS,
-            "            keep_unused=True,",
-            "            keep_unused=False,",
+            _HOST_OPERATIONS,
+            "jax.jit(bound, keep_unused=True, out_shardings=output_sharding)",
+            "jax.jit(bound, keep_unused=False, out_shardings=output_sharding)",
             "transition compiler must retain inputs and place every output",
         ),
         (
-            _TRANSITION_CHECKS,
-            "            out_shardings=self.output_sharding,",
-            "            out_shardings=None,",
+            _HOST_OPERATIONS,
+            "jax.jit(bound, keep_unused=True, out_shardings=output_sharding)",
+            "jax.jit(bound, keep_unused=True, out_shardings=None)",
             "transition compiler must retain inputs and place every output",
         ),
         (
@@ -321,6 +332,7 @@ def test_state_transition_admission_mutation_is_rejected(
     sources = {
         _INITIAL_CONDITIONS: (_ROOT / _INITIAL_CONDITIONS).read_text(),
         _TRANSITION_CHECKS: (_ROOT / _TRANSITION_CHECKS).read_text(),
+        _HOST_OPERATIONS: (_ROOT / _HOST_OPERATIONS).read_text(),
     }
     sources[path].index(old)
     sources[path] = sources[path].replace(old, new, 1)
@@ -328,5 +340,6 @@ def test_state_transition_admission_mutation_is_rejected(
     errors = _state_transition_admission_errors(
         initial_conditions=sources[_INITIAL_CONDITIONS],
         transition_checks=sources[_TRANSITION_CHECKS],
+        host_operations=sources[_HOST_OPERATIONS],
     )
     assert expected in errors

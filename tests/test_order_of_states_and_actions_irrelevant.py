@@ -11,6 +11,7 @@ import pytest
 from lcm import ExecutionConfig, LinSpacedGrid, Model
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models.deterministic.ds_pension import RegimeId, get_model, get_params
+from tests.test_models.initial_regimes import initial_regimes_of
 
 _N_PERIODS = 5
 _N_BOTH = 8
@@ -31,6 +32,7 @@ def _solve(*, reverse_working_states=False, cell_width=1, **overrides):
         ages=model.ages,
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": cell_width}),
+        initial_regimes=initial_regimes_of(model=model),
     )
     return reordered.solve(params=get_params(), log_level="off").values
 

@@ -10,6 +10,7 @@ from _lcm.execution.core_program import CoreExecutionDisposition, core_program_g
 from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
@@ -30,6 +31,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import assert_agrees_to_ulp
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -85,16 +87,20 @@ def _model(*, kind: str, width: int) -> Model:
     return Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
+                    exits=("done",),
+                ),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(transition=None, active=lambda age: age >= 1, **common),
+            "done": Regime(regime_transitions=None, **common),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": width}),
+        initial_regimes={0: "acting"},
     )
 
 
@@ -193,16 +199,20 @@ def _collision_model() -> Model:
     return Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
+                    exits=("done",),
+                ),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(transition=None, active=lambda age: age >= 1, **common),
+            "done": Regime(regime_transitions=None, **common),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
+        initial_regimes={0: "acting"},
     )
 
 
@@ -248,15 +258,19 @@ def test_trivial_state_product_does_not_declare_a_cell_axis(
     model = Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
+                    exits=("done",),
+                ),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(transition=None, active=lambda age: age >= 1, **common),
+            "done": Regime(regime_transitions=None, **common),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "acting"},
     )
     program = core_program_graph(
         kernel=model._regimes["acting"].solution.period_kernels[0]

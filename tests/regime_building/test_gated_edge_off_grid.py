@@ -42,6 +42,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 # Nodes 0, 1, 2. The gate opens strictly above 1.0, so the cell [1, 2] straddles
 # it and is where gating on the nodes and gating at the landing point differ.
@@ -104,42 +105,44 @@ def _make_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={
-                    "target": ValueDependentTransition(
-                        probability=MarkovTransition(_certain_target),
-                        gate=_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"x": _identity_x},
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "target": ValueDependentTransition(
+                            probability=MarkovTransition(func=_certain_target),
+                            gate=_gate,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="fallback",
+                                        projection={"x": _identity_x},
+                                    )
                                 )
-                            )
-                        },
-                        off_grid=off_grid,
-                    )
-                },
-                active=lambda age: age < 1,
+                            },
+                            off_grid=off_grid,
+                        )
+                    },
+                    exits=("target",),
+                ),
                 states={"x": _X},
                 state_transitions={"x": _next_x},
                 actions={"saving": saving_grid},
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _utility_target},
             ),
             "fallback": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _utility_fallback},
             ),
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "source"},
     )
 
 
@@ -274,41 +277,43 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
     return Model(
         regimes={
             "source": Regime(
-                transition={
-                    "target": ValueDependentTransition(
-                        probability=MarkovTransition(_certain_target),
-                        gate=_healthy_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"health": _keep_health},
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "target": ValueDependentTransition(
+                            probability=MarkovTransition(func=_certain_target),
+                            gate=_healthy_gate,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="fallback",
+                                        projection={"health": _keep_health},
+                                    )
                                 )
-                            )
-                        },
-                        off_grid=off_grid,
-                    )
-                },
-                active=lambda age: age < 1,
+                            },
+                            off_grid=off_grid,
+                        )
+                    },
+                    exits=("target",),
+                ),
                 states={"health": health},
                 state_transitions={"health": _keep_health},
                 functions={"utility": _utility_zero},
             ),
             "target": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"health": health},
                 functions={"utility": _utility_healthy_target},
             ),
             "fallback": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"health": health},
                 functions={"utility": _fallback_utility},
             ),
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "source"},
     )
 
 
@@ -376,52 +381,53 @@ def _witness_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
-                    "target": ValueDependentTransition(
-                        probability=MarkovTransition(_certain_target),
-                        gate=_witness_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"x": _identity_x},
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "target": ValueDependentTransition(
+                            probability=MarkovTransition(func=_certain_target),
+                            gate=_witness_gate,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="fallback",
+                                        projection={"x": _identity_x},
+                                    )
                                 )
-                            )
-                        },
-                        gate_references={
-                            "V_reference": ProjectedRegimeValue(
-                                regime="reference", projection={"x": _identity_x}
-                            )
-                        },
-                    )
-                },
-                active=lambda age: age < 1,
+                            },
+                            gate_references={
+                                "V_reference": ProjectedRegimeValue(
+                                    regime="reference", projection={"x": _identity_x}
+                                )
+                            },
+                        )
+                    },
+                    exits=("target",),
+                ),
                 states={"x": _WITNESS_X},
                 state_transitions={"x": _witness_next_x},
                 actions={"risk": DiscreteGrid(category_class=Risk)},
                 functions={"utility": _witness_utility},
             ),
             "target": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"x": _WITNESS_X},
                 functions={"utility": _witness_target},
             ),
             "reference": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"x": _WITNESS_X},
                 functions={"utility": _witness_reference},
             ),
             "fallback": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"x": _WITNESS_X},
                 functions={"utility": _witness_fallback},
             ),
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=WitnessRegimeId,
+        initial_regimes={0: "source"},
     )
 
 

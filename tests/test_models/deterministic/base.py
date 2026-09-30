@@ -1,9 +1,14 @@
 """Deterministic Iskhakov et al. (2017) retirement model, re-exported for tests.
 
 The model lives in `lcm_examples.iskhakov_et_al_2017`; this module keeps the
-historical test-suite import location stable.
+historical test-suite import location stable. Its `get_model` also admits
+retirement at the first age: the analytical solution reports the retired value
+at every age, so the tests query that problem explicitly.
 """
 
+import functools
+
+from lcm import Model
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
     WEALTH_GRID,
@@ -11,7 +16,6 @@ from lcm_examples.iskhakov_et_al_2017 import (
     RegimeId,
     borrowing_constraint,
     dead,
-    get_model,
     get_params,
     is_working,
     labor_income,
@@ -19,9 +23,14 @@ from lcm_examples.iskhakov_et_al_2017 import (
     next_regime_from_working,
     next_wealth,
     retirement,
+    retirement_transitions,
     utility_retirement,
     utility_working,
     working_life,
+    working_life_transitions,
+)
+from lcm_examples.iskhakov_et_al_2017 import (
+    get_model as get_example_model,
 )
 
 __all__ = [
@@ -39,7 +48,21 @@ __all__ = [
     "next_regime_from_working",
     "next_wealth",
     "retirement",
+    "retirement_transitions",
     "utility_retirement",
     "utility_working",
     "working_life",
+    "working_life_transitions",
 ]
+
+
+@functools.cache
+def get_model(n_periods: int) -> Model:
+    """Return the example model with working life and retirement as first-age starts."""
+    example = get_example_model(n_periods=n_periods)
+    return Model(
+        regimes=example.user_regimes,
+        ages=example.ages,
+        regime_id_class=RegimeId,
+        initial_regimes={example.ages.exact_values[0]: ("working_life", "retirement")},
+    )

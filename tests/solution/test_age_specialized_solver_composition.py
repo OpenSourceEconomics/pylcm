@@ -67,6 +67,7 @@ def _dcegm_twin_with_wealth_grid(wealth_grid) -> Model:
         },
         ages=AgeGrid(start=MIN_AGE, stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
+        initial_regimes={20: ("working_life", "retirement")},
     )
 
 
@@ -170,6 +171,7 @@ def _negm_toy_with_illiquid_grid(illiquid_grid) -> Model:
             start=20, stop=20 + (negm_kinked_toy.N_PERIODS - 1) * 5, step="5Y"
         ),
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={20: "alive"},
     )
 
 

@@ -16,6 +16,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     JointTransition,
     LinSpacedGrid,
     Model,
@@ -27,6 +28,7 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.95
 _WEALTH = (1.0, 5.5, 10.0)
@@ -70,8 +72,11 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _model(*, support: tuple[float, float]) -> Model:
     working = Regime(
-        transition=_next_regime,
-        active=lambda age: age < 62,
+        regime_transitions=until_exit(
+            62,
+            law=Choose(func=_next_regime, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={
             "wealth": LinSpacedGrid(
                 start=_WEALTH[0], stop=_WEALTH[-1], n_points=len(_WEALTH)
@@ -97,11 +102,12 @@ def _model(*, support: tuple[float, float]) -> Model:
             }
         },
     )
-    dead = Regime(transition=None, functions={"utility": _zero_utility})
+    dead = Regime(regime_transitions=None, functions={"utility": _zero_utility})
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=63, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={60: "working"},
     )
 
 

@@ -7,7 +7,7 @@ they are re-exported here so engine-internal code can import everything from
 `_lcm.typing`.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -180,7 +180,7 @@ class ConstraintFunction(Protocol):
 class TransitionFunction(Protocol):
     """A state / regime / process transition function.
 
-    Stored on `Regime.transition` (regime transition), in
+    Stored on `Regime.regime_transitions` (regime transition), in
     `Regime.state_transitions` (per-state, plus per-target dicts),
     and as the auto-generated stubs for process-derived transitions.
     Returns the deterministic next-period value (`IntND` / `FloatND`)
@@ -358,7 +358,3 @@ class NextStateSimulationFunction(Protocol):
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
     ]: ...
-
-
-# Function that determines if a regime is active at a given age.
-ActiveFunction = Callable[..., bool]

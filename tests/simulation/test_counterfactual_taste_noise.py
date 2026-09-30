@@ -23,10 +23,6 @@ class _RenamedRegimeId:
     absorbed: ScalarInt
 
 
-def _enter_absorbed() -> ScalarInt:
-    return _RenamedRegimeId.absorbed
-
-
 @dataclasses.dataclass(kw_only=True)
 class _NoiseRecords:
     """Call-local observations associate noise with keys, never callback order."""
@@ -69,12 +65,13 @@ def _counterfactual_model(*, renamed: bool) -> Model:
     return Model(
         regimes={
             "student": dataclasses.replace(
-                taste_shocks_toy.alive, transition=_enter_absorbed
+                taste_shocks_toy.alive, regime_transitions="absorbed"
             ),
             "absorbed": taste_shocks_toy.done,
         },
         ages=AgeGrid(start=39, stop=42, step="Y"),
         regime_id_class=_RenamedRegimeId,
+        initial_regimes={(39, 40): "student"},
     )
 
 

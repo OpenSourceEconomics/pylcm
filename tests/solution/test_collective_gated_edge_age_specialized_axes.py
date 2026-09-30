@@ -29,7 +29,9 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedGrid,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -51,6 +53,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
 
@@ -238,36 +241,39 @@ def _build_gate_ref_model() -> Model:
 
     """
     couple = Regime(
-        transition={
-            "couple": MarkovTransition(_probability_of_staying_put),
-            "account": ValueDependentTransition(
-                probability=MarkovTransition(_probability_of_leaving),
-                gate=_index_clears_the_hurdle,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="annuity_f",
-                            projection={"principal": _principal_from_balance},
+        regime_transitions=until_exit(
+            2,
+            law={
+                "couple": MarkovTransition(func=_probability_of_staying_put),
+                "account": ValueDependentTransition(
+                    probability=MarkovTransition(func=_probability_of_leaving),
+                    gate=_index_clears_the_hurdle,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="annuity_f",
+                                projection={"principal": _principal_from_balance},
+                            ),
                         ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="annuity_m",
-                            projection={"principal": _principal_from_balance},
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="annuity_m",
+                                projection={"principal": _principal_from_balance},
+                            ),
                         ),
-                    ),
-                },
-                gate_references={
-                    "index_value": ProjectedRegimeValue(
-                        regime="index",
-                        projection={"level": _level_from_balance},
-                    )
-                },
-            ),
-        },
-        active=lambda age: age < 2,
+                    },
+                    gate_references={
+                        "index_value": ProjectedRegimeValue(
+                            regime="index",
+                            projection={"level": _level_from_balance},
+                        )
+                    },
+                ),
+            },
+            exits=("account",),
+        ),
         state_transitions={"balance": {"account": _entry_amount}},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
@@ -277,8 +283,7 @@ def _build_gate_ref_model() -> Model:
         },
     )
     account = Regime(
-        transition=None,
-        active=lambda age: (age >= 1) & (age < 3),
+        regime_transitions=None,
         states={"balance": LinSpacedGrid(start=0.0, stop=4.0, n_points=2)},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
@@ -288,22 +293,19 @@ def _build_gate_ref_model() -> Model:
         },
     )
     index = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={
             "level": AgeSpecializedGrid(build=_moving_grid, signature=_moving_ceiling)
         },
         functions={"utility": _index_felicity},
     )
     annuity_f = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_felicity_f},
     )
     annuity_m = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_felicity_m},
     )
@@ -317,6 +319,7 @@ def _build_gate_ref_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_GateRefRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 
@@ -350,28 +353,33 @@ def _build_dissolution_model() -> Model:
 
     """
     couple = Regime(
-        transition={
-            "couple": MarkovTransition(_probability_of_staying_put),
-            "pair": ValueDependentTransition(
-                probability=MarkovTransition(_probability_of_leaving),
-                gate=_household_consents,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f", projection={"s": _single_state_from_w}
+        regime_transitions=until_exit(
+            2,
+            law={
+                "couple": MarkovTransition(func=_probability_of_staying_put),
+                "pair": ValueDependentTransition(
+                    probability=MarkovTransition(func=_probability_of_leaving),
+                    gate=_household_consents,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f",
+                                projection={"s": _single_state_from_w},
+                            ),
                         ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m", projection={"s": _single_state_from_w}
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m",
+                                projection={"s": _single_state_from_w},
+                            ),
                         ),
-                    ),
-                },
-            ),
-        },
-        active=lambda age: age < 2,
+                    },
+                ),
+            },
+            exits=("pair",),
+        ),
         state_transitions={"w": {"pair": _entry_amount}},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
@@ -381,8 +389,13 @@ def _build_dissolution_model() -> Model:
         },
     )
     pair = Regime(
-        transition={"pair_terminal": MarkovTransition(_certainty)},
-        active=lambda age: (age >= 1) & (age < 3),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=3): {
+                    "pair_terminal": MarkovTransition(func=_certainty)
+                }
+            }
+        ),
         states={"w": AgeSpecializedGrid(build=_moving_grid, signature=_moving_ceiling)},
         state_transitions={"w": fixed_transition("w")},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
@@ -394,8 +407,7 @@ def _build_dissolution_model() -> Model:
         constraints={"ir_f": ValueDependentConstraint(predicate=_wife_participates)},
     )
     pair_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         states={"w": _ANNUITY_GRID},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
@@ -405,14 +417,12 @@ def _build_dissolution_model() -> Model:
         },
     )
     single_f = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"s": _ANNUITY_GRID},
         functions={"utility": _single_felicity_f},
     )
     single_m = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"s": _ANNUITY_GRID},
         functions={"utility": _single_felicity_m},
     )
@@ -426,6 +436,7 @@ def _build_dissolution_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_DissolutionRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 

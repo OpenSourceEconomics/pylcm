@@ -269,7 +269,7 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
     """A bad `Regime` argument surfaces as `RegimeInitializationError`."""
     with pytest.raises(RegimeInitializationError):
         UserRegime(
-            transition=None,
+            regime_transitions=None,
             states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
             functions="not a mapping",  # ty: ignore[invalid-argument-type]
         )
@@ -282,6 +282,7 @@ def test_model_with_bad_arg_raises_project_exception() -> None:
             ages=AgeGrid(start=25, stop=75, step="Y"),
             regimes="not a mapping",  # ty: ignore[invalid-argument-type]
             regime_id_class=int,
+            initial_regimes={25: "n"},
         )
 
 

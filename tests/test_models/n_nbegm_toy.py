@@ -58,6 +58,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import choose_among, until_exit
 
 N_WEALTH = 12
 N_ILLIQUID = 10
@@ -261,7 +262,6 @@ def build_model(
     koopmans_aggregator: Callable[..., object] | Phased | None = None,
     second_passive_state: bool = False,
     carried_state: bool = False,
-    terminal_active_from_start: bool = False,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
@@ -300,10 +300,6 @@ def build_model(
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
-    `terminal_active_from_start=True` also activates the terminal regime before
-    the lifecycle transition. This supports simulations seeded with subjects in
-    both regimes at the same age; the default keeps the terminal regime active
-    only after the final alive age.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
@@ -332,7 +328,11 @@ def build_model(
         )
     if constraints is None:
         constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
-    active = lambda age, n=final_age_alive: age <= n  # noqa: E731
+    transitions = until_exit(
+        final_age_alive + 5,
+        law=choose_among(regime_transition, targets=("alive", "dead")),
+        exits=("dead",),
+    )
     states: dict[str, Grid | Phased | AgeSpecializedGrid] = {
         "wealth": WEALTH_GRID,
         "illiquid": illiquid_grid,
@@ -377,11 +377,10 @@ def build_model(
     # argument types the narrowing is expressed in.
     if variant == "brute":
         alive = Regime(
-            active=active,
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=regime_transition,
+            regime_transitions=transitions,
             functions=functions,
             constraints=constraints,
             solver=solver,
@@ -398,11 +397,10 @@ def build_model(
             else "resources"
         )
         alive = NestedConsumptionSavingsRegime(
-            active=active,
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=regime_transition,
+            regime_transitions=transitions,
             functions=functions,
             constraints=constraints,
             solver=solver,
@@ -422,8 +420,7 @@ def build_model(
             ),
         )
     dead = Regime(
-        transition=None,
-        active=lambda age, n=final_age_alive: terminal_active_from_start or age > n,
+        regime_transitions=None,
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         functions={"utility": terminal_utility_function},
     )
@@ -433,4 +430,5 @@ def build_model(
         ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
         execution_config=execution_config,
+        initial_regimes={20: ("alive", "dead")},
     )

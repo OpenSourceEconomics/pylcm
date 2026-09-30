@@ -16,6 +16,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LogNormalIIDProcess,
     MarkovTransition,
     Model,
@@ -47,10 +48,6 @@ def _target_id() -> ScalarInt:
     return RegimeId.target
 
 
-def _source_early(age: float) -> bool:
-    return age < 22
-
-
 def _oracle() -> float:
     raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(3)
     values = np.exp(math.sqrt(2.0) * raw_nodes)
@@ -60,7 +57,11 @@ def _oracle() -> float:
 @pytest.mark.parametrize("coarse", [False, True])
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit):
-    transition = _target_id if coarse else {"target": MarkovTransition(_one)}
+    transition = (
+        Choose(func=_target_id, targets=("target",))
+        if coarse
+        else {"target": MarkovTransition(func=_one)}
+    )
     process = LogNormalIIDProcess(
         n_points=3,
         gauss_hermite=True,
@@ -70,12 +71,11 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
     model = Model(
         regimes={
             "source": Regime(
-                transition=transition,
-                active=_source_early,
+                regime_transitions=transition,
                 functions={"utility": _zero},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock},
             ),
@@ -83,6 +83,7 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
     got = float(np.asarray(solution[0]["source"]))

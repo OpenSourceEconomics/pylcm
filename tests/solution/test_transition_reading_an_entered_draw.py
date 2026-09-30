@@ -26,6 +26,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts symmetric nodes on `(0, 1, 2)`,
 # so the draw has mean one whatever weights the discretization assigns them.
@@ -72,19 +73,23 @@ def _build(*, functions, next_wealth) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
+                ),
                 state_transitions={"wealth": {"target": next_wealth}},
                 functions=functions,
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK},
                 functions={"utility": _wealth_plus_shock},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 
@@ -132,20 +137,24 @@ def _build_reading_a_runtime_draw() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
+                ),
                 states={"shock": _RUNTIME_SHOCK},
                 state_transitions={"wealth": {"target": _next_wealth_from_draw}},
                 functions={"utility": _shock_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _RUNTIME_SHOCK},
                 functions={"utility": _wealth_plus_shock},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

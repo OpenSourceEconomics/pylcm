@@ -43,6 +43,8 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ByAge,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -63,6 +65,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
+from tests.test_models.schedules import until_exit
 
 # Number of model periods; the last one is spent in the terminal `dead` regime.
 N_PERIODS = 4
@@ -244,8 +247,13 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _active(age: int) -> bool:
-    return age < 40 + (N_PERIODS - 1) * 10
+def _keeper_transitions() -> ByAge:
+    """Keep the house until the final living age, then die."""
+    return until_exit(
+        40 + (N_PERIODS - 1) * 10,
+        law=Choose(func=next_regime, targets=("keeper", "dead")),
+        exits=("dead",),
+    )
 
 
 def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRegime:
@@ -261,8 +269,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
     """
     if variant == "brute":
         return UserRegime(
-            transition=next_regime,
-            active=_active,
+            regime_transitions=_keeper_transitions(),
             actions={"consumption": CONSUMPTION_GRID},
             states={
                 "liquid_assets": LIQUID_ASSETS_GRID,
@@ -272,7 +279,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
             state_transitions={
                 "liquid_assets": next_liquid_assets_brute,
                 "housing": fixed_transition("housing"),
-                "income": MarkovTransition(income_transition),
+                "income": MarkovTransition(func=income_transition),
             },
             constraints={"borrowing_constraint": borrowing_constraint},
             functions={
@@ -281,8 +288,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
             },
         )
     return ConsumptionSavingsRegime(
-        transition=next_regime,
-        active=_active,
+        regime_transitions=_keeper_transitions(),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "liquid_assets": LIQUID_ASSETS_GRID,
@@ -292,7 +298,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
         state_transitions={
             "liquid_assets": next_liquid_assets,
             "housing": fixed_transition("housing"),
-            "income": MarkovTransition(income_transition),
+            "income": MarkovTransition(func=income_transition),
         },
         functions={
             "utility": utility,
@@ -321,6 +327,7 @@ def build_model(variant: Literal["dcegm", "brute"] = "dcegm") -> Model:
         regimes={"keeper": build_working_regime(variant), "dead": dead},
         ages=_ages(),
         regime_id_class=HousingKeeperRegimeId,
+        initial_regimes={40: "keeper"},
     )
 
 

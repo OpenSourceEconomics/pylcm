@@ -39,10 +39,6 @@ def _one_probability() -> FloatND:
     return jnp.asarray(1.0)
 
 
-def _source_is_early(age: float) -> bool:
-    return age < 22
-
-
 def _enter_shock() -> ScalarFloat:
     return jnp.asarray(_ENTRY)
 
@@ -69,8 +65,7 @@ def _build_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={
                     "shock": {"target": _enter_shock},
                     "wealth": {"target": _double_the_entry},
@@ -78,7 +73,7 @@ def _build_model() -> Model:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
@@ -91,6 +86,7 @@ def _build_model() -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
 

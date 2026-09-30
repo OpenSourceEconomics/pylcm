@@ -25,6 +25,7 @@ from tests.test_models.deterministic.retirement_only import (
     RetirementOnlyRegimeId,
     dead,
     get_params,
+    retirement_transitions,
 )
 
 
@@ -48,7 +49,7 @@ def _model(
 ) -> Model:
     """Small real DC-EGM model exercising either numerical envelope consumer."""
     retirement = dcegm_retirement.replace(
-        active=lambda age: age < 60,
+        regime_transitions=retirement_transitions(last_age=60),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=6)},
         solver=DCEGM(
             savings_grid=LinSpacedGrid(start=0.0, stop=12.0, n_points=8),
@@ -67,6 +68,7 @@ def _model(
         execution_config=ExecutionConfig(
             axis_widths=widths, device_memory_bytes=device_memory_bytes
         ),
+        initial_regimes={60 - 10 * (n_periods - 1): "retirement"},
     )
 
 
@@ -208,7 +210,10 @@ def test_fues_compiler_option_reaches_actual_lowering_keys(
         device_memory_bytes=device_memory_bytes,
         n_periods=4,
     )
-    model.solve(params=get_params(n_periods=4), log_level="off")
+    # `_model` ends every horizon at age 60, so retirement's last exit is at 50.
+    model.solve(
+        params={**get_params(n_periods=4), "final_age_alive": 50}, log_level="off"
+    )
     assert len(compiled_programs) == 1
     cores = compiled_programs[0].executables
     assert (

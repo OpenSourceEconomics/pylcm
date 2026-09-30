@@ -39,7 +39,9 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedGrid,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -51,8 +53,16 @@ from lcm import (
 from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
 from lcm.transition import MarkovTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    InitialRegimes,
+    ScalarInt,
+)
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -146,7 +156,9 @@ def _solve(*, later_ceiling: float) -> SolutionResult:
         The complete labelled solution.
 
     """
-    return _make_model(later_ceiling=later_ceiling).solve(
+    return _make_model(
+        later_ceiling=later_ceiling, initial_regimes={0: "couple"}
+    ).solve(
         params={
             "single_f": {"koopmans_aggregator": {"discount_factor": 0.0}},
             "single_f_terminal": {},
@@ -160,7 +172,7 @@ def _solve(*, later_ceiling: float) -> SolutionResult:
     )
 
 
-def _make_model(*, later_ceiling: float) -> Model:
+def _make_model(*, later_ceiling: float, initial_regimes: InitialRegimes) -> Model:
     """Build the couple-and-single model with an age-specialized reference grid."""
 
     def _single_wealth_grid(age: float) -> LinSpacedGrid:
@@ -168,11 +180,14 @@ def _make_model(*, later_ceiling: float) -> Model:
         return LinSpacedGrid(start=0.0, stop=ceiling, n_points=2)
 
     single_f = Regime(
-        transition={
-            "single_f": MarkovTransition(_stays_single),
-            "single_f_terminal": MarkovTransition(_leaves_single),
-        },
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law={
+                "single_f": MarkovTransition(func=_stays_single),
+                "single_f_terminal": MarkovTransition(func=_leaves_single),
+            },
+            exits=("single_f_terminal",),
+        ),
         states={
             "wealth": AgeSpecializedGrid(
                 build=_single_wealth_grid, signature=lambda age: age < 0.5
@@ -182,14 +197,16 @@ def _make_model(*, later_ceiling: float) -> Model:
         functions={"utility": _single_utility},
     )
     single_f_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=INITIAL_CEILING, n_points=2)},
         functions={"utility": _zero_utility},
     )
     couple = Regime(
-        transition={"couple_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {"couple_terminal": MarkovTransition(func=_prob_one)}
+            }
+        ),
         states={"wealth": COUPLE_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -210,8 +227,7 @@ def _make_model(*, later_ceiling: float) -> Model:
         },
     )
     couple_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wealth": COUPLE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -229,6 +245,7 @@ def _make_model(*, later_ceiling: float) -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes=initial_regimes,
     )
 
 

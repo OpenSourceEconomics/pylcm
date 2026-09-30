@@ -10,6 +10,10 @@ engine's numerics, so a change to either moves them and they have to be
 re-frozen against a run whose correctness has been argued separately. They are
 for the explicit working, retirement, and dead regimes and are reproducible
 across GPUs at float64 — a re-freeze needs a fresh run, not a matching device.
+The simulated moments were frozen from the pull-request GPU CI run of commit
+56c465af at float64 under jax and jaxlib 0.11.1. The solved value function is
+pinned separately by `test_value_function_sums`, whose numbers do not depend on
+the simulation's random draws.
 
 The structural invariants at the bottom of the module are the stable half: they
 assert relations that hold for any correct solve, so they survive a re-freeze
@@ -28,7 +32,7 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import Model
+from lcm import ByAge, Model, Regime
 from lcm_examples.mahler_yum_2024 import (
     RETIREMENT_REGIME,
     START_PARAMS,
@@ -168,21 +172,29 @@ def test_retirement_split_removes_exactly_the_work_only_dimensions():
         "productivity_shock",
     }
     assert retirement_dimensions <= working_dimensions
-    working_transition = cast("Mapping[str, object]", WORKING_REGIME.transition)
-    retirement_transition = cast("Mapping[str, object]", RETIREMENT_REGIME.transition)
-    assert set(working_transition) == {"working", "retirement", "dead"}
-    assert set(retirement_transition) == {"retirement", "dead"}
+    assert _targets(WORKING_REGIME) == {"working", "retirement", "dead"}
+    assert _targets(RETIREMENT_REGIME) == {"retirement", "dead"}
+
+
+def _targets(regime: Regime) -> set[str]:
+    """Every target any age of the regime's schedule declares."""
+    schedule = cast("ByAge", regime.regime_transitions)
+    return set().union(*(cast("Mapping[str, object]", law) for law in schedule.laws))
+
+
+def _covered_periods(regime: Regime) -> set[int]:
+    schedule = cast("ByAge", regime.regime_transitions)
+    return set(schedule.resolve(ages).law_by_period)
 
 
 def test_living_regimes_partition_ages_at_65():
     """Every living age belongs to working life or retirement according to age 65."""
+    working = _covered_periods(WORKING_REGIME)
+    retirement = _covered_periods(RETIREMENT_REGIME)
     activity = np.array(
         [
-            [
-                WORKING_REGIME.active(int(age)),
-                RETIREMENT_REGIME.active(age=int(age)),
-            ]
-            for age in ages.values[:-1]
+            [period in working, period in retirement]
+            for period in range(len(ages.values) - 1)
         ]
     )
     expected = np.array(
@@ -239,6 +251,46 @@ def mahler_gpu_model(*, request: pytest.FixtureRequest) -> Model:
     )
 
 
+# Sum of the solved value function over all state nodes, by (period, regime).
+# Computed on CPU at float64 under jax 0.11.1 (Marvin jobs 27963541 and
+# 27963372), where every value array the pull request's base commit and its head
+# both solve agrees bit for bit.
+_EXPECTED_V_SUMS = {
+    (0, "working"): 265404544.8688668,
+    (10, "working"): 211638140.41507253,
+    (19, "working"): 143963708.5204066,
+    (20, "retirement"): 13507992.7483361,
+    (30, "retirement"): 6106725.67137574,
+    (37, "retirement"): 1869762.1062872498,
+}
+
+
+@pytest.fixture(scope="module")
+def value_function_sums(*, mahler_gpu_model: Model) -> dict[tuple[int, str], float]:
+    """Solve once with START_PARAMS and sum each checked value array."""
+    model_params, _ = create_inputs(
+        seed=32, n_simulation_subjects=4, params=START_PARAMS
+    )
+    values = mahler_gpu_model.solve(params=model_params, log_level="off").values
+    return {
+        (period, regime): float(np.sum(np.asarray(values[period][regime])))
+        for period, regime in _EXPECTED_V_SUMS
+    }
+
+
+@_gpu_x64
+@pytest.mark.parametrize(("period", "regime"), list(_EXPECTED_V_SUMS))
+def test_value_function_sums(
+    *, value_function_sums: dict[tuple[int, str], float], period: int, regime: str
+) -> None:
+    """The solved value function sums to its pinned value in each checked slot."""
+    np.testing.assert_allclose(
+        value_function_sums[(period, regime)],
+        _EXPECTED_V_SUMS[(period, regime)],
+        rtol=1e-9,
+    )
+
+
 @_gpu_x64
 def test_model_solves_and_simulates(*, mahler_gpu_model: Model) -> None:
     """Smoke test: model runs end-to-end with small n."""
@@ -279,10 +331,10 @@ def simulation_result(*, mahler_gpu_model: Model) -> pd.DataFrame:
     ("period", "expected_retired", "expected_part_time", "expected_full_time"),
     [
         (0, 633, 6219, 3148),
-        (1, 653, 7687, 1656),
-        (2, 579, 5846, 3559),
-        (3, 526, 6376, 3072),
-        (4, 473, 5329, 4161),
+        (1, 607, 7713, 1672),
+        (2, 588, 5889, 3510),
+        (3, 562, 6328, 3091),
+        (4, 460, 5343, 4164),
     ],
 )
 def test_labor_supply_distribution(
@@ -307,11 +359,11 @@ def test_labor_supply_distribution(
     [
         (0, 0.0),
         (5, 0.3038),
-        (10, 1.0975),
-        (15, 2.3246),
-        (20, 2.8767),
-        (25, 1.9310),
-        (30, 0.9374),
+        (10, 1.0845),
+        (15, 2.3094),
+        (20, 2.8561),
+        (25, 1.9116),
+        (30, 0.9251),
     ],
 )
 def test_mean_wealth_profile(*, simulation_result, period, expected_mean_wealth):
@@ -342,10 +394,10 @@ def test_health_good_fraction(*, simulation_result, period, expected_good_frac):
 @pytest.mark.parametrize(
     ("period", "expected_alive"),
     [
-        (10, 9880),
+        (10, 9851),
         (20, 9113),
-        (30, 5037),
-        (37, 510),
+        (30, 5025),
+        (37, 501),
     ],
 )
 def test_survival_counts(*, simulation_result, period, expected_alive):
@@ -380,7 +432,7 @@ def test_income_by_education(simulation_result):
     working = simulation_result[simulation_result["period"] < retirement_period]
     inc = working.groupby("education")["income"].mean()
     np.testing.assert_allclose(inc.loc["low"], 0.7995, atol=0.01)
-    np.testing.assert_allclose(inc.loc["high"], 1.5526, atol=0.01)
+    np.testing.assert_allclose(inc.loc["high"], 1.5638, atol=0.01)
     assert inc.loc["high"] > inc.loc["low"]
 
 
@@ -396,7 +448,7 @@ def test_retirement_regime_starts_at_retirement_period(simulation_result):
 @_gpu_x64
 def test_total_living_rows(simulation_result):
     """Total number of living-regime rows must match reference."""
-    assert abs(len(simulation_result) - 294706) <= 50
+    assert abs(len(simulation_result) - 293892) <= 50
 
 
 @_gpu_x64

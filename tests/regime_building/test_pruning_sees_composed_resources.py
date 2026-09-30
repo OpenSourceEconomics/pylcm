@@ -11,6 +11,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
+    Choose,
     ConsumptionSavingsRegime,
     DiscreteGrid,
     LinSpacedGrid,
@@ -75,7 +77,11 @@ def next_regime(age: int) -> DiscreteState:
 
 def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=3,
+            law=Choose(func=next_regime, targets=("working",)),
+            then=Choose(func=next_regime, targets=("dead",)),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={
@@ -101,7 +107,7 @@ def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": terminal_utility},
         states={"wealth": _WEALTH},
     )
@@ -121,6 +127,7 @@ def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
         regime_id_class=RegimeId,
         states=model_states,
         state_transitions=model_laws,
+        initial_regimes={0: "working"},
     )
 
 

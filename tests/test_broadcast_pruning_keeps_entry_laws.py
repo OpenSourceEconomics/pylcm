@@ -17,6 +17,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -79,12 +81,13 @@ def _entry_health(wealth: float) -> FloatND:
 
 def _working_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "transition": {"retired": MarkovTransition(_always_retire)},
-        "active": lambda age: age < 1,
+        "regime_transitions": ByAge(
+            cases={AgeRange(stop=1): {"retired": MarkovTransition(func=_always_retire)}}
+        ),
         "states": {"wealth": _WEALTH_GRID},
         "state_transitions": {
             "wealth": _next_wealth,
-            "health": {"retired": MarkovTransition(_entry_health)},
+            "health": {"retired": MarkovTransition(func=_entry_health)},
         },
         "actions": {"consumption": _CONSUMPTION_GRID},
         "functions": {"utility": _utility_without_health},
@@ -95,8 +98,7 @@ def _working_regime(**overrides: Any) -> Regime:
 
 def _retired_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "transition": None,
-        "active": lambda age: age >= 1,
+        "regime_transitions": None,
         "states": {"wealth": _WEALTH_GRID},
         "functions": {"utility": _utility_with_health},
     }
@@ -116,6 +118,7 @@ def _build(*, regimes: dict[str, Regime], **model_slots: Any) -> Model:
         regimes=regimes,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "working"},
         **model_slots,
     )
 
@@ -218,7 +221,7 @@ def test_an_unkeyed_entry_law_survives_toward_a_retaining_target() -> None:
             "working": _working_regime(
                 state_transitions={
                     "wealth": _next_wealth,
-                    "health": MarkovTransition(_entry_health),
+                    "health": MarkovTransition(func=_entry_health),
                 }
             ),
             "retired": _retired_regime(),
@@ -281,7 +284,7 @@ def test_a_kept_entry_law_leaves_no_dangling_reference() -> None:
                 state_transitions={
                     "wealth": _next_wealth,
                     "health": {
-                        "retired": MarkovTransition(_entry_health_from_endowment)
+                        "retired": MarkovTransition(func=_entry_health_from_endowment)
                     },
                     "endowment": fixed_transition("endowment"),
                 }
@@ -315,7 +318,7 @@ def test_an_entry_law_reading_the_state_itself_keeps_the_state() -> None:
             "working": _working_regime(
                 state_transitions={
                     "wealth": _next_wealth,
-                    "health": {"retired": MarkovTransition(_persistent_health)},
+                    "health": {"retired": MarkovTransition(func=_persistent_health)},
                 }
             ),
             "retired": _retired_regime(),

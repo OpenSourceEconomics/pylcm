@@ -75,7 +75,9 @@ def _generate_mortality(data_dir: Path) -> None:
         seed=12345,
         log_level="off",
     )
-    result.to_dataframe().to_pickle(data_dir / "mortality_simulation.pkl")
+    result.to_dataframe(terminal_rows="all").to_pickle(
+        data_dir / "mortality_simulation.pkl"
+    )
 
 
 if __name__ == "__main__":

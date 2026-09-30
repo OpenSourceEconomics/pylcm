@@ -58,6 +58,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -98,12 +99,9 @@ class _Level:
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=3)
 _CONSUMPTION = LinSpacedGrid(start=0.5, stop=2.0, n_points=3)
 
-_PARAMS = {
-    "solo": {"koopmans_aggregator": {"discount_factor": _BETA}},
-    "pair": {"koopmans_aggregator": {"discount_factor": _BETA}},
-    "mate": {"koopmans_aggregator": {"discount_factor": _BETA}},
-    "dead": {},
-}
+# Model-level, so the ungated control — which never reaches `solo` — needs no
+# parameters for it.
+_PARAMS = {"discount_factor": _BETA}
 
 _INITIAL_CONDITIONS = {
     "age": jnp.zeros(4),
@@ -142,6 +140,11 @@ def _none_before_age_two(age: FloatND) -> FloatND:
 
 def _half_before_age_two(age: FloatND) -> FloatND:
     return jnp.where(age < 2.0, 0.5, 0.0)
+
+
+def _half_from_age_one(age: FloatND) -> FloatND:
+    """Die with the half of the pair's mass that has no pair to stay in at age 2."""
+    return jnp.where(age < 1.0, 0.0, 0.5)
 
 
 def _gate_open_above_the_middle(wealth: ContinuousState) -> BoolND:
@@ -197,7 +200,7 @@ def build_model(
     )
     leaving = (
         ValueDependentTransition(
-            probability=MarkovTransition(_half_before_age_two),
+            probability=MarkovTransition(func=_half_before_age_two),
             gate=_gate_open_above_the_middle,
             routes={
                 "only": StakeholderRoute(
@@ -209,14 +212,17 @@ def build_model(
             },
         )
         if gated
-        else MarkovTransition(_half_before_age_two)
+        else MarkovTransition(func=_half_before_age_two)
     )
     solo = Regime(
-        transition={
-            "solo": MarkovTransition(_all_before_age_two),
-            "dead": MarkovTransition(_none_before_age_two),
-        },
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3,
+            law={
+                "solo": MarkovTransition(func=_all_before_age_two),
+                "dead": MarkovTransition(func=_none_before_age_two),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_x},
@@ -226,12 +232,15 @@ def build_model(
         },
     )
     pair = Regime(
-        transition={
-            "pair": MarkovTransition(_half_before_age_two),
-            "mate": leaving,
-            "dead": MarkovTransition(_none_before_age_two),
-        },
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law={
+                "pair": MarkovTransition(func=_half_before_age_two),
+                "mate": leaving,
+                "dead": MarkovTransition(func=_half_from_age_one),
+            },
+            exits=("mate", "dead"),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_level},
@@ -244,11 +253,14 @@ def build_model(
         },
     )
     mate = Regime(
-        transition={
-            "mate": MarkovTransition(_all_before_age_two),
-            "dead": MarkovTransition(_none_before_age_two),
-        },
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3,
+            law={
+                "mate": MarkovTransition(func=_all_before_age_two),
+                "dead": MarkovTransition(func=_none_before_age_two),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_level},
@@ -258,8 +270,7 @@ def build_model(
         },
     )
     dead = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )
@@ -272,6 +283,7 @@ def build_model(
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),
+        initial_regimes={0: "pair"},
     )
 
 

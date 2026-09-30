@@ -19,6 +19,7 @@ jobs:
   run:
     name: Run explanation notebooks for docs
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: prefix-dev/setup-pixi@v0.10.2
@@ -58,8 +59,19 @@ jobs:
       - run
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
+      - uses: actions/checkout@v7.0.1
+        if: contains(needs.*.result, 'cancelled')
+        with:
+          sparse-checkout: .github/actions
+      - id: superseded
+        if: contains(needs.*.result, 'cancelled')
+        uses: ./.github/actions/superseded
       - name: Fail unless the check succeeded
+        if: >-
+          steps.superseded.outputs.superseded != 'true'
+          || contains(needs.*.result, 'failure')
         run: |-
           echo "run: ${{ needs.run.result }}"
           test "${{ needs.run.result }}" = "success"

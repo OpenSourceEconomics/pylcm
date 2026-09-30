@@ -13,6 +13,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -22,6 +24,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
@@ -66,26 +69,33 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"a": MarkovTransition(_to_a), "b": MarkovTransition(_to_b)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21,
+                    law={
+                        "a": MarkovTransition(func=_to_a),
+                        "b": MarkovTransition(func=_to_b),
+                    },
+                    exits=("a", "b"),
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _keep},
                 functions={"utility": _no_utility},
                 certainty_equivalent=certainty_equivalent,
             ),
             "a": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _pays_wealth},
             ),
             "b": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _pays_ten_times},
             ),
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 
@@ -97,20 +107,20 @@ def test_a_negative_regime_probability_is_refused_even_at_unit_mass(
 ) -> None:
     """`1.5` on one target and `-0.5` on another is not a distribution.
 
-    The two sum to one, so the mass budget alone accepts them. Dropping the
-    negative target instead would publish `1.5 * wealth` — precisely the value a
-    well-posed model with all its mass on the first target would produce.
+    The two sum to one, so the mass budget alone accepts them; regime selection
+    refuses the negative entry at every log level, `"off"` included.
     """
     model = _build(
         probability_a=1.5, probability_b=-0.5, certainty_equivalent=certainty_equivalent
     )
 
-    V = model.solve(
-        params=_PARAMS if certainty_equivalent is None else _POWER_MEAN_PARAMS,
-        log_level="off",
-    ).values
-
-    assert bool(jnp.all(jnp.isnan(jnp.asarray(V[0]["source"]))))
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=r"outside \[0, 1\]"
+    ):
+        model.solve(
+            params=_PARAMS if certainty_equivalent is None else _POWER_MEAN_PARAMS,
+            log_level="off",
+        )
 
 
 def test_a_well_formed_regime_transition_is_untouched() -> None:
@@ -127,21 +137,19 @@ def test_a_well_formed_regime_transition_is_untouched() -> None:
 
 
 @categorical(ordered=False)
-class RegimeIdWithInactiveTargets:
+class RegimeIdWithSignedTargets:
     source: ScalarInt
     live: ScalarInt
     gone_a: ScalarInt
     gone_b: ScalarInt
 
 
-def test_a_signed_cell_on_a_target_that_drops_out_is_refused_by_validation() -> None:
-    """The declared transition is checked as written, not as it survives pruning.
+def test_signed_cells_that_cancel_across_targets_are_refused_by_validation() -> None:
+    """Every declared cell is checked, not only the row sum.
 
-    A target that activity makes unreachable is a legal declaration — it simply
-    needs no handoff — and its cell is dropped before any continuation is
-    built. Nothing downstream can see it, so `+0.5` and `-0.5` on two such
-    targets cancel and leave the live target's `1.0` looking well formed.
-    Validation reads the transition as declared and refuses it.
+    `+0.5` and `-0.5` on two targets cancel and leave the row summing to one
+    alongside the live target's `1.0`. Validation reads each cell as declared
+    and refuses the negative one.
     """
 
     def _all_mass_to_live() -> ScalarFloat:
@@ -153,10 +161,9 @@ def test_a_signed_cell_on_a_target_that_drops_out_is_refused_by_validation() -> 
     def _negative_on_a_dead_target() -> ScalarFloat:
         return jnp.float32(-0.5)
 
-    def _terminal(active) -> Regime:
+    def _terminal() -> Regime:
         return Regime(
-            transition=None,
-            active=active,
+            regime_transitions=None,
             states={"wealth": _WEALTH},
             functions={"utility": _pays_wealth},
         )
@@ -164,22 +171,26 @@ def test_a_signed_cell_on_a_target_that_drops_out_is_refused_by_validation() -> 
     model = Model(
         regimes={
             "source": Regime(
-                transition={
-                    "live": MarkovTransition(_all_mass_to_live),
-                    "gone_a": MarkovTransition(_positive_on_a_dead_target),
-                    "gone_b": MarkovTransition(_negative_on_a_dead_target),
-                },
-                active=lambda age: age < 21,
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(stop=21): {
+                            "live": MarkovTransition(func=_all_mass_to_live),
+                            "gone_a": MarkovTransition(func=_positive_on_a_dead_target),
+                            "gone_b": MarkovTransition(func=_negative_on_a_dead_target),
+                        }
+                    }
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _keep},
                 functions={"utility": _no_utility},
             ),
-            "live": _terminal(lambda _age: True),
-            "gone_a": _terminal(lambda age: age < 21),
-            "gone_b": _terminal(lambda age: age < 21),
+            "live": _terminal(),
+            "gone_a": _terminal(),
+            "gone_b": _terminal(),
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
-        regime_id_class=RegimeIdWithInactiveTargets,
+        regime_id_class=RegimeIdWithSignedTargets,
+        initial_regimes={20: "source"},
     )
 
     with pytest.raises(

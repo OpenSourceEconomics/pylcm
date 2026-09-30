@@ -142,11 +142,14 @@ def test_finite_outer_grid_reproduces_the_frozen_candidate_values() -> None:
         .values
     )
 
+    # The frozen values are `alive` at period 0 and `dead` at period 1. The toy
+    # also starts subjects in `dead`, whose terminal payoff reads no age, so its
+    # period-0 value repeats the period-1 one.
+    np.testing.assert_array_equal(solution[0]["dead"], solution[1]["dead"])
     values = np.concatenate(
         [
             np.asarray(solution[period][name]).ravel()
-            for period in sorted(solution)
-            for name in sorted(solution[period])
+            for period, name in ((0, "alive"), (1, "dead"))
         ]
     )
     assert values.size == _FINITE_GRID_BASELINE_SIZE

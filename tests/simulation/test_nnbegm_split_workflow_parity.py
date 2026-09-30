@@ -76,7 +76,13 @@ def _simulate(*, model: Model, solution: SolutionResult | None) -> pd.DataFrame:
     ).to_dataframe()
 
 
-@pytest.fixture(scope="module", params=["finite", "adaptive"])
+@pytest.fixture(
+    scope="module",
+    # The adaptive solve in this fixture's setup alone approaches the per-test
+    # timeout on the macOS runner, so that case joins the `slow` set those
+    # runners deselect; Linux and the GPU jobs still run it.
+    params=["finite", pytest.param("adaptive", marks=pytest.mark.slow)],
+)
 def route(request: pytest.FixtureRequest) -> str:
     return request.param
 

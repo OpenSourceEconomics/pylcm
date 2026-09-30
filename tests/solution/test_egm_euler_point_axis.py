@@ -37,6 +37,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, invariance_tolerances
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -116,11 +117,14 @@ def _model(width: int | None = None) -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        transition={
-            "working": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH)},
         state_transitions={"wealth": next_wealth},
@@ -141,7 +145,7 @@ def _model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -150,6 +154,7 @@ def _model(width: int | None = None) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 

@@ -23,6 +23,7 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
+    Choose,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
@@ -47,6 +48,7 @@ from tests.test_models.negm_kinked_toy import (
     resources_before_outer_cost,
     utility,
 )
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -106,7 +108,6 @@ def _build_model(*, helper_name: str, override) -> Model:
         if helper_name == "keep_illiquid":
             no_adjustment = "keep_illiquid"
     alive = NestedConsumptionSavingsRegime(
-        active=lambda age: age <= _FINAL_AGE_ALIVE,
         states={
             "wealth": negm_kinked_toy.WEALTH_GRID,
             "illiquid": negm_kinked_toy.ILLIQUID_GRID,
@@ -119,7 +120,11 @@ def _build_model(*, helper_name: str, override) -> Model:
             "consumption": negm_kinked_toy.CONSUMPTION_GRID,
             "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        transition=next_regime,
+        regime_transitions=until_exit(
+            _FINAL_AGE_ALIVE + _AGE_STEP,
+            law=Choose(func=next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions=functions,
         solver=replace(NEGM_SOLVER),
         liquid=LiquidMargin(
@@ -148,6 +153,7 @@ def _build_model(*, helper_name: str, override) -> Model:
             step=f"{_AGE_STEP}Y",
         ),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
+        initial_regimes={20: "alive"},
     )
 
 
@@ -157,10 +163,10 @@ def _specialized(helper_name: str) -> AgeSpecializedFunction:
 
 
 @pytest.mark.parametrize("helper_name", ["keep_illiquid", "credited"])
-def test_the_last_active_age_uses_that_ages_own_outer_helper(helper_name):
-    """The last active age's value equals a plain solve pinned to that age's helper.
+def test_the_last_covered_age_uses_that_ages_own_outer_helper(helper_name):
+    """The last covered age's value equals a plain solve pinned to that age's helper.
 
-    The last active period's value depends on its own economics and on a
+    The last covered period's value depends on its own economics and on a
     continuation into the terminal regime, which no age specialization touches. So
     the age-specialized solve must reproduce, *exactly*, a plain solve whose helper
     is the concrete function `build(age)` returns at that age.

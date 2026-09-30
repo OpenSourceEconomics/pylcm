@@ -72,12 +72,7 @@ def test_only_reachable_targets_of_continuation_readers_publish_carries():
             "needed": (1,),
             "unused": (1,),
         },
-        candidate_targets_by_source={
-            "reader": ("needed",),
-            "value_only": ("unused",),
-            "needed": (),
-            "unused": (),
-        },
+        support_by_period={"reader": {0: ("needed",)}, "value_only": {0: ("unused",)}},
         terminal_regimes=("needed", "unused"),
     )
     continuation_reader = EGM(

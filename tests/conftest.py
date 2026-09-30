@@ -7,6 +7,7 @@ import pathlib
 import platform
 from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
+from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
@@ -21,8 +22,13 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import (
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
-    compute_active_periods_by_regime,
     prepare_model_structure,
+)
+from _lcm.regime_building.schedules import (
+    RegimeSchedules,
+    gated_source_periods,
+    lower_demanded_transitions,
+    resolve_regime_schedules,
 )
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
@@ -625,15 +631,47 @@ def build_prepared_structure(
 
     Tests that call `process_regimes` directly (bypassing `Model`) build this
     the same way `Model.__init__` does, rather than `process_regimes` growing
-    a test-only fallback for constructing one internally.
+    a test-only fallback for constructing one internally. `user_regimes` carry
+    their declared `regime_transitions`; pass `lower_declarations` of the same
+    regimes to `process_regimes`.
     """
+    schedules = _resolve_schedules(user_regimes=user_regimes, ages=ages)
     return prepare_model_structure(
-        user_regimes=user_regimes,
+        user_regimes=lower_declarations(user_regimes, ages=ages),
         ages=ages,
-        active_periods_by_regime=compute_active_periods_by_regime(
-            ages=ages, user_regimes=user_regimes
-        ),
+        active_periods_by_regime=schedules.coverage_by_regime,
+        support_by_phase=schedules.support_by_phase,
+        gated_source_periods=gated_source_periods(schedules=schedules),
     )
+
+
+# keyword-only-exempt: primary-argument=user_regimes
+def lower_declarations(
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime], *, ages: AgeGrid
+) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
+    """Replace each declared `regime_transitions` by its engine law, as `Model` does.
+
+    Regime codes follow the mapping's order.
+    """
+    lowered = lower_demanded_transitions(
+        schedules=_resolve_schedules(user_regimes=user_regimes, ages=ages),
+        declared_transitions={
+            name: regime.regime_transitions for name, regime in user_regimes.items()
+        },
+        code_by_name={name: code for code, name in enumerate(user_regimes)},
+    )
+    return MappingProxyType(
+        {
+            name: regime.replace(regime_transitions=lowered[name])
+            for name, regime in user_regimes.items()
+        }
+    )
+
+
+def _resolve_schedules(
+    *, user_regimes: Mapping[RegimeName, FinalizedUserRegime], ages: AgeGrid
+) -> RegimeSchedules:
+    return resolve_regime_schedules(user_regimes=user_regimes, ages=ages)
 
 
 @pytest.fixture(scope="session")

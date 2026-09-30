@@ -149,14 +149,9 @@ def build_params(
             "koopmans_aggregator": {"discount_factor": discount_factor},
             "gross_income": {"base_income": base_income},
             "tax": {"tax_rate": tax_rate, "tax_kink": tax_kink},
-            "alive": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
-            "dead": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
+            "alive": {"next_liquid": alive_budget},
+            "dead": {"next_liquid": alive_budget},
+            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

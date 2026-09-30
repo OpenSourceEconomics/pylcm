@@ -22,7 +22,7 @@ from _lcm.typing import (
     InitialConditions,
 )
 from _lcm.utils.logging import LogLevel, get_logger
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, AgeRange, ByAge, Choose, LinSpacedGrid, Model, categorical
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
@@ -64,7 +64,7 @@ def _validate(*, model: Model, initial: InitialConditions) -> None:
         (999, 99.0, 999, True, "Invalid regime IDs [999]. Valid IDs: [0, 1]"),
         (0, 99.0, 999, True, "Missing model states: ['wealth']."),
         (0, 99.0, 999, False, "Invalid age values [99.0]"),
-        (1, 0.0, 999, False, "not active"),
+        (0, 3.0, 999, False, "not declared"),
         (0, 0.0, 999, False, "Invalid values [999] for discrete state 'health'"),
     ],
 )
@@ -314,8 +314,13 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
     actions = {"consumption": LinSpacedGrid(start=2, stop=3, n_points=2)}
     regimes = {
         name: UserRegime(
-            transition=next_regime,
-            active=lambda age: age == 0,
+            regime_transitions=ByAge(
+                cases={
+                    AgeRange(start=0, stop=1): Choose(
+                        func=next_regime, targets=("dead",)
+                    )
+                }
+            ),
             states=states,
             actions=actions,
             state_transitions={"wealth": lambda wealth: wealth},
@@ -328,8 +333,7 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
         )
     }
     regimes["dead"] = UserRegime(
-        transition=None,
-        active=lambda age: age == 1,
+        regime_transitions=None,
         states=states,
         functions={"utility": terminal_utility},
     )
@@ -337,6 +341,7 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
         regimes=regimes,
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: ("first", "second")},
     )
     armed = True
     with pytest.raises(InvalidInitialConditionsError) as caught:

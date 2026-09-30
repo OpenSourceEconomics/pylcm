@@ -42,6 +42,7 @@ def test_collective_utilities_may_come_from_the_model_level_slot():
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         functions=utilities,
+        initial_regimes={0: "couple"},
     )
 
     solution = broadcast_model.solve(params=params, log_level="debug").values
@@ -67,6 +68,7 @@ def test_collective_discrete_action_may_come_from_the_model_level_slot():
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         actions={"work": DiscreteGrid(category_class=Work)},
+        initial_regimes={0: "couple"},
     )
 
     solution = broadcast_model.solve(params=params, log_level="debug").values

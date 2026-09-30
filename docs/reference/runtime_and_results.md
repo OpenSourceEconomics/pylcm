@@ -39,6 +39,7 @@ model = Model(
     regimes=regimes,
     ages=ages,
     regime_id_class=RegimeId,
+    initial_regimes=initial_regimes,
     execution_config=ExecutionConfig(
         device_memory_bytes=40 * 2**30,
         sharded_states=("type",),
@@ -526,6 +527,19 @@ pylcm enables a persistent JAX compilation cache by default. Set
 to choose the project-specific leaf. Set `XLA_PYTHON_CLIENT_PREALLOCATE=true` before
 importing pylcm to restore JAX's device preallocation; pylcm otherwise requests
 on-demand allocation.
+
+(api-policy-lookup)=
+
+## `PolicyLookup`
+
+`Model.lookup_policy(params=..., solution=..., period=..., regime_name=..., states=..., action_grids=None)`
+evaluates the decision that simulate takes at caller-supplied states of one demanded
+period and regime. It returns a `PolicyLookup` with `actions`, a mapping from action
+name to the chosen grid values, and `value`, the maximised value at each state.
+Continuous states off the grid extrapolate as in simulate; discrete states and
+restricted `action_grids` values must lie on their grids. `Model.state_names` gives the
+axis order of `solution.values[period][regime]`, and `Model.state_grid` gives a state's
+grid nodes after runtime parameters.
 
 (api-simulation-result)=
 

@@ -57,6 +57,7 @@ from lcm.solvers import (
 )
 from lcm.typing import FloatND, RegimeName, ScalarFloat, ScalarInt, StateName
 from tests.conftest import assert_agrees_to_ulp
+from tests.test_models.schedules import until_exit
 
 # The out-of-tree solver module builds arrays at import, which initializes a JAX
 # backend; every name it supplies is therefore imported inside the function that
@@ -596,15 +597,18 @@ def _model(
     return Model(
         regimes={
             "alive": Regime(
-                transition={"dead": MarkovTransition(_certain)},
-                active=lambda age: age < _N_PERIODS - 1,
+                regime_transitions=until_exit(
+                    _N_PERIODS - 1,
+                    law={"dead": MarkovTransition(func=_certain)},
+                    exits=("dead",),
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": lambda wealth, type1: wealth * (type1 + 1.0)},
                 solver=solver if solver is not None else _ReadingSolver(),
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
                 solver=(
@@ -619,6 +623,9 @@ def _model(
         states={"type1": DiscreteGrid(category_class=_Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
+        # Every reading age is a start: `alive` exits straight to `dead`, so one
+        # age-0 root would demand the reading problem at period 0 alone.
+        initial_regimes={range(_N_PERIODS - 1): "alive"},
     )
 
 
@@ -914,7 +921,7 @@ def test_every_retained_value_stays_readable(monkeypatch: pytest.MonkeyPatch) ->
 
     assert [
         value.is_deleted() for _, (value, _) in sorted(observed.published.items())
-    ] == [False] * _N_PERIODS
+    ] == [False] * (_N_PERIODS - 1)  # `dead` is demanded from period 1 on
 
 
 @_skip_pytest_parallel
@@ -1064,17 +1071,17 @@ def donating_and_plain_values() -> tuple[dict[int, np.ndarray], dict[int, np.nda
     return (
         {
             period: np.asarray(donating.values[period]["dead"])
-            for period in range(_N_PERIODS)
+            for period in range(1, _N_PERIODS)
         },
         {
             period: np.asarray(plain.values[period]["dead"])
-            for period in range(_N_PERIODS)
+            for period in range(1, _N_PERIODS)
         },
     )
 
 
 @_skip_pytest_parallel
-@pytest.mark.parametrize("period", range(_N_PERIODS))
+@pytest.mark.parametrize("period", range(1, _N_PERIODS))
 def test_donation_leaves_every_terminal_value_unchanged(
     *,
     period: int,

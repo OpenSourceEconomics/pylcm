@@ -23,6 +23,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
+    working_life_transitions,
 )
 from tests.test_models.deterministic.regression import (
     get_model as get_durable_model,
@@ -41,7 +42,7 @@ def _inputs(
     model = Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= 18,
+                regime_transitions=working_life_transitions(last_age=19),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -54,6 +55,7 @@ def _inputs(
         ages=AgeGrid(start=18, stop=19, step="Y"),
         regime_id_class=RegimeId,
         durable_identity=durable_identity,
+        initial_regimes={18: "working_life"},
     )
     params = get_params(n_periods=2)
     initial_conditions = {

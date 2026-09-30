@@ -245,14 +245,9 @@ def build_params(
             "resources": budget_params,
             "income": {"mu": 0.0, "sigma": 1.0},
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
-            "alive": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
-            "dead": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
+            "alive": {"next_liquid": alive_budget},
+            "dead": {"next_liquid": alive_budget},
+            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

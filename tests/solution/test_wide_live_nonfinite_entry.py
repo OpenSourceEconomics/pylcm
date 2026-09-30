@@ -29,6 +29,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 
@@ -190,19 +191,22 @@ def _build_model(
         certainty_equivalent=certainty_equivalent,
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21,
+                    law={"target": MarkovTransition(func=_certain)},
+                    exits=("target",),
+                ),
                 state_transitions={
                     "income": {"target": _make_entry(rare_entry)},
                     **{
-                        name: {"target": MarkovTransition(_draw_probabilities)}
+                        name: {"target": MarkovTransition(func=_draw_probabilities)}
                         for name in axis_names
                     },
                 },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
                     **{name: DiscreteGrid(category_class=Draw) for name in axis_names},
@@ -219,6 +223,7 @@ def _build_model(
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 

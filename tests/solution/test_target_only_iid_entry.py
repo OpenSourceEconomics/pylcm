@@ -30,6 +30,7 @@ from scipy.stats import norm
 from _lcm.grids import Grid
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     LogNormalIIDProcess,
     MarkovTransition,
@@ -69,10 +70,6 @@ def _one_probability() -> FloatND:
 
 def _target_id() -> ScalarInt:
     return RegimeId.target
-
-
-def _source_is_early(age: float) -> bool:
-    return age < 22
 
 
 def _gauss_hermite(n_points: int) -> tuple[np.ndarray, np.ndarray]:
@@ -119,17 +116,18 @@ def _build_model(
 ) -> Model:
     """Build a source whose declared target's only state is `process`."""
     transition = (
-        _target_id if coarse else {"target": MarkovTransition(_one_probability)}
+        Choose(func=_target_id, targets=("target",))
+        if coarse
+        else {"target": MarkovTransition(func=_one_probability)}
     )
     return Model(
         regimes={
             "source": Regime(
-                transition=transition,
-                active=_source_is_early,
+                regime_transitions=transition,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": target_utility},
             ),
@@ -137,6 +135,7 @@ def _build_model(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 
@@ -336,12 +335,12 @@ def test_the_entry_law_decides_the_action() -> None:
         return 1.5 + 0.0 * wealth
 
     stay = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         functions={"utility": _stay_utility},
     )
     enter = Regime(
-        transition=None,
+        regime_transitions=None,
         states={
             "shock": NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
         },
@@ -358,8 +357,7 @@ def test_the_entry_law_decides_the_action() -> None:
         return jnp.where(go == 1, _ThreeRegimeId.enter, _ThreeRegimeId.stay)
 
     source = Regime(
-        transition=_choose,
-        active=_source_is_early,
+        regime_transitions=Choose(func=_choose, targets=("stay", "enter")),
         actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
         state_transitions={"wealth": {"stay": lambda: jnp.asarray(1.0)}},
         functions={"utility": _zero_utility},
@@ -369,6 +367,7 @@ def test_the_entry_law_decides_the_action() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=_ThreeRegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     got = _source_value(
         model=model,
@@ -455,13 +454,12 @@ def _build_explicit_entry_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3,
@@ -477,6 +475,7 @@ def _build_explicit_entry_model(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 

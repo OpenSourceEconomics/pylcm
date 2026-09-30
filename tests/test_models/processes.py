@@ -5,6 +5,7 @@ from jax import numpy as jnp
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm import (
+    Choose,
     LogNormalIIDProcess,
     NormalIIDProcess,
     RouwenhorstAR1Process,
@@ -23,6 +24,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from tests.test_models.schedules import until_exit
 
 _SHOCK_GRID_CLASSES = {
     "uniform": UniformIIDProcess,
@@ -100,7 +102,6 @@ def get_model(
     final_age_alive = n_periods - 2
 
     alive = UserRegime(
-        active=lambda age, n=final_age_alive: age <= n,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
             "income": _SHOCK_GRID_CLASSES[distribution_type](
@@ -110,17 +111,21 @@ def get_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(next_health),
+            "health": MarkovTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        transition=next_regime,
+        regime_transitions=until_exit(
+            final_age_alive + 1,
+            law=Choose(func=next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -128,6 +133,7 @@ def get_model(
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={0: "alive"},
     )
 
 
@@ -168,7 +174,6 @@ def get_multi_regime_model(
     shock_kwargs = _SHOCK_GRID_KWARGS[distribution_type]
 
     work_regime = UserRegime(
-        active=lambda age, w=work_final_age: age <= w,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
             "income": shock_grid_cls(n_points=5, **shock_kwargs),
@@ -176,17 +181,20 @@ def get_multi_regime_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(next_health),
+            "health": MarkovTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        transition=_next_regime_multi,
+        regime_transitions=until_exit(
+            work_final_age + 1,
+            law=Choose(func=_next_regime_multi, targets=("work",)),
+            exits=("retire",),
+        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     retire_regime = UserRegime(
-        active=lambda age, w=work_final_age, r=retire_final_age: (age > w) & (age <= r),
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
             "income": shock_grid_cls(n_points=5, **shock_kwargs),
@@ -194,17 +202,22 @@ def get_multi_regime_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(next_health),
+            "health": MarkovTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        transition=_next_regime_multi,
+        regime_transitions=until_exit(
+            retire_final_age + 1,
+            law=Choose(func=_next_regime_multi, targets=("retire",)),
+            exits=("dead",),
+            start=work_final_age + 1,
+        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead_regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -219,6 +232,7 @@ def get_multi_regime_model(
             "work_final_age": work_final_age,
             "retire_final_age": retire_final_age,
         },
+        initial_regimes={0: "work"},
     )
 
 

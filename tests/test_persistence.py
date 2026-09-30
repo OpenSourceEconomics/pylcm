@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import h5py
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import lcm
@@ -13,6 +14,7 @@ from _lcm.persistence import snapshots as _snapshot_module
 from _lcm.persistence.io import _get_platform
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     Model,
     SimulateSnapshot,
@@ -26,6 +28,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult as _PublicSimulationResult
 from lcm.solver_api import SolutionResult, ValueStore
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 def test_forward_refs_bound_after_import() -> None:
@@ -64,18 +67,20 @@ def _build_tiny_model(*, enable_jit: bool):
         return jnp.where(period >= 1, 1, 0)
 
     working = UserRegime(
-        transition=next_regime,
+        regime_transitions=until_exit(
+            2,
+            law=Choose(func=next_regime, targets=("working", "retired")),
+            exits=("retired",),
+        ),
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1, n_points=3)},
         functions={"utility": utility},
-        active=lambda age: age < 2,
     )
     retired = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         functions={"utility": _retired_utility},
-        active=lambda age: age >= 2,
     )
     ages = AgeGrid(start=0, stop=3, step="Y")
     model = Model(
@@ -83,9 +88,61 @@ def _build_tiny_model(*, enable_jit: bool):
         ages=ages,
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
+        # The simulation starts at age zero; an empty later period is intentional.
+        initial_regimes={0: "working"},
     )
     params = {"discount_factor": 0.95}
     return model, params
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_persistence_fixture_does_not_fill_an_unrequired_final_period(
+    *, enable_jit: bool
+) -> None:
+    """Archive round trips use the declared entry domain, including its empty tail."""
+    model, _params = _build_tiny_model(enable_jit=enable_jit)
+    expected = frozenset(
+        {(0, "working"), (1, "working"), (1, "retired"), (2, "retired")}
+    )
+    assert model.initial_nodes == frozenset({(0, "working")})
+    assert model.reachability.visited_nodes == expected
+    assert model.reachability.nodes == expected
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_persistence_roundtrip_preserves_the_exact_sparse_domain(
+    *, tmp_path: Path, enable_jit: bool
+) -> None:
+    """A saved and reloaded solution holds exactly the demanded pairs, same values."""
+    model, params = _build_tiny_model(enable_jit=enable_jit)
+    expected = {(0, "working"), (1, "working"), (1, "retired"), (2, "retired")}
+    solution = model.solve(params=params, log_level="debug", log_path=tmp_path)
+    path = tmp_path / "sparse-solution.lcm"
+    save_solution(solution=solution, path=path)
+
+    loaded = load_solution(path=path)
+
+    for store in (solution.values, loaded.values):
+        assert {
+            (period, name) for period in store for name in store[period]
+        } == expected
+    for period, name in expected:
+        np.testing.assert_array_equal(
+            np.asarray(loaded.value(period=period, regime=name)),
+            np.asarray(solution.value(period=period, regime=name)),
+        )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_solve_publishes_only_periods_that_hold_a_demanded_node(
+    *, enable_jit: bool
+) -> None:
+    """The unrequired final period is absent from the published value periods."""
+    model, params = _build_tiny_model(enable_jit=enable_jit)
+
+    solution = model.solve(params=params, log_level="off")
+
+    assert set(solution.values) == {0, 1, 2}
 
 
 def _initial_conditions():

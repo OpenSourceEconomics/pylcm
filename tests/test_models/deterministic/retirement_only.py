@@ -11,9 +11,9 @@ import functools
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, Model, categorical
+from lcm import AgeGrid, ByAge, Choose, Model, categorical
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ScalarInt
+from lcm.typing import ScalarInt, UserAge
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
     WEALTH_GRID,
@@ -38,8 +38,17 @@ def next_regime_from_retirement(*, age: int, final_age_alive: float) -> ScalarIn
     )
 
 
+def retirement_transitions(*, last_age: UserAge | float) -> ByAge:
+    """Stay retired or die until the age before `last_age`, then die."""
+    return ByAge.until(
+        stop_age_exclusive=last_age,
+        law=Choose(func=next_regime_from_retirement, targets=("retirement", "dead")),
+        then=Choose(func=next_regime_from_retirement, targets=("dead",)),
+    )
+
+
 retirement = UserRegime(
-    transition=next_regime_from_retirement,
+    regime_transitions=retirement_transitions(last_age=70),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
@@ -54,11 +63,14 @@ def get_model(n_periods: int) -> Model:
     last_age = ages.exact_values[-1]
     return Model(
         regimes={
-            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "retirement": retirement.replace(
+                regime_transitions=retirement_transitions(last_age=last_age)
+            ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -83,4 +95,5 @@ __all__ = [
     "get_params",
     "next_regime_from_retirement",
     "retirement",
+    "retirement_transitions",
 ]

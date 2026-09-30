@@ -25,6 +25,7 @@ from _lcm.constraints.ir import And
 from _lcm.engine import Regime as EngineRegime
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_building import schedules
 from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.functools import _PositionalAdapter, allow_args
@@ -926,13 +927,13 @@ def _phased_regime_declaration(
     """Project a regime whose `slot` varies by phase only in its simulate member."""
     phased = Phased(solve=_solve_law, simulate=simulate)
     slots: dict[str, object] = {
-        "transition": _solve_law,
+        "regime_transitions": _solve_law,
         "states": {"wealth": LinSpacedGrid(start=0, stop=1, n_points=3)},
         "state_transitions": {"wealth": _solve_law},
         "functions": {"utility": _terminal_utility},
     }
-    if slot == "transition":
-        slots["transition"] = phased
+    if slot == "regime_transitions":
+        slots["regime_transitions"] = phased
     elif slot == "state_transitions":
         slots["state_transitions"] = {"wealth": phased}
     elif slot == "functions":
@@ -944,7 +945,7 @@ def _phased_regime_declaration(
     )
 
 
-@pytest.mark.parametrize("slot", ["transition", "state_transitions"])
+@pytest.mark.parametrize("slot", ["regime_transitions", "state_transitions"])
 def test_simulate_truth_of_a_transition_slot_is_not_model_identity(slot: str) -> None:
     """Realized transitions govern the path after the action is chosen; a stored
     solution is priced against the solve-phase laws alone."""
@@ -974,7 +975,7 @@ def test_phased_protocol_subclass_fails_closed() -> None:
 
 def test_regime_description_is_not_mathematical_identity() -> None:
     regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _terminal_utility},
         description="first wording",
     )
@@ -1651,6 +1652,9 @@ def _fingerprint_regime(
             transitions={},
             compute_regime_transition_probs=None,
             external_replay_route=None,
+            reachability=SimpleNamespace(
+                active_regimes_by_period=(frozenset({"alive"}),) * 2
+            ),
         ),
         "fold_state_names": (),
         "stakeholders": None,
@@ -2039,3 +2043,34 @@ def test_a_shipped_class_used_directly_is_fingerprinted_by_identity() -> None:
     assert digest == fingerprints._semantic_fingerprint(
         _utility_through_a_shipped_class
     )
+
+
+def _masked_survival(age: float) -> float:
+    return 1.0 - age / 100.0
+
+
+def _reading(law: Callable[..., object]) -> Callable[..., object]:
+    """A function that reaches `law` only through its closure."""
+
+    def read(**kwargs: object) -> object:
+        return law(**kwargs)
+
+    return read
+
+
+@pytest.mark.parametrize(("left", "right"), [((0,), (0,)), ((0,), (1,))])
+def test_a_function_closing_over_a_lowered_law_is_fingerprinted_by_its_fields(
+    *, left: tuple[int, ...], right: tuple[int, ...]
+) -> None:
+    """A lowered schedule law is identified by its fields, not refused as opaque."""
+    digests = [
+        fingerprints._semantic_fingerprint(
+            _reading(
+                schedules._period_masked(
+                    cell=_masked_survival, periods=periods, names=("age",)
+                )
+            )
+        )
+        for periods in (left, right)
+    ]
+    assert (digests[0] == digests[1]) is (left == right)

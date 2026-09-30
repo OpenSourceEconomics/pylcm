@@ -15,6 +15,7 @@ from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
 )
+from tests.test_models.initial_regimes import initial_regimes_of
 
 
 def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
@@ -62,6 +63,7 @@ def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
         ages=model.ages,
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=output_slots - 1),
+        initial_regimes=initial_regimes_of(model=model),
     )
     budgeted_solution = budgeted.solve(params=params, log_level="off")
     candidates: list[int] = []

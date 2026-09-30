@@ -3,6 +3,7 @@
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from types import MappingProxyType
 from typing import Literal
 
@@ -11,6 +12,146 @@ from lcm.typing import RegimeName, StateName
 # The declared width of one execution axis: one width for every regime, or one
 # width per named regime.
 type AxisWidth = int | Mapping[RegimeName, int]
+
+
+class WidthSearch(Enum):
+    """How much of the width frontier a budgeted solve is willing to compile."""
+
+    EXHAUSTIVE = "exhaustive"
+    """Walk the ranked frontier widest-first and keep the first admitted candidate."""
+    BOUNDED = "bounded"
+    """Seed, shrink and refine within one evaluation budget per core."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class WidthSearchPolicy:
+    """How a budgeted solve chooses a width when its first candidate is refused.
+
+    - `EXHAUSTIVE` walks the ranked frontier widest-first and keeps the first
+      admitted candidate: the widest feasible point, at the cost of compiling
+      every ranked candidate above it. `max_evaluations`, `refinement_share`,
+      `seed` and `hints` are ignored.
+    - `BOUNDED` evaluates a seed, shrinks decisively on refusal and refines
+      within one evaluation budget; keeps the widest admitted candidate found.
+      The result may be narrower than the widest feasible point, and the
+      refusal on exhaustion says the search, not the model, ran out.
+    """
+
+    kind: WidthSearch = WidthSearch.EXHAUSTIVE
+    """Which of the two searches a budgeted solve runs."""
+    max_evaluations: int = 24
+    """Distinct width candidates evaluated by the memory-admission search per core,
+    cache hits included. The optional post-selection materialised-gather pass
+    has a separate, finite halving walk and is not charged to this count.
+    Leave `halve_on_materialised_gather=False` (the default) when this
+    admission-search count must also be the total width-evaluation ceiling.
+    """
+    refinement_share: int = 8
+    """Of `max_evaluations`, how many may be spent widening after admission."""
+    seed: Literal["conservative", "widest"] = "conservative"
+    """Start from the conservative bootstrap anchor, or from the widest candidate."""
+    hints: Mapping[RegimeName, Mapping[str, int]] = MappingProxyType({})
+    """Regime name to a width mapping tried first; an incompatible hint is skipped."""
+    carry_across_periods: bool = False
+    """Reserved compatibility flag; it has no effect on width selection.
+
+    Exhaustive search checks each core's ranked candidates independently and
+    selects its first admitted rank. Another period's refusal does not exclude
+    a candidate for this period. Compilation still reuses identical lowering keys.
+    """
+
+    def __post_init__(self) -> None:
+        """Reject unusable counts, seeds and hints at construction."""
+        _fail_if_width_search_kind_invalid(kind=self.kind)
+        _fail_if_evaluation_counts_invalid(
+            max_evaluations=self.max_evaluations,
+            refinement_share=self.refinement_share,
+        )
+        _fail_if_seed_invalid(seed=self.seed)
+        if type(self.carry_across_periods) is not bool:
+            raise TypeError("WidthSearchPolicy.carry_across_periods must be a bool.")
+        object.__setattr__(
+            self, "hints", MappingProxyType(_normalized_hints(hints=self.hints))
+        )
+
+
+def _fail_if_width_search_kind_invalid(*, kind: WidthSearch) -> None:
+    """Require one of the two declared search kinds."""
+    if not isinstance(kind, WidthSearch):
+        raise TypeError("WidthSearchPolicy.kind must be a WidthSearch member.")
+
+
+def _fail_if_evaluation_counts_invalid(
+    *, max_evaluations: int, refinement_share: int
+) -> None:
+    """Require a positive evaluation budget holding a non-negative refinement share."""
+    for label, value in (
+        ("max_evaluations", max_evaluations),
+        ("refinement_share", refinement_share),
+    ):
+        if type(value) is not int:
+            raise TypeError(f"WidthSearchPolicy.{label} must be an exact int.")
+    if max_evaluations < 1:
+        raise ValueError("WidthSearchPolicy.max_evaluations must be at least one.")
+    if refinement_share < 0:
+        raise ValueError("WidthSearchPolicy.refinement_share must not be negative.")
+    if refinement_share > max_evaluations:
+        msg = (
+            "WidthSearchPolicy.refinement_share must not exceed max_evaluations; got "
+            f"{refinement_share} of {max_evaluations}."
+        )
+        raise ValueError(msg)
+
+
+def _fail_if_seed_invalid(*, seed: str) -> None:
+    """Require one of the two declared seed rules."""
+    if type(seed) is not str:
+        raise TypeError("WidthSearchPolicy.seed must be an exact str.")
+    if seed not in ("conservative", "widest"):
+        msg = f"WidthSearchPolicy.seed must be conservative or widest; got {seed!r}."
+        raise ValueError(msg)
+
+
+def _normalized_hints(
+    *, hints: Mapping[RegimeName, Mapping[str, int]]
+) -> dict[RegimeName, Mapping[str, int]]:
+    """Validate every hinted width and freeze each regime's mapping."""
+    normalized: dict[RegimeName, Mapping[str, int]] = {}
+    for regime_name, widths in hints.items():
+        if type(regime_name) is not str or not regime_name:
+            msg = "WidthSearchPolicy.hints keys must be non-empty regime names."
+            raise TypeError(msg)
+        if not isinstance(widths, Mapping):
+            msg = (
+                f"WidthSearchPolicy.hints[{regime_name!r}] must map axis names to "
+                "widths."
+            )
+            raise TypeError(msg)
+        normalized[regime_name] = MappingProxyType(
+            _validated_hint_widths(regime_name=regime_name, widths=widths)
+        )
+    return normalized
+
+
+def _validated_hint_widths(
+    *, regime_name: RegimeName, widths: Mapping[str, int]
+) -> dict[str, int]:
+    """Require positive exact widths keyed by non-empty axis names."""
+    validated: dict[str, int] = {}
+    for axis_name, width in widths.items():
+        if type(axis_name) is not str or not axis_name:
+            msg = (
+                f"WidthSearchPolicy.hints[{regime_name!r}] keys must be non-empty "
+                "axis names."
+            )
+            raise TypeError(msg)
+        label = f"WidthSearchPolicy.hints[{regime_name!r}][{axis_name!r}]"
+        if type(width) is not int:
+            raise TypeError(f"{label} must be an exact int.")
+        if width <= 0:
+            raise ValueError(f"{label} must be positive.")
+        validated[axis_name] = width
+    return validated
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -91,6 +232,37 @@ class ExecutionConfig:
     an axis only its programs declare takes the bare-integer form.
     """
 
+    axis_width_ceilings: Mapping[str, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Planner axis name to the widest block it may be compiled at; empty means none.
+
+    A ceiling is an upper bound, not an override: the planner keeps every legal
+    candidate at or below it and drops the wider ones. It leaves the axis extent,
+    the output shape, the alignment and the floor of the axis untouched, and it
+    binds only the axes it names. An axis whose `axis_widths` entry already fixes
+    it is narrowed to the ceiling as well.
+
+    A ceiling below an axis's narrowest legal width is refused when the axis is
+    planned, naming the axis and the value.
+    """
+
+    covered_axes: tuple[str, ...] = ()
+    """Planner axis names whose conservative seed covers the whole extent.
+
+    Without a budget, and as the conservative seed of a bounded search, an axis
+    is lowered at the largest power of two below its extent. For an axis named
+    here whose extent is at most the bootstrap cap and not a multiple of that
+    power of two, the seed is the full extent instead, so the map over the axis
+    needs no remainder program. A fixed width or a ceiling below the extent
+    still binds. A bounded search refused at the covered width proposes the
+    power-of-two width next. An empty tuple covers nothing.
+
+    Only solve planning reads this option. Forward simulation plans its programs
+    without it, so naming an axis that only simulation programs declare is
+    accepted but covers nothing.
+    """
+
     devices: tuple[int, ...] | None = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
@@ -104,14 +276,66 @@ class ExecutionConfig:
     donate_buffers: bool = True
     """Allow eligible owned inputs to be donated by compiled solve programs."""
 
+    halve_on_materialised_gather: bool = False
+    """Opt in to halving a GridSearch cell width when its gather materialises.
+
+    Disabled by default. Enable only for a measured workload and compiler/device
+    configuration: unsuccessful trials still cost compilation time, and a fused
+    program is not necessarily faster. Disabling this pass does not disable the
+    ordinary memory-admission search.
+
+    This targets one specific compiler pattern, observed on an NVIDIA A40 and not on
+    other GPUs tried: past a device- and program-dependent cell count, XLA writes the
+    continuation lookup table to device memory and the reduction reads it back, instead
+    of recomputing it inside the reduction. The check matches that pattern in the
+    optimized HLO text and nothing more. Similar layouts the compiler expresses through
+    other fusion kinds or operations are not detected, and a future JAX/XLA release may
+    emit HLO the check no longer recognises; "fused" below means only "this pattern was
+    not found". The planner reads each compiled GridSearch solve program and, while one
+    of its reduce fusions reads a gather table another fusion wrote, recompiles it at
+    half the cell width. A width fixed through `axis_widths` is kept as given. A
+    narrower width is kept only when the pattern is absent from its compiled program.
+    When the walk reaches the narrowest width its cell axis admits and every program
+    still materialises, or reaches a program whose structure the planner does not read
+    completely, the solve keeps the width that passed memory admission, with its
+    materialised gather and its already compiled program, and logs why no narrower width
+    was kept. An unreadable program is diagnosed once and is never assumed fused. Under
+    a device-memory budget, a narrower candidate is admitted like any other width: one
+    that exceeds the budget raises `ExecutionPlanningError`. Each halving is a trial
+    beyond `WidthSearchPolicy.max_evaluations`, and is compiled only when no earlier
+    program shares its lowering. Other solvers and simulation are not checked.
+
+    Halving is a bounded heuristic over the compiled executable, not a guarantee
+    that no table is materialised or that the resulting program is faster: the
+    compiler's choice need not be monotone in the width, so the walk can miss a
+    useful width or give up at its floor although an unvisited width fuses.
+    """
+
+    width_search: WidthSearchPolicy = WidthSearchPolicy()
+    """How much of the width frontier a budgeted solve is willing to compile.
+
+    The default walks the ranked frontier widest-first, so a solve keeps the
+    widest feasible width and pays for every ranked candidate above it. The
+    bounded policy trades that guarantee for an evaluation budget per core:
+    the budgeted compilation waves take each core's next width from its search
+    instead of from the ranked frontier.
+    """
+
     def __post_init__(self) -> None:
         """Reject ambiguous or unusable values at construction."""
         _fail_if_budget_invalid(device_memory_bytes=self.device_memory_bytes)
         _fail_if_headroom_fraction_invalid(
             device_memory_headroom_fraction=self.device_memory_headroom_fraction
         )
+        if not isinstance(self.width_search, WidthSearchPolicy):
+            msg = "ExecutionConfig.width_search must be a WidthSearchPolicy."
+            raise TypeError(msg)
         if type(self.donate_buffers) is not bool:
             raise TypeError("ExecutionConfig.donate_buffers must be an exact bool.")
+        if type(self.halve_on_materialised_gather) is not bool:
+            raise TypeError(
+                "ExecutionConfig.halve_on_materialised_gather must be an exact bool."
+            )
         if type(self.simulation_sharding) is not str:
             raise TypeError("ExecutionConfig.simulation_sharding must be an exact str.")
         if self.simulation_sharding not in ("legacy", "subjects"):
@@ -120,6 +344,14 @@ class ExecutionConfig:
             )
         widths = _normalized_axis_widths(axis_widths=self.axis_widths)
         object.__setattr__(self, "axis_widths", MappingProxyType(widths))
+        object.__setattr__(
+            self,
+            "axis_width_ceilings",
+            _normalized_axis_width_ceilings(
+                axis_width_ceilings=self.axis_width_ceilings
+            ),
+        )
+        _fail_if_covered_axes_invalid(covered_axes=self.covered_axes)
         sharded = tuple(self.sharded_states)
         _fail_if_sharded_states_invalid(sharded_states=sharded)
         object.__setattr__(self, "sharded_states", sharded)
@@ -188,6 +420,45 @@ def _normalized_axis_widths(
             _fail_if_width_invalid(label=f"axis_widths[{name!r}]", width=width)
             normalized[name] = width
     return normalized
+
+
+def _normalized_axis_width_ceilings(
+    *, axis_width_ceilings: Mapping[str, int]
+) -> MappingProxyType[str, int]:
+    """Validate the one declaration form a ceiling takes and freeze it.
+
+    Args:
+        axis_width_ceilings: The ceilings the caller declared, by axis name.
+
+    Returns:
+        The same declaration in a read-only mapping.
+
+    Raises:
+        TypeError: An axis name is not a non-empty string, or a ceiling is not
+            an exact integer — a per-regime mapping among them.
+        ValueError: A ceiling is not positive.
+
+    """
+    validated: dict[str, int] = {}
+    for name, ceiling in axis_width_ceilings.items():
+        if type(name) is not str or not name:
+            msg = (
+                "ExecutionConfig.axis_width_ceilings keys must be non-empty axis names."
+            )
+            raise TypeError(msg)
+        _fail_if_width_invalid(label=f"axis_width_ceilings[{name!r}]", width=ceiling)
+        validated[name] = ceiling
+    return MappingProxyType(validated)
+
+
+def _fail_if_covered_axes_invalid(*, covered_axes: tuple[str, ...]) -> None:
+    """Require distinct non-empty axis names."""
+    if not all(covered_axes):
+        msg = "ExecutionConfig.covered_axes entries must be non-empty axis names."
+        raise ValueError(msg)
+    if len(set(covered_axes)) != len(covered_axes):
+        msg = f"ExecutionConfig.covered_axes names an axis twice: {covered_axes!r}."
+        raise ValueError(msg)
 
 
 def _validated_per_regime_widths(

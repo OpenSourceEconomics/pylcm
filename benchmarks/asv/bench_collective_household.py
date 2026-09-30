@@ -24,6 +24,8 @@ import gc
 import statistics
 import time
 
+from lcm import AgeRange, ByAge
+
 from . import _gpu_mem
 
 # Warm samples CollectiveHouseholdConstruct's and CollectiveHouseholdSolve's
@@ -367,6 +369,7 @@ def _make_reference_chain(*, depth):
             regimes=regimes,
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=regime_id_class,
+            initial_regimes={0: tuple(link_names)},
         ),
         params,
     )
@@ -379,8 +382,13 @@ def _chain_link(*, terminal_name, reference_regime):
 
     kernels = _chain_kernels()
     return Regime(
-        transition={terminal_name: MarkovTransition(kernels["to_terminal"])},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    terminal_name: MarkovTransition(func=kernels["to_terminal"])
+                }
+            }
+        ),
         states={"wealth": _chain_wealth_grid()},
         state_transitions={"wealth": kernels["next_wealth"]},
         actions={"consumption": _chain_consumption_grid()},
@@ -399,8 +407,7 @@ def _chain_link_terminal():
 
     kernels = _chain_kernels()
     return Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wealth": _chain_wealth_grid()},
         actions={"consumption": _chain_consumption_grid()},
         functions={

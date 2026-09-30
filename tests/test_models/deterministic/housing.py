@@ -30,7 +30,7 @@ is flagged, not yet replicated).
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
 from lcm.grids import DiscreteGrid
 from lcm.regime import Regime
 from lcm.typing import (
@@ -41,6 +41,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -226,12 +227,15 @@ def get_model(
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={"liquid": next_liquid, "housing": next_housing},
         constraints={"feasible": feasible},
-        transition=next_regime_from_working,
+        regime_transitions=until_exit(
+            final_age,
+            law=Choose(func=next_regime_from_working, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": utility},
-        active=lambda age, fa=final_age: age < fa,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -239,6 +243,7 @@ def get_model(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 

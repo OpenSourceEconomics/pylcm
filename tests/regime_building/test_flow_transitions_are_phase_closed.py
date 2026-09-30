@@ -22,8 +22,9 @@ law the FLOW resolves. That isolates the flow: a build that took the flow's oute
 import jax.numpy as jnp
 import pandas as pd
 
-from lcm import AgeGrid, DiscreteGrid, Model, Phased, Regime, categorical
+from lcm import AgeGrid, Choose, DiscreteGrid, Model, Phased, Regime, categorical
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -90,24 +91,27 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=until_exit(
+            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+        ),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions=live_functions,
-    ).replace(active=lambda age: age < 2)
+    ).replace()
     last = Regime(
-        transition=None,
+        regime_transitions=None,
         state_transitions={},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": flat_utility},
-    ).replace(active=lambda age: age >= 2)
+    ).replace()
     model = Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="phase closure of the flow sub-DAG",
+        initial_regimes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="debug")
     return (

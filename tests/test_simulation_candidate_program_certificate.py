@@ -124,12 +124,12 @@ _PROFILED_HELPER_MUTATIONS = {
     "simulation_pandas:dataframe_writer_omitted": (
         "src/lcm/model.py",
         (
-            "                regime_names_to_ids=self.regime_names_to_ids,\n"
-            "                array_writer=entry_allocations,"
+            "                        regime_names_to_ids=self.regime_names_to_ids,\n"
+            "                        array_writer=entry_allocations,"
         ),
         (
-            "                regime_names_to_ids=self.regime_names_to_ids,\n"
-            "                array_writer=None,"
+            "                        regime_names_to_ids=self.regime_names_to_ids,\n"
+            "                        array_writer=None,"
         ),
     ),
     "simulation_pandas:series_writer_omitted": (
@@ -188,14 +188,18 @@ _PROFILED_HELPER_MUTATIONS = {
     "simulation_pandas:resolved_solution_owner_omitted": (
         "src/lcm/model.py",
         (
-            "            period_to_regime_to_replay_reader = None\n"
-            "        if entry_allocations is not None:\n"
-            "            entry_allocations.update_solution("
+            "                period_to_regime_to_replay_reader = None\n"
+            '            with solve_phase(name="simulation_inputs", logger=log, '
+            "call_id=call_id):\n"
+            "                if entry_allocations is not None:\n"
+            "                    entry_allocations.update_solution("
         ),
         (
-            "            period_to_regime_to_replay_reader = None\n"
-            "        if entry_allocations is not None:\n"
-            "            (lambda **kwargs: None)("
+            "                period_to_regime_to_replay_reader = None\n"
+            '            with solve_phase(name="simulation_inputs", logger=log, '
+            "call_id=call_id):\n"
+            "                if entry_allocations is not None:\n"
+            "                    (lambda **kwargs: None)("
         ),
     ),
     "simulation_entry:automatic_solve_owners_omitted": (
@@ -248,13 +252,13 @@ _PROFILED_HELPER_MUTATIONS = {
         "src/lcm/model.py",
         (
             "entry_allocations.snapshot()\n"
-            "                if entry_allocations is not None "
-            "and validation_enabled(log)"
+            "                        if entry_allocations is not None and "
+            "validation_enabled(log)"
         ),
         (
             "entry_inputs.footprint(solution=solution)\n"
-            "                if entry_allocations is not None "
-            "and validation_enabled(log)"
+            "                        if entry_allocations is not None and "
+            "validation_enabled(log)"
         ),
     ),
     "simulation_entry:completed_output_owner_omitted": (
@@ -326,15 +330,15 @@ _PROFILED_HELPER_MUTATIONS = {
         "src/lcm/model.py",
         (
             "retained_footprint=(\n"
-            "                entry_allocations.snapshot()\n"
-            "                if entry_allocations is not None "
-            "and validation_enabled(log)"
+            "                        entry_allocations.snapshot()\n"
+            "                        if entry_allocations is not None and "
+            "validation_enabled(log)"
         ),
         (
             "retained_footprint=(\n"
-            "                None\n"
-            "                if entry_allocations is not None "
-            "and validation_enabled(log)"
+            "                        None\n"
+            "                        if entry_allocations is not None and "
+            "validation_enabled(log)"
         ),
     ),
     "simulation_preflight:invalid_discrete_cohort_accepted": (
@@ -394,8 +398,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "workspace:per_candidate_residency_ignored": (
         "src/_lcm/execution/workspace_planning.py",
-        "resident_bytes_for=resident_bytes_for,",
-        "resident_bytes_for=None,",
+        "lower_bound=resident,\n            resident_bytes_for=resident_bytes_for,",
+        "lower_bound=resident,\n            resident_bytes_for=None,",
     ),
     "workspace:resident_lower_bound_bypassed": (
         "src/_lcm/execution/workspace_planning.py",
@@ -414,8 +418,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "solution_runtime:fixed_owner_inventory_omitted": (
         "src/_lcm/solution/backward_induction.py",
-        "\n            fixed_bytes=fixed_bytes,",
-        "\n            fixed_bytes={},",
+        "device_ids=execution.device_ids,\n                fixed_bytes=fixed_bytes,",
+        "device_ids=execution.device_ids,\n                fixed_bytes={},",
     ),
     "solution_runtime:shared_copy_destinations_omitted": (
         "src/_lcm/solution/backward_induction.py",
@@ -478,8 +482,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_host:subject_output_cache_identity_omitted": (
         "src/_lcm/simulation/host_operations.py",
-        'layout_key=("simulation_host_operation", subject_outputs),',
-        'layout_key=("simulation_host_operation", False),',
+        'layout_key=("simulation_host_operation", subject_outputs, output_sharding),',
+        'layout_key=("simulation_host_operation", False, output_sharding),',
     ),
     "simulation_caller:initialized_state_ownership_omitted": (
         "src/_lcm/simulation/simulate.py",
@@ -668,11 +672,11 @@ _COMBINED_INPUT_MUTATIONS = {
         "src/lcm/model.py",
         (
             "retained_footprint=entry_allocations.snapshot(),\n"
-            "                independent_taste="
+            "                        independent_taste="
         ),
         (
             "retained_footprint=DeviceBufferFootprint(spans={}),\n"
-            "                independent_taste="
+            "                        independent_taste="
         ),
     ),
     "chunk_model:selected_profile_not_dispatched": (
@@ -737,11 +741,7 @@ _COMBINED_INPUT_MUTATIONS = {
     ),
     "chunk_dispatch:explicit_width_conflict_ignored": (
         "src/_lcm/simulation/runtime.py",
-        (
-            "axis.name in configured\n"
-            "            and min(configured[axis.name], axis.extent) !="
-            " selected"
-        ),
+        "axis.name in configured and effective_pins[axis.name] != selected",
         "False",
     ),
     "chunk_dispatch:unit_width_handoff_omitted": (
@@ -753,9 +753,8 @@ _COMBINED_INPUT_MUTATIONS = {
         "src/_lcm/simulation/simulate.py",
         (
             "prepared_chunks.require_chunk(\n"
-            "                memory=memory, completed_setup=completed_s"
-            "etup\n"
-            "            )"
+            "                    memory=memory, completed_setup=completed_setup\n"
+            "                )"
         ),
         "pass",
     ),
@@ -787,34 +786,38 @@ _COMBINED_INPUT_MUTATIONS = {
         "src/lcm/model.py",
         (
             "entry_allocations=entry_allocations,\n"
-            "                process_grid_resolver=process_grid_resolver,\n"
-            "            )\n"
-            "        else:\n"
-            "            period_to_regime_to_V_arr = None"
+            "                        process_grid_resolver=process_grid_resolver,\n"
+            "                    )\n"
+            "            else:\n"
+            "                period_to_regime_to_V_arr = None"
         ),
         (
             "entry_allocations=None,\n"
-            "                process_grid_resolver=process_grid_resolver,\n"
-            "            )\n"
-            "        else:\n"
-            "            period_to_regime_to_V_arr = None"
+            "                        process_grid_resolver=process_grid_resolver,\n"
+            "                    )\n"
+            "            else:\n"
+            "                period_to_regime_to_V_arr = None"
         ),
     ),
     "foreign_model:automatic_resolution_owner_omitted": (
         "src/lcm/model.py",
         (
             "entry_allocations=entry_allocations,\n"
-            "                process_grid_resolver=process_grid_resolver,\n"
-            "            )\n"
-            "        if (\n"
-            "            period_to_regime_to_V_arr is None"
+            "                        process_grid_resolver=process_grid_resolver,\n"
+            "                    )\n"
+            '            with solve_phase(name="solution_handover", logger=log, '
+            "call_id=call_id):\n"
+            "                if (\n"
+            "                    period_to_regime_to_V_arr is None"
         ),
         (
             "entry_allocations=None,\n"
-            "                process_grid_resolver=process_grid_resolver,\n"
-            "            )\n"
-            "        if (\n"
-            "            period_to_regime_to_V_arr is None"
+            "                        process_grid_resolver=process_grid_resolver,\n"
+            "                    )\n"
+            '            with solve_phase(name="solution_handover", logger=log, '
+            "call_id=call_id):\n"
+            "                if (\n"
+            "                    period_to_regime_to_V_arr is None"
         ),
     ),
     "foreign_model:value_snapshot_dependency_omitted": (

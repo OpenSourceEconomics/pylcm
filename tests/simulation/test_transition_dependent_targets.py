@@ -26,9 +26,10 @@ import jax.numpy as jnp
 import pandas as pd
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import AgeGrid, DiscreteGrid, Model, Phased, Regime, categorical
+from lcm import AgeGrid, Choose, DiscreteGrid, Model, Phased, Regime, categorical
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -84,24 +85,27 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 def _simulated(new_stock=_new_stock):
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=until_exit(
+            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+        ),
         state_transitions={"stock": _carry_new_stock},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": _service_flow, "new_stock": new_stock},
-    ).replace(active=lambda age: age < 2)
+    ).replace()
     last = Regime(
-        transition=None,
+        regime_transitions=None,
         state_transitions={},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": _flat_utility},
-    ).replace(active=lambda age: age >= 2)
+    ).replace()
     model = Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="transition-dependent target",
+        initial_regimes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="debug")
     return model.simulate(

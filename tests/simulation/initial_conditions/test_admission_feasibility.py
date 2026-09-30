@@ -15,7 +15,15 @@ import lcm
 from _lcm.simulation import initial_conditions as preflight
 from _lcm.simulation.initial_conditions import _SerialValidationRequired
 from _lcm.utils.logging import LogLevel
-from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    Choose,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import ExecutionPlanningError, InvalidInitialConditionsError
 from lcm.params import MappingLeaf, as_leaf
 from lcm.persistence import load_solution
@@ -39,10 +47,6 @@ def _terminal_utility(*, wealth: FloatND) -> FloatND:
 
 def _next_regime() -> ScalarInt:
     return _RegimeId.done
-
-
-def _initial_age(age: float) -> bool:
-    return age == 0
 
 
 def _costly_constraint(*, wealth: FloatND, saving: FloatND, cutoff: FloatND) -> BoolND:
@@ -99,8 +103,7 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
-                active=_initial_age,
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
                 state_transitions={"wealth": lcm.fixed_transition("wealth")},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=n_actions)},
@@ -108,7 +111,7 @@ def _inputs(
                 constraints=constraints,
             ),
             "done": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
                 functions={"utility": _terminal_utility},
             ),
@@ -116,6 +119,7 @@ def _inputs(
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
+        initial_regimes={0: "alive"},
     )
     params = {
         "alive": {

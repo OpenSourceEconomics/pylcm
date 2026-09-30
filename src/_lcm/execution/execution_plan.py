@@ -10,7 +10,7 @@ import dataclasses
 import logging
 import math
 import operator
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
 
@@ -19,7 +19,7 @@ import jax
 from _lcm.execution.core_program import CoreProgram
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
-from lcm.execution import AxisWidth, ExecutionConfig
+from lcm.execution import AxisWidth, ExecutionConfig, WidthSearchPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,12 @@ class ResolvedExecution:
         MappingProxyType({})
     )
     """Widths that override the model-wide ones, by regime name then axis name."""
+
+    axis_width_ceilings: MappingProxyType[str, int] = MappingProxyType({})
+    """Widest block the planner may compile each named axis at; empty means none."""
+
+    covered_axes: frozenset[str] = frozenset()
+    """Axis names whose conservative seed covers the whole extent; solve only."""
 
     device_memory_bytes: int | None
     """Effective per-device workspace budget every phase admits against, or `None`.
@@ -74,6 +80,14 @@ class ResolvedExecution:
 
     donate_buffers: bool = True
     """Whether eligible solve inputs may be donated to a compiled executable."""
+
+    halve_on_materialised_gather: bool = False
+    """Whether GridSearch cell widths are halved while a gather materialises."""
+
+    width_search: WidthSearchPolicy = dataclasses.field(
+        default_factory=WidthSearchPolicy
+    )
+    """Which width search a budgeted solve's compilation waves are driven by."""
 
     def widths_for(self, *, regime_name: RegimeName) -> MappingProxyType[str, int]:
         """Return the fixed widths one regime's programs are planned against.
@@ -249,6 +263,8 @@ def resolve_execution_config(
         sharded_states=frozenset(config.sharded_states),
         axis_widths=model_wide_widths,
         axis_widths_by_regime=widths_by_regime,
+        axis_width_ceilings=MappingProxyType(dict(config.axis_width_ceilings)),
+        covered_axes=frozenset(config.covered_axes),
         device_memory_bytes=_effective_device_memory_bytes(
             requested_bytes=config.device_memory_bytes,
             headroom_fraction=config.device_memory_headroom_fraction,
@@ -258,6 +274,8 @@ def resolve_execution_config(
         device_memory_headroom_fraction=config.device_memory_headroom_fraction,
         device_pool_limit_bytes=selected_limits,
         donate_buffers=config.donate_buffers,
+        halve_on_materialised_gather=config.halve_on_materialised_gather,
+        width_search=config.width_search,
         simulation_sharding=config.simulation_sharding,
     )
     if config.device_memory_bytes is not None:
@@ -366,8 +384,9 @@ def fail_if_per_regime_widths_name_non_solve_axes(
 
 def fail_if_axis_widths_name_undeclared_axes(
     *,
-    axis_widths: Mapping[str, AxisWidth],
+    axis_widths: Collection[str],
     program_collections: tuple[Iterable[CoreProgram], ...],
+    label: str = "axis_widths",
 ) -> None:
     """Reject an axis width for a name none of the model's programs declares.
 
@@ -378,9 +397,11 @@ def fail_if_axis_widths_name_undeclared_axes(
     already merged.
 
     Args:
-        axis_widths: The widths the user declared, by axis name.
+        axis_widths: The axis names the user declared, as width keys or a tuple.
         program_collections: One collection of core programs per phase whose
             axes the widths may name.
+        label: The `ExecutionConfig` field the declaration came from, named in
+            the error a rejected axis raises.
 
     Raises:
         ExecutionPlanningError: A width names an axis no program declares.
@@ -397,7 +418,7 @@ def fail_if_axis_widths_name_undeclared_axes(
     for name in axis_widths:
         if name not in declared:
             msg = (
-                f"ExecutionConfig.axis_widths names {name!r}, which no core program "
+                f"ExecutionConfig.{label} names {name!r}, which no core program "
                 f"declares; declared axes are {sorted(declared)!r}."
             )
             raise ExecutionPlanningError(msg)

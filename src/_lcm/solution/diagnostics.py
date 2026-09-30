@@ -102,6 +102,10 @@ def _fold_period_diagnostics(
     Each extra full-V read is a memory-bandwidth tax on the larger models, so
     the default keeps it to two reductions per (regime, period).
 
+    The row's age is read from the grid's exact host-side values: a read off
+    the device array here would be a blocking device-to-host copy queued
+    behind the period's dispatch, charged to the host loop.
+
     Returns:
         Tuple of the updated running NaN and Inf flag scalars.
 
@@ -122,7 +126,7 @@ def _fold_period_diagnostics(
         _DiagnosticRow(
             regime_name=regime_name,
             period=period,
-            age=float(ages.values[period]),
+            age=float(ages.exact_values[period]),
         )
     )
     return (

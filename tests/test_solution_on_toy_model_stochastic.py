@@ -20,6 +20,7 @@ from lcm import (
 from lcm.typing import DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_solution_on_toy_model_deterministic import (
+    THREE_PERIOD_TRANSITIONS,
     RegimeId,
     alive_deterministic,
     dead,
@@ -45,7 +46,7 @@ alive_stochastic = alive_deterministic.replace(
     states=dict(alive_deterministic.states)
     | {"health": DiscreteGrid(category_class=Health)},
     state_transitions=dict(alive_deterministic.state_transitions)
-    | {"health": MarkovTransition(next_health)},
+    | {"health": MarkovTransition(func=next_health)},
 )
 
 
@@ -224,12 +225,13 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
     model = Model(
         regimes={
             "alive": alive_stochastic.replace(
-                states=new_states, active=lambda age: age < n_periods - 1
+                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
             ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     params = {
@@ -285,12 +287,13 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
     model = Model(
         regimes={
             "alive": alive_stochastic.replace(
-                states=new_states, active=lambda age: age < n_periods - 1
+                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
             ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     params_alive = {

@@ -19,6 +19,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
 
@@ -61,11 +62,14 @@ def model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
-                    "target": MarkovTransition(_p_target),
-                    "other": MarkovTransition(_p_other),
-                },
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={
+                        "target": MarkovTransition(func=_p_target),
+                        "other": MarkovTransition(func=_p_other),
+                    },
+                    exits=("target", "other"),
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={
                     "shock": {"target": _enter_shock},
@@ -74,7 +78,7 @@ def model() -> Model:
                 functions={"utility": _wealth_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
@@ -83,13 +87,14 @@ def model() -> Model:
                 functions={"utility": _shock_utility},
             ),
             "other": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _wealth_utility},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

@@ -65,6 +65,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -194,11 +195,14 @@ def build_model(
     """
     pair_utility = _utility_of_y if pair_reads == "y" else _utility_of_x_and_health
     solo = Regime(
-        transition={
-            "solo": MarkovTransition(_solo_stays_before_age_two),
-            "dead": MarkovTransition(_solo_leaves_from_age_two),
-        },
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3,
+            law={
+                "solo": MarkovTransition(func=_solo_stays_before_age_two),
+                "dead": MarkovTransition(func=_solo_leaves_from_age_two),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_x},
@@ -208,25 +212,28 @@ def build_model(
         },
     )
     pair = Regime(
-        transition={
-            "pair": MarkovTransition(_stay_before_age_one),
-            "dead": ValueDependentTransition(
-                probability=MarkovTransition(_leave_from_age_one),
-                gate=_gate_open_above_the_middle,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="solo",
-                            projection={
-                                "wealth": _projected_wealth,
-                                "x": _projected_x,
-                            },
+        regime_transitions=until_exit(
+            2,
+            law={
+                "pair": MarkovTransition(func=_stay_before_age_one),
+                "dead": ValueDependentTransition(
+                    probability=MarkovTransition(func=_leave_from_age_one),
+                    gate=_gate_open_above_the_middle,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="solo",
+                                projection={
+                                    "wealth": _projected_wealth,
+                                    "x": _projected_x,
+                                },
+                            )
                         )
-                    )
-                },
-            ),
-        },
-        active=lambda age: age < 2,
+                    },
+                ),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": pair_utility},
@@ -237,8 +244,7 @@ def build_model(
         },
     )
     dead = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )
@@ -252,6 +258,7 @@ def build_model(
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),
+        initial_regimes={0: "pair"},
     )
 
 
@@ -316,14 +323,14 @@ def _report(
 
     simulated = model.simulate(
         params=_PARAMS,
-        initial_conditions=_INITIAL_CONDITIONS,
+        initial_conditions=_initial_conditions_read_by(model),
         solution=solution,
         log_level="off",
         seed=42,
     )
     expected_frame = reference.simulate(
         params=_PARAMS,
-        initial_conditions=_INITIAL_CONDITIONS,
+        initial_conditions=_initial_conditions_read_by(reference),
         solution=reference_solution,
         log_level="off",
         seed=42,
@@ -617,3 +624,11 @@ def test_a_refused_route_names_both_device_axes(
     message = overlapping_meshes["message"]
     assert "x=4" in message
     assert "y=4" in message
+
+
+def _initial_conditions_read_by(model: Model) -> dict[str, Any]:
+    """Return the initial conditions restricted to the states `model` simulates."""
+    read = {"age", "regime_id"}.union(
+        *(regime.simulation.state_names for regime in model._regimes.values())
+    )
+    return {name: value for name, value in _INITIAL_CONDITIONS.items() if name in read}

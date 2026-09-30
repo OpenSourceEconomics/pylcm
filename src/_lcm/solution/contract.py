@@ -512,7 +512,11 @@ class BackwardInductionResult:
     """
 
     value_functions: PeriodToRegimeToVArr
-    """Immutable mapping of period to each regime's value-function array."""
+    """Immutable mapping of period to each regime's value-function array.
+
+    Holds exactly the periods with at least one demanded node; a period outside
+    the root-derived domain has no key rather than an empty mapping.
+    """
 
     simulation_policies: PeriodToRegimeToSimulationPolicy
     """Immutable mapping of period to each regime's published simulation policy.

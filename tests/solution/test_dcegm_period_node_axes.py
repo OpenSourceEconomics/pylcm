@@ -12,6 +12,8 @@ from _lcm.execution.core_program import core_program_graph
 from _lcm.solution.dcegm import EGMStepBuild
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -24,6 +26,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime
 from lcm.solver_api import SolutionResult
 from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS
+from lcm.transition import AgeSelector
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
@@ -83,22 +86,29 @@ def _model(
 ) -> Model:
     grid = LinSpacedGrid(start=1.0, stop=20.0, n_points=4)
     old_domain = ShortHealth if short_old_health else Health
+    young = {"young": MarkovTransition(func=young_probability)}
+    old = {"old": MarkovTransition(func=old_probability)}
+    parent_cases: dict[AgeSelector, object] = {
+        AgeRange(start=40, stop=50): young | old if overlapping_children else young,
+        AgeRange(start=50, stop=60): old,
+    }
+    if parent_period is not None:
+        parent_cases = {
+            selector: law
+            for selector, law in parent_cases.items()
+            if isinstance(selector, AgeRange)
+            and selector.start == 40 + 10 * parent_period
+        }
     parent = ConsumptionSavingsRegime(
-        transition={
-            "young": MarkovTransition(young_probability),
-            "old": MarkovTransition(old_probability),
-        },
-        active=lambda age: (
-            age < 60 if parent_period is None else age == 40 + 10 * parent_period
-        ),
+        regime_transitions=ByAge(cases=parent_cases),
         states={"wealth": grid, "health": DiscreteGrid(Health)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=5)},
         state_transitions={
             "wealth": next_wealth,
             "health": {
-                "young": MarkovTransition(three_health),
+                "young": MarkovTransition(func=three_health),
                 "old": MarkovTransition(
-                    two_health if short_old_health else three_health
+                    func=two_health if short_old_health else three_health
                 ),
             },
         },
@@ -122,18 +132,28 @@ def _model(
         regimes={
             "parent": parent,
             "young": parent.replace(
-                transition={"dead": MarkovTransition(death_probability)},
-                active=lambda age: age == 50,
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(start=50, stop=51): {
+                            "dead": MarkovTransition(func=death_probability)
+                        }
+                    }
+                ),
                 state_transitions={"wealth": next_wealth, "health": {}},
             ),
             "old": parent.replace(
-                transition={"dead": MarkovTransition(death_probability)},
-                active=lambda age: age == 60 or (overlapping_children and age == 50),
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(start=50 if overlapping_children else 60, stop=70): {
+                            "dead": MarkovTransition(func=death_probability)
+                        }
+                    }
+                ),
                 states={"wealth": grid, "health": DiscreteGrid(old_domain)},
                 state_transitions={"wealth": next_wealth, "health": {}},
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": grid},
                 functions={"utility": final_bequest},
             ),
@@ -141,6 +161,10 @@ def _model(
         ages=AgeGrid(start=40, stop=70, step="10Y"),
         regime_id_class=DiagnosisRegimes,
         execution_config=ExecutionConfig(devices=(0,)),
+        # The parent is a start at each age it declares a law for.
+        initial_regimes={
+            (40, 50) if parent_period is None else 40 + 10 * parent_period: "parent"
+        },
     )
 
 

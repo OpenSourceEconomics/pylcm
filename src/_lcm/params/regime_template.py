@@ -1076,7 +1076,7 @@ def _collect_all_functions_for_template(
     for name, spec in user_regime.states.items():
         if isinstance(spec, Phased):
             result[name] = cast("UserFunction", spec.solve)
-    if user_regime.transition is not None:
+    if user_regime.regime_transitions is not None:
         joint_output_names = {
             output_name
             for kernels in user_regime.joint_transitions.values()

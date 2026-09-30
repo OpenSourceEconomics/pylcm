@@ -18,6 +18,7 @@ import numpy as np
 from lcm import (
     AgeGrid,
     CESAggregator,
+    Choose,
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -30,6 +31,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import NBEGM, STOCHASTIC_NODE_AXIS, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _RETURN = 0.03
@@ -98,11 +100,14 @@ def _build_model(
 ) -> Model:
     final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
     alive = ConsumptionSavingsRegime(
-        active=lambda age, n=final_age_alive: age <= n,
         states={"liquid": _LIQUID_GRID, "health": _HEALTH},
         state_transitions={"liquid": _next_liquid},
         actions={"consumption": _CONSUMPTION_GRID},
-        transition=_next_regime,
+        regime_transitions=until_exit(
+            final_age_alive + 5,
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -122,8 +127,7 @@ def _build_model(
         ),
     )
     dead = Regime(
-        transition=None,
-        active=lambda age, n=final_age_alive: age > n,
+        regime_transitions=None,
         # Starts at zero so the terminal carry covers the whole attainable
         # savings range: the corner `s = 0` reads the terminal value exactly
         # instead of the edge bracket's secant.
@@ -136,6 +140,7 @@ def _build_model(
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=20, stop=20 + (_N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={20: "alive"},
     )
 
 

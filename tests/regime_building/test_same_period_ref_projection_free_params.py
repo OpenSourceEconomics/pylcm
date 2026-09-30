@@ -64,7 +64,7 @@ def _halved_wealth(*, wealth: ContinuousState, divorce_cost: float) -> Continuou
 
 def _make_regime(*, projection) -> Regime:
     return Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": _next_wealth},
         actions={"work": DiscreteGrid(category_class=Work)},

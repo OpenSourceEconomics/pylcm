@@ -44,6 +44,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -53,6 +54,7 @@ from lcm import (
 )
 from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -111,8 +113,11 @@ def _next_regime() -> ScalarInt:
 
 def _make_model() -> Model:
     couple = Regime(
-        transition=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_next_regime, targets=("couple", "couple_terminal")),
+            exits=("couple_terminal",),
+        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -122,8 +127,7 @@ def _make_model() -> Model:
         constraints={"participation_f": _participation_f},
     )
     couple_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -135,6 +139,7 @@ def _make_model() -> Model:
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "couple"},
     )
 
 

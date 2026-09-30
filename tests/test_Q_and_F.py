@@ -33,10 +33,12 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
+    Choose,
     LinearAggregator,
     LinearExpectation,
     PowerMean,
 )
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -50,20 +52,27 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,
     get_params,
     utility,
     working_life,
+    working_life_transitions,
 )
+from tests.test_models.schedules import choose_among, until_exit
 
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, stop=4, step="Y")
-    user_regimes = {"working_life": working_life, "dead": dead}
+    user_regimes = {
+        "working_life": working_life.replace(
+            regime_transitions=working_life_transitions(last_age=4)
+        ),
+        "dead": dead,
+    }
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
@@ -74,7 +83,7 @@ def test_get_Q_and_F_function():
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=finalized_user_regimes,
+        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
@@ -346,7 +355,6 @@ def _build_partial_coverage_model(
         return wealth - consumption
 
     work = UserRegime(
-        active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
             "health": DiscreteGrid(category_class=_PartialCoverageHealth),
@@ -354,33 +362,40 @@ def _build_partial_coverage_model(
         state_transitions={
             "wealth": _next_wealth,
             "health": {
-                "work": MarkovTransition(_health_probs),
+                "work": MarkovTransition(func=_health_probs),
             },
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        transition=work_transition,
+        regime_transitions=until_exit(
+            3,
+            law=choose_among(work_transition, targets=("work", "retire", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": _utility},
     )
     retire = UserRegime(
-        active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
             "health": DiscreteGrid(category_class=_PartialCoverageHealth),
         },
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(_health_probs),
+            "health": MarkovTransition(func=_health_probs),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        transition=next_regime_func,
+        regime_transitions=until_exit(
+            3,
+            law=Choose(func=next_regime_func, targets=("work", "retire", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": _utility},
     )
     dead_regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
@@ -388,6 +403,7 @@ def _build_partial_coverage_model(
         regimes={"work": work, "retire": retire, "dead": dead_regime},
         regime_id_class=_PartialCoverageRegimeId,
         ages=AgeGrid(start=0, stop=3, step="Y"),
+        initial_regimes={0: ("work", "retire")},
     )
     params = {
         "discount_factor": 0.9,
@@ -410,8 +426,8 @@ def test_partial_state_laws_solve_with_declared_targets():
         )
 
     work_transition = {
-        "work": MarkovTransition(lambda age: jnp.where(age >= 2, 0.0, 1.0)),
-        "dead": MarkovTransition(lambda age: jnp.where(age >= 2, 1.0, 0.0)),
+        "work": MarkovTransition(func=lambda age: jnp.where(age >= 2, 0.0, 1.0)),
+        "dead": MarkovTransition(func=lambda age: jnp.where(age >= 2, 1.0, 0.0)),
     }
     model, params = _build_partial_coverage_model(
         work_transition=work_transition, next_regime_func=_next_regime
@@ -435,8 +451,15 @@ def test_partial_state_laws_solve_with_declared_targets():
             V_arr = period_to_regime_to_V_arr.values[period][regime_name]
             assert V_arr.shape == (2, 3)
             assert_allclose(V_arr, expected, atol=1e-5)
-    for regime_to_V_arr in period_to_regime_to_V_arr.values.values():
-        dead_V = regime_to_V_arr["dead"]
+    dead_periods = [
+        period
+        for period, regime_to_V_arr in period_to_regime_to_V_arr.values.items()
+        if "dead" in regime_to_V_arr
+    ]
+    # Death is first reached from a start at 0, so it is solved from period 1.
+    assert sorted(dead_periods) == [1, 2, 3]
+    for period in dead_periods:
+        dead_V = period_to_regime_to_V_arr.values[period]["dead"]
         assert dead_V.shape == ()
         assert_allclose(dead_V, 0.0, atol=1e-6)
 
@@ -900,15 +923,18 @@ def _model_emitting_total_regime_mass(
     """
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        transition={
-            "alive": MarkovTransition(
-                lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
-            ),
-            "dead": MarkovTransition(
-                lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
-            ),
-        },
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law={
+                "alive": MarkovTransition(
+                    func=lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
+                ),
+                "dead": MarkovTransition(
+                    func=lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
+                ),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -916,7 +942,7 @@ def _model_emitting_total_regime_mass(
         certainty_equivalent=certainty_equivalent,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
@@ -924,10 +950,11 @@ def _model_emitting_total_regime_mass(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_MassRegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
-def _solve_alive_without_validation(
+def _solve_alive_at_log_level_off(
     *, total_mass: float, certainty_equivalent: CertaintyEquivalent
 ) -> FloatND:
     """Solve the model at `log_level="off"` and return `alive`'s first V array."""
@@ -945,21 +972,22 @@ def _solve_alive_without_validation(
 @pytest.mark.parametrize(
     "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
 )
-def test_solve_at_log_level_off_poisons_a_regime_transition_that_drops_mass(
+def test_solve_at_log_level_off_refuses_a_regime_transition_that_drops_mass(
     *, certainty_equivalent: CertaintyEquivalent, x64_enabled: None
 ):
-    """A regime transition emitting 0.977 of unit mass solves to NaN.
+    """A regime transition emitting 0.977 of unit mass is refused.
 
     Every aggregation route divides the continuation by the mass it received,
-    so dropped mass is otherwise divided straight back out: the same model at
-    0.977 and at 1.0 returns bit-identical values, and nothing in the result
-    marks the difference. The check therefore lives in the arithmetic rather
-    than in runtime validation, which `log_level="off"` skips.
+    so dropped mass would otherwise be divided straight back out and leave no
+    trace in the result. Regime selection is validated at every log level, so
+    even `log_level="off"` names the offending regime and its mass.
     """
-    V_arr = _solve_alive_without_validation(
-        total_mass=0.977, certainty_equivalent=certainty_equivalent
-    )
-    assert bool(jnp.all(jnp.isnan(V_arr)))
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=r"do not sum to 1\.0"
+    ):
+        _solve_alive_at_log_level_off(
+            total_mass=0.977, certainty_equivalent=certainty_equivalent
+        )
 
 
 @pytest.mark.parametrize(
@@ -996,68 +1024,12 @@ def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
     adds no arithmetic is a separate, backend-independent claim, tested against
     the predicate rather than against a solve.
     """
-    V_arr = _solve_alive_without_validation(
+    V_arr = _solve_alive_at_log_level_off(
         total_mass=1.0, certainty_equivalent=certainty_equivalent
     )
     np.testing.assert_allclose(
         np.asarray(V_arr), np.array(expected), rtol=1e-15, atol=0.0
     )
-
-
-def _model_with_alive_active_at_every_age(
-    certainty_equivalent: CertaintyEquivalent,
-) -> Model:
-    """A two-regime model whose non-terminal regime outlives all of its targets.
-
-    `alive` is active at every age, including the last, where no regime is left
-    to carry its continuation. It emits unit mass in every period, so nothing
-    but the missing target distinguishes it from a well-formed model.
-    """
-    wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
-    alive = UserRegime(
-        transition=lambda: _MassRegimeId.dead,
-        states={"wealth": wealth},
-        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
-        actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
-        functions={"utility": lambda consumption: consumption},
-        certainty_equivalent=certainty_equivalent,
-    )
-    dead = UserRegime(
-        transition=None,
-        active=lambda age: age < 2,
-        states={"wealth": wealth},
-        functions={"utility": lambda wealth: wealth + 1.0},
-    )
-    return Model(
-        regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=_MassRegimeId,
-    )
-
-
-@pytest.mark.parametrize(
-    "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
-)
-def test_solve_poisons_a_non_terminal_regime_with_no_reachable_target(
-    *, certainty_equivalent: CertaintyEquivalent, x64_enabled: None
-):
-    """The period where a non-terminal regime has no target left solves to NaN.
-
-    Emitting unit mass toward regimes that are all inactive next period leaves
-    the continuation carrying no mass at all — the same defect as a transition
-    that drops mass, arrived at through the topology rather than through the
-    probabilities. Aggregating nothing would return the utility-only Bellman
-    value: finite, plausible, and an answer to a model that cannot be solved.
-    """
-    alive_params: dict[str, Any] = {"discount_factor": 0.95}
-    if not isinstance(certainty_equivalent, LinearExpectation):
-        alive_params["certainty_equivalent"] = {"risk_aversion": 2.0}
-    model = _model_with_alive_active_at_every_age(certainty_equivalent)
-    period_to_regime_to_V_arr = model.solve(
-        params={"alive": alive_params}, log_level="off"
-    )
-    V_arr = period_to_regime_to_V_arr.values[model.n_periods - 1]["alive"]
-    assert bool(jnp.all(jnp.isnan(V_arr)))
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

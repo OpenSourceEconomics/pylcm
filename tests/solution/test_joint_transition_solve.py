@@ -40,6 +40,7 @@ from lcm.typing import (
     UserParams,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -102,8 +103,11 @@ def _build_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain_target)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21,
+                    law={"target": MarkovTransition(func=_certain_target)},
+                    exits=("target",),
+                ),
                 functions={"utility": lambda: jnp.asarray(0.0)},
                 joint_transitions={
                     "target": {
@@ -120,7 +124,7 @@ def _build_model(
                 },
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
                     "income": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
@@ -131,6 +135,7 @@ def _build_model(
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 
@@ -364,22 +369,25 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
     return Model(
         regimes={
             "single": Regime(
-                transition={
-                    "couple": ValueDependentTransition(
-                        probability=MarkovTransition(_bdy_certain_couple),
-                        gate=_bdy_gate_always_open,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_terminal",
-                                    projection={"wealth": _bdy_identity_wealth},
-                                ),
-                            )
-                        },
-                    )
-                },
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "couple": ValueDependentTransition(
+                            probability=MarkovTransition(func=_bdy_certain_couple),
+                            gate=_bdy_gate_always_open,
+                            routes={
+                                "f": StakeholderRoute(
+                                    target_stakeholder="f",
+                                    fallback=ProjectedRegimeValue(
+                                        regime="single_terminal",
+                                        projection={"wealth": _bdy_identity_wealth},
+                                    ),
+                                )
+                            },
+                        )
+                    },
+                    exits=("couple",),
+                ),
                 states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
                 functions={"utility": _bdy_single_utility},
                 joint_transitions={
@@ -398,14 +406,12 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
                 },
             ),
             "single_terminal": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
                 functions={"utility": _bdy_fallback_utility},
             ),
             "couple": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 actions={"household_choice": DiscreteGrid(category_class=BDYChoice)},
                 states={
                     "wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS),
@@ -425,6 +431,7 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=BDYRegimeId,
         enable_jit=enable_jit,
+        initial_regimes={0: "single"},
     )
 
 

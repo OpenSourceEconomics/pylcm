@@ -218,21 +218,15 @@ def build_params(
             "consumption_weight": consumption_weight,
             "util_scale": util_scale,
         },
-        "leisure": {
-            "leisure_base": leisure_base,
-            "leisure_slope": leisure_slope,
-        },
+        "leisure": {"leisure_base": leisure_base, "leisure_slope": leisure_slope},
         "koopmans_aggregator": {"discount_factor": discount_factor},
         "subsidy": subsidy_params,
         "alive": {
             "next_liquid": alive_budget,
             "next_wage": {"wage_persistence": wage_persistence},
-            "next_regime": {"final_age_alive": final_age_alive},
         },
-        "dead": {
-            "next_liquid": alive_budget,
-            "next_regime": {"final_age_alive": final_age_alive},
-        },
+        "dead": {"next_liquid": alive_budget},
+        "final_age_alive": final_age_alive,
     }
     return {
         "alive": alive_params,

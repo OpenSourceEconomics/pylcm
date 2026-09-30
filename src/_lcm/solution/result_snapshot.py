@@ -218,7 +218,9 @@ def own_value_store(
     entries: dict[tuple[int, RegimeName], object] = {}
     regimes_by_period: dict[int, tuple[RegimeName, ...]] = {}
     for period, regime_to_value in values.items():
-        regimes_by_period[period] = tuple(regime_to_value)
+        # Like the public constructor, a period without a value holds no key.
+        if regime_to_value:
+            regimes_by_period[period] = tuple(regime_to_value)
         for regime_name, value in regime_to_value.items():
             entries[(period, regime_name)] = _CanonicalValueEntry(value=value)
     store = object.__new__(ValueStore)

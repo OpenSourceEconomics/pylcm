@@ -11,6 +11,7 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -19,6 +20,7 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -53,7 +55,9 @@ def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
 
 
 _active = UserRegime(
-    transition=_next_regime,
+    regime_transitions=until_exit(
+        2, law=Choose(func=_next_regime, targets=("active", "dead")), exits=("dead",)
+    ),
     actions={
         "labor_supply": DiscreteGrid(category_class=_LaborSupply),
         "consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3),
@@ -67,11 +71,12 @@ _active = UserRegime(
         "wealth": _next_wealth,
     },
     functions={"utility": _utility},
-    active=lambda age: age < 2,
 )
 
 
-_dead = UserRegime(transition=None, functions={"utility": lambda: jnp.array(0.0)})
+_dead = UserRegime(
+    regime_transitions=None, functions={"utility": lambda: jnp.array(0.0)}
+)
 
 
 def _build_model() -> Model:
@@ -79,6 +84,7 @@ def _build_model() -> Model:
         regimes={"active": _active, "dead": _dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "active"},
     )
 
 
@@ -198,28 +204,31 @@ def _f2_next_regime(period: Period) -> ScalarInt:
 
 def _f2_build_model() -> Model:
     live = UserRegime(
-        transition=_f2_next_regime,
-        active=lambda age: age < 27,
+        regime_transitions=until_exit(
+            27,
+            law=Choose(func=_f2_next_regime, targets=("live", "last")),
+            exits=("last",),
+        ),
         states={
             "good": DiscreteGrid(category_class=_Good),
             "capital": DiscreteGrid(category_class=_Capital),
         },
         actions={"move": DiscreteGrid(category_class=_Move)},
         state_transitions={
-            "good": MarkovTransition(_f2_good_probs),
+            "good": MarkovTransition(func=_f2_good_probs),
             "capital": _f2_next_capital,
         },
         functions={"utility": _f2_utility},
     )
     last = UserRegime(
-        transition=None,
-        active=lambda age: age >= 27,
+        regime_transitions=None,
         functions={"utility": lambda: jnp.array(0.0)},
     )
     return Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(start=25, stop=27, step="1Y"),
         regime_id_class=_RegimeIdF2,
+        initial_regimes={25: "live"},
     )
 
 

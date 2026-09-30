@@ -57,6 +57,7 @@ def _make_model() -> Model:
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
+        initial_regimes={0: "married"},
     )
 
 

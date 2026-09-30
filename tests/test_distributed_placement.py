@@ -74,7 +74,7 @@ from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.typing import RegimeName
 from _lcm.utils.logging import LogLevel
-from lcm import fixed_transition
+from lcm import AgeRange, ByAge, Choose, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -85,6 +85,7 @@ from lcm.solvers import GridSearch, Solver
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
+from tests.test_models.schedules import until_exit
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized; otherwise the tests skip.
@@ -455,14 +456,15 @@ def _make_three_type_model(
 ) -> Model:
     """A working regime over a three-valued type beside a single-device terminal one.
 
-    Both regimes are active before the final age and read nothing of each other
-    within a period, so on four devices the working regime runs on three and the
-    terminal one on the fourth. `sharded` names the same axis through
-    `ExecutionConfig`; either spelling places the regime the same way.
+    The working regime starts at age 0 and names the terminal one in its support
+    at every source age, so both are solved at every period between the first
+    and the last and read nothing of each other within a period: on four devices
+    the working regime runs on three and the terminal one on the fourth.
+    `sharded` names the same axis through `ExecutionConfig`; either spelling
+    places the regime the same way.
     `devices` restricts the model to a subset of the four.
     """
     working = UserRegime(
-        active=lambda age: age < 4,
         solver=GridSearch() if solver is None else solver,
         functions={
             "utility": lambda wealth, consumption, type1: (
@@ -472,12 +474,19 @@ def _make_three_type_model(
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=lambda age: jnp.where(
-            age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+        regime_transitions=until_exit(
+            4,
+            law=Choose(
+                func=lambda age: jnp.where(
+                    age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+                ),
+                targets=("working", "retired"),
+            ),
+            exits=("retired",),
         ),
     )
     retired = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={
             "utility": (
                 _constant_retired_value
@@ -501,6 +510,7 @@ def _make_three_type_model(
             ),
             devices=devices,
         ),
+        initial_regimes={0: "working"},
     )
 
 
@@ -741,7 +751,7 @@ def test_the_regime_beside_a_sharded_one_stays_on_the_configured_devices() -> No
     solution = _make_three_type_model(
         distributed=False, sharded=("type1",), devices=(1, 2, 3)
     ).solve(params=_PARAMS, log_level="off")
-    value = solution.values[0]["retired"]
+    value = solution.values[1]["retired"]
 
     assert {device.id for device in value.sharding.device_set} <= {1, 2, 3}
 
@@ -788,7 +798,7 @@ def test_the_single_device_regime_takes_the_idle_device() -> None:
     solution = _make_three_type_model(distributed=True).solve(
         params=_PARAMS, log_level="off"
     )
-    value = solution.values[0]["retired"]
+    value = solution.values[1]["retired"]
 
     assert value.sharding == jax.sharding.SingleDeviceSharding(jax.devices()[3])
 
@@ -812,9 +822,9 @@ def test_two_placements_of_one_model_publish_the_same_values(
         params=_PARAMS, log_level="off"
     )
 
-    expected_roster = {
+    expected_roster = {0: {"working"}} | {
         period: {"working", "retired"} if period < 4 else {"retired"}
-        for period in range(5)
+        for period in range(1, 5)
     }
     assert {period: set(values) for period, values in placed.values.items()} == (
         expected_roster
@@ -837,7 +847,10 @@ def test_two_placements_of_one_model_publish_the_same_values(
 def test_independent_regimes_of_one_period_share_one_wave(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Both regimes of a period are dispatched together in the period's first wave."""
+    """Both regimes of a period are dispatched together in the period's first wave.
+
+    Only the working regime is solved at the root period.
+    """
     units_by_period: dict[int, int] = {}
     recorder = _WavePlanRecorder(
         planner=backward_induction.plan_period_waves, units_by_period=units_by_period
@@ -845,7 +858,7 @@ def test_independent_regimes_of_one_period_share_one_wave(
     monkeypatch.setattr(backward_induction, "plan_period_waves", recorder)
     _make_three_type_model(distributed=True).solve(params=_PARAMS, log_level="off")
 
-    assert units_by_period == {0: 2, 1: 2, 2: 2, 3: 2, 4: 1}
+    assert units_by_period == {0: 1, 1: 2, 2: 2, 3: 2, 4: 1}
 
 
 class _WavePlanRecorder:
@@ -870,9 +883,9 @@ def test_a_model_with_one_regime_per_period_is_placed_on_device_zero() -> None:
         _make_correct_distributed_model,
     )
 
-    solution = _make_correct_distributed_model(distributed=False).solve(
-        params=_PARAMS, log_level="off"
-    )
+    solution = _make_correct_distributed_model(
+        distributed=False, one_regime_per_period=True
+    ).solve(params=_PARAMS, log_level="off")
     value = solution.values[5]["retirement"]
 
     assert value.sharding.device_set == {jax.devices()[0]}
@@ -968,11 +981,11 @@ class _TwoMeshRegimeId:
 def _make_two_mesh_model() -> Model:
     """Two co-active regimes over one three-valued type beside a terminal one.
 
-    Both sharded regimes take the same three-device block, and the terminal
-    regime — which does not read the type — takes the device that block leaves
-    idle. Each sharded regime therefore reads the terminal value across
-    disjoint devices, into the one replicated layout their shared mesh
-    defines.
+    Both sharded regimes are roots at the first age and take the same
+    three-device block, and the terminal regime — which does not read the type —
+    takes the device that block leaves idle. Each sharded regime therefore
+    reads the terminal value across disjoint devices, into the one replicated
+    layout their shared mesh defines.
     """
 
     def _worker() -> UserRegime:
@@ -987,8 +1000,11 @@ def _make_two_mesh_model() -> Model:
                 "wealth": lambda wealth, consumption: wealth - consumption
             },
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=6)},
-            transition=lambda age: jnp.where(
-                age >= 0, _TwoMeshRegimeId.retired, _TwoMeshRegimeId.alpha
+            regime_transitions=Choose(
+                func=lambda age: jnp.where(
+                    age >= 0, _TwoMeshRegimeId.retired, _TwoMeshRegimeId.alpha
+                ),
+                targets=("retired",),
             ),
         )
 
@@ -997,7 +1013,7 @@ def _make_two_mesh_model() -> Model:
             "alpha": _worker(),
             "beta": _worker(),
             "retired": UserRegime(
-                transition=None,
+                regime_transitions=None,
                 functions={"utility": lambda wealth: wealth * 0.5},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=8)},
             ),
@@ -1007,6 +1023,7 @@ def _make_two_mesh_model() -> Model:
         states={"type1": DiscreteGrid(category_class=_Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
+        initial_regimes={0: ("alpha", "beta")},
     )
 
 
@@ -1146,33 +1163,44 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     def _next_wealth(*, wealth: Any, consumption: Any) -> Any:
         return wealth - consumption
 
-    def _worker(*, transition: Any, active: Any) -> UserRegime:
+    def _next_from_first(age: Any) -> Any:
+        return jnp.where(age >= 1, _TwoBlockRegimeId.second, _TwoBlockRegimeId.first)
+
+    def _worker(*, regime_transitions: ByAge) -> UserRegime:
         return UserRegime(
             functions={"utility": _utility},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             state_transitions={"wealth": _next_wealth},
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-            transition=transition,
-            active=active,
+            regime_transitions=regime_transitions,
         )
 
     first = _worker(
-        transition=lambda age: jnp.where(
-            age >= 1, _TwoBlockRegimeId.second, _TwoBlockRegimeId.first
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): Choose(func=_next_from_first, targets=("first",)),
+                AgeRange(start=1, stop=3): Choose(
+                    func=_next_from_first, targets=("second",)
+                ),
+            }
         ),
-        active=lambda age: age < 3,
     )
     second = _worker(
-        transition=lambda age: jnp.where(
-            age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
+        regime_transitions=until_exit(
+            4,
+            law=Choose(
+                func=lambda age: jnp.where(
+                    age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
+                ),
+                targets=("second", "dead"),
+            ),
+            exits=("dead",),
         ),
-        active=lambda _age: True,
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-        active=lambda age: age >= 4,
     )
     return Model(
         regimes={"first": first, "second": second, "dead": dead},
@@ -1183,6 +1211,7 @@ def _make_two_block_model(*, distributed: bool) -> Model:
         execution_config=ExecutionConfig(
             sharded_states=("type1",) if distributed else ()
         ),
+        initial_regimes={0: "first"},
     )
 
 
@@ -1779,14 +1808,6 @@ def _uniform_placement_transition() -> ScalarInt:
     return _UniformPlacementRegimeId.done
 
 
-def _uniform_placement_initial_age(age: float) -> bool:
-    return age == 0
-
-
-def _uniform_placement_terminal_age(age: float) -> bool:
-    return age == 1
-
-
 def _uniform_placement_model(
     *, selected: tuple[int, ...], sharded: bool, stateless_terminal: bool = False
 ) -> Model:
@@ -1795,15 +1816,15 @@ def _uniform_placement_model(
     return Model(
         regimes={
             "alive": UserRegime(
-                transition=_uniform_placement_transition,
-                active=_uniform_placement_initial_age,
+                regime_transitions=Choose(
+                    func=_uniform_placement_transition, targets=("done",)
+                ),
                 states={"income": UniformIIDProcess(n_points=5)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _uniform_placement_utility},
             ),
             "done": UserRegime(
-                transition=None,
-                active=_uniform_placement_terminal_age,
+                regime_transitions=None,
                 functions={
                     "utility": _stateless_placement_terminal
                     if stateless_terminal
@@ -1820,4 +1841,5 @@ def _uniform_placement_model(
             devices=selected,
             sharded_states=("kind",) if sharded else (),
         ),
+        initial_regimes={0: "alive"},
     )

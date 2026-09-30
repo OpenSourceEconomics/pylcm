@@ -15,6 +15,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -25,6 +26,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -54,8 +56,9 @@ def _next_regime(age: float) -> ScalarInt:
 def _build_regime(**overrides: Any) -> UserRegime:
     """A small valid regime with a fixed health state; tests override slots."""
     spec: dict[str, Any] = {
-        "transition": _next_regime,
-        "active": lambda age: age < 2,
+        "regime_transitions": until_exit(
+            2, law=Choose(func=_next_regime, targets=("dead", "work")), exits=("dead",)
+        ),
         "states": {
             "health": DiscreteGrid(category_class=_Health),
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -73,14 +76,14 @@ def _build_regime(**overrides: Any) -> UserRegime:
 
 def _build_model(work: UserRegime) -> Model:
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 1,
     )
     return Model(
         regimes={"work": work, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "work"},
     )
 
 

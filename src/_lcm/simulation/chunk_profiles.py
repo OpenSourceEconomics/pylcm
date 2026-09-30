@@ -5,8 +5,11 @@ arrays supply only descriptors. Logical future slots are conservative reservatio
 separate from both actual entry-buffer residency and raw compiler peaks.
 """
 
+import contextvars
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Hashable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from types import MappingProxyType
 from typing import cast
 
@@ -77,9 +80,11 @@ from _lcm.simulation.membership import (
 from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.program_arguments import gate_route_arguments
+from _lcm.simulation.programs import forward_regimes_by_period
 from _lcm.simulation.random import (
     _create_simulation_key,
     _generate_windowed_simulation_keys,
+    _site_simulation_key,
     _split_simulation_key,
 )
 from _lcm.simulation.replay_inputs import replay_payload_reads
@@ -94,6 +99,14 @@ from _lcm.simulation.transitions import (
     _update_regime_ids,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.solution.backward_induction import (
+    _resolve_compilation_workers,
+    _trace_settings_key,
+)
+from _lcm.transition_checks import (
+    regime_probability_flags,
+    regime_probability_inactive_indices,
+)
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
 from lcm.ages import AgeGrid
@@ -106,7 +119,7 @@ type _FiniteRankOutput = tuple[
 
 
 # Keep setup, per-unit publication and period cleanup in their lifetime order.
-def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
+def profile_simulation_chunk(  # noqa: C901, PLR0915
     *,
     runtime: SimulationRuntime,
     regimes: Mapping[str, Regime],
@@ -124,12 +137,18 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     independent_taste: bool,
     log_level: LogLevel,
     policies: Mapping[int, Mapping[str, object]] | None = None,
+    max_compilation_workers: int | None = None,
 ) -> SimulationChunkProfile:
     """Prepare actual compiled stages for one proposed outer population extent.
 
     The current route covers declared grid and finite-policy decisions without
     host gated or other replay adapters. Diagnostics, retained storage and outer
     assembly profiles feed the selector before any candidate chunk is allocated.
+
+    With more than one compilation worker, every forward unit is first compiled on
+    a thread pool from the entry carrier; the ordered walk then finds each
+    executable in the runtime's shared cache under its exact abstract key and
+    compiles only what the pool did not.
     """
     if population < original_population or original_population <= 0 or n_subjects <= 0:
         raise ExecutionPlanningError("Chunk profiles need a valid positive population.")
@@ -185,6 +204,38 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     carrier = _profile_initial_carrier(
         inventory=inventory, initial=initial, regimes=regimes
     )
+    forward_regimes = forward_regimes_by_period(
+        regimes=regimes, n_periods=ages.n_periods
+    )
+    _compile_forward_units_in_parallel(
+        n_workers=_resolve_compilation_workers(
+            max_compilation_workers=max_compilation_workers
+        ),
+        units=tuple(
+            partial(
+                profile_forward_unit,
+                runtime=runtime,
+                regimes=regimes,
+                regime=regime,
+                name=name,
+                period=period,
+                flat_params=flat_params,
+                base=base_spaces[name],
+                base_spaces=base_spaces,
+                values=values,
+                flags=flags,
+                ages=ages,
+                n_subjects=n_subjects,
+                widths=widths,
+                columns=carrier[name],
+                ordinary_key=key,
+                taste_key=taste_key,
+                policy=(policies or {}).get(period, {}).get(name),
+            )
+            for period in range(ages.n_periods)
+            for name, regime in forward_regimes[period].items()
+        ),
+    )
     regime_ids, own_roles = cast(
         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
         inventory.operation(
@@ -237,9 +288,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         pending = payload_bytes(tree=(carrier, regime_ids, own_roles, key, taste_key))
         inventory.close_unit()
         new_ids = regime_ids
-        for name, regime in regimes.items():
-            if period not in regime.active_periods:
-                continue
+        for name, regime in forward_regimes[period].items():
             cores = profile_forward_unit(
                 runtime=runtime,
                 regimes=regimes,
@@ -398,7 +447,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         add_bytes(
             target=pending,
             source=_period_copy_reservation(
-                regimes=regimes,
+                regimes=forward_regimes[period],
                 values=values,
                 flags=flags,
                 policies=policies,
@@ -435,6 +484,52 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     )
 
 
+def _compile_forward_units_in_parallel(
+    *, n_workers: int, units: tuple[Callable[[], object], ...]
+) -> None:
+    """Fill the runtime's executable cache by profiling forward units concurrently.
+
+    Tracing holds the GIL and XLA compilation releases it, so the pool overlaps
+    compiles the way the solve's compilation waves do. The runtime's cache owns
+    one in-flight compilation per key, so duplicates across units compile once.
+    Each task copies the caller's contextvars for compilation phase records.
+    JAX trace settings are thread-local, not contextvars: a worker whose effective
+    settings differ must do no speculative work. The subsequent ordered walk
+    then fills missing entries under the caller's settings. One worker keeps
+    the ordered walk alone.
+    """
+    if n_workers <= 1 or len(units) <= 1:
+        return
+    trace_settings = _trace_settings_key()
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = [
+            pool.submit(
+                contextvars.copy_context().run,
+                partial(
+                    _compile_forward_unit_if_context_matches,
+                    unit=unit,
+                    trace_settings=trace_settings,
+                ),
+            )
+            for unit in units
+        ]
+    for future in futures:
+        future.result()
+
+
+def _compile_forward_unit_if_context_matches(
+    *, unit: Callable[[], object], trace_settings: Hashable
+) -> None:
+    """Warm a unit only under the semantic trace context of the calling thread.
+
+    A mismatch is a safe cache-warming miss, not a compilation failure. Never
+    run the unit first and inspect the resulting key afterwards: tracing can
+    itself reject otherwise valid user functions under different settings.
+    """
+    if _trace_settings_key() == trace_settings:
+        unit()
+
+
 def _profile_next_subjects(
     *,
     inventory: ChunkProfileInventory,
@@ -464,11 +559,19 @@ def _profile_next_subjects(
     jax.ShapeDtypeStruct,
 ]:
     """Advance state, membership and ordinary-key metadata in actual dispatch order."""
+    site_scalar = jax.ShapeDtypeStruct((), np.uint32)
+    site_key = cast(
+        "jax.ShapeDtypeStruct",
+        inventory.operation(
+            function=_site_simulation_key,
+            arguments={"key": key, "period": site_scalar, "regime_id": site_scalar},
+        ),
+    )
     split = cast(
         "tuple[jax.ShapeDtypeStruct, ...]",
         inventory.operation(
             function=_split_simulation_key,
-            arguments={"key": key},
+            arguments={"key": site_key},
             static_arguments={"partitionable": jax.config.jax_threefry_partitionable},
         ),
     )
@@ -515,6 +618,15 @@ def _profile_next_subjects(
         _record_core(inventory=inventory, profile=cores["route"], family="route"),
     )
     targets = regime.simulation.reachability.targets(period=period, source=name)
+    inventory.operation(
+        function=regime_probability_flags,
+        arguments={"probabilities": tuple(route.values()), "rows": mask},
+        static_arguments={
+            "inactive_indices": regime_probability_inactive_indices(
+                names=tuple(route), active_regimes_next_period=targets
+            )
+        },
+    )
     names = sorted(
         (target for target in targets if target in route),
         key=lambda target: int(regime_names_to_ids[target]),

@@ -37,7 +37,7 @@ def test_joint_transition_is_an_edge_owned_public_declaration() -> None:
     )
 
     regime = Regime(
-        transition=_next_regime,
+        regime_transitions=_next_regime,
         states={"wealth": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
         state_transitions={"wealth": lambda wealth: wealth},
         functions={"utility": _utility},

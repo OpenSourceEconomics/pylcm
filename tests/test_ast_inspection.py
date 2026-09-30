@@ -5,7 +5,9 @@ from typing import Any
 
 import pytest
 
+from _lcm.regime_building.schedules import _period_masked
 from _lcm.utils.ast_inspection import _get_func_indexing_params
+from lcm import MarkovTransition
 
 
 def _good_multi(*, period: int, health: int, probs_array: Any) -> Any:
@@ -215,3 +217,30 @@ def test_uninspectable_callable_object_names_its_class() -> None:
         _get_func_indexing_params(
             func=namespace["_Dynamic"](), array_param_name="probs_array"
         )
+
+
+def test_get_func_indexing_params_reads_through_a_dated_law() -> None:
+    """A law lowered from an age schedule is indexed like the law it wraps."""
+    masked = _period_masked(
+        cell=_good_three,
+        periods=(0, 1),
+        names=("period", "work", "partner", "probs_array"),
+    )
+    assert _get_func_indexing_params(func=masked, array_param_name="probs_array") == [
+        "period",
+        "work",
+        "partner",
+    ]
+
+
+def test_get_func_indexing_params_reads_through_a_dated_markov_law() -> None:
+    """A dated law wrapped as a `MarkovTransition` is indexed like its source."""
+    masked = _period_masked(
+        cell=_good_three,
+        periods=(0, 1),
+        names=("period", "work", "partner", "probs_array"),
+    )
+    assert _get_func_indexing_params(
+        func=MarkovTransition(func=masked, targets=("a",)),
+        array_param_name="probs_array",
+    ) == ["period", "work", "partner"]

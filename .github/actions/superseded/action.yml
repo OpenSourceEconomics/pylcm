@@ -1,0 +1,48 @@
+---
+name: superseded
+description: >-
+  Report whether a newer pull-request run of this workflow for the same head
+  (same head repository and branch) exists, i.e. the current run was cancelled
+  because the concurrency group replaced it.
+outputs:
+  superseded:
+    description: >-
+      `true` only for a pull-request run when a newer run of this workflow from
+      the same head repository and branch exists.
+    value: ${{ steps.check.outputs.superseded }}
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |-
+        superseded=false
+        if test "${GITHUB_EVENT_NAME}" = pull_request; then
+          repo="repos/${GITHUB_REPOSITORY}/actions"
+          current=$(gh api "${repo}/runs/${GITHUB_RUN_ID}")
+          workflow_id=$(jq -er '.workflow_id' <<< "${current}")
+          head_repo=$(jq -er '.head_repository.full_name' <<< "${current}")
+          head_branch=$(jq -er '.head_branch' <<< "${current}")
+          runs="${repo}/workflows/${workflow_id}/runs"
+          # Encode branch names as query values, not URL syntax. Recheck the
+          # literal identity in the response: the server filter is not proof.
+          newer=$(
+            gh api --method GET "${runs}" \
+              --raw-field "branch=${head_branch}" \
+              --raw-field event=pull_request \
+              | jq --argjson current "${current}" '
+                [.workflow_runs[] | select(
+                  .id > $current.id
+                  and .workflow_id == $current.workflow_id
+                  and .event == "pull_request"
+                  and .head_repository.full_name
+                      == $current.head_repository.full_name
+                  and .head_branch == $current.head_branch
+                )] | length'
+          )
+          echo "newer runs from ${head_repo}:${head_branch}: ${newer}"
+          if test "${newer}" -gt 0; then superseded=true; fi
+        fi
+        echo "superseded=${superseded}" >> "$GITHUB_OUTPUT"

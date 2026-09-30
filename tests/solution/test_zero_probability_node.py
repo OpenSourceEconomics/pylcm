@@ -30,6 +30,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, IntND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 # The entry names 10.0 at the middle node, outside income's support.
@@ -74,18 +75,21 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
+                ),
                 states={},
                 state_transitions={
                     "income": {"target": _entry_income},
-                    "health": {"target": MarkovTransition(_health_probabilities)},
+                    "health": {"target": MarkovTransition(func=_health_probabilities)},
                 },
                 functions={"utility": _zero_utility},
                 certainty_equivalent=certainty_equivalent,
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
                     "health": DiscreteGrid(category_class=Health),
@@ -95,6 +99,7 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

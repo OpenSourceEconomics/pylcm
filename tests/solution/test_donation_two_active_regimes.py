@@ -28,7 +28,15 @@ from _lcm.execution.value_transfer import ValueArtifactAddress
 from _lcm.solution import backward_induction
 from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.solve_inputs import SolveInputMappings, locate_artifact
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    ByAge,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.solver_api import (
     ArtifactKey,
     ContinuationCapabilities,
@@ -49,6 +57,7 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
+from tests.test_solver_api_out_of_tree import TerminalPublisher
 
 _N_PERIODS = 3
 _WEALTH = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
@@ -240,18 +249,20 @@ class _DonatingCounterSolver(_CounterSolver):
     donation_candidates = ("count",)
 
 
-def _always(age: ScalarFloat) -> bool:  # noqa: ARG001
-    """Keep the regime acting in every period of the age grid."""
-    return True
-
-
 def _model(*, solver_class: type[_CounterSolver]) -> Model:
-    """Build the two-regime model, both regimes acting in every period."""
+    """Build the two-regime model, both regimes acting at every non-final age.
+
+    Each acting regime stays in itself until the last acting age, where it
+    moves into the terminal `dead`.
+    """
     return Model(
         regimes={
             name: Regime(
-                transition={name: MarkovTransition(_stay)},
-                active=_always,
+                regime_transitions=ByAge.until(
+                    stop_age_exclusive=_N_PERIODS,
+                    law={name: MarkovTransition(func=_stay)},
+                    then={"dead": MarkovTransition(func=_stay)},
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _utility},
@@ -261,13 +272,15 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
         }
         | {
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
+                solver=TerminalPublisher(parent=solver_class()),
             )
         },
-        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=0, stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: _ACTING_REGIMES},
     )
 
 

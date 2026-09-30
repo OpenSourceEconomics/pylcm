@@ -5,6 +5,22 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Required starting problems and keyword-only age-indexed declarations
+
+- `Model(..., initial_regimes=...)` is required and has no default. It maps age
+  selectors (exact age, tuple, `range`, `AgeRange(start=..., stop=...)`) to one regime
+  name or a nonempty sequence of names; the Cartesian pairs are the admissible roots,
+  published as `model.initial_nodes`. `None`, a bare name, an empty mapping, unknown
+  names and off-grid ages raise.
+- Solved problems are derived from the roots — physical successors plus declared value
+  reads — rather than from transition schedules. `ByAge` selects laws only;
+  `ByAge(cases=..., default=law)` fills every unmatched age, including the last.
+- Terminality is exactly `regime_transitions is None`.
+- `ByAge`, `ByAge.until`, `AgeRange`, `Choose` and `MarkovTransition` take keyword
+  arguments only. `ByAge.until(*, stop_age_exclusive, law, then, start_age_inclusive)`
+  uses `then` at the last source age below `stop_age_exclusive`. See
+  [Migrating to age-indexed regimes](docs/user_guide/migrating_dated_regimes.md).
+
 ### Initial-condition validation without simulating
 
 - `Model.validate_initial_conditions(initial_conditions=..., params=...)` and
@@ -814,7 +830,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `None` now masks a model-level entry instead.
 
 - Regime transitions take a third form: a per-target dict
-  `{target_regime: MarkovTransition(prob_func)}` whose key set declares the regime's
+  `{target_regime: MarkovTransition(func=prob_func)}` whose key set declares the regime's
   reachable targets — omitted regimes are structurally unreachable. Per-target dicts in
   `state_transitions` hand state values across regime boundaries, including into states
   the source regime does not carry and across grids that differ between regimes.

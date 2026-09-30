@@ -29,7 +29,7 @@ from _lcm.simulation.programs import (
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import ArgmaxQOverAFunction, QAndFFunction
 from benchmarks.asv._simulation_witnesses import WITNESSES
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import ACTION_PRODUCT_AXIS
@@ -43,6 +43,7 @@ from lcm.typing import (
 )
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import taste_shocks_toy
+from tests.test_models.schedules import until_exit
 
 # A regime whose solve kernel streams its action product, and one whose
 # collective kernel keeps the canonical dense reducer and whose routing a host
@@ -124,12 +125,16 @@ def test_terminal_regime_declares_no_route_program() -> None:
 
 
 def test_decision_program_declares_its_continuation_reads() -> None:
-    """A decision names every stored value leaf it reads across the boundary."""
+    """A decision names every stored value leaf it reads across the boundary.
+
+    At the first period `work` declares only itself as a target, so that is the
+    one leaf it reads.
+    """
     program = _program(witness=_STREAMED[0], regime=_STREAMED[1], family="decision")
     assert [
         (read.target.kind.value, read.target.period, read.target.regime)
         for read in program.requirements.value_reads
-    ] == [("regime_value", 1, "dead"), ("regime_value", 1, "work")]
+    ] == [("regime_value", 1, "work")]
 
 
 def test_ungated_route_program_declares_no_value_read() -> None:
@@ -254,8 +259,11 @@ def _branch_terminal_utility() -> FloatND:
 def _branching_regime() -> UserRegime:
     """Return one of the two regimes a subject moves between."""
     return UserRegime(
-        transition=_branch_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law=Choose(func=_branch_next_regime, targets=("stay", "switch", "done")),
+            exits=("done",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         state_transitions={"wealth": _branch_next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3)},
@@ -272,11 +280,12 @@ def _two_target_model() -> Model:
             "stay": _branching_regime(),
             "switch": _branching_regime(),
             "done": UserRegime(
-                transition=None, functions={"utility": _branch_terminal_utility}
+                regime_transitions=None, functions={"utility": _branch_terminal_utility}
             ),
         },
         regime_id_class=_BranchRegimeId,
         ages=AgeGrid(start=0, stop=2, step="Y"),
+        initial_regimes={0: "stay"},
     )
 
 

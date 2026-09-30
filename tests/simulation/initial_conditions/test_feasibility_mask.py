@@ -26,10 +26,7 @@ def test_infeasible_initial_states_detected():
     model = make_constraint_model(
         wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
-    params = {
-        "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": 0.95, "final_age_alive": 1}
     _working_life = model.regime_names_to_ids["working_life"]
     with pytest.raises(InvalidInitialConditionsError):
         model.simulate(
@@ -52,10 +49,7 @@ def test_on_grid_state_but_combination_infeasible():
     model = make_constraint_model(
         wealth_grid=LinSpacedGrid(start=0.3, stop=10, n_points=15)
     )
-    params = {
-        "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": 0.95, "final_age_alive": 1}
     _working_life = model.regime_names_to_ids["working_life"]
     with pytest.raises(InvalidInitialConditionsError):
         model.simulate(
@@ -74,10 +68,7 @@ def test_extrapolated_initial_states_accepted():
     model = make_constraint_model(
         wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
-    params = {
-        "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": 0.95, "final_age_alive": 1}
     _working_life = model.regime_names_to_ids["working_life"]
     model.simulate(
         log_level="debug",
@@ -95,10 +86,7 @@ def test_on_grid_initial_states_accepted():
     model = make_constraint_model(
         wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
-    params = {
-        "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": 0.95, "final_age_alive": 1}
     _working_life = model.regime_names_to_ids["working_life"]
     model.simulate(
         log_level="debug",
@@ -116,10 +104,8 @@ def test_irreg_spaced_grid_with_runtime_points():
     model = make_constraint_model(wealth_grid=IrregSpacedGrid(n_points=15))
     params = {
         "discount_factor": 0.95,
-        "working_life": {
-            "wealth": {"points": jnp.linspace(0.3, 10, 15)},
-            "next_regime": {"final_age_alive": 1},
-        },
+        "working_life": {"wealth": {"points": jnp.linspace(0.3, 10, 15)}},
+        "final_age_alive": 1,
     }
     _working_life = model.regime_names_to_ids["working_life"]
     with pytest.raises(InvalidInitialConditionsError, match="infeasible for 1 subject"):
@@ -312,10 +298,7 @@ def test_feasibility_mask_marks_each_subject_in_caller_order() -> None:
         wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
     flat_params = process_params(
-        params={
-            "discount_factor": 0.95,
-            "working_life": {"next_regime": {"final_age_alive": 1}},
-        },
+        params={"discount_factor": 0.95, "final_age_alive": 1},
         params_template=model._params_template,
     )
     _working_life = model.regime_names_to_ids["working_life"]

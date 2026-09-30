@@ -61,6 +61,7 @@ from lcm.solver_api import (
     PersistencePolicy,
     SolverIdentity,
 )
+from lcm.transition import AgeRange
 
 # beartype compiles every guard it writes under this synthetic filename.
 _BEARTYPE_BODY_FILENAME_PREFIX = "<@beartype("
@@ -516,13 +517,51 @@ def fingerprint_model(
     Hardware placement, compiler, sharding, tiling controls, prose descriptions,
     and ``Phased.simulate`` truth are intentionally excluded.
 
-    The record is split at the boundary no parameter vector crosses. Everything
-    a model fixes at build — topology, names, identities, declared callable
-    semantics — enters through `structure`, whose digest
-    `fingerprint_model_structure` produces; only concrete grid support and the
-    canonical solution parameters are read from `flat_params` here. A caller
-    holding a model across many parameter vectors passes the structure digest it
-    already computed, and pays the callable walk once rather than per solve.
+    The record is `fingerprint_model_programs` — everything the lowered
+    programs depend on — plus the canonical solution parameters, which are
+    traced inputs of those programs and so belong only to a stored solution.
+    A caller holding a model across many parameter vectors passes the
+    structure digest it already computed, and pays the callable walk once
+    rather than per solve.
+    """
+    record = (
+        ("pylcm-model-fingerprint", 7),
+        fingerprint_model_programs(
+            ages=ages,
+            regimes=regimes,
+            user_regimes=user_regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            flat_params=flat_params,
+            structure=structure,
+            process_grid_resolver=process_grid_resolver,
+        ),
+        project_solution_params(
+            flat_params=flat_params, regimes=regimes, projection=projection
+        ),
+    )
+    return _semantic_fingerprint(record)
+
+
+def fingerprint_model_programs(
+    *,
+    ages: AgeGrid,
+    regimes: Mapping[RegimeName, Regime],
+    user_regimes: _FingerprintUserRegimes,
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_params: FlatParams,
+    structure: str | None = None,
+    process_grid_resolver: ProcessGridResolver | None = None,
+) -> str:
+    """Hash the model facts every lowered solve program depends on.
+
+    The record is the structure digest `fingerprint_model_structure` produces
+    — topology, names, identities, declared callable semantics — plus the
+    concrete grid support read from `flat_params`. Fixed parameters enter
+    through the structure digest, since they can shape grids, topology and
+    static choices. Solve-time parameter values are traced inputs of every
+    program and are excluded: two parameter vectors of one model lower to
+    byte-identical programs, so they share this digest and the executables
+    keyed on it.
     """
     structure_digest = structure
     if structure_digest is None:
@@ -533,7 +572,7 @@ def fingerprint_model(
             regime_names_to_ids=regime_names_to_ids,
         )
     record = (
-        ("pylcm-model-fingerprint", 6),
+        ("pylcm-model-programs", 1),
         structure_digest,
         {
             name: _grid_support(
@@ -543,9 +582,6 @@ def fingerprint_model(
             )
             for name, regime in regimes.items()
         },
-        project_solution_params(
-            flat_params=flat_params, regimes=regimes, projection=projection
-        ),
     )
     return _semantic_fingerprint(record)
 
@@ -598,8 +634,9 @@ def fingerprint_model_structure(
     """Hash the mathematical facts a model fixes at build.
 
     No parameter vector reaches this record: it carries period and regime
-    topology, state and action names, stakeholders, solver and replay
-    identities, artifact descriptors, per-period state axes, the user
+    topology (the solved and the visited periods of every regime, but not the
+    declared starts that produced them), state and action names, stakeholders,
+    solver and replay identities, artifact descriptors, per-period state axes, the user
     declaration's callable semantics, and the regimes' own fixed parameters.
     Concrete grid support and canonical solution parameters belong to
     `fingerprint_model`, which reads them from the parameter vector.
@@ -615,12 +652,19 @@ def fingerprint_model_structure(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-structure", 7),
+        ("pylcm-model-structure", 8),
         tuple(ages.exact_values),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
             name: {
                 "active_periods": regime.active_periods,
+                "visited_periods": tuple(
+                    period
+                    for period, visited in enumerate(
+                        regime.simulation.reachability.active_regimes_by_period
+                    )
+                    if name in visited
+                ),
                 "state_names": regime.solution.state_names,
                 "action_names": regime.solution.action_names,
                 "fold_state_names": regime.fold_state_names,
@@ -672,7 +716,7 @@ def _grid_support(
 
 
 # Regime slots whose simulate-phase truth a stored solution is independent of.
-_TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
+_TRANSITION_SLOTS = frozenset({"state_transitions", "regime_transitions"})
 
 
 def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, object]:
@@ -1652,6 +1696,12 @@ class _SemanticHasher:
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
         for declaration in dataclasses.fields(cast("Any", value)):
+            # An optional field left at its default hashes like its absence, so
+            # declarations that never use it keep their durable fingerprint.
+            if declaration.metadata.get("fingerprint_omit_if_default") and (
+                getattr(value, declaration.name) is declaration.default
+            ):
+                continue
             self.frame(label="field", payload=declaration.name.encode())
             self.visit(value=getattr(value, declaration.name))
         # Exact pylcm declarations have their implementation sealed by the
@@ -2132,7 +2182,7 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         value=value, candidates=_TRUSTED_TERMINAL_OBJECT_TYPES
     ) or isinstance(value, CertaintyEquivalent):
         return True
-    if isinstance(value, Fraction | Enum | DiscreteGrid | Phased):
+    if isinstance(value, Fraction | Enum | DiscreteGrid | Phased | AgeRange):
         return True
     if isinstance(value, Array | np.dtype):
         return True
@@ -2147,9 +2197,14 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     if isinstance(value, type):
         return _is_closed_direct_type(value)
 
-    if not isinstance(value, functools.partial) and not _has_exact_type(
-        value=value,
-        candidates=(tuple, list, frozenset, set, dict, _MAPPING_PROXY_TYPE),
+    engine_callable = _is_engine_callable_dataclass(value)
+    if (
+        not engine_callable
+        and not isinstance(value, functools.partial)
+        and not _has_exact_type(
+            value=value,
+            candidates=(tuple, list, frozenset, set, dict, _MAPPING_PROXY_TYPE),
+        )
     ):
         return False
 
@@ -2159,6 +2214,15 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         return False
     active.add(identity)
     try:
+        if engine_callable:
+            # The class is pylcm's, so its `__call__` is sealed by the pylcm
+            # version; what varies per instance is its fields.
+            return all(
+                _is_closed_terminal_reference(
+                    value=getattr(value, field.name), _active=active
+                )
+                for field in dataclasses.fields(cast("Any", value))
+            )
         if isinstance(value, functools.partial):
             return _is_closed_terminal_reference(
                 value=value.func, _active=active
@@ -2179,6 +2243,16 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         )
     finally:
         active.remove(identity)
+
+
+def _is_engine_callable_dataclass(value: object) -> bool:
+    """Whether `value` is a callable dataclass instance of a shipped pylcm class."""
+    value_type = type(value)
+    return (
+        dataclasses.is_dataclass(value_type)
+        and callable(value)
+        and _is_shipped_pylcm_module_name(value_type.__module__)
+    )
 
 
 def _is_closed_direct_type(value: type) -> bool:
@@ -2645,6 +2719,7 @@ def _semantic_sort_key(value: object) -> tuple[str, str]:
 __all__ = [
     "SealedBinding",
     "fingerprint_model",
+    "fingerprint_model_programs",
     "fingerprint_model_structure",
     "fingerprint_solution_support",
     "project_solution_params",

@@ -62,10 +62,6 @@ def _target_utility(*, wealth: ScalarFloat, income: ScalarFloat) -> ScalarFloat:
     return wealth + income
 
 
-def _active_source(age: float) -> bool:
-    return age == 0
-
-
 def _active_target(age: float) -> bool:
     return age == 1
 
@@ -129,8 +125,7 @@ def _inputs(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain_target)},
-                active=_active_source,
+                regime_transitions={"target": MarkovTransition(func=_certain_target)},
                 functions={"utility": _utility},
                 joint_transitions={
                     "target": {
@@ -147,8 +142,7 @@ def _inputs(
                 },
             ),
             "target": Regime(
-                transition=None,
-                active=_active_target,
+                regime_transitions=None,
                 states={
                     "wealth": LinSpacedGrid(start=0, stop=1, n_points=2),
                     "income": LinSpacedGrid(start=0, stop=1, n_points=2),
@@ -159,6 +153,7 @@ def _inputs(
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
+        initial_regimes={0: "source"},
     )
     params: UserParams = {
         "source": {
@@ -184,6 +179,7 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
     import jax
 
     from _lcm import transition_checks
+    from _lcm.simulation.host_operations import ProfiledSimulationOperations
     from lcm.exceptions import InvalidStateTransitionProbabilitiesError
     from tests.simulation.test_joint_transition_entry_admission import (
         _inputs,
@@ -204,13 +200,14 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
     compiled = []
     weight_devices = []
     support_devices = []
-    original_compile = transition_checks._TransitionLawCompiler.__call__
+    original_admit = ProfiledSimulationOperations.admit_producer
     original_weights = transition_checks._evaluate_joint_weights
     original_support = transition_checks._evaluate_joint_support
 
-    def compile_and_record(self, widths):
-        executable = original_compile(self, widths)
-        compiled.append(executable)
+    def admit_and_record(self, **kwargs):
+        executable = original_admit(self, **kwargs)
+        if kwargs["output_sharding"] is not None:
+            compiled.append(executable)
         return executable
 
     def weights_and_record(**kwargs):
@@ -231,7 +228,7 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
             )
         return support
 
-    transition_checks._TransitionLawCompiler.__call__ = compile_and_record
+    ProfiledSimulationOperations.admit_producer = admit_and_record
     transition_checks._evaluate_joint_weights = weights_and_record
     transition_checks._evaluate_joint_support = support_and_record
     try:
@@ -257,11 +254,12 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
         for executable in compiled
         for sharding in jax.tree.leaves(executable.output_shardings)
     ]
-    # The shared compiler also sees the valid regime producer in summary and serial.
+    # The shared compiler also sees the valid regime producer in regime selection,
+    # summary and serial.
     assert (weight_devices, support_devices, output_devices) == (
         expected_weights,
         expected_supports,
-        [(selected_id,)] * 11,
+        [(selected_id,)] * 12,
     ), (weight_devices, support_devices, output_devices)
     print("JOINT-PRODUCER-PLACEMENT-OK")
     """

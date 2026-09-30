@@ -44,6 +44,8 @@ curvature, boundaries, or regions visited frequently in simulation.
 locations. They do not declare a budget kink or cliff to NBEGM; use the structured
 [budget declarations](../methods/nonconvex_budgets.md) for that.
 
+(fix-a-planner-axis-width)=
+
 ## Fix a planner axis width
 
 A solver declares its execution axes by name. `ExecutionConfig(axis_widths=...)` fixes
@@ -56,6 +58,7 @@ model = Model(
     regimes=regimes,
     ages=ages,
     regime_id_class=RegimeId,
+    initial_regimes=initial_regimes,
     execution_config=ExecutionConfig(axis_widths={"action_product": 8}),
 )
 ```
@@ -134,6 +137,62 @@ device memory.
 Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 [Upper envelopes](../reference/envelopes.md), and
 [Outer search](../reference/outer_search.md).
+
+## Factor a fixed component out of a Markov state
+
+A product-coded Markov state often combines a component that never changes, such as a
+fixed effect or a permanent type, with components that do. With a plain
+`MarkovTransition`, the law keeps the fixed part by giving zero probability to every
+code outside the current group. Declaring this structure lets continuation lookup select
+the current group and makes the fixed component available for sharding.
+
+Declare the group of each code with `fixed_component`:
+
+```python
+from lcm import MarkovTransition
+
+# Codes 0-3 = 2 * kind + health; `kind` never changes.
+state_transitions = {
+    "kind_health": MarkovTransition(
+        func=next_kind_health, fixed_component=(0, 0, 1, 1)
+    ),
+}
+```
+
+`fixed_component[code]` is the group of that code. The law must give probability zero to
+every target outside the current code's group, and every group must have the same number
+of codes. At model construction the state is rewritten into:
+
+- `kind_health_rest`, the changing part, carrying the restricted Markov law;
+- `kind_health_fixed`, the group, a model-level state with an identity law;
+- a DAG function `kind_health` that recombines the original code, so utility,
+  constraints and other functions keep reading `kind_health` unchanged.
+
+Continuation lookup selects the current group by index. For a linear expectation, the
+original probability vector and lottery-slot order are retained, including
+zero-probability slots; the reduction is not shortened. This preserves the original
+reduction layout while keeping value reads local to the current group. Published values
+can still differ in floating-point rounding between the annotated and original models.
+
+Use it when a Markov state's transition matrix is block-diagonal across a component,
+that is, when most entries of each row are structurally zero. A state without such a
+component gains nothing, and a model that does not use the annotation is unaffected.
+
+Because `<s>_fixed` is a model-level state, it can be named in
+`ExecutionConfig(sharded_states=("kind_health_fixed",))`, which spreads the groups
+across devices.
+
+`Model.simulate` takes initial conditions in the declared state's codes: pass a
+`kind_health` column in a DataFrame or a `"kind_health"` entry in a mapping, and it is
+split into the two parts. The public validation and feasibility methods accept the same
+original observations. Labels are interpreted only on rows whose initial regime carries
+the state; irrelevant cells may remain blank.
+
+The annotation works in model-level, regime-level, per-target and `Phased` laws. Every
+carrier, including a terminal regime, uses the same code grouping. Each outgoing law
+must declare that grouping or use `fixed_transition`; inconsistent groupings and
+reset/entry laws without an established group are rejected. Generated `_rest` and
+`_fixed` names must be unused by user declarations.
 
 ## Distribute state work
 
@@ -249,6 +308,19 @@ separates them, so a refusal is never ambiguous about which ceiling it was measu
 against. Field-by-field contracts are in
 [Runtime, results, and persistence](../reference/runtime_and_results.md).
 
+### Exhaustive width selection across periods
+
+Under a budget, exhaustive search checks each core's ranked width frontier from the
+widest candidate and selects the first admitted rank. Admission uses the current
+period's residency and each required executable variant's compiler reservation. Memory
+need not be monotone in frontier rank: a refused neighbour does not prove that all
+earlier candidates also refuse.
+
+`WidthSearchPolicy(carry_across_periods=True)` is accepted for compatibility and has no
+effect. Every period follows the full ranked walk; independent cores share compilation
+waves, and identical lowering keys still reuse compiled programs. There is no
+cross-period candidate-skipping or compilation-saving guarantee.
+
 ## Batch forward simulation
 
 Set `ExecutionConfig(axis_widths={"subject": k})` on the model to process subjects in
@@ -354,6 +426,80 @@ processes that only import the model.
 
 Runtime environment controls are listed in
 [Runtime, results, and persistence](../reference/runtime_and_results.md).
+
+## Choose knobs from measurements
+
+The knobs above change how the same program is executed. The measured examples below
+show why each one needs a measurement on your own model before it is set.
+
+### Wider is not always faster
+
+Under a budget, the width search admits the widest candidate that fits. That is a memory
+criterion, not a speed criterion, and a narrower width can run faster because smaller
+tiles materialise smaller intermediates:
+
+- Borella marriage-and-taxes model, simulation, one A40, fp32: `action_product` 16
+  instead of 64 was 12% faster cold and 18% faster warm, with a byte-identical panel.
+- The same model's solve: a `cell` width of 2048 instead of 8192 on the `couple_work`
+  regime was about 20% faster on a single-period replay but flat on the full solve,
+  inside the run-to-run spread.
+- ACA retirement model, 8×A40, fp32: halving or quartering the `cell` width of the
+  costliest regime left its single-period replay time unchanged and only cut compiler
+  temporary memory.
+
+So measure a width on a single-period replay, confirm it with one production pair, and
+then pin it with `ExecutionConfig(axis_widths=...)`, per regime where the regimes differ
+(see [Fix a planner axis width](#fix-a-planner-axis-width)).
+
+(which-states-can-be-sharded)=
+
+### Which states can be sharded
+
+- A discrete state qualifies when it is declared at model level.
+- A continuous state qualifies only on the continuous route: it is the only sharded
+  state, declared at model level, its grid is exactly a `LinSpacedGrid`, every regime
+  retains it and solves with ordinary hard-max `GridSearch`, and no regime is
+  collective, gated, or uses taste shocks.
+- A sharded state runs on the largest divisor of its extent that does not exceed the
+  device count; nothing is padded. A 24-point grid uses all 8 devices, a 10-point grid
+  only 5.
+- Several sharded states place one point per device, so the product of their extents
+  must fit the device count.
+
+Sharded states come first in the value array's axis order. Compare sharded and unsharded
+values by state name or through the simulated panel, never by axis position.
+
+At fp32, a sharded solve is a different compiled program and can round differently.
+Choices whose values are nearly tied can then flip, and a flip propagates through the
+rest of that subject's history. Measured on the Borella model, fp32, 5×A40 sharded
+against 1×A40: 17,084 of 20,000 simulated subjects' actions diverged at some point, with
+a median relative value gap of 1.7e-6 at the first divergence. Judge such a difference
+against an fp64 control before treating it as a defect or as noise.
+
+### Subject sharding for simulate-heavy models
+
+When simulation, not the solve, dominates a call, spread the simulated subjects over all
+devices with `ExecutionConfig(simulation_sharding="subjects")`; see
+[subject-parallel simulation](subject_parallel_simulation.md). Measured on the ACA
+retirement model, 8×A40, fp32, one pair: the warm call went from 1,686 s to 1,064 s and
+warm simulation from 801 s to 191 s, with the solve time and device peak unchanged and
+bitwise-equal panels.
+
+### How to measure
+
+Time three calls in one process and report them separately:
+
+- `cold`: the first call, including compilation;
+- `warm_same`: a repeat with the same parameters;
+- `warm_changed`: a repeat with changed parameters, which is what an estimation loop
+  pays.
+
+To iterate on one slow regime-period without a full backward induction, set
+`LCM_CAPTURE_PERIOD="<regime>@<period>"` and `LCM_CAPTURE_DIR` for one solve. That
+writes the period's kernel inputs, and `_lcm.solution.period_replay` then runs just that
+period under a candidate setting. Check that the replayed values match the in-context
+values bitwise before you trust its timings. `benchmarks/perf_loop.py` in the pylcm
+repository runs a cold, warm and changed-parameter protocol on a named example model.
 
 ## Benchmark the decision you face
 

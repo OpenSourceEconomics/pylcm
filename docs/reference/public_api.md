@@ -56,6 +56,9 @@ and the correctness of destinations require page-specific documentation and test
 | --------------------------------------------------------------------- | ---------------------------------- |
 | [`lcm.MarkovTransition`](transitions.md#api-state-transitions)        | Stochastic transition wrapper      |
 | [`lcm.JointTransition`](transitions.md#api-joint-transitions)         | Shared-draw joint law              |
+| [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)            | Laws by exact age                  |
+| [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)         | Half-open age interval             |
+| [`lcm.Choose`](transitions.md#api-dated-regime-transitions)           | Deterministic regime choice        |
 | [`lcm.fixed_transition`](transitions.md#api-state-transitions)        | Identity law                       |
 | [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization) | Age-varying function               |
 | [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)     | Age-varying grid                   |
@@ -80,6 +83,7 @@ and the correctness of destinations require page-specific documentation and test
 | [`lcm.PowerMean`](../methods/preferences.md)                                    | Power-mean reduction            |
 | [`lcm.QuasiArithmeticMean`](../methods/preferences.md)                          | Quasi-arithmetic reduction      |
 | [`lcm.SimulationResult`](runtime_and_results.md#api-simulation-result)          | Deferred simulation result      |
+| [`lcm.PolicyLookup`](runtime_and_results.md#api-policy-lookup)                  | Per-period policy lookup result |
 | [`lcm.save_solution`](runtime_and_results.md#api-standalone-persistence)        | Save a complete solution        |
 | [`lcm.load_solution`](runtime_and_results.md#api-standalone-persistence)        | Load a complete solution lazily |
 | [`lcm.load_legacy_solution`](runtime_and_results.md#api-standalone-persistence) | Read the old value-only format  |
