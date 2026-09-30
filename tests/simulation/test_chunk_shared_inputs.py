@@ -27,9 +27,9 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
 ) -> None:
     """Each regime's space is completed a fixed number of times per simulate call.
 
-    The count does not depend on the subject-chunk width: `working_life` is
-    completed once for the regime-selection check and once for the simulation
-    inputs, `dead` once for the simulation inputs.
+    The count does not depend on the subject-chunk width: each regime is
+    completed once for the simulation inputs. The regime-selection check
+    already passed for these params in `solve`, so simulate reuses it.
     """
     model = get_model(
         n_periods=2,
@@ -64,7 +64,7 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
         )
     assert (result.n_subjects, counts) == (
         _N_SUBJECTS,
-        {"working_life": 2, "dead": 1},
+        {"working_life": 1, "dead": 1},
     )
 
 

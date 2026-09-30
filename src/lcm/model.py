@@ -626,6 +626,11 @@ class Model:
             OrderedDict()
         )
         self._declared_authority_lock = threading.Lock()
+        # Digests of full canonical params whose regime selection validated.
+        # Validation is a pure function of the sealed model and these params,
+        # so a repeat with identical params cannot raise; failures are never
+        # recorded, so every invalid call raises afresh.
+        self._validated_selection_params: set[str] = set()
         # Fusion verdicts read off compiled solve programs; warm solves reuse the
         # executables, so they reuse the verdicts instead of re-reading the HLO.
         self._gather_checks: GatherChecks = {}
@@ -904,6 +909,7 @@ class Model:
             "_simulate_entry_operations",
             "_declared_authority_cache",
             "_declared_authority_lock",
+            "_validated_selection_params",
             "_gather_checks",
             "_solution_param_projection",
             "_sealed_bindings",
@@ -928,6 +934,7 @@ class Model:
         self._declared_authority_cache = OrderedDict()
         self._declared_authority_lock = threading.Lock()
         self._gather_checks = {}
+        self._validated_selection_params = set()
         self._solution_param_projection = solution_param_projection(self._regimes)
         stored_structure = state.get("_model_structure_fingerprint")
         self._seal()
@@ -3301,6 +3308,20 @@ class Model:
             regime.solution.sharded_state_names for regime in self._regimes.values()
         )
 
+    def _validate_regime_selection(self, *, flat_params: FlatParams) -> None:
+        """Validate regime selection once per distinct canonical params.
+
+        Serves only the unadmitted route. Entry admission validates on every
+        call, because its law producers are admitted against that call's memory.
+        """
+        digest = fingerprint_flat_params(flat_params)
+        if digest in self._validated_selection_params:
+            return
+        validate_regime_selection(
+            regimes=self._regimes, flat_params=flat_params, ages=self.ages
+        )
+        self._validated_selection_params.add(digest)
+
     # keyword-only-exempt: primary-argument=params
     def _process_params(
         self,
@@ -3349,9 +3370,7 @@ class Model:
         if array_writer is None:
             # Under entry admission the caller validates after the process
             # grids are admitted; see `simulate`.
-            validate_regime_selection(
-                regimes=self._regimes, flat_params=flat_params, ages=self.ages
-            )
+            self._validate_regime_selection(flat_params=flat_params)
         else:
             array_writer.publish(stage="params", tree=flat_params)
 
