@@ -57,9 +57,10 @@ from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
 )
-from _lcm.processes.ar1 import RouwenhorstAR1Process
+from _lcm.processes.ar1 import RouwenhorstAR1Process, TauchenAR1Process
+from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.processes.iid import NormalIIDProcess
+from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
 from _lcm.reachability import ModelReachability
 from _lcm.regime_building.broadcast import (
     merge_model_slots,
@@ -3538,8 +3539,9 @@ def _validate_sharded_state_capability(
         "Continuous sharding requires one concrete model-level LinSpacedGrid as "
         "the sole sharded state, retained in every regime, with singleton hard-max "
         "GridSearch. Unsharded states may include one static piecewise-linear "
-        "coordinate, concrete discrete grids, fixed unfolded normal/Rouwenhorst "
-        "processes and carried linear grids. Runtime state grids, folded processes, "
+        "coordinate, concrete discrete grids, fixed unfolded Gauss-Hermite "
+        "normal/log-normal processes, fixed Rouwenhorst/Tauchen processes and "
+        "carried linear grids. Runtime state grids, folded processes, "
         "mixed solvers, collective/gated/same-period routes and taste shocks "
         "are unsupported."
     )
@@ -3605,18 +3607,22 @@ def _supports_continuous_sharding_vocabulary(
 
 
 def _supports_unsharded_continuous_process(grid: Grid) -> bool:
-    """Accept fixed unfolded normal quadrature and Rouwenhorst node laws."""
-    if type(grid) not in (NormalIIDProcess, RouwenhorstAR1Process):
+    """Accept fixed node laws that stay replicated discrete solve axes.
+
+    - `NormalIIDProcess` / `LogNormalIIDProcess`: unfolded Gauss-Hermite nodes
+    - `RouwenhorstAR1Process` / `TauchenAR1Process`: any fixed node law
+
+    Every accepted process is fully specified and not state-conditioned, so its
+    nodes and transition matrix are constants of the model.
+    """
+    if type(grid) in (NormalIIDProcess, LogNormalIIDProcess):
+        iid = cast("NormalIIDProcess | LogNormalIIDProcess", grid)
+        if iid.fold or not iid.gauss_hermite:
+            return False
+    elif type(grid) not in (RouwenhorstAR1Process, TauchenAR1Process):
         return False
-    process = cast("NormalIIDProcess | RouwenhorstAR1Process", grid)
-    return (
-        process.is_fully_specified
-        and process.state_conditioned is None
-        and (
-            not isinstance(process, NormalIIDProcess)
-            or (not process.fold and process.gauss_hermite)
-        )
-    )
+    process = cast("_ContinuousStochasticProcess", grid)
+    return process.is_fully_specified and process.state_conditioned is None
 
 
 def _fail_if_a_sharded_state_is_pruned(
