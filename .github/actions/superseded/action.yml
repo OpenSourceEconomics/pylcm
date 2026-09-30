@@ -17,23 +17,32 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-        BRANCH: ${{ github.head_ref || github.ref_name }}
       run: |-
         superseded=false
         if test "${GITHUB_EVENT_NAME}" = pull_request; then
           repo="repos/${GITHUB_REPOSITORY}/actions"
-          run="${repo}/runs/${GITHUB_RUN_ID}"
-          workflow_id=$(gh api "${run}" --jq .workflow_id)
-          head_repo=$(gh api "${run}" --jq .head_repository.full_name)
+          current=$(gh api "${repo}/runs/${GITHUB_RUN_ID}")
+          workflow_id=$(jq -er '.workflow_id' <<< "${current}")
+          head_repo=$(jq -er '.head_repository.full_name' <<< "${current}")
+          head_branch=$(jq -er '.head_branch' <<< "${current}")
           runs="${repo}/workflows/${workflow_id}/runs"
-          same_head="select(.id > ${GITHUB_RUN_ID}"
-          same_head+=" and .event == \"pull_request\""
-          same_head+=" and .head_repository.full_name == \"${head_repo}\")"
+          # Encode branch names as query values, not URL syntax. Recheck the
+          # literal identity in the response: the server filter is not proof.
           newer=$(
-            gh api "${runs}?branch=${BRANCH}&event=pull_request" \
-              --jq "[.workflow_runs[] | ${same_head}] | length"
+            gh api --method GET "${runs}" \
+              --raw-field "branch=${head_branch}" \
+              --raw-field event=pull_request \
+              | jq --argjson current "${current}" '
+                [.workflow_runs[] | select(
+                  .id > $current.id
+                  and .workflow_id == $current.workflow_id
+                  and .event == "pull_request"
+                  and .head_repository.full_name
+                      == $current.head_repository.full_name
+                  and .head_branch == $current.head_branch
+                )] | length'
           )
-          echo "newer runs from ${head_repo}:${BRANCH}: ${newer}"
+          echo "newer runs from ${head_repo}:${head_branch}: ${newer}"
           if test "${newer}" -gt 0; then superseded=true; fi
         fi
         echo "superseded=${superseded}" >> "$GITHUB_OUTPUT"

@@ -39,25 +39,72 @@ _CURRENT = {
     "head_sha": "a" * 40,
     "head_repository": {"full_name": "alice/pylcm"},
 }
-_STUB_GH = r"""#!/usr/bin/env bash
-set -euo pipefail
-case "$2" in
-  */workflows/*/runs\?*) source="$STUB_DATA/runs.json" ;;
-  */runs/*) source="$STUB_DATA/current.json" ;;
-  *) echo "unexpected API URL: $2" >&2; exit 64 ;;
-esac
-jq -r "$4" "$source"
+_STUB_GH = """#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from urllib.parse import parse_qs, urlencode, urlsplit
+
+args = iter(sys.argv[1:])
+assert next(args) == "api"
+endpoint = None
+query = None
+fields = {}
+method = "GET"
+for arg in args:
+    if arg in ("--method", "-X"):
+        method = next(args)
+    elif arg in ("--raw-field", "-f"):
+        key, value = next(args).split("=", 1)
+        fields[key] = value
+    elif arg in ("--jq", "-q"):
+        query = next(args)
+    elif endpoint is None:
+        endpoint = arg
+    else:
+        raise AssertionError(f"Unexpected argument: {arg}")
+assert endpoint is not None and method == "GET"
+if fields:
+    endpoint += ("&" if "?" in endpoint else "?") + urlencode(fields)
+url = urlsplit(endpoint)
+root = Path(os.environ["STUB_DATA"])
+if "/workflows/" in url.path:
+    filters = parse_qs(url.query)
+    workflow_id = int(url.path.split("/workflows/", 1)[1].split("/", 1)[0])
+    data = json.loads((root / "runs.json").read_text())
+    data["workflow_runs"] = [
+        row for row in data["workflow_runs"]
+        if row["workflow_id"] == workflow_id
+        and ("branch" not in filters or row["head_branch"] == filters["branch"][0])
+        and ("event" not in filters or row["event"] == filters["event"][0])
+    ]
+else:
+    data = json.loads((root / "current.json").read_text())
+if query is None:
+    print(json.dumps(data))
+else:
+    result = subprocess.run(
+        ["jq", "-r", query], input=json.dumps(data), text=True, check=False,
+    )
+    sys.exit(result.returncode)
 """
 
 
 def _run_action(
-    *, tmp_path: Path, runs: list[dict[str, Any]], event: str = "pull_request"
+    *,
+    tmp_path: Path,
+    runs: list[dict[str, Any]],
+    event: str = "pull_request",
+    current: dict[str, Any] | None = None,
 ) -> str:
+    current = _CURRENT if current is None else current
     assert shutil.which("jq") is not None
     action = yaml.safe_load(
         (_REPO_ROOT / ".github/actions/superseded/action.yml").read_text()
     )
-    (tmp_path / "current.json").write_text(json.dumps(_CURRENT))
+    (tmp_path / "current.json").write_text(json.dumps(current))
     (tmp_path / "runs.json").write_text(json.dumps({"workflow_runs": runs}))
     gh = tmp_path / "gh"
     gh.write_text(_STUB_GH)
@@ -67,10 +114,10 @@ def _run_action(
         PATH=f"{tmp_path}:{os.environ['PATH']}",
         STUB_DATA=str(tmp_path),
         GITHUB_REPOSITORY="owner/repo",
-        GITHUB_RUN_ID=str(_CURRENT["id"]),
+        GITHUB_RUN_ID=str(current["id"]),
         GITHUB_EVENT_NAME=event,
         GITHUB_OUTPUT=str(tmp_path / "output"),
-        BRANCH="fix",
+        BRANCH=str(current["head_branch"]),
     )
     subprocess.run(  # noqa: S603 - repository-owned action script
         [_BASH, "-e", "-o", "pipefail", "-c", action["runs"]["steps"][0]["run"]],
@@ -155,3 +202,33 @@ def test_gate_passes_iff_every_lane_succeeded_or_the_run_was_superseded(
             if _gate_passes(step=step, needs=needs, superseded=superseded) != expected:
                 mismatches.append((needs, superseded))
     assert mismatches == []
+
+
+@pytest.mark.parametrize(
+    ("branch", "other_branch"),
+    [
+        ("fix#topic", "fix"),
+        ("fix&topic", "fix"),
+        ("fix%2Ftopic", "fix/topic"),
+        ("fix+topic", "different"),
+        ('fix"topic', "different"),
+        ("feature/ümlaut", "different"),
+    ],
+)
+@pytest.mark.parametrize("same_branch", [False, True])
+def test_supersession_preserves_literal_branch_identity(
+    *,
+    tmp_path: Path,
+    branch: str,
+    other_branch: str,
+    same_branch: bool,
+) -> None:
+    """A query metacharacter must neither alias nor lose the PR's branch."""
+    current = {**_CURRENT, "head_branch": branch}
+    newer = {
+        **current,
+        "id": 101,
+        "head_branch": branch if same_branch else other_branch,
+    }
+    observed = _run_action(tmp_path=tmp_path, current=current, runs=[newer])
+    assert observed == f"superseded={str(same_branch).lower()}"
