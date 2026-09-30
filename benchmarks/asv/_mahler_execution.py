@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from lcm import ExecutionConfig, Model
 
 
-POLICY_LABEL = "capacity-half-a64-c4096-v1-fp64"
+POLICY_LABEL = "capacity-half-planned-v2-fp64"
 _FORMULA = "min(physical_free_bytes, allocator_limit_bytes - allocator_used_bytes) // 2"
 _WORKLOAD_MODULE = "lcm_examples.mahler_yum_2024"
 _RECEIPT_DIRECTORY = Path(__file__).resolve().parents[2] / ".asv" / "mahler-receipts"
@@ -52,7 +52,7 @@ def create_mahler_execution_config(
         "started_at": _timestamp(),
         "formula": _FORMULA,
         "headroom_divisor": 2,
-        "axis_widths": {"action_product": 64, "cell": 4096},
+        "axis_widths": {},
         "units": {
             "nvidia_smi_memory": "MiB",
             "jax_memory_stats": "bytes",
@@ -151,7 +151,6 @@ def _configure_observed_devices(
         raise ValueError("Measured headroom yields no positive workload budget.")
     return ExecutionConfig(
         devices=tuple(selected_ids),
-        axis_widths={"action_product": 64, "cell": 4096},
         device_memory_bytes=budget,
     )
 

@@ -113,11 +113,11 @@ retained under the output directory; `summary.json` is the entry point for revie
 
 ## Benchmark Scenarios
 
-| File                             | What it benchmarks                                                                                          |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `bench_precautionary_savings.py` | Solve (varying grid sizes), simulate (varying subjects), solve+simulate, lin vs irreg grid comparison       |
-| `bench_mahler_yum.py`            | Mahler & Yum (2024) replication, configured fp64 GPU series `capacity-half-a64-c4096-v1`                    |
-| `bench_aca_baseline.py`          | Reduced ACA benchmark: 18 regimes, tiny continuous grids, 2 preference types, and 1,000 subjects (GPU only) |
+| File                             | What it benchmarks                                                                                             |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `bench_precautionary_savings.py` | Solve (varying grid sizes), simulate (varying subjects), solve+simulate, lin vs irreg grid comparison          |
+| `bench_mahler_yum.py`            | Mahler & Yum (2024) replication, configured fp64 GPU series `capacity-half-planned-v2` (planner-chosen widths) |
+| `bench_aca_baseline.py`          | Reduced ACA benchmark: 18 regimes, tiny continuous grids, 2 preference types, and 1,000 subjects (GPU only)    |
 
 The reduced ACA benchmark preserves the 18-regime structure while using its benchmark
 profile. Production ACA runs use the production grid configuration and 3 preference

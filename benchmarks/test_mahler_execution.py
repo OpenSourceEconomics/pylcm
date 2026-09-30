@@ -84,7 +84,7 @@ def test_capacity_policy_uses_uuid_matched_limiting_headroom(
     )
 
     assert config.devices == (42, 3)
-    assert dict(config.axis_widths) == {"action_product": 64, "cell": 4096}
+    assert dict(config.axis_widths) == {}
     assert config.device_memory_bytes == (5 * _MIB + 3) // 2
     assert ordinals == [1, 0]
     receipt = json.loads(report.read_text())
