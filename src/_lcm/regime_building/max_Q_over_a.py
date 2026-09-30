@@ -83,6 +83,7 @@ def get_max_Q_over_a(
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
+    broadcast_state_names: tuple[StateName, ...] = (),
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -114,6 +115,10 @@ def get_max_Q_over_a(
             state product. The execution planner binds it before lowering.
         untiled_state_names: Non-co-mapped states evaluated by ordinary outer
             vmaps, keeping sharded coordinate axes outside the cell loop.
+        broadcast_state_names: Non-co-mapped states the continuation never
+            reads, evaluated by ordinary outer vmaps whose extent counts toward
+            the cell width. The continuation is then computed once per remaining
+            cell and broadcast along them.
         action_names: Tuple of action variable names (discrete first, continuous
             last — the `StateActionSpace.action_names` order).
         state_names: Tuple of state names.
@@ -238,6 +243,7 @@ def get_max_Q_over_a(
             variables=inner_state_names,
             width_keyword=cell_width_keyword,
             untiled_variables=untiled_state_names,
+            broadcast_variables=broadcast_state_names,
         )
         if cell_width_keyword is not None
         else productmap(
@@ -415,6 +421,7 @@ def get_streaming_max_Q_over_a(
     action_width_keyword: str = "_lcm_action_block_width",
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
+    broadcast_state_names: tuple[StateName, ...] = (),
 ) -> MaxQOverAFunction:
     """Build a singleton or collective V kernel that streams the action product.
 
@@ -502,6 +509,7 @@ def get_streaming_max_Q_over_a(
             variables=inner_state_names,
             width_keyword=cell_width_keyword,
             untiled_variables=untiled_state_names,
+            broadcast_variables=broadcast_state_names,
         )
         if cell_width_keyword is not None
         else productmap(

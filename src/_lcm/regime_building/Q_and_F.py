@@ -389,7 +389,34 @@ def get_Q_and_F(
         koopmans_aggregator=koopmans_aggregator,
         build_W_kwargs=_build_W_kwargs,
         arg_names=tuple(arg_names_of_Q_and_F),
+        continuation_reads=_continuation_reads(
+            deps=continuation_deps, arg_names=continuation_arg_names
+        ),
     )
+
+
+def _continuation_reads(
+    *, deps: tuple[Callable[..., Any], ...], arg_names: frozenset[str]
+) -> frozenset[str] | None:
+    """Every argument `compute_CE` reads from the cell, or `None` if unknowable.
+
+    `compute_CE` reads the cell only through its dependencies, whose published
+    signatures are resolved to leaf arguments, and through the further names it
+    returns beside them. A dependency taking variadic arguments could read any
+    name, so its reads are unknown.
+    """
+    parameters = [
+        parameter
+        for dep in deps
+        for parameter in inspect.signature(dep).parameters.values()
+    ]
+    if any(
+        parameter.kind
+        in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        for parameter in parameters
+    ):
+        return None
+    return frozenset(parameter.name for parameter in parameters) | arg_names
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -406,6 +433,12 @@ class _QAndF:
     """Assembles `W`'s further arguments from the cell."""
     arg_names: tuple[str, ...]
     """The published argument names, in order."""
+    continuation_reads: frozenset[str] | None
+    """Every argument the continuation reads from the cell, or `None` if unknown.
+
+    A state outside it enters `Q` only through utility, feasibility and `W`, so
+    the continuation is constant along that state's axis.
+    """
 
     def __post_init__(self) -> None:
         _publish_signature(
