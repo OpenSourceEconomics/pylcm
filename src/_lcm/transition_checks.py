@@ -1520,6 +1520,11 @@ def _validate_state_transition_single(
             )
             return
 
+    source_codes = (
+        None
+        if fixed_of_code is None
+        else _source_codes(grid_args=grid_args, state_name=transition.state_name)
+    )
     current_memory = (
         summary.memory if summary is not None and summary.memory is not None else memory
     )
@@ -1528,11 +1533,6 @@ def _validate_state_transition_single(
         grid_args=MappingProxyType(grid_args),
         scalar_kwargs=MappingProxyType(scalar_kwargs),
         memory=current_memory,
-    )
-    source_codes = (
-        None
-        if fixed_of_code is None
-        else _source_codes(grid_args=grid_args, state_name=transition.state_name)
     )
     _check_and_release_state_probability(
         probs=probs,
