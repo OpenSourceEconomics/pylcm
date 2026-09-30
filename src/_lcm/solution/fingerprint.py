@@ -814,7 +814,17 @@ def _semantic_fingerprint(value: object) -> str:
 
 
 class _SemanticHasher:
-    """Length-framed serializer feeding a SHA-256 digest."""
+    """Length-framed serializer feeding a SHA-256 digest.
+
+    A model reaches the same objects along many paths: every regime that reads a
+    shared helper, every GETTSIM target graph that contains the same policy
+    function. Each completed object visit keeps the exact frames it fed to the
+    digest, and a later visit of the same object replays them instead of walking
+    it again. Only visits that emitted no cycle back-reference are kept, since a
+    back-reference encodes the traversal depth of an enclosing object and so
+    depends on the path, not on the object. The replayed bytes are the bytes a
+    fresh walk would feed, so the digest does not depend on this reuse.
+    """
 
     def __init__(self, *, binding_recorder: BindingRecorder | None = None) -> None:
         self._digest = hashlib.sha256()
@@ -822,6 +832,11 @@ class _SemanticHasher:
         self._active_annotations: set[int] = set()
         self._active_bound_methods: dict[tuple[int, int], int] = {}
         self._binding_recorder = binding_recorder
+        self._back_references = 0
+        self._recording: list[object] | None = None
+        # Each entry keeps its object alive, so an id cannot be reused by a
+        # temporary created later in the same walk.
+        self._completed: dict[tuple[int, bool], tuple[object, list[object]]] = {}
 
     def hexdigest(self) -> str:
         return self._digest.hexdigest()
@@ -850,8 +865,21 @@ class _SemanticHasher:
 
     def frame(self, *, label: str, payload: bytes = b"") -> None:
         for part in (label.encode(), payload):
-            self._digest.update(len(part).to_bytes(8, byteorder="big"))
-            self._digest.update(part)
+            chunk = len(part).to_bytes(8, byteorder="big") + part
+            self._digest.update(chunk)
+            if self._recording is not None:
+                self._recording.append(chunk)
+
+    def _replay(self, frames: list[object]) -> None:
+        """Feed the frames of a completed visit to the digest again.
+
+        Each item is one framed chunk or the frame list of a nested visit.
+        """
+        for item in frames:
+            if isinstance(item, bytes):
+                self._digest.update(item)
+            else:
+                self._replay(cast("list[object]", item))
 
     def visit(self, *, value: object, _ignore_beartype_guards: bool = False) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915
         if value is _NUMPY_NO_VALUE:
@@ -973,6 +1001,7 @@ class _SemanticHasher:
 
         identity = id(value)
         if identity in self._active:
+            self._back_references += 1
             self.frame(
                 label="cycle-backreference",
                 payload=(
@@ -981,159 +1010,182 @@ class _SemanticHasher:
                 ).encode(),
             )
             return
+        completed_key = (identity, _ignore_beartype_guards)
+        if (completed := self._completed.get(completed_key)) is not None:
+            self._replay(completed[1])
+            if self._recording is not None:
+                self._recording.append(completed[1])
+            return
+        enclosing_recording = self._recording
+        recording: list[object] = []
+        self._recording = recording
+        back_references = self._back_references
+        is_complete = False
         # The anchor is its deterministic depth in the current traversal, never
         # the process-local object id. Tracking functions and classes as well as
         # containers is necessary because a helper method may refer back to the
         # class attribute through which it was reached.
         self._active[identity] = len(self._active)
         try:
-            if isinstance(value, types.ModuleType):
-                msg = (
-                    "Cannot durably fingerprint direct module dependency "
-                    f"{value.__name__}; reference a statically inspectable module "
-                    "attribute instead."
-                )
-                raise TypeError(msg)
-            if isinstance(value, DiscreteGrid):
-                if type(value) is not DiscreteGrid:
-                    msg = (
-                        "Cannot durably fingerprint DiscreteGrid subclass semantic "
-                        f"value {type(value).__module__}.{type(value).__qualname__}."
-                    )
-                    raise TypeError(msg)
-                self.frame(
-                    label="DiscreteGrid-start",
-                    payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
-                )
-                self.visit(value=value.categories)
-                self.visit(value=value.codes)
-                self.visit(value=value.ordered)
-                self.frame(label="DiscreteGrid-end")
-                return
-            if isinstance(value, Phased):
-                if type(value) is not Phased:
-                    msg = (
-                        "Cannot durably fingerprint Phased subclass semantic value "
-                        f"{type(value).__module__}.{type(value).__qualname__}."
-                    )
-                    raise TypeError(msg)
-                # Both members bind: a simulate-phase decision primitive changes
-                # what a stored solution is replayed with. Only the transition
-                # slots are exempt from simulate truth, and the regime
-                # declaration projects those before they reach the hasher.
-                self.frame(label="Phased-solve-start")
-                self.visit(value=value.solve)
-                self.frame(label="Phased-solve-end")
-                self.frame(label="Phased-simulate-start")
-                self.visit(value=value.simulate)
-                self.frame(label="Phased-simulate-end")
-                return
-            if isinstance(value, types.CodeType):
-                self._visit_code(value)
-                return
-            if isinstance(value, type):
-                if not _is_closed_direct_type(value):
-                    msg = (
-                        "Cannot durably fingerprint direct class dependency "
-                        f"{value.__module__}.{value.__qualname__}."
-                    )
-                    raise TypeError(msg)
-                self._visit_type(value)
-                return
-            if isinstance(value, Mapping):
-                if not _has_exact_type(
-                    value=value, candidates=(dict, _MAPPING_PROXY_TYPE)
-                ):
-                    msg = (
-                        "Cannot durably fingerprint custom Mapping semantic value "
-                        f"{type(value).__module__}.{type(value).__qualname__}."
-                    )
-                    raise TypeError(msg)
-                mapping = cast("Mapping[object, object]", value)
-                self.frame(label="mapping-start", payload=str(len(mapping)).encode())
-                for key in sorted(mapping, key=_semantic_sort_key):
-                    self.visit(value=key)
-                    self.visit(value=mapping[key])
-                self.frame(label="mapping-end")
-                return
-            if _has_exact_type(value=value, candidates=(tuple, list, frozenset, set)):
-                collection = cast("_SemanticCollection", value)
-                children = (
-                    sorted(collection, key=_semantic_sort_key)
-                    if isinstance(collection, frozenset | set)
-                    else collection
-                )
-                self.frame(
-                    label=type(value).__name__ + "-start",
-                    payload=str(len(collection)).encode(),
-                )
-                for child in children:
-                    self.visit(value=child)
-                self.frame(label=type(value).__name__ + "-end")
-                return
-            if isinstance(value, functools.partial):
-                self._validate_partial_arguments(value)
-                self.frame(label="partial-start")
-                self.visit(value=value.func)
-                self.visit(value=value.args)
-                keywords = dict(value.keywords or {})
-                if (backend := external_backend_binding(value)) is not None:
-                    keywords.pop("xnp")
-                    self.frame(label="reviewed-partial-backend")
-                    self.visit(value=backend)
-                self.visit(value=keywords)
-                self._visit_named_state(state=value.__dict__)
-                self.frame(label="partial-end")
-                return
-            if inspect.ismethod(value):
-                self._visit_referenced_bound_method(value)
-                return
-            if inspect.isfunction(value):
-                self._visit_function(
-                    function=value, ignore_beartype_guards=_ignore_beartype_guards
-                )
-                return
-            if inspect.isbuiltin(value):
-                self.frame(
-                    label="builtin",
-                    payload=(
-                        f"{getattr(value, '__module__', '')}."
-                        f"{getattr(value, '__qualname__', value.__name__)}"
-                    ).encode(),
-                )
-                owner = getattr(value, "__self__", None)
-                if owner is not None and not isinstance(owner, types.ModuleType):
-                    self.visit(value=owner)
-                return
-            if _is_solver_instance(value):
-                self._visit_solver(value)
-                return
-            if self._visit_certainty_equivalent(value):
-                return
-            if dataclasses.is_dataclass(value) and not isinstance(value, type):
-                self._visit_dataclass(value)
-                return
-            if callable(value):
-                self._visit_callable_object(value)
-                return
-            state = getattr(value, "__dict__", None)
-            slots = _slot_state(value)
-            if state or slots:
-                self.frame(
-                    label="object-state-start",
-                    payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
-                )
-                self._visit_named_state(state=state or {})
-                self._visit_named_state(state=slots)
-                self.frame(label="object-state-end")
-                return
-            msg = (
-                "Cannot durably fingerprint opaque semantic value of type "
-                f"{type(value).__module__}.{type(value).__qualname__}."
+            self._visit_active(
+                value=value, _ignore_beartype_guards=_ignore_beartype_guards
             )
-            raise TypeError(msg)
+            is_complete = True
         finally:
             del self._active[identity]
+            self._recording = enclosing_recording
+            if enclosing_recording is not None:
+                enclosing_recording.append(recording)
+            if is_complete and self._back_references == back_references:
+                self._completed[completed_key] = (value, recording)
+
+    def _visit_active(  # noqa: C901, PLR0911, PLR0912, PLR0915
+        self, *, value: object, _ignore_beartype_guards: bool
+    ) -> None:
+        """Hash one object already registered on the active traversal path."""
+        if isinstance(value, types.ModuleType):
+            msg = (
+                "Cannot durably fingerprint direct module dependency "
+                f"{value.__name__}; reference a statically inspectable module "
+                "attribute instead."
+            )
+            raise TypeError(msg)
+        if isinstance(value, DiscreteGrid):
+            if type(value) is not DiscreteGrid:
+                msg = (
+                    "Cannot durably fingerprint DiscreteGrid subclass semantic "
+                    f"value {type(value).__module__}.{type(value).__qualname__}."
+                )
+                raise TypeError(msg)
+            self.frame(
+                label="DiscreteGrid-start",
+                payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
+            )
+            self.visit(value=value.categories)
+            self.visit(value=value.codes)
+            self.visit(value=value.ordered)
+            self.frame(label="DiscreteGrid-end")
+            return
+        if isinstance(value, Phased):
+            if type(value) is not Phased:
+                msg = (
+                    "Cannot durably fingerprint Phased subclass semantic value "
+                    f"{type(value).__module__}.{type(value).__qualname__}."
+                )
+                raise TypeError(msg)
+            # Both members bind: a simulate-phase decision primitive changes
+            # what a stored solution is replayed with. Only the transition
+            # slots are exempt from simulate truth, and the regime
+            # declaration projects those before they reach the hasher.
+            self.frame(label="Phased-solve-start")
+            self.visit(value=value.solve)
+            self.frame(label="Phased-solve-end")
+            self.frame(label="Phased-simulate-start")
+            self.visit(value=value.simulate)
+            self.frame(label="Phased-simulate-end")
+            return
+        if isinstance(value, types.CodeType):
+            self._visit_code(value)
+            return
+        if isinstance(value, type):
+            if not _is_closed_direct_type(value):
+                msg = (
+                    "Cannot durably fingerprint direct class dependency "
+                    f"{value.__module__}.{value.__qualname__}."
+                )
+                raise TypeError(msg)
+            self._visit_type(value)
+            return
+        if isinstance(value, Mapping):
+            if not _has_exact_type(value=value, candidates=(dict, _MAPPING_PROXY_TYPE)):
+                msg = (
+                    "Cannot durably fingerprint custom Mapping semantic value "
+                    f"{type(value).__module__}.{type(value).__qualname__}."
+                )
+                raise TypeError(msg)
+            mapping = cast("Mapping[object, object]", value)
+            self.frame(label="mapping-start", payload=str(len(mapping)).encode())
+            for key in sorted(mapping, key=_semantic_sort_key):
+                self.visit(value=key)
+                self.visit(value=mapping[key])
+            self.frame(label="mapping-end")
+            return
+        if _has_exact_type(value=value, candidates=(tuple, list, frozenset, set)):
+            collection = cast("_SemanticCollection", value)
+            children = (
+                sorted(collection, key=_semantic_sort_key)
+                if isinstance(collection, frozenset | set)
+                else collection
+            )
+            self.frame(
+                label=type(value).__name__ + "-start",
+                payload=str(len(collection)).encode(),
+            )
+            for child in children:
+                self.visit(value=child)
+            self.frame(label=type(value).__name__ + "-end")
+            return
+        if isinstance(value, functools.partial):
+            self._validate_partial_arguments(value)
+            self.frame(label="partial-start")
+            self.visit(value=value.func)
+            self.visit(value=value.args)
+            keywords = dict(value.keywords or {})
+            if (backend := external_backend_binding(value)) is not None:
+                keywords.pop("xnp")
+                self.frame(label="reviewed-partial-backend")
+                self.visit(value=backend)
+            self.visit(value=keywords)
+            self._visit_named_state(state=value.__dict__)
+            self.frame(label="partial-end")
+            return
+        if inspect.ismethod(value):
+            self._visit_referenced_bound_method(value)
+            return
+        if inspect.isfunction(value):
+            self._visit_function(
+                function=value, ignore_beartype_guards=_ignore_beartype_guards
+            )
+            return
+        if inspect.isbuiltin(value):
+            self.frame(
+                label="builtin",
+                payload=(
+                    f"{getattr(value, '__module__', '')}."
+                    f"{getattr(value, '__qualname__', value.__name__)}"
+                ).encode(),
+            )
+            owner = getattr(value, "__self__", None)
+            if owner is not None and not isinstance(owner, types.ModuleType):
+                self.visit(value=owner)
+            return
+        if _is_solver_instance(value):
+            self._visit_solver(value)
+            return
+        if self._visit_certainty_equivalent(value):
+            return
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            self._visit_dataclass(value)
+            return
+        if callable(value):
+            self._visit_callable_object(value)
+            return
+        state = getattr(value, "__dict__", None)
+        slots = _slot_state(value)
+        if state or slots:
+            self.frame(
+                label="object-state-start",
+                payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
+            )
+            self._visit_named_state(state=state or {})
+            self._visit_named_state(state=slots)
+            self.frame(label="object-state-end")
+            return
+        msg = (
+            "Cannot durably fingerprint opaque semantic value of type "
+            f"{type(value).__module__}.{type(value).__qualname__}."
+        )
+        raise TypeError(msg)
 
     def _visit_code(self, code: types.CodeType) -> None:
         """Hash executable code without source paths or line-table noise."""
@@ -1278,6 +1330,7 @@ class _SemanticHasher:
         """Hash an exact JAX custom-JVP wrapper through its semantic callables."""
         identity = id(value)
         if identity in self._active:
+            self._back_references += 1
             self.frame(
                 label="cycle-backreference",
                 payload=(
@@ -1684,6 +1737,7 @@ class _SemanticHasher:
         identity = (id(function), id(receiver))
         if identity in self._active_bound_methods:
             receiver_type = receiver if isinstance(receiver, type) else type(receiver)
+            self._back_references += 1
             self.frame(
                 label="bound-method-cycle-backreference",
                 payload=(

@@ -2162,3 +2162,69 @@ def test_a_function_closing_over_a_lowered_law_is_fingerprinted_by_its_fields(
         for periods in (left, right)
     ]
     assert (digests[0] == digests[1]) is (left == right)
+
+
+class _WalksEveryPath(dict):
+    """A completed-visit store that never keeps a visit."""
+
+    # keyword-only-exempt: library-callback=dict.__setitem__
+    def __setitem__(self, key: object, value: object) -> None:
+        pass
+
+
+def _shared_helper(wealth: float) -> float:
+    return 2.0 * wealth
+
+
+def _reads_shared_helper_twice(wealth: float) -> float:
+    return _shared_helper(wealth) + _shared_helper(wealth)
+
+
+def _recursive_helper(wealth: float) -> float:
+    return wealth if wealth < 1.0 else _recursive_helper(wealth / 2.0)
+
+
+def _diamond(*, depth: int) -> tuple[object, ...]:
+    level: tuple[object, ...] = (_shared_helper,)
+    for _ in range(depth):
+        level = (level, level)
+    return level
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(
+            (_shared_helper, _reads_shared_helper_twice, _shared_helper), id="shared"
+        ),
+        pytest.param(
+            (_recursive_helper, _recursive_helper, _reads_shared_helper_twice),
+            id="cyclic",
+        ),
+        pytest.param(_diamond(depth=8), id="diamond"),
+    ],
+)
+def test_reused_visits_feed_the_digest_the_bytes_of_a_full_walk(
+    *, value: object
+) -> None:
+    """Replaying a completed visit leaves the digest of every-path walking."""
+    replayed = fingerprints._SemanticHasher()
+    replayed.visit(value=value)
+    walked = fingerprints._SemanticHasher()
+    walked._completed = _WalksEveryPath()
+    walked.visit(value=value)
+    assert replayed.hexdigest() == walked.hexdigest()
+
+
+def test_shared_objects_are_walked_once(*, monkeypatch) -> None:
+    """A diamond with 2**16 paths walks each object it reaches once."""
+    walked: list[int] = []
+    visit_active = fingerprints._SemanticHasher._visit_active
+
+    def counting(self: fingerprints._SemanticHasher, **kwargs: Any) -> None:
+        walked.append(id(kwargs["value"]))
+        visit_active(self, **kwargs)
+
+    monkeypatch.setattr(fingerprints._SemanticHasher, "_visit_active", counting)
+    fingerprints._semantic_fingerprint(_diamond(depth=16))
+    assert len(walked) == len(set(walked))
