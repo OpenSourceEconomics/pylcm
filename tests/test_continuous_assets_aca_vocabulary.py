@@ -23,12 +23,14 @@ from lcm import (
     ExecutionConfig,
     GridBreakpoint,
     LinSpacedGrid,
+    LogNormalIIDProcess,
     Model,
     NormalIIDProcess,
     Phased,
     PiecewiseLinSpacedGrid,
     Regime,
     RouwenhorstAR1Process,
+    TauchenAR1Process,
     categorical,
     fixed_transition,
 )
@@ -207,8 +209,47 @@ def test_assets_sharding_keeps_effective_phase_axes() -> None:
     assert shock_grid.fold is False
 
 
+TAUCHEN_AND_LOG_NORMAL = {
+    "shock": LogNormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=0.5),
+    "persistent": TauchenAR1Process(
+        n_points=3, gauss_hermite=False, rho=0.5, sigma=1.0, mu=0.0, n_std=2.0
+    ),
+}
+
+
 @pytest.mark.parametrize(
-    "unsupported", ["fold", "runtime_process", "extra_linear", "second_shard"]
+    "overrides",
+    [
+        {"persistent": TAUCHEN_AND_LOG_NORMAL["persistent"]},
+        {
+            "persistent": TauchenAR1Process(
+                n_points=3, gauss_hermite=True, rho=0.5, sigma=1.0, mu=0.0
+            )
+        },
+        {"shock": TAUCHEN_AND_LOG_NORMAL["shock"]},
+        TAUCHEN_AND_LOG_NORMAL,
+    ],
+    ids=["tauchen_binned", "tauchen_gauss_hermite", "log_normal", "both"],
+)
+def test_fixed_tauchen_and_log_normal_processes_admit_continuous_sharding(
+    *, overrides: dict[str, Any]
+) -> None:
+    """Fixed Tauchen and unfolded Gauss-Hermite log-normal nodes stay unsharded."""
+    model = _model(state_overrides=overrides)
+    assert model._execution.continuous_sharded_state == "assets"
+
+
+@pytest.mark.parametrize(
+    "unsupported",
+    [
+        "fold",
+        "runtime_process",
+        "runtime_tauchen",
+        "folded_log_normal",
+        "binned_log_normal",
+        "extra_linear",
+        "second_shard",
+    ],
 )
 def test_unsupported_compositions_refuse_before_solve(*, unsupported: str) -> None:
     """Unvalidated folded, runtime and multiple-shard compositions stay refused."""
@@ -216,6 +257,18 @@ def test_unsupported_compositions_refuse_before_solve(*, unsupported: str) -> No
     overrides = {}
     if unsupported == "runtime_process":
         overrides["shock"] = NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0)
+    if unsupported == "runtime_tauchen":
+        overrides["persistent"] = TauchenAR1Process(
+            n_points=3, gauss_hermite=False, rho=0.5, mu=0.0, n_std=2.0
+        )
+    if unsupported == "folded_log_normal":
+        overrides["shock"] = LogNormalIIDProcess(
+            n_points=3, gauss_hermite=True, mu=0.0, sigma=0.5, fold=True
+        )
+    if unsupported == "binned_log_normal":
+        overrides["shock"] = LogNormalIIDProcess(
+            n_points=3, gauss_hermite=False, mu=0.0, sigma=0.5, n_std=2.0
+        )
     if unsupported == "extra_linear":
         overrides["aime"] = LinSpacedGrid(start=0, stop=4, n_points=4)
     with pytest.raises(ExecutionPlanningError, match="Continuous sharding"):
