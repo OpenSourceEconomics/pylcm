@@ -1,5 +1,6 @@
 """Actual pending producer outputs are completed before conflicting budgeted cores."""
 
+import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -47,6 +48,8 @@ from tests.test_solver_api_out_of_tree import RegimeId as CounterRegimeId
 _SIZE = 1024
 _BUDGET = 128 * 1024 * 1024
 _GATE_TIMEOUT_SECONDS = 120.0
+# Replaced per test. The producer's matrix stays pending until the test sets it.
+_PRODUCER_GATE = threading.Event()
 
 
 @categorical(ordered=False)
@@ -60,35 +63,22 @@ def _utility(*, wealth: jax.Array, work: jax.Array) -> jax.Array:
 
 
 def _produce(*, wealth: jax.Array, work: jax.Array) -> tuple[jax.Array, jax.Array]:
-    return wealth, work @ work
+    """Return the matrix product once the test has opened `_PRODUCER_GATE`.
+
+    The matrix depends on a host callback that blocks on the gate, so whether it
+    is still pending is decided by the test, not by how fast the host multiplies.
+    """
+    held = jax.pure_callback(
+        _hold_until_released, jax.ShapeDtypeStruct(work.shape, work.dtype), work
+    )
+    return wealth, held @ held
 
 
-def _hold_until_released(*, work: np.ndarray, gate: threading.Event) -> np.ndarray:
-    """Keep the producer's execution unfinished until the test opens the gate."""
-    if not gate.wait(timeout=_GATE_TIMEOUT_SECONDS):
+def _hold_until_released(work: np.ndarray) -> np.ndarray:
+    if not _PRODUCER_GATE.wait(timeout=_GATE_TIMEOUT_SECONDS):
         msg = "The producer gate was never opened."
         raise TimeoutError(msg)
     return np.asarray(work)
-
-
-def _gated_produce(
-    *, gate: threading.Event
-) -> Callable[..., tuple[jax.Array, jax.Array]]:
-    """Build a producer whose matrix stays pending until `gate` is set.
-
-    The matrix depends on a host callback that blocks on the gate, so its
-    readiness is decided by the test, not by how fast the host runs the matmul.
-    """
-
-    def produce(*, wealth: jax.Array, work: jax.Array) -> tuple[jax.Array, jax.Array]:
-        held = jax.pure_callback(
-            lambda array: _hold_until_released(work=array, gate=gate),
-            jax.ShapeDtypeStruct(work.shape, work.dtype),
-            work,
-        )
-        return _produce(wealth=wealth, work=held)
-
-    return produce
 
 
 def _consume(*, previous_value: jax.Array, previous_matrix: jax.Array) -> jax.Array:
@@ -153,9 +143,6 @@ class _TwoProgramKernel:
 
 @dataclass(frozen=True)
 class _TwoProgramSolver(Solver):
-    gate: threading.Event
-    """Opened by the test; the producer's matrix is pending until then."""
-
     @property
     def capabilities(self) -> SolverExecutionCapabilities:
         return SolverExecutionCapabilities(
@@ -168,7 +155,7 @@ class _TwoProgramSolver(Solver):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         producer = CoreProgram(
             name="producer",
-            function=_gated_produce(gate=self.gate),
+            function=_produce,
             argument_builder=_producer_arguments,
             requirements=CoreExecutionRequirements(),
             output_roles=(
@@ -216,7 +203,7 @@ class _TwoProgramSolver(Solver):
         )
 
 
-def _model(*, budget: int | None, gate: threading.Event) -> Model:
+def _model(*, budget: int | None) -> Model:
     grid = LinSpacedGrid(start=1, stop=2, n_points=2)
     return Model(
         regimes={
@@ -226,7 +213,7 @@ def _model(*, budget: int | None, gate: threading.Event) -> Model:
                 states={"wealth": grid},
                 state_transitions={"wealth": lambda wealth: wealth},
                 functions={"utility": _utility},
-                solver=_TwoProgramSolver(gate=gate),
+                solver=_TwoProgramSolver(),
             ),
             "terminal": Regime(
                 active=lambda age: age == 1,
@@ -248,7 +235,8 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gate = threading.Event()
-    model = _model(budget=budget, gate=gate)
+    monkeypatch.setattr(sys.modules[__name__], "_PRODUCER_GATE", gate)
+    model = _model(budget=budget)
     left = (np.arange(_SIZE) % 8 + 1) / 8
     right = (np.arange(_SIZE) % 16 + 1) / 16
     host_work = np.outer(left, right)
