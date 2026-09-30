@@ -646,7 +646,11 @@ def _validate_regime_transition_single(
             law=cast("Callable[..., Mapping[RegimeName, FloatND]]", law),
             phase=phase,
             available_grids=MappingProxyType(available_grids),
-            regime_params=regime_params,
+            # The feasibility pools are not partialled over fixed params, while
+            # `regime_params` holds only the free ones: bind both.
+            regime_params=MappingProxyType(
+                {**regime.resolved_fixed_params, **regime_params}
+            ),
             scalar_kwargs=MappingProxyType(period_kwargs),
             active_regimes_next_period=active_regimes_next_period,
             regime_name=regime_name,
