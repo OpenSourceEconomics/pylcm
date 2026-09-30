@@ -134,8 +134,14 @@ def validate_simulation_inputs(
     A budgeted call keeps its user-law executables in `producers`, which a Model
     passes so they are reused across its calls and freed with it; without one,
     they live for this call only.
+
+    With validation off, an unknown state name is still rejected: a misnamed state
+    would otherwise simulate from values that were never supplied.
     """
     if not validation_enabled(logger):
+        _fail_if_state_names_are_wrong(
+            initial_conditions=initial_conditions, regimes=regimes
+        )
         return
     memory = _preflight_memory(
         execution=execution,
@@ -1190,6 +1196,24 @@ def _merged_regime_params(
         **regime.resolved_fixed_params,
         **dict(flat_params.get(regime_name, MappingProxyType({}))),
     }
+
+
+def _fail_if_state_names_are_wrong(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+) -> None:
+    """Raise on an initial state no regime has; a set comparison, no device read."""
+    provided = set(initial_conditions) - {"regime_id", "own_stakeholder"}
+    known = set(PSEUDO_STATE_NAMES).union(
+        *(regime.simulation.state_names for regime in regimes.values())
+    )
+    if extra := provided - known:
+        msg = (
+            f"Unknown initial states: {sorted(extra)}. "
+            f"Valid states are: {sorted(known)}"
+        )
+        raise InvalidInitialConditionsError(format_messages([msg]))
 
 
 def _format_missing_states_message(*, missing: set[str], required: set[str]) -> str:

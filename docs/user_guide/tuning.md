@@ -135,6 +135,60 @@ Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 [Upper envelopes](../reference/envelopes.md), and
 [Outer search](../reference/outer_search.md).
 
+## Factor a fixed component out of a Markov state
+
+A product-coded Markov state often combines a component that never changes, such as a
+fixed effect or a permanent type, with components that do. With a plain
+`MarkovTransition`, the law keeps the fixed part by giving zero probability to every
+code outside the current group. Declaring this structure lets continuation lookup select
+the current group and makes the fixed component available for sharding.
+
+Declare the group of each code with `fixed_component`:
+
+```python
+from lcm import MarkovTransition
+
+# Codes 0-3 = 2 * kind + health; `kind` never changes.
+state_transitions = {
+    "kind_health": MarkovTransition(next_kind_health, fixed_component=(0, 0, 1, 1)),
+}
+```
+
+`fixed_component[code]` is the group of that code. The law must give probability zero to
+every target outside the current code's group, and every group must have the same number
+of codes. At model construction the state is rewritten into:
+
+- `kind_health_rest`, the changing part, carrying the restricted Markov law;
+- `kind_health_fixed`, the group, a model-level state with an identity law;
+- a DAG function `kind_health` that recombines the original code, so utility,
+  constraints and other functions keep reading `kind_health` unchanged.
+
+Continuation lookup selects the current group by index. For a linear expectation, the
+original probability vector and lottery-slot order are retained, including
+zero-probability slots; the reduction is not shortened. This preserves the original
+reduction layout while keeping value reads local to the current group. Published values
+can still differ in floating-point rounding between the annotated and original models.
+
+Use it when a Markov state's transition matrix is block-diagonal across a component,
+that is, when most entries of each row are structurally zero. A state without such a
+component gains nothing, and a model that does not use the annotation is unaffected.
+
+Because `<s>_fixed` is a model-level state, it can be named in
+`ExecutionConfig(sharded_states=("kind_health_fixed",))`, which spreads the groups
+across devices.
+
+`Model.simulate` takes initial conditions in the declared state's codes: pass a
+`kind_health` column in a DataFrame or a `"kind_health"` entry in a mapping, and it is
+split into the two parts. The public validation and feasibility methods accept the same
+original observations. Labels are interpreted only on rows whose initial regime carries
+the state; irrelevant cells may remain blank.
+
+The annotation works in model-level, regime-level, per-target and `Phased` laws. Every
+carrier, including a terminal regime, uses the same code grouping. Each outgoing law
+must declare that grouping or use `fixed_transition`; inconsistent groupings and
+reset/entry laws without an established group are rejected. Generated `_rest` and
+`_fixed` names must be unused by user declarations.
+
 ## Distribute state work
 
 Declare a discrete state at model level, then name it in

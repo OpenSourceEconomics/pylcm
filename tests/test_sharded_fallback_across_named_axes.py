@@ -316,14 +316,14 @@ def _report(
 
     simulated = model.simulate(
         params=_PARAMS,
-        initial_conditions=_INITIAL_CONDITIONS,
+        initial_conditions=_initial_conditions_read_by(model),
         solution=solution,
         log_level="off",
         seed=42,
     )
     expected_frame = reference.simulate(
         params=_PARAMS,
-        initial_conditions=_INITIAL_CONDITIONS,
+        initial_conditions=_initial_conditions_read_by(reference),
         solution=reference_solution,
         log_level="off",
         seed=42,
@@ -617,3 +617,11 @@ def test_a_refused_route_names_both_device_axes(
     message = overlapping_meshes["message"]
     assert "x=4" in message
     assert "y=4" in message
+
+
+def _initial_conditions_read_by(model: Model) -> dict[str, Any]:
+    """Return the initial conditions restricted to the states `model` simulates."""
+    read = {"age", "regime_id"}.union(
+        *(regime.simulation.state_names for regime in model._regimes.values())
+    )
+    return {name: value for name, value in _INITIAL_CONDITIONS.items() if name in read}

@@ -13,7 +13,8 @@ regime needs exactly one producer for that `(target, state)` cell: an ordinary
 `state_transitions` law or a `JointTransition` output. In `state_transitions`:
 
 - an ordinary callable is deterministic;
-- `MarkovTransition(func)` wraps a probability-vector function;
+- `MarkovTransition(func)` wraps a probability-vector function; `fixed_component=`
+  declares a component the law never changes (see [tuning](../user_guide/tuning.md));
 - `fixed_transition("state_name")` declares the identity law;
 - a per-target mapping gives different laws for different reachable target regimes.
 

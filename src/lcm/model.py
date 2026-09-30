@@ -69,6 +69,11 @@ from _lcm.regime_building.finalize import (
     FinalizedUserRegime,
     finalize_regimes,
 )
+from _lcm.regime_building.fixed_components import (
+    factor_fixed_components,
+    rename_split_params,
+    split_initial_conditions,
+)
 from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
 from _lcm.regime_building.processing import (
     Regime,
@@ -559,6 +564,26 @@ class Model:
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
+        self.fixed_params = ensure_containers_are_immutable(fixed_params)
+        # A Markov state that declares a fixed component is carried as two states
+        # (group and position within it) before anything else reads the regimes.
+        (
+            regimes,
+            fixed_params,
+            states,
+            state_transitions,
+            functions,
+            self._fixed_component_splits,
+        ) = factor_fixed_components(
+            regimes=regimes,
+            fixed_params=self.fixed_params,
+            states=states,
+            state_transitions=state_transitions,
+            functions=functions,
+            constraints=constraints,
+            actions=actions,
+            derived_categoricals=derived_categoricals,
+        )
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self._simulate_runtime_regimes = {}
         self._simulate_entry_operations = ProfiledSimulationOperations()
@@ -2516,6 +2541,12 @@ class Model:
                             period_to_regime_to_replay_reader,
                         ),
                     )
+                initial_conditions = split_initial_conditions(
+                    initial_conditions=initial_conditions,
+                    splits=self._fixed_component_splits,
+                    user_regimes=self.user_regimes,
+                    regime_names_to_ids=self.regime_names_to_ids,
+                )
                 if isinstance(initial_conditions, pd.DataFrame):
                     initial_conditions = initial_conditions_from_dataframe(
                         df=initial_conditions,
@@ -2837,6 +2868,12 @@ class Model:
         """Canonicalize public feasibility inputs without allocation accounting."""
         self._sealed_bindings.fail_if_moved()
         flat_params = self._process_params(params)
+        initial_conditions = split_initial_conditions(
+            initial_conditions=initial_conditions,
+            splits=self._fixed_component_splits,
+            user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
@@ -2900,7 +2937,11 @@ class Model:
         case).
         """
         flat_params = broadcast_to_template(
-            params=params, template=self._params_template, required=True
+            params=rename_split_params(
+                params=params, splits=self._fixed_component_splits
+            ),
+            template=self._params_template,
+            required=True,
         )
         if has_series(flat_params):
             flat_params = convert_series_in_params(

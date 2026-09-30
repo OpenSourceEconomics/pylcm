@@ -1687,6 +1687,12 @@ class _SemanticHasher:
             payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
         )
         for declaration in dataclasses.fields(cast("Any", value)):
+            # An optional field left at its default hashes like its absence, so
+            # declarations that never use it keep their durable fingerprint.
+            if declaration.metadata.get("fingerprint_omit_if_default") and (
+                getattr(value, declaration.name) is declaration.default
+            ):
+                continue
             self.frame(label="field", payload=declaration.name.encode())
             self.visit(value=getattr(value, declaration.name))
         # Exact pylcm declarations have their implementation sealed by the
