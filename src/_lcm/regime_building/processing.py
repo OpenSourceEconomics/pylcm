@@ -4,8 +4,8 @@
 built against. `process_regimes` then compiles each regime's two phase
 namespaces — grids, transition plans, constraint routes, and the `Q_and_F`,
 `max_Q_over_a` and next-state closures each period needs.
-`compute_active_periods_by_regime` is the single definition of when a regime is
-active that both reachability and this build read.
+Coverage — when each regime is solved — comes from
+`_lcm.regime_building.schedules`, which both reachability and this build read.
 """
 
 import functools
@@ -18,7 +18,15 @@ from dataclasses import replace as dataclass_replace
 from itertools import product
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    cast,
+    no_type_check,
+    runtime_checkable,
+)
 
 import jax
 import numpy as np
@@ -51,6 +59,7 @@ from _lcm.egm.terminal import (
 from _lcm.egm.validation import savings_stage_reads_euler_state
 from _lcm.engine import (
     EGMPolicyRead,
+    FeasibilityPoolsByPeriod,
     NNBEGMPolicyRead,
     Regime,
     SimulationPhase,
@@ -112,6 +121,7 @@ from _lcm.regime_building.age_normalization import (
     normalize_age_specialization,
     periodized_tree_signature,
     resolve_periodized_nodes,
+    resolve_periodized_pools_by_period,
 )
 from _lcm.regime_building.canonicalize import canonicalize_phased_regimes
 from _lcm.regime_building.collective import (
@@ -121,6 +131,7 @@ from _lcm.regime_building.collective import (
 )
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
+from _lcm.regime_building.fixed_components import FixedComponentLaw
 from _lcm.regime_building.gated_edges import (
     CompiledEdgeFold,
     ResolvedGatedEdge,
@@ -203,6 +214,7 @@ from _lcm.transition_plans import (
     InterpolationBasisInfo,
     LotteryIndexCoordinate,
     LotteryLifetime,
+    OriginalLotteryLayout,
     OutputProducerRef,
     ParameterBinding,
     PhysicalCoordinate,
@@ -221,7 +233,6 @@ from _lcm.typing import (
     EGMCarryProducer,
     FlatParams,
     FunctionName,
-    MappingLeaf,
     NextStateSimulationFunction,
     ProcessName,
     QAndFFunction,
@@ -229,7 +240,6 @@ from _lcm.typing import (
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
-    SequenceLeaf,
     StateName,
     StateOrActionName,
     TransitionFunction,
@@ -248,7 +258,11 @@ from _lcm.variables import (
     simulate_variables_from_regime,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
@@ -270,32 +284,11 @@ from lcm.solvers import (
     UniformObservedFixedCost,
 )
 from lcm.transition import JointTransition, MarkovTransition
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
+from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
     RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
 ]
-
-
-def compute_active_periods_by_regime(
-    *,
-    ages: AgeGrid,
-    user_regimes: Mapping[RegimeName, object],
-) -> MappingProxyType[RegimeName, tuple[int, ...]]:
-    """Evaluate every regime's `active` predicate exactly once.
-
-    The single canonical activity schedule for the model: every other
-    subsystem that needs to know which periods a regime is active in
-    (reachability, age specialization, broadcast pruning, model-input
-    validation) consumes this mapping instead of re-evaluating
-    `Regime.active` or calling `AgeGrid.get_periods_where` itself.
-    """
-    return MappingProxyType(
-        {
-            regime_name: tuple(ages.get_periods_where(regime.active))  # ty: ignore[unresolved-attribute]
-            for regime_name, regime in user_regimes.items()
-        }
-    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -317,18 +310,33 @@ class PreparedModelStructure:
     active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]]
     """Periods in which each regime is locally active."""
 
+    gated_source_periods: MappingProxyType[
+        tuple[RegimeName, RegimeName], tuple[int, ...]
+    ]
+    """Per `(source, target)` gated edge, the source periods whose selected law
+    declares the gate."""
+
 
 def prepare_model_structure(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     ages: AgeGrid,
     active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]],
+    support_by_phase: Mapping[
+        str, Mapping[RegimeName, Mapping[int, tuple[RegimeName, ...]]]
+    ],
+    gated_source_periods: MappingProxyType[
+        tuple[RegimeName, RegimeName], tuple[int, ...]
+    ],
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
 
-    `active_periods_by_regime` must be the single canonical activity
-    mapping from `compute_active_periods_by_regime`, computed once by the
-    caller — this function does not evaluate `Regime.active` itself.
+    `active_periods_by_regime`, `support_by_phase` and `gated_source_periods`
+    are the coverage, the per-period targets and the per-edge gated source
+    periods resolved once from the declarations by the caller;
+    `visited_periods_by_regime` are the periods a subject can occupy, where the
+    simulate graph is active.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes)
     age_normalization = normalize_age_specialization(
@@ -336,28 +344,20 @@ def prepare_model_structure(
         phased_specs=raw_phase_specs,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
+        visited_periods_by_regime=visited_periods_by_regime,
     )
     phased_specs = age_normalization.phased_specs
-    transitions_by_phase: Mapping[PhaseName, Mapping[RegimeName, object]] = {
-        "solution": {
-            regime_name: spec.solution.regime_transition
-            for regime_name, spec in phased_specs.items()
-        },
-        "simulation": {
-            regime_name: spec.simulation.regime_transition
-            for regime_name, spec in phased_specs.items()
-        },
-    }
     try:
         reachability = build_model_reachability(
             n_periods=ages.n_periods,
             active_periods_by_regime=active_periods_by_regime,
-            transitions_by_phase=transitions_by_phase,
+            support_by_phase=support_by_phase,
             terminal_regimes={
                 regime_name
                 for regime_name, regime in user_regimes.items()
                 if regime.terminal
             },
+            visited_periods_by_regime=visited_periods_by_regime,
         )
     except ValueError as error:
         raise ModelInitializationError(str(error)) from error
@@ -367,6 +367,7 @@ def prepare_model_structure(
         grid_schedule=age_normalization.grid_schedule,
         reachability=reachability,
         active_periods_by_regime=active_periods_by_regime,
+        gated_source_periods=gated_source_periods,
     )
 
 
@@ -595,7 +596,10 @@ def process_regimes(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         regimes_to_active_periods=regimes_to_active_periods,
     )
-    _fail_if_same_period_ref_cycle(user_regimes=user_regimes)
+    _fail_if_same_period_ref_cycle(
+        user_regimes=user_regimes,
+        regimes_to_active_periods=regimes_to_active_periods,
+    )
 
     # Gated-edge declarations are a cross-regime
     # contract — validate endpoints, stakeholder layout, and projection coverage
@@ -605,6 +609,7 @@ def process_regimes(
         representative_user_regimes=representative_user_regimes,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         regimes_to_active_periods=regimes_to_active_periods,
+        gated_source_periods=prepared_structure.gated_source_periods,
     )
 
     # `fold=True` on a regime that another regime's gate reads nodewise (as a
@@ -748,6 +753,7 @@ def process_regimes(
     # it can only be built after all regimes exist.
     canonical_regimes = _attach_gated_edge_folds(
         canonical_regimes=canonical_regimes,
+        gated_source_periods=prepared_structure.gated_source_periods,
         user_regimes=user_regimes,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         period_to_regime_v_interp=period_to_regime_v_interp,
@@ -768,6 +774,7 @@ def process_regimes(
             canonical_regimes=build_canonical_regimes(
                 gated_continuations_by_source=gated_continuations_by_source
             ),
+            gated_source_periods=prepared_structure.gated_source_periods,
             user_regimes=user_regimes,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             period_to_regime_v_interp=period_to_regime_v_interp,
@@ -1403,6 +1410,7 @@ def _gated_continuation_specs(
 def _attach_gated_edge_folds(
     *,
     canonical_regimes: dict[RegimeName, Regime],
+    gated_source_periods: Mapping[tuple[RegimeName, RegimeName], tuple[int, ...]],
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     period_to_regime_v_interp: (
@@ -1485,11 +1493,21 @@ def _attach_gated_edge_folds(
                     target_name
                 ].discrete_states.values()
             )
-            # The periods the edge can ever fold at: those its target holds a
-            # value in. Backward induction folds at the target's own period and
-            # forward simulation at the source's `period + 1`, which is the
-            # same period seen from the consumer's side.
-            fold_periods = canonical_regimes[target_name].active_periods
+            # The periods the edge can ever fold at: those after a source
+            # period whose selected law declares this gate, where the target
+            # holds a value. Backward induction folds at the target's own
+            # period and forward simulation at the source's `period + 1`,
+            # which is the same period seen from the consumer's side. A target
+            # solved at other periods for other sources, or after a source
+            # period whose case declares no gate, owes this edge no fold there.
+            source_periods = frozenset(
+                gated_source_periods.get((source_name, target_name), ())
+            )
+            fold_periods = tuple(
+                period
+                for period in canonical_regimes[target_name].active_periods
+                if period - 1 in source_periods
+            )
             # The fold takes the target's value array as a RUNTIME argument and
             # needs only its state names, so it groups on the grids its own
             # readers interpolate -- `interpolated_regimes`, which names the
@@ -2101,30 +2119,48 @@ def _fail_if_same_period_refs_invalid(
                     f"{target_regime.stakeholders}."
                 )
                 raise ModelInitializationError(msg)
-            expected_states = set(
-                regime_to_v_interpolation_info[ref.regime].state_names
-            )
-            if set(ref.projection) != expected_states:
-                msg = (
-                    f"{prefix}the projection must supply exactly one coordinate "
-                    "function per state of the reference regime "
-                    f"({sorted(expected_states)}); got "
-                    f"{sorted(ref.projection)}."
+            # A reader solved at no age never reads its reference, so neither
+            # the projection nor the reference's periods are required.
+            if regimes_to_active_periods[regime_name]:
+                _fail_if_same_period_ref_unreadable(
+                    prefix=prefix,
+                    ref=ref,
+                    reader_periods=regimes_to_active_periods[regime_name],
+                    reference_periods=regimes_to_active_periods[ref.regime],
+                    reference_states=regime_to_v_interpolation_info[
+                        ref.regime
+                    ].state_names,
                 )
-                raise ModelInitializationError(msg)
-            missing_periods = sorted(
-                set(regimes_to_active_periods[regime_name])
-                - set(regimes_to_active_periods[ref.regime])
-            )
-            if missing_periods:
-                msg = (
-                    f"{prefix}the reference regime must be active (and hence "
-                    "solved) in every period the declaring regime is active, "
-                    "but it is not active in period(s) "
-                    f"{missing_periods}. A same-period reference V that was "
-                    "never solved cannot be read."
-                )
-                raise ModelInitializationError(msg)
+
+
+def _fail_if_same_period_ref_unreadable(
+    *,
+    prefix: str,
+    ref: ProjectedRegimeValue,
+    reader_periods: tuple[int, ...],
+    reference_periods: tuple[int, ...],
+    reference_states: Collection[str],
+) -> None:
+    """Reject a projection or a reference schedule the reader cannot read."""
+    expected_states = set(reference_states)
+    if set(ref.projection) != expected_states:
+        msg = (
+            f"{prefix}the projection must supply exactly one coordinate "
+            "function per state of the reference regime "
+            f"({sorted(expected_states)}); got "
+            f"{sorted(ref.projection)}."
+        )
+        raise ModelInitializationError(msg)
+    missing_periods = sorted(set(reader_periods) - set(reference_periods))
+    if missing_periods:
+        msg = (
+            f"{prefix}the reference regime must be solved in every "
+            "period the declaring regime is solved, but it is not "
+            "solved in period(s) "
+            f"{missing_periods}. A same-period reference V that was "
+            "never solved cannot be read."
+        )
+        raise ModelInitializationError(msg)
 
 
 def _fail_if_gated_edges_invalid(
@@ -2133,6 +2169,7 @@ def _fail_if_gated_edges_invalid(
     representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    gated_source_periods: Mapping[tuple[RegimeName, RegimeName], tuple[int, ...]],
 ) -> None:
     """Validate every `gated_edges` declaration against the other regimes.
 
@@ -2215,6 +2252,7 @@ def _fail_if_gated_edges_invalid(
                 target_name=target_name,
                 edge=edge,
                 regimes_to_active_periods=regimes_to_active_periods,
+                gated_periods=gated_source_periods.get((regime_name, target_name), ()),
             )
             _fail_if_off_grid_landing_is_possible(
                 prefix=prefix,
@@ -2265,6 +2303,7 @@ def _fail_if_gated_edge_references_inactive(
     target_name: RegimeName,
     edge: GatedEdge,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    gated_periods: tuple[int, ...],
 ) -> None:
     """Reject a gated edge whose fallback / gate reference is not co-active with
     its target on every period whose `Wbar` is actually consumed.
@@ -2277,10 +2316,11 @@ def _fail_if_gated_edge_references_inactive(
     the previous period's `Wbar` would feed the source a STALE later-period value.
 
     Which target-active periods are consumed is `source_reads_folded_wbar`'s
-    question, and this validator asks it rather than restating it — a period
-    whose `Wbar` no source reads may legitimately reference an unsolved
-    regime, and rejecting those would rule out an ordinary self-loop edge at the
-    target's earliest active period. Require every referenced regime to be
+    question, asked of `gated_periods` — the source periods whose selected law
+    declares this gate. A period whose `Wbar` no source reads may legitimately
+    reference an unsolved regime, and rejecting those would rule out an
+    ordinary self-loop edge at the target's earliest active period, or a
+    source case that declares no gate. Require every referenced regime to be
     active on every consumed period, so the roll is well defined wherever its
     result is used.
     """
@@ -2289,7 +2329,7 @@ def _fail_if_gated_edge_references_inactive(
         | {leg.simulate_fallback.regime for leg in edge.legs.values()}
         | {ref.regime for ref in edge.gate_refs.values()}
     )
-    source_active_periods = set(regimes_to_active_periods[source_name])
+    source_active_periods = set(gated_periods)
     consumed_periods = {
         period
         for period in regimes_to_active_periods[target_name]
@@ -2303,11 +2343,11 @@ def _fail_if_gated_edge_references_inactive(
         )
         if missing_periods:
             msg = (
-                f"{prefix}reference regime '{ref_regime_name}' must be active "
-                "(and hence solved) in every period the edge target "
-                f"'{target_name}' is active AND the source '{source_name}' is "
-                "active one period earlier (so the edge's Wbar is actually "
-                f"consumed); but it is not active in such period(s) "
+                f"{prefix}reference regime '{ref_regime_name}' must be solved "
+                "in every period the edge target "
+                f"'{target_name}' is solved AND the source '{source_name}' is "
+                "solved one period earlier (so the edge's Wbar is actually "
+                f"consumed); but it is not solved in such period(s) "
                 f"{missing_periods}. A gated-edge reference V that was never "
                 "solved cannot be read."
             )
@@ -2468,23 +2508,33 @@ def _fail_if_ref_invalid(
 def _fail_if_same_period_ref_cycle(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
 ) -> None:
-    """Reject cyclic `same_period_refs` declarations at model build.
+    """Reject cyclic `same_period_refs` among the regimes solved in one period.
 
-    Within one period, a regime's value constraints
-    read reference regimes solved EARLIER in that period, so the reference
-    graph must be acyclic (a self-reference is a one-node cycle). Depth-first
-    three-color search; the error names one offending cycle.
+    Within one period, a regime's value constraints read reference regimes
+    solved EARLIER in that period, so the references among the regimes solved
+    in that period must be acyclic (a self-reference is a one-node cycle). A
+    regime no required problem solves at a period adds no reference there.
+    Depth-first three-color search; the error names one offending cycle.
     """
-    graph = {
+    references = {
         regime_name: tuple(
             dict.fromkeys(ref.regime for ref in user_regime.same_period_refs.values())
         )
         for regime_name, user_regime in user_regimes.items()
     }
-    search = _SamePeriodRefSearch(graph=graph)
-    for regime_name in graph:
-        search.visit(regime_name)
+    for period in sorted(
+        {p for periods in regimes_to_active_periods.values() for p in periods}
+    ):
+        graph = {
+            regime_name: successors
+            for regime_name, successors in references.items()
+            if period in regimes_to_active_periods.get(regime_name, ())
+        }
+        search = _SamePeriodRefSearch(graph=graph)
+        for regime_name in graph:
+            search.visit(regime_name)
 
 
 @dataclass(frozen=True)
@@ -3241,7 +3291,19 @@ def _build_solution_phase(  # noqa: PLR0915
     # Set by whichever branch below builds the decision kernels, to the key
     # their periods were grouped by; `None` where one closure serves every period.
     decision_group_key: _PeriodGroupKey | None = None
-    if spec.terminal:
+    zero_node = _is_zero_node_regime(
+        spec=spec,
+        regime_name=regime_name,
+        regimes_to_active_periods=regimes_to_active_periods,
+    )
+    if zero_node:
+        # A nonterminal regime no required problem solves runs nothing, so it
+        # gets no transition program, kernel or diagnostic.
+        compute_regime_transition_probs = None
+        validation_regime_transition_probs = None
+        Q_and_F_functions = MappingProxyType({})
+        compute_intermediates = MappingProxyType({})
+    elif spec.terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
         if stakeholders is not None:
@@ -3283,7 +3345,7 @@ def _build_solution_phase(  # noqa: PLR0915
             flat_param_names=flat_param_names,
             is_stochastic=spec.solution.stochastic_regime_transition,
             enable_jit=enable_jit,
-            phase="solve",
+            shape="grid",
             next_regime_cells=(
                 core.next_regime_cells
                 if core.next_regime_func is not None
@@ -3434,8 +3496,16 @@ def _build_solution_phase(  # noqa: PLR0915
         regime_name=regime_name,
         transition_plans=core.transition_plans,
     )
-    solver.validate_build(context=context)
-    solver_kernels = solver.build_period_kernels(context=context)
+    if zero_node:
+        # No required problem solves this regime, so its solver builds nothing
+        # and simulation never enters it.
+        solver_kernels = SolutionKernels(
+            period_kernels=MappingProxyType({}),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
+        )
+    else:
+        solver.validate_build(context=context)
+        solver_kernels = solver.build_period_kernels(context=context)
     fail_if_replay_is_undeclared(
         solver=solver,
         replay_route=solver_kernels.replay_route,
@@ -3525,6 +3595,14 @@ def _build_solution_phase(  # noqa: PLR0915
         # continuation can resolve each at the age of the period it prices.
         _continuation_functions=core.functions,
         constraints=core.constraints,
+        feasibility_pools_by_period=cast(
+            "FeasibilityPoolsByPeriod",
+            resolve_periodized_pools_by_period(
+                functions=core.functions,
+                constraints=core.constraints,
+                periods=tuple(solution_active_periods),
+            ),
+        ),
         has_compiled_constraint_boundaries=(
             routing.plan is not None and bool(routing.plan.compiled_boundaries)
         ),
@@ -3590,6 +3668,34 @@ class _PerPeriodGroupKey:
     def __call__(self, *, period: int) -> Hashable:
         """Return a key putting every period in a group of its own."""
         return (self.label, period)
+
+
+def _simulated_periods(
+    *,
+    phase_reachability: PhaseReachability,
+    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
+) -> MappingProxyType[RegimeName, tuple[int, ...]]:
+    """Per regime, the active periods at which the simulate graph holds it."""
+    return MappingProxyType(
+        {
+            name: tuple(
+                period
+                for period in periods
+                if name in phase_reachability.active_regimes_by_period[period]
+            )
+            for name, periods in regimes_to_active_periods.items()
+        }
+    )
+
+
+def _is_zero_node_regime(
+    *,
+    spec: PhasedRegimeSpec,
+    regime_name: RegimeName,
+    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
+) -> bool:
+    """Whether `regime_name` is nonterminal and no required problem solves it."""
+    return not spec.terminal and not regimes_to_active_periods[regime_name]
 
 
 def _build_period_signatures(
@@ -4080,7 +4186,7 @@ def _outer_state_domain_by_period(
     return MappingProxyType(domains)
 
 
-def _build_simulation_phase(  # noqa: PLR0912, PLR0915
+def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     *,
     spec: PhasedRegimeSpec,
     user_regime: UserRegime,
@@ -4159,6 +4265,8 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         simulation_variables: Simulate-phase variables (solve variables plus
             carried-only states, appended).
         regimes_to_active_periods: Mapping of regime names to active period tuples.
+            The phase is built at the periods where the simulate graph holds each
+            regime, a subset of these.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
@@ -4199,6 +4307,12 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         Complete simulate functions container.
 
     """
+    # A regime is simulated only where a subject can stand in it, so no
+    # simulate-side program, factory or route exists at a value-only period.
+    simulated_periods = _simulated_periods(
+        phase_reachability=simulation_reachability,
+        regimes_to_active_periods=regimes_to_active_periods,
+    )
     carried_only = spec.carried_only_state_names
     decision_functions = dict(spec.simulation.functions) | {
         name: spec.solution.functions[name] for name in carried_only
@@ -4216,7 +4330,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         functions=MappingProxyType(decision_functions),
         variables=variables,
         flat_param_names=flat_param_names,
-        active_periods=regimes_to_active_periods[regime_name],
+        active_periods=simulated_periods[regime_name],
         grids=all_grids[regime_name],
     )
 
@@ -4263,7 +4377,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
             functions=core.functions,
             variables=variables,
             flat_param_names=flat_param_names,
-            active_periods=regimes_to_active_periods[regime_name],
+            active_periods=simulated_periods[regime_name],
             grids=all_grids[regime_name],
         )
         constraints = MappingProxyType(
@@ -4309,9 +4423,20 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     # collective branch (below) recomputes the household argmax and gathers
     # each stakeholder's own value at it.
     collective = stakeholders is not None
-    if spec.terminal:
+    if _is_zero_node_regime(
+        spec=spec,
+        regime_name=regime_name,
+        regimes_to_active_periods=simulated_periods,
+    ):
+        # A nonterminal regime no required problem solves is never simulated.
         compute_regime_transition_probs = None
         per_subject_route = None
+        realized_validation_probs = None
+        Q_and_F_functions = MappingProxyType({})
+    elif spec.terminal:
+        compute_regime_transition_probs = None
+        per_subject_route = None
+        realized_validation_probs = None
         if collective:
             Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
                 n_periods=ages.n_periods,
@@ -4342,13 +4467,33 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
             flat_param_names=flat_param_names,
             is_stochastic=spec.simulation.stochastic_regime_transition,
             enable_jit=enable_jit,
-            phase="simulate",
+            shape="per_subject",
             next_regime_cells=(
                 core.next_regime_cells
                 if core.next_regime_func is not None
                 or core.next_regime_cells is not None
                 else MappingProxyType({})
             ),
+        )
+        realized_validation_probs = (
+            None
+            if spec.simulation.regime_transition == spec.solution.regime_transition
+            else build_regime_transition_probs_functions(
+                functions=simulate_functions,
+                compute_regime_transition_probs=core.next_regime_func,
+                grids=simulate_grids,
+                regime_names_to_ids=regime_names_to_ids,
+                flat_param_names=flat_param_names,
+                is_stochastic=spec.simulation.stochastic_regime_transition,
+                enable_jit=enable_jit,
+                shape="grid",
+                next_regime_cells=(
+                    core.next_regime_cells
+                    if core.next_regime_func is not None
+                    or core.next_regime_cells is not None
+                    else MappingProxyType({})
+                ),
+            )
         )
         per_subject_route = build_per_subject_regime_transition_probs(
             functions=simulate_functions,
@@ -4402,7 +4547,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
             | dict(functions)
         )
         Q_and_F_functions = _build_Q_and_F_per_period(
-            active_periods=regimes_to_active_periods[regime_name],
+            active_periods=simulated_periods[regime_name],
             phase_reachability=solution_reachability,
             source_regime_name=regime_name,
             functions=decision_functions_pool,
@@ -4438,7 +4583,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     )
 
     next_state_build = _build_next_state_vmapped(
-        active_periods=regimes_to_active_periods[regime_name],
+        active_periods=simulated_periods[regime_name],
         phase_reachability=simulation_reachability,
         source_regime_name=regime_name,
         functions=simulate_functions,
@@ -4491,7 +4636,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
                 f"{tuple(simulation_variables.continuous_action_names)!r}."
             )
 
-        active_periods = regimes_to_active_periods[regime_name]
+        active_periods = simulated_periods[regime_name]
         grids = all_grids[regime_name]
         state_names = tuple(state_action_space.states)
         row_discrete_state_names = _get_discrete_state_names(
@@ -4644,7 +4789,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
             row_axis_lengths_by_period=_replay_axis_lengths_by_period(
                 axis_names=row_names,
                 regime_name=regime_name,
-                active_periods=regimes_to_active_periods[regime_name],
+                active_periods=simulated_periods[regime_name],
                 grids=all_grids[regime_name],
                 grid_schedule=grid_schedule,
             ),
@@ -4671,7 +4816,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     # time. `next_state` above keeps resolving `simulate_functions` per period;
     # per-period *target* reads of a periodized node are still rejected by the guard
     # via `age_specialized_function_names` (a rep-period closure would be wrong).
-    simulation_active_periods = regimes_to_active_periods[regime_name]
+    simulation_active_periods = simulated_periods[regime_name]
     published_simulate_functions = (
         cast(
             "EconFunctionsMapping",
@@ -4700,7 +4845,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         per_subject_transitions=next_state_build.per_subject_by_period,
         per_subject_route=per_subject_route,
         simulation_state_names=simulation_variables.state_names,
-        active_periods=tuple(regimes_to_active_periods[regime_name]),
+        active_periods=tuple(simulated_periods[regime_name]),
         has_gated_edges=bool(user_regime.gated_edges),
     )
 
@@ -4710,11 +4855,20 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         carried_only_state_names=frozenset(carried_grids),
         functions=published_simulate_functions,
         constraints=published_simulate_constraints,
+        feasibility_pools_by_period=cast(
+            "FeasibilityPoolsByPeriod",
+            resolve_periodized_pools_by_period(
+                functions=simulate_functions,
+                constraints=constraints,
+                periods=tuple(simulation_active_periods),
+            ),
+        ),
         age_specialized_function_names=age_specialized_function_names,
         transitions=core.transitions,
         reachability=simulation_reachability,
         transition_plans=core.transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
+        validation_regime_transition_probs=realized_validation_probs,
         # A source standing at `period` reads the edges folding at `period + 1`,
         # the same selection the period's Q_and_F was built from, so the channel
         # names exactly the regimes that period's readers interpolate.
@@ -5121,6 +5275,7 @@ def _process_regime_core(
             names_key=names_key,
         )
 
+    original_lottery_layouts: dict[str, OriginalLotteryLayout] = {}
     for func_name, func in stochastic_transition_functions.items():
         _fail_if_a_markov_law_names_a_continuous_state(
             func_name=func_name,
@@ -5136,6 +5291,27 @@ def _process_regime_core(
                 func_name=func_name, regime_params_template=regime_params_template
             ),
         )
+        wrapped = (
+            getattr(func.func, "__wrapped__", None)
+            if isinstance(func, MarkovTransition)
+            else None
+        )
+        if inspect.ismethod(wrapped) and isinstance(
+            wrapped.__self__, FixedComponentLaw
+        ):
+            original = wrapped.__self__.original_layout
+            original_lottery_layouts[func_name] = dataclass_replace(
+                original,
+                probabilities=_rename_params_to_qnames(
+                    func=original.probabilities,
+                    regime_params_template=regime_params_template,
+                    param_key=func_name,
+                    names_key=_extract_template_names_key(
+                        func_name=func_name,
+                        regime_params_template=regime_params_template,
+                    ),
+                ),
+            )
         processed_functions[func_name] = _get_discrete_markov_next_function(
             func=func,
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
@@ -5298,10 +5474,17 @@ def _process_regime_core(
         }
     )
 
-    process_transition_keys = {
-        f"{user_regime}__next_{process}"
-        for user_regime, process in (*target_process_grids, *split_entry_process_grids)
-    }
+    # Bundle insertion order fixes the continuation's lottery reduction axes.
+    # Preserve the declared process order independently of Python's hash seed.
+    process_transition_keys = tuple(
+        dict.fromkeys(
+            f"{user_regime}__next_{process}"
+            for user_regime, process in (
+                *target_process_grids,
+                *split_entry_process_grids,
+            )
+        )
+    )
     internal_transition = {
         func_name: processed_functions[func_name]
         for func_name in flat_nested_transitions
@@ -5319,8 +5502,8 @@ def _process_regime_core(
     excluded_from_functions = (
         set(flat_nested_transitions)
         | set(constraints)
-        | process_transition_keys
-        | joint_transition_keys
+        | set(process_transition_keys)
+        | set(joint_transition_keys)
     )
     phase_functions = MappingProxyType(
         {
@@ -5360,6 +5543,7 @@ def _process_regime_core(
         ),
         joint_transitions=joint_transitions,
         phase_name=phase_name,
+        original_lottery_layouts=original_lottery_layouts,
     )
 
     fail_if_transition_namespaces_are_mixed(
@@ -5403,9 +5587,9 @@ def _process_joint_transitions(
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     processed_functions: dict[str, EconFunction],
     regime_params_template: RegimeParamsTemplate,
-) -> set[str]:
+) -> tuple[str, ...]:
     """Compile joint kernels into target-local DAG nodes and output laws."""
-    transition_keys: set[str] = set()
+    transition_keys: dict[str, None] = {}
     for target, kernels in joint_transitions.items():
         for kernel_name, kernel in kernels.items():
             axis_name = qname_from_tree_path((target, kernel_name))
@@ -5434,7 +5618,7 @@ def _process_joint_transitions(
                 regime_params_template=regime_params_template,
                 param_key=qname_from_tree_path((target, kernel_name, "probabilities")),
             )
-            transition_keys.update((axis_name, support_name))
+            transition_keys.update(dict.fromkeys((axis_name, support_name)))
 
             for state_name, output in kernel.outputs.items():
                 output_name = qname_from_tree_path((target, f"next_{state_name}"))
@@ -5443,8 +5627,8 @@ def _process_joint_transitions(
                     regime_params_template=regime_params_template,
                     param_key=output_name,
                 )
-                transition_keys.add(output_name)
-    return transition_keys
+                transition_keys[output_name] = None
+    return tuple(transition_keys)
 
 
 def _joint_support_indices(support_size: int) -> EconFunction:
@@ -5514,6 +5698,9 @@ def _build_transition_plans(
     support_index_processes: frozenset[tuple[RegimeName, ProcessName]],
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     phase_name: PhaseName,
+    original_lottery_layouts: Mapping[str, OriginalLotteryLayout] = MappingProxyType(
+        {}
+    ),
 ) -> TargetTransitionPlans:
     """Lower ordinary and joint declarations into complete target-edge plans."""
     plans: dict[RegimeName, TargetTransitionPlan] = {}
@@ -5621,6 +5808,7 @@ def _build_transition_plans(
                         public_path=(source_regime_name, target, next_state_name)
                     ),
                     weight_name=weight_name,
+                    original_layout=original_lottery_layouts.get(qualified_name),
                 )
 
             continuation_coordinate = (
@@ -5785,7 +5973,7 @@ def _build_validation_regime_transition_probs(
         flat_param_names=flat_param_names,
         is_stochastic=True,
         enable_jit=enable_jit,
-        phase="solve",
+        shape="grid",
         next_regime_cells=declared_cells,
     )
 
@@ -6975,10 +7163,10 @@ def build_regime_transition_probs_functions(
     flat_param_names: frozenset[str],
     is_stochastic: bool,
     enable_jit: bool,
-    phase: Literal["solve", "simulate"],
+    shape: Literal["grid", "per_subject"],
     next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None,
 ) -> RegimeTransitionFunction | VmappedRegimeTransitionFunction:
-    """Build a regime transition probability function for the given phase.
+    """Build a regime transition probability function in the given shape.
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
@@ -6990,7 +7178,9 @@ def build_regime_transition_probs_functions(
             binding vocabulary.
         is_stochastic: Whether the regime transition is stochastic.
         enable_jit: Whether to JIT-compile the functions.
-        phase: Which phase to build for.
+        shape: How the function is evaluated, whichever phase's law it holds:
+            - `"grid"` ⇒ on grid arguments, as the solve step and validation do;
+            - `"per_subject"` ⇒ vmapped over subjects, as simulation does.
         next_regime_cells: Per-target regime transition probability functions;
             `None` for coarse regime transitions.
 
@@ -7002,7 +7192,7 @@ def build_regime_transition_probs_functions(
         is_stochastic=is_stochastic,
         next_regime_cells=next_regime_cells,
     )
-    if phase == "solve":
+    if shape == "grid":
         return jax.jit(next_regime) if enable_jit else next_regime
 
     per_subject = per_subject_regime_transition_probs(
@@ -7248,6 +7438,7 @@ def _wrap_regime_transition_probs(
         **kwargs: FloatND | IntND | int,
     ) -> MappingProxyType[RegimeName, FloatND]:
         result = func(*args, **kwargs)
+        _fail_if_not_one_entry_per_regime(result=result, n_regimes=len(regime_names))
         # Convert array to dict using ordering by regime id
         return MappingProxyType(
             {name: result[idx] for idx, name in enumerate(regime_names)}
@@ -7259,6 +7450,49 @@ def _wrap_regime_transition_probs(
     # annotations through `functools.wraps`.
     wrapped.__annotations__ = {**annotations, "return": return_annotation}
     return wrapped
+
+
+def _fail_if_not_one_entry_per_regime(*, result: FloatND, n_regimes: int) -> None:
+    """Refuse a regime-probability vector that is not indexed by every regime id.
+
+    The vector's length is static under tracing, so the check costs nothing at
+    runtime. Without it, indexing past a short vector clamps to its last entry
+    and silently assigns that entry's mass to every missing regime.
+    """
+    n_entries = jnp.shape(result)[-1] if jnp.ndim(result) else 1
+    if n_entries != n_regimes:
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"A vector regime transition returned {n_entries} entries, but the "
+            f"model has {n_regimes} regime ids. Return one probability per "
+            "regime id, in `regime_id_class` order; `targets` names the "
+            "support, not the vector's layout."
+        )
+
+
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _OneHotRegimeTransition:
+    """A deterministic regime selector's code as a one-hot probability vector.
+
+    A frozen callable instance rather than a nested function: the beartype claw
+    memoizes every function it decorates, so a function defined per model build
+    would pin that build's selector after the model is dropped.
+    """
+
+    func: TransitionFunction
+    """The deterministic selector, returning a regime code."""
+    n_regimes: int
+    """The number of regimes, the length of the one-hot vector."""
+
+    def __post_init__(self) -> None:
+        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
+            value = getattr(self.func, name, None)
+            if value is not None:
+                object.__setattr__(self, name, value)
+        object.__setattr__(self, "__wrapped__", self.func)
+
+    @no_type_check
+    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
+        return jax.nn.one_hot(self.func(*args, **kwargs), self.n_regimes)
 
 
 def _wrap_deterministic_regime_transition(
@@ -7280,19 +7514,12 @@ def _wrap_deterministic_regime_transition(
         A wrapped function that returns a one-hot probability array.
 
     """
-    n_regimes = len(regime_names_to_ids)
-
     # Preserve original annotations but update return type
     annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
 
-    @with_signature(args=annotations, return_annotation="FloatND")
-    @functools.wraps(func)
-    def wrapped(
-        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-    ) -> FloatND:
-        regime_idx = func(*args, **kwargs)
-        return jax.nn.one_hot(regime_idx, n_regimes)
+    wrapped = with_signature(args=annotations, return_annotation="FloatND")(
+        _OneHotRegimeTransition(func=func, n_regimes=len(regime_names_to_ids))
+    )
 
     # Pin `__annotations__` on the final wrapper: `concatenate_functions`
     # reads `__annotations__` (not `__signature__`) to reconcile the DAG, and
@@ -8080,7 +8307,7 @@ def _fail_if_phase_state_nodes_disagree(
             f"Regime {regime_name!r} resolves per-period state nodes for "
             f"different periods in its two phases: {only_solve} only in solve, "
             f"{only_simulate} only in simulation. Both phases must carry every "
-            "period the regime is active in. This is an internal inconsistency "
+            "period the regime is solved in. This is an internal inconsistency "
             "in how the regime's age-specialized grids were normalized; please "
             "report it."
         )
@@ -8192,7 +8419,7 @@ def _route_constraints(
         context=ConstraintRouteContext(
             regime_name=regime_name,
             phase=phase,
-            functions=functions,
+            functions=_routing_pool(functions=functions, active_periods=active_periods),
             variables=variables,
             flat_param_names=flat_param_names,
             active_periods=active_periods,
@@ -8216,6 +8443,23 @@ def _route_constraints(
     _fail_if_a_constraint_cannot_be_met(plan=plan)
     evaluated = _names_every_route_evaluates(plan=plan, regime_name=regime_name)
     return _ConstraintRoutingResult(plan=plan, evaluated_names=evaluated)
+
+
+def _routing_pool(
+    *, functions: EconFunctionsMapping, active_periods: tuple[int, ...]
+) -> EconFunctionsMapping:
+    """The pool constraint routing resolves leaves through.
+
+    Routing reads argument names only. An age-specialized function exposes the
+    same parameters at every age, so its first active period's callable stands
+    for all of them.
+    """
+    if not active_periods:
+        return functions
+    return cast(
+        "EconFunctionsMapping",
+        resolve_periodized_nodes(mapping=functions, period=active_periods[0]),
+    )
 
 
 def _fail_if_a_constraint_cannot_be_met(*, plan: ConstraintPlan) -> None:
@@ -8307,7 +8551,7 @@ def _fail_if_a_synthesized_constraint_is_unmet(
         context=ConstraintRouteContext(
             regime_name=regime_name,
             phase="simulate",
-            functions=functions,
+            functions=_routing_pool(functions=functions, active_periods=active_periods),
             variables=variables,
             flat_param_names=flat_param_names,
             active_periods=active_periods,

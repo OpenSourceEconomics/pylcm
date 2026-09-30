@@ -855,7 +855,7 @@ def _build_terminal_regime(**kwargs: object) -> Regime:
     utilities = kwargs.pop("utilities", {"f": _utility_f, "m": _utility_m})
     objective = kwargs.pop("objective", None)
     base = {
-        "transition": None,
+        "regime_transitions": None,
         "states": {"wealth": _WEALTH},
         "actions": {"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
         "functions": {

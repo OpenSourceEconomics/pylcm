@@ -12,13 +12,14 @@ import _lcm.simulation.simulate as simulation
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.solution.artifacts import OwnedSolutionView
-from lcm import DiscreteGrid, ExecutionConfig, Model, Regime, categorical
+from lcm import Choose, DiscreteGrid, ExecutionConfig, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
 )
+from tests.test_models.initial_regimes import initial_regimes_of
 
 
 @categorical(ordered=False)
@@ -50,11 +51,12 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_finish_regime,
-                active=lambda age: age == 0,
+                regime_transitions=Choose(func=_finish_regime, targets=("done",)),
                 functions={"utility": _flag_utility},
             ),
-            "done": Regime(transition=None, functions={"utility": _flag_utility}),
+            "done": Regime(
+                regime_transitions=None, functions={"utility": _flag_utility}
+            ),
         },
         states={"flag": DiscreteGrid(_Flag)},
         state_transitions={
@@ -63,6 +65,7 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
+        initial_regimes={0: "alive"},
     )
     params = {"discount_factor": 0.0}
     solution = model.solve(params=params, log_level="off")
@@ -87,7 +90,7 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
         seed=3,
         log_level="off",
     )
-    assert result.raw_results["done"][0].states["flag"].dtype == jnp.int32
+    assert result.raw_results["done"][1].states["flag"].dtype == jnp.int32
     assert start_counts
     assert all(count == len(runtime.cache) for runtime, count in start_counts), (
         "Promoted consumers compiled only after the outer admission"
@@ -187,6 +190,7 @@ def test_profiled_public_chunks_need_no_additional_core_compilation(
         execution_config=ExecutionConfig(
             axis_widths={"subject": 2}, device_memory_bytes=2**32
         ),
+        initial_regimes=initial_regimes_of(model=base),
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = model.solve(params=params, log_level="off")

@@ -16,6 +16,7 @@ from _lcm.regime_building import max_Q_over_a
 from _lcm.solution import action_streaming
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -35,6 +36,7 @@ from tests.regime_building.test_collective_feasibility_is_shared import (
     _make_model as _build_collective_model,
 )
 from tests.test_models import taste_shocks_toy
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -83,8 +85,11 @@ def _terminal_utility() -> FloatND:
 def _build_model(*, enable_jit: bool = True) -> Model:
     """Build the ordinary singleton model used by the production tracer."""
     acting = Regime(
-        transition=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_next_regime, targets=("acting", "done")),
+            exits=("done",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -95,8 +100,7 @@ def _build_model(*, enable_jit: bool = True) -> Model:
         constraints={"only_target": _only_target},
     )
     done = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         functions={"utility": _terminal_utility},
     )
     return Model(
@@ -104,6 +108,7 @@ def _build_model(*, enable_jit: bool = True) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={0: "acting"},
     )
 
 

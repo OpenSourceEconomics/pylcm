@@ -42,7 +42,7 @@ def _kernel(probabilities: object) -> JointTransition:
 def test_joint_kernel_params_follow_role_and_output_ownership() -> None:
     """Support/probability params live under the kernel; outputs keep `next_` paths."""
     regime = Regime(
-        transition={"target": MarkovTransition(_target_probability)},
+        regime_transitions={"target": MarkovTransition(func=_target_probability)},
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={
             "target": {

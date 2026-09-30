@@ -11,6 +11,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -32,6 +33,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     dead,
 )
 from tests.test_models.ds2024_housing import build_model
+from tests.test_models.schedules import until_exit
 
 _PORTABLE_DCEGM_SOLVER = dataclasses.replace(
     DCEGM_SOLVER,
@@ -95,7 +97,10 @@ def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None)
         envelope=FUESEnvelope(n_points_to_scan=n_points_to_scan),
     )
     model = _model_from_alive(
-        alive=dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
+        alive=dcegm_retirement.replace(
+            regime_transitions=retirement_only.retirement_transitions(last_age=50),
+            solver=solver,
+        )
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
@@ -104,7 +109,10 @@ def test_mss_backend_remains_disqualified_without_fues_controls():
     """MSS has no FUES controls and remains outside the policy-read gate."""
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=MSSEnvelope())
     model = _model_from_alive(
-        alive=dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
+        alive=dcegm_retirement.replace(
+            regime_transitions=retirement_only.retirement_transitions(last_age=50),
+            solver=solver,
+        )
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
@@ -120,7 +128,7 @@ def test_process_state_regime_does_not_qualify_for_the_policy_read():
     """
     model = _model_from_alive(
         alive=_PORTABLE_DCEGM_RETIREMENT.replace(
-            active=lambda age: age < 50,
+            regime_transitions=retirement_only.retirement_transitions(last_age=50),
             liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources"),
             states={
                 "wealth": WEALTH_GRID,
@@ -149,8 +157,13 @@ def test_asset_row_regime_does_not_qualify_for_the_policy_read():
     """
     model = _model_from_alive(
         alive=_PORTABLE_DCEGM_RETIREMENT.replace(
-            active=lambda age: age < 50,
-            transition=_next_regime_reads_wealth,
+            regime_transitions=until_exit(
+                50,
+                law=Choose(
+                    func=_next_regime_reads_wealth, targets=("retirement", "dead")
+                ),
+                exits=("dead",),
+            ),
         )
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None
@@ -167,7 +180,7 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
     """
     skill_grid = LinSpacedGrid(start=0.5, stop=1.5, n_points=5)
     alive = _PORTABLE_DCEGM_RETIREMENT.replace(
-        active=lambda age: age < 50,
+        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         states={"wealth": WEALTH_GRID, "skill": skill_grid},
         state_transitions={
             "wealth": next_wealth_from_savings,
@@ -183,6 +196,7 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
         regimes={"retirement": alive, "dead": dead_regime},
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
@@ -190,7 +204,10 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
 def _retirement_model_with_backend(backend: EnvelopeName) -> Model:
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(backend))
     return _model_from_alive(
-        alive=dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
+        alive=dcegm_retirement.replace(
+            regime_transitions=retirement_only.retirement_transitions(last_age=50),
+            solver=solver,
+        )
     )
 
 
@@ -200,6 +217,7 @@ def _model_from_alive(*, alive, dead_states=None) -> Model:
         regimes={"retirement": alive, "dead": dead_regime},
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

@@ -41,6 +41,8 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -56,7 +58,11 @@ from lcm import (
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.conftest import DECIMAL_PRECISION, build_prepared_structure
+from tests.conftest import (
+    DECIMAL_PRECISION,
+    build_prepared_structure,
+    lower_declarations,
+)
 
 _BETA = 0.95
 
@@ -225,6 +231,7 @@ def _simulate_three_households():
         regimes=_make_regimes(carrying_fallback=True),
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "married"},
     )
     params = {"discount_factor": _BETA}
     solution = model.solve(params=params, log_level="off")
@@ -267,7 +274,7 @@ def _solve_kernel_level(*, carrying_fallback: bool):
         prepared_structure=build_prepared_structure(
             user_regimes=user_regimes, ages=_AGES
         ),
-        user_regimes=user_regimes,
+        user_regimes=lower_declarations(user_regimes, ages=_AGES),
         ages=_AGES,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=False,
@@ -283,7 +290,7 @@ def _solve_kernel_level(*, carrying_fallback: bool):
         }
     )
     bi_result = solve(
-        model_fingerprint="test_fallback_state_writes",
+        program_fingerprint="test_fallback_state_writes",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
@@ -307,8 +314,13 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
     if carrying_fallback:
         wife_projection = {"wage": _identity_wage, "career": _project_career}
         single_f = Regime(
-            transition={"single_f_terminal": MarkovTransition(_prob_one)},
-            active=lambda age: (age >= 1) & (age < 2),
+            regime_transitions=ByAge(
+                cases={
+                    AgeRange(start=1, stop=2): {
+                        "single_f_terminal": MarkovTransition(func=_prob_one)
+                    }
+                }
+            ),
             states={
                 "wage": _WAGE,
                 "career": Phased(solve=_impute_career, simulate=_CAREER),
@@ -323,8 +335,13 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
     else:
         wife_projection = {"wage": _identity_wage}
         single_f = Regime(
-            transition={"single_f_terminal": MarkovTransition(_prob_one)},
-            active=lambda age: (age >= 1) & (age < 2),
+            regime_transitions=ByAge(
+                cases={
+                    AgeRange(start=1, stop=2): {
+                        "single_f_terminal": MarkovTransition(func=_prob_one)
+                    }
+                }
+            ),
             states={"wage": _WAGE},
             state_transitions={"wage": fixed_transition("wage")},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -332,27 +349,31 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         )
 
     married = Regime(
-        transition={
-            "married_terminal": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_consent_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f", projection=wife_projection
-                        ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m", projection={"wage": _identity_wage}
-                        ),
-                    ),
-                },
-            )
-        },
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "married_terminal": ValueDependentTransition(
+                        probability=MarkovTransition(func=_prob_one),
+                        gate=_consent_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f", projection=wife_projection
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                    )
+                }
+            }
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -363,8 +384,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -374,16 +394,20 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         },
     )
     single_m = Regime(
-        transition={"single_m_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=2): {
+                    "single_m_terminal": MarkovTransition(func=_prob_one)
+                }
+            }
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_single_m},
     )
     single_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )

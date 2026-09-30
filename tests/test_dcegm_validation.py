@@ -13,6 +13,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -39,6 +41,7 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
+from lcm_examples.iskhakov_et_al_2017 import working_life_transitions
 from lcm_examples.mortality import (
     borrowing_constraint,
     dead,
@@ -51,8 +54,10 @@ from tests.test_models.deterministic import (
     retirement_only,
 )
 from tests.test_models.deterministic.dcegm_variants import LIQUID_MARGIN
+from tests.test_models.schedules import until_exit
 
 N_PERIODS = 3
+LAST_AGE = 40 + (N_PERIODS - 1) * 10
 
 
 def _build_model(
@@ -66,6 +71,7 @@ def _build_model(
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         execution_config=config,
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -154,6 +160,7 @@ def _build_with_model_level_sharded_pruned() -> Model:
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -173,6 +180,7 @@ def _build_with_model_level_sharded_used() -> Model:
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -193,6 +201,7 @@ def _build_with_regime_level_sharded_terminal() -> Model:
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         execution_config=ExecutionConfig(sharded_states=("kind",)),
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -231,22 +240,25 @@ def test_sharded_state_cannot_feed_a_dcegm_carry(*, build, match):
 # These are semantic-contract tests, so they select a portable envelope explicitly
 # rather than making their outcome depend on a machine-local native library.
 VALID = dcegm_variants.dcegm_retirement.replace(
+    regime_transitions=retirement_only.retirement_transitions(last_age=LAST_AGE),
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
-    )
+    ),
 )
 PORTABLE_DCEGM_RETIREMENT_FULL = dcegm_variants.dcegm_retirement_full.replace(
+    regime_transitions=base.retirement_transitions(last_age=LAST_AGE),
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
-    )
+    ),
 )
 PORTABLE_DCEGM_WORKING_LIFE = dcegm_variants.dcegm_working_life.replace(
+    regime_transitions=base.working_life_transitions(last_age=LAST_AGE),
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
-    )
+    ),
 )
 
 
@@ -321,7 +333,7 @@ CASES = {
             },
             state_transitions={
                 **dict(VALID.state_transitions),
-                "aime": MarkovTransition(_stochastic_next_aime),
+                "aime": MarkovTransition(func=_stochastic_next_aime),
             },
         ),
         "'aime'.*is stochastic",
@@ -340,12 +352,23 @@ CASES = {
         "not passive",
     ),
     "regime_transition_cliff_in_wealth": (
-        lambda: VALID.replace(transition=_regime_transition_with_wealth_cliff),
+        lambda: VALID.replace(
+            regime_transitions=ByAge.until(
+                stop_age_exclusive=LAST_AGE,
+                law=Choose(
+                    func=_regime_transition_with_wealth_cliff,
+                    targets=("retirement", "dead"),
+                ),
+                then=Choose(
+                    func=_regime_transition_with_wealth_cliff, targets=("dead",)
+                ),
+            )
+        ),
         "regime transition function.*discontinuous",
     ),
     "stochastic_euler_state_transition": (
         lambda: VALID.replace(
-            state_transitions={"wealth": MarkovTransition(_stochastic_next_wealth)}
+            state_transitions={"wealth": MarkovTransition(func=_stochastic_next_wealth)}
         ),
         "stochastic",
     ),
@@ -385,7 +408,7 @@ def test_semantic_contract_precedes_exact_kernel_capability(monkeypatch):
     from _lcm.egm.upper_envelope._exact_affine import ffi  # noqa: PLC0415
 
     monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
-    malformed = dcegm_variants.dcegm_retirement.replace(
+    malformed = VALID.replace(
         liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources")
     )
 
@@ -592,16 +615,18 @@ def _three_regime_model_with_brute_worker(retirement_transition) -> Model:
     return Model(
         regimes={
             "working_life": base.working_life.replace(
-                active=lambda age, la=last_age: age < la
+                regime_transitions=working_life_transitions(last_age=last_age)
             ),
             "retirement": PORTABLE_DCEGM_RETIREMENT_FULL.replace(
-                transition=retirement_transition,
-                active=lambda age, la=last_age: age < la,
+                regime_transitions=until_exit(
+                    last_age, law=retirement_transition, exits=("dead",)
+                ),
             ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=base.RegimeId,
+        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
     )
 
 
@@ -617,22 +642,26 @@ def test_granular_transition_excluding_brute_regime_passes():
     """
     model = _three_regime_model_with_brute_worker(
         {
-            "retirement": MarkovTransition(_retirement_stay_prob),
-            "dead": MarkovTransition(_retirement_death_prob),
+            "retirement": MarkovTransition(func=_retirement_stay_prob),
+            "dead": MarkovTransition(func=_retirement_death_prob),
         }
     )
     assert model.n_periods == N_PERIODS
 
 
 def test_coarse_transition_reaching_brute_regime_raises():
-    """A coarse regime transition declares every regime reachable.
+    """A declared brute-force non-terminal target fails target compatibility.
 
-    The same model fails the target-compatibility check once the DC-EGM
-    regime's transition is a bare callable: the brute-force non-terminal
-    regime becomes a declared target.
+    The same model fails the check once the DC-EGM regime's transition also
+    declares the brute-force `working_life` regime as a target.
     """
     with pytest.raises(ModelInitializationError, match="GridSearch"):
-        _three_regime_model_with_brute_worker(base.next_regime_from_retirement)
+        _three_regime_model_with_brute_worker(
+            Choose(
+                func=base.next_regime_from_retirement,
+                targets=("working_life", "retirement", "dead"),
+            )
+        )
 
 
 def test_solver_configuration_does_not_change_reachability() -> None:
@@ -652,47 +681,12 @@ def test_solver_configuration_does_not_change_reachability() -> None:
     )
 
 
-def test_activity_disjoint_brute_target_imposes_no_dcegm_requirement() -> None:
-    """A catalog target outside every adjacent activity window is not an edge."""
-    source = dcegm_variants.dcegm_retirement
-    brute_target = UserRegime(
-        transition=source.transition,
-        solver=GridSearch(),
-        active=lambda age: age < 50,
-        states=source.states,
-        actions=source.actions,
-        state_transitions={"wealth": next_wealth},
-        constraints={"borrowing_constraint": borrowing_constraint},
-        functions={"utility": utility_retirement},
-    )
-    dcegm_source = PORTABLE_DCEGM_WORKING_LIFE.replace(
-        active=lambda age: 50 <= age < 60,
-    )
-    model = Model(
-        regimes={
-            "working_life": dcegm_source,
-            "retirement": brute_target,
-            "dead": dead,
-        },
-        ages=AgeGrid(start=40, stop=60, step="10Y"),
-        regime_id_class=base.RegimeId,
-    )
-
-    assert (
-        model.reachability.solution.periods_for_edge(
-            source="working_life", target="retirement"
-        )
-        == ()
-    )
-
-
 def test_non_dcegm_non_terminal_target_raises():
     """A DC-EGM regime may not target a brute-force non-terminal regime."""
     source = dcegm_variants.dcegm_retirement
     brute_target = UserRegime(
-        transition=source.transition,
+        regime_transitions=base.retirement_transitions(last_age=60),
         solver=GridSearch(),
-        active=lambda age: age < 60,
         states=source.states,
         actions=source.actions,
         state_transitions={"wealth": next_wealth},
@@ -700,7 +694,7 @@ def test_non_dcegm_non_terminal_target_raises():
         functions={"utility": utility_retirement},
     )
     dcegm_source = PORTABLE_DCEGM_WORKING_LIFE.replace(
-        active=lambda age: age < 60,
+        regime_transitions=base.working_life_transitions(last_age=60)
     )
     ages = AgeGrid(start=40, stop=60, step="10Y")
     with pytest.raises(
@@ -715,6 +709,7 @@ def test_non_dcegm_non_terminal_target_raises():
             },
             ages=ages,
             regime_id_class=base.RegimeId,
+            initial_regimes={ages.exact_values[0]: "working_life"},
         )
 
 
@@ -735,7 +730,7 @@ def test_brute_force_inverse_marginal_utility_keeps_its_params():
             **dict(retirement_only.retirement.functions),
             "inverse_marginal_utility": _ordinary_inverse_marginal_utility,
         },
-        active=lambda age: age < 60,
+        regime_transitions=retirement_only.retirement_transitions(last_age=60),
     )
     model = _build_model(regime=regime)
 
@@ -752,7 +747,7 @@ def test_brute_force_solver_explicit_equals_default():
     default_model = retirement_only.get_model(N_PERIODS)
     explicit = retirement_only.retirement.replace(
         solver=GridSearch(),
-        active=lambda age: age < 60,
+        regime_transitions=retirement_only.retirement_transitions(last_age=60),
     )
     explicit_model = _build_model(regime=explicit)
 

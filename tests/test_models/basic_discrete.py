@@ -2,6 +2,7 @@
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -30,7 +31,7 @@ def _next_regime() -> ScalarInt:
 
 
 working_life = UserRegime(
-    transition=_next_regime,
+    regime_transitions=Choose(func=_next_regime, targets=("dead",)),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
@@ -43,7 +44,7 @@ working_life = UserRegime(
 )
 
 retirement = UserRegime(
-    transition=_next_regime,
+    regime_transitions=Choose(func=_next_regime, targets=("dead",)),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
@@ -56,7 +57,7 @@ retirement = UserRegime(
 )
 
 dead = UserRegime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
@@ -71,4 +72,5 @@ def get_model() -> Model:
         },
         ages=AgeGrid(start=25, stop=75, step="10Y"),
         regime_id_class=RegimeId,
+        initial_regimes={25: "working_life"},
     )

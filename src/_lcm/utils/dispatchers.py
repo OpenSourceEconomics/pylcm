@@ -41,6 +41,16 @@ FunctionWithArrayReturn = TypeVar(
 )
 
 
+# Largest share of extra rows worth adding so the batch size divides the axis.
+# `jax.lax.map` traces its body a second time for a remainder batch, and when such
+# maps nest the extra traces multiply, so a remainder is expensive at lowering time.
+# Repeating the last row up to the next multiple of the batch size removes the
+# remainder at the cost of evaluating the added rows, which is cheap only while
+# they are a small share of the axis. Above this share the remainder batch keeps
+# its own trace.
+_MAX_PADDING_SHARE = 0.01
+
+
 def map_over_leading_axis[InputTree, OutputTree](
     *,
     func: Callable[[InputTree], OutputTree],
@@ -63,9 +73,17 @@ def map_over_leading_axis[InputTree, OutputTree](
     if batch_size < 0:
         raise ValueError(f"batch_size must be non-negative, got {batch_size}")
     positional_func = allow_args(func)
-    if 0 < batch_size < n_rows:
+    if not 0 < batch_size < n_rows:
+        return jax.vmap(positional_func)(xs)
+    n_padding = -n_rows % batch_size
+    if n_padding == 0 or n_padding / n_rows > _MAX_PADDING_SHARE:
         return jax.lax.map(positional_func, xs, batch_size=batch_size)
-    return jax.vmap(positional_func)(xs)
+    padded = jax.tree.map(
+        lambda leaf: jnp.concatenate([leaf, jnp.repeat(leaf[-1:], n_padding, axis=0)]),
+        xs,
+    )
+    mapped = jax.lax.map(positional_func, padded, batch_size=batch_size)
+    return jax.tree.map(lambda leaf: leaf[:n_rows], mapped)
 
 
 def simulation_spacemap(
@@ -274,6 +292,7 @@ def tiled_productmap(
     variables: tuple[str, ...],
     width_keyword: str,
     untiled_variables: tuple[str, ...] = (),
+    broadcast_variables: tuple[str, ...] = (),
 ) -> FunctionWithArrayReturn:
     """Map a bounded window of the C-order Cartesian product of named inputs.
 
@@ -281,8 +300,17 @@ def tiled_productmap(
     the original product axes followed by its own trailing axes. Coordinate grids
     remain separate arrays. A window holding multiple prefix cells maps the final
     coordinate separately; other windows decode every coordinate from a flat index.
-    Untiled variables use ordinary outer vmaps. Their axes are restored to their
-    original positions before the result leaves this boundary.
+    Two kinds of variables stay out of the flat cell and use ordinary outer vmaps:
+
+    - untiled variables, whose extent the width does not count;
+    - broadcast variables, whose extent the width does count: each window covers
+      `width // prod(extents)` cells, so a window holds `width` points of the
+      whole product. Any computation of `func` that does not read a broadcast
+      variable is then evaluated once per cell and broadcast along it, where a
+      flat index would batch it along that variable as well.
+
+    Their axes are restored to their original positions before the result leaves
+    this boundary.
     """
     if duplicates := find_duplicates(variables):
         msg = f"Same argument provided more than once in variables: {duplicates}"
@@ -295,10 +323,12 @@ def tiled_productmap(
     if missing:
         msg = f"Product variables are absent from the function: {sorted(missing)!r}."
         raise FunctionDispatchError(msg)
-    if find_duplicates(untiled_variables) or set(untiled_variables).difference(
-        variables
-    ):
-        msg = "Untiled variables must be a distinct subset of the product variables."
+    outer_variables = (*untiled_variables, *broadcast_variables)
+    if find_duplicates(outer_variables) or set(outer_variables).difference(variables):
+        msg = (
+            "Untiled and broadcast variables must be distinct subsets of the product "
+            "variables."
+        )
         raise FunctionDispatchError(msg)
     parameters = [
         parameter.replace(kind=inspect.Parameter.KEYWORD_ONLY)
@@ -307,20 +337,20 @@ def tiled_productmap(
     parameters.append(
         inspect.Parameter(width_keyword, inspect.Parameter.KEYWORD_ONLY, default=1)
     )
-    cell_variables = tuple(name for name in variables if name not in untiled_variables)
+    cell_variables = tuple(name for name in variables if name not in outer_variables)
     cell_mapper = _TiledProductMap(
         func=func, variables=cell_variables, width_keyword=width_keyword
     )
     mapped_signature = signature.replace(parameters=parameters)
     publish_signature(target=cell_mapper, signature=mapped_signature)
     mapped = cast("FunctionWithArrayReturn", cell_mapper)
-    if untiled_variables:
+    if outer_variables:
         mapped = productmap(
             func=mapped,
-            variables=untiled_variables,
-            batch_sizes=dict.fromkeys(untiled_variables, 0),
+            variables=outer_variables,
+            batch_sizes=dict.fromkeys(outer_variables, 0),
         )
-        mapped_order = (*untiled_variables, *cell_variables)
+        mapped_order = (*outer_variables, *cell_variables)
         if mapped_order != variables:
             restored = _RestoreProductAxisOrder(
                 func=mapped,
@@ -328,7 +358,35 @@ def tiled_productmap(
             )
             publish_signature(target=restored, signature=mapped_signature)
             mapped = cast("FunctionWithArrayReturn", restored)
+    if broadcast_variables:
+        counted = _CountBroadcastExtentInWidth(
+            func=mapped, variables=broadcast_variables, width_keyword=width_keyword
+        )
+        publish_signature(target=counted, signature=mapped_signature)
+        mapped = cast("FunctionWithArrayReturn", counted)
     return mapped
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _CountBroadcastExtentInWidth:
+    """Shrink the cell window so each window still holds `width` product points."""
+
+    func: Callable[..., Any]
+    """Mapper whose outer vmaps run over the broadcast variables."""
+    variables: tuple[str, ...]
+    """Broadcast variables, each mapped whole around every cell window."""
+    width_keyword: str
+    """Static keyword naming the width in points of the whole product."""
+
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        width = kwargs.get(self.width_keyword, 1)
+        # An invalid width passes through unchanged for the cell mapper to refuse.
+        if type(width) is int and width >= 1:
+            extent = math.prod(
+                jnp.atleast_1d(kwargs[name]).shape[0] for name in self.variables
+            )
+            kwargs[self.width_keyword] = max(1, width // extent)
+        return self.func(**kwargs)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

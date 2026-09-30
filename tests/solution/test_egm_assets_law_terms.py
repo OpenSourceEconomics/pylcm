@@ -21,6 +21,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -45,6 +46,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -218,11 +220,6 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _active(age: int) -> bool:
-    last_age = 40 + (N_PERIODS - 1) * 10
-    return age < last_age
-
-
 DCEGM_SOLVER = DCEGM(
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
@@ -282,8 +279,11 @@ def _health_insurance_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={
             "buy_private": DiscreteGrid(category_class=Insurance),
             "consumption": CONSUMPTION_GRID,
@@ -317,6 +317,7 @@ def _health_insurance_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -362,8 +363,11 @@ def _means_test_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -393,6 +397,7 @@ def _means_test_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -427,7 +432,7 @@ def _bequest_utility(wealth: ContinuousState) -> FloatND:
 def _per_target_model(solver: str) -> Model:
     """Per-target asymmetry: the law term applies toward one target only."""
     bequest = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": BEQUEST_GRID},
         functions={"utility": _bequest_utility},
     )
@@ -456,11 +461,14 @@ def _per_target_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition={
-            "working_life": MarkovTransition(_stay_prob),
-            "dead": MarkovTransition(_death_prob),
-        },
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "working_life": MarkovTransition(func=_stay_prob),
+                "dead": MarkovTransition(func=_death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={
             "buy_private": DiscreteGrid(category_class=Insurance),
             "consumption": CONSUMPTION_GRID,
@@ -501,6 +509,7 @@ def _per_target_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": bequest},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -547,8 +556,11 @@ def _phased_law_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -584,6 +596,7 @@ def _phased_law_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -628,8 +641,11 @@ def _chained_law_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
@@ -663,6 +679,7 @@ def _chained_law_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 

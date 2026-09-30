@@ -24,6 +24,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidParamsError
 from lcm.typing import ScalarFloat, ScalarInt, UserParams
+from tests.test_models.schedules import until_exit
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts equidistant nodes on
 # `(0, 1, 2)`, so the unconditional mean is `mu` and a dropped continuation
@@ -66,12 +67,15 @@ def _entered_process_model(*, at_construction: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_one_probability)},
+                    exits=("target",),
+                ),
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -80,6 +84,7 @@ def _entered_process_model(*, at_construction: bool) -> Model:
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
 
@@ -130,13 +135,16 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
         return Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
-                    active=lambda age: age < 22,
+                    regime_transitions=until_exit(
+                        22,
+                        law={"target": MarkovTransition(func=_one_probability)},
+                        exits=("target",),
+                    ),
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
@@ -145,6 +153,7 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
             regime_id_class=RegimeId,
             fixed_params=fixed_params,
             enable_jit=False,
+            initial_regimes={20: "source"},
         )
 
     from_construction = (
@@ -170,12 +179,15 @@ def _model_with_law_value(value: Any) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_one_probability)},
+                    exits=("target",),
+                ),
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _process(at_construction=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -186,6 +198,7 @@ def _model_with_law_value(value: Any) -> Model:
             "UserParams", {"target": {"shock": _PROCESS_LAW | {"mu": value}}}
         ),
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
 

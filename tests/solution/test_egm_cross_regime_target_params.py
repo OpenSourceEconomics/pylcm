@@ -21,6 +21,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -38,6 +40,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -115,17 +118,6 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _young_active(age: int) -> bool:
-    # Young in the first decision period only, so its only DC-EGM carry target
-    # is the *old* regime (a different regime) and the terminal `dead` regime.
-    return age < 50
-
-
-def _old_active(age: int) -> bool:
-    last_age = 40 + (N_PERIODS - 1) * 10
-    return 50 <= age < last_age
-
-
 # Source-regime savings-stage reads (drive the asset-row solve)
 
 
@@ -182,7 +174,7 @@ def budget_constraint_young(
 
 def next_old_stay_prob(*, wealth: ContinuousState, age: int) -> FloatND:
     # At the last decision age `old` must transition into the terminal `dead`
-    # regime only, since `old` is inactive in the next period.
+    # regime only, since `old` is not solved in the next period.
     last_age = 40 + (N_PERIODS - 1) * 10
     return jnp.where(age >= last_age - 10, 0.0, survival_of_wealth(wealth))
 
@@ -221,11 +213,17 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     young = regime_type(
-        transition={
-            "old": MarkovTransition(young_stay_prob),
-            "dead": MarkovTransition(young_death_prob),
-        },
-        active=_young_active,
+        # Young in the first decision period only, so its only DC-EGM carry
+        # target is the *old* regime (a different regime) and the terminal
+        # `dead` regime.
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=50): {
+                    "old": MarkovTransition(func=young_stay_prob),
+                    "dead": MarkovTransition(func=young_death_prob),
+                }
+            }
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -267,11 +265,15 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
     )
     pension_funcs = {"accrued_pension": accrued_pension, "pension_value": pension_value}
     old = regime_type(
-        transition={
-            "old": MarkovTransition(next_old_stay_prob),
-            "dead": MarkovTransition(next_old_death_prob),
-        },
-        active=_old_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "old": MarkovTransition(func=next_old_stay_prob),
+                "dead": MarkovTransition(func=next_old_death_prob),
+            },
+            exits=("dead",),
+            start=50,
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -304,9 +306,8 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda _age: True,
     )
     fixed_params = (
         {
@@ -321,6 +322,7 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         ages=_ages(),
         regime_id_class=CrossRegimeId,
         fixed_params=fixed_params,
+        initial_regimes={40: "young"},
     )
 
 

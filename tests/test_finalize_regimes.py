@@ -14,6 +14,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinearAggregator,
     LinSpacedGrid,
@@ -23,6 +24,7 @@ from lcm import (
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -45,8 +47,9 @@ def _next_regime(age: float) -> ScalarInt:
 
 def _build_work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "transition": _next_regime,
-        "active": lambda age: age < 2,
+        "regime_transitions": until_exit(
+            2, law=Choose(func=_next_regime, targets=("dead", "work")), exits=("dead",)
+        ),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -58,14 +61,14 @@ def _build_work_regime(**overrides: Any) -> UserRegime:
 
 def _build_model(work: UserRegime) -> Model:
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 1,
     )
     return Model(
         regimes={"work": work, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "work"},
     )
 
 
@@ -136,15 +139,15 @@ def test_model_level_derived_categoricals_are_merged() -> None:
 
     work = _build_work_regime()
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 1,
     )
     model = Model(
         regimes={"work": work, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
         derived_categoricals={"flag": DiscreteGrid(category_class=_Flag)},
+        initial_regimes={0: "work"},
     )
     assert "flag" in model.user_regimes["work"].derived_categoricals
     assert "flag" in model.user_regimes["dead"].derived_categoricals

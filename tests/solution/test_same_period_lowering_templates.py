@@ -40,6 +40,7 @@ from lcm import (
 )
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
 
@@ -165,25 +166,28 @@ def _build_model() -> Model:
 
     """
     couple = Regime(
-        transition={
-            "single": ValueDependentTransition(
-                probability=MarkovTransition(_probability_of_separating),
-                gate=_wage_clears_the_floor,
-                routes={
-                    "f": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="outside_f", projection={"wage": _identity_wage}
-                        )
-                    ),
-                    "m": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="outside_m", projection={"wage": _identity_wage}
-                        )
-                    ),
-                },
-            )
-        },
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law={
+                "single": ValueDependentTransition(
+                    probability=MarkovTransition(func=_probability_of_separating),
+                    gate=_wage_clears_the_floor,
+                    routes={
+                        "f": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="outside_f", projection={"wage": _identity_wage}
+                            )
+                        ),
+                        "m": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="outside_m", projection={"wage": _identity_wage}
+                            )
+                        ),
+                    },
+                )
+            },
+            exits=("single",),
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=_Work)},
@@ -204,17 +208,17 @@ def _build_model() -> Model:
         },
     )
     single = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _single_utility},
     )
     outside_f = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_f_utility},
     )
     outside_m = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_m_utility},
     )
@@ -227,6 +231,7 @@ def _build_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "couple"},
     )
 
 

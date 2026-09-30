@@ -32,6 +32,9 @@ import pytest
 import tests.conftest
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -110,8 +113,11 @@ def _entry_kind(wealth: FloatND) -> FloatND:
 
 def _working(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "active": lambda age: age < 2,
-        "transition": _retire_at_one,
+        "regime_transitions": ByAge.until(
+            stop_age_exclusive=2,
+            law=Choose(func=_retire_at_one, targets=("working",)),
+            then=Choose(func=_retire_at_one, targets=("retired",)),
+        ),
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
@@ -123,8 +129,11 @@ def _working(**overrides: Any) -> Regime:
 
 def _retired(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "active": lambda age: (age >= 2) & (age < 3),
-        "transition": _die_at_three,
+        "regime_transitions": ByAge(
+            cases={
+                AgeRange(start=2, stop=3): Choose(func=_die_at_three, targets=("dead",))
+            }
+        ),
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
@@ -136,8 +145,7 @@ def _retired(**overrides: Any) -> Regime:
 
 def _dead() -> Regime:
     return Regime(
-        active=lambda age: age >= 3,
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )
@@ -153,6 +161,7 @@ def _build(
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(sharded_states=sharded, **config),
         states={"kind": DiscreteGrid(category_class=_Kind)},
+        initial_regimes={0: "working"},
     )
 
 
@@ -184,10 +193,11 @@ def mirror_model(*, devices: tuple[int, ...], sharded: tuple[str, ...]) -> Model
             "dead": _dead(),
         },
         states={"kind": DiscreteGrid(category_class=_Kind)},
-        state_transitions={"kind": {"retired": MarkovTransition(_entry_kind)}},
+        state_transitions={"kind": {"retired": MarkovTransition(func=_entry_kind)}},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),
+        initial_regimes={0: "working"},
     )
 
 
@@ -223,6 +233,7 @@ def build_pruned_continuous_sharded_state() -> Model:
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=(0,), sharded_states=("assets",)),
+        initial_regimes={0: "working"},
     )
 
 

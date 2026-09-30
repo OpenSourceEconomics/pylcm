@@ -84,8 +84,9 @@ def _params():
         "alive": {
             "utility": {"crra": 2.0},
             "koopmans_aggregator": {"discount_factor": 0.95},
-            "alive": {"next_liquid": budget, "next_regime": {"final_age_alive": 3.0}},
-            "dead": {"next_liquid": budget, "next_regime": {"final_age_alive": 3.0}},
+            "alive": {"next_liquid": budget},
+            "dead": {"next_liquid": budget},
+            "final_age_alive": 3.0,
         },
         "dead": {"utility": {"crra": 2.0}},
     }

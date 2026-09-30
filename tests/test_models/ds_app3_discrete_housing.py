@@ -75,6 +75,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -95,6 +96,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.envelope_configs import envelope_config
+from tests.test_models.schedules import until_exit
 
 # Lifecycle: T = 20 periods. The last period is the terminal bequest regime, so
 # there are 19 decision periods. Ages are abstract unit steps from 0.
@@ -527,16 +529,18 @@ def build_model(
     borrowing = borrowing_constraint_taxed if use_taxes else borrowing_constraint
 
     dead = UserRegime(
-        transition=None,
-        active=lambda age, fa=final_age_alive: age >= fa,
+        regime_transitions=None,
         states={"assets": assets_grid, "housing": DiscreteGrid(category_class=Housing)},
         functions={"utility": bequest},
     )
 
     if variant == "brute":
         working = UserRegime(
-            transition=next_regime,
-            active=lambda age, fa=final_age_alive: age < fa,
+            regime_transitions=until_exit(
+                final_age_alive,
+                law=Choose(func=next_regime, targets=("working", "dead")),
+                exits=("dead",),
+            ),
             states={
                 "assets": assets_grid,
                 "housing": DiscreteGrid(category_class=Housing),
@@ -563,11 +567,15 @@ def build_model(
             regimes={"working": working, "dead": dead},
             ages=ages,
             regime_id_class=DiscreteHousingRegimeId,
+            initial_regimes={ages.exact_values[0]: "working"},
         )
 
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
-        active=lambda age, fa=final_age_alive: age < fa,
+        regime_transitions=until_exit(
+            final_age_alive,
+            law=Choose(func=next_regime, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={
             "assets": assets_grid,
             "housing": DiscreteGrid(category_class=Housing),
@@ -606,6 +614,7 @@ def build_model(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=DiscreteHousingRegimeId,
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 

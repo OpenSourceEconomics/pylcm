@@ -38,6 +38,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ByAge,
     CertaintyEquivalent,
     CESAggregator,
     DiscreteGrid,
@@ -165,24 +166,27 @@ def get_model(
         n_points=n_consumption_points,
     )
     alive = Regime(
-        transition=MarkovTransition(next_regime),
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=last_age,
+            law=MarkovTransition(func=next_regime, targets=("alive", "dead")),
+            then=MarkovTransition(func=next_regime, targets=("dead",)),
+        ),
         states={
             "wealth": wealth_grid,
             "health": DiscreteGrid(category_class=HealthStatus),
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": {"alive": MarkovTransition(health_probs)},
+            "health": {"alive": MarkovTransition(func=health_probs)},
         },
         actions={"consumption": consumption_grid},
         constraints={"budget_constraint": budget_constraint},
         functions={"utility": utility_alive},
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=certainty_equivalent,
-        active=lambda age, la=last_age: age < la,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": dead_wealth_grid},
         functions={"utility": utility_dead},
     )
@@ -190,6 +194,7 @@ def get_model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=25, stop=last_age, step="Y"),
         regime_id_class=EZRegimeId,
+        initial_regimes={25: "alive"},
     )
 
 

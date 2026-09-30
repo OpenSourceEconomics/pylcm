@@ -1,14 +1,13 @@
-"""Mass normalization and probability poisoning in a collective continuation.
+"""Regime-transition mass in a collective continuation.
 
 A regime's continuation is a lottery over the targets it can reach, weighted by
-the regime-transition probabilities. Two properties of that lottery hold whether
-or not the regime carries stakeholders:
+the regime-transition probabilities. Two properties hold whether or not the
+regime carries stakeholders:
 
-- The aggregated continuation is divided by the probability mass that was summed,
-  so a mass the arithmetic accepts as a distribution but that is not exactly one
-  does not scale the continuation.
-- Probabilities that sum to one only because one of them is negative are not a
-  distribution, and the continuation publishes `NaN` rather than a finite value.
+- A unit mass on the single target prices each stakeholder as its singleton twin.
+- Regime selection refuses a non-unit mass and a negative probability at the
+  `off`, `warning` and `debug` log levels, including probabilities that sum to one
+  only because one is negative.
 
 Every model here pairs a two-stakeholder regime with singleton twins carrying one
 stakeholder's utility each. The husband's payoff is twice the wife's, so the
@@ -20,9 +19,12 @@ equal its twin's value.
 from collections.abc import Mapping
 
 import jax.numpy as jnp
+import pytest
 from numpy.testing import assert_allclose
 
+from _lcm.utils.logging import LogLevel
 from lcm import CollectiveUtility, DiscreteGrid, MarkovTransition, Model, Regime
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import (
     ContinuousState,
     DiscreteAction,
@@ -40,16 +42,15 @@ from tests.collective_fixtures import (
     Work,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import choose_among, until_exit
 
 # The stakeholders every collective regime in this module carries, wife first.
 STAKEHOLDERS = ("f", "m")
 
-# Regime-transition mass of the single-target source regime. Inside the band the
-# continuation arithmetic accepts as a distribution, and far enough above one
-# that an undivided sum shows up at either float precision.
+# A regime-transition mass just above one, which regime selection refuses.
 INFLATED_MASS = 1.0 + 1e-4
 
-# Probabilities of the two-target source regime's targets while it is active.
+# Probabilities of the two-target source regime's targets at age 0.
 # They sum to one, so only the sign disqualifies them as a distribution.
 STAY_PROBABILITY = 1.5
 LEAVE_PROBABILITY = -0.5
@@ -60,23 +61,17 @@ LEAVE_PROBABILITY = -0.5
 EXPECTED_TWIN_V = {"f": (3808.0, 3840.0), "m": (7616.0, 7680.0)}
 
 
-def test_collective_continuation_divides_by_represented_mass():
-    """A transition mass inside the accepted band is renormalized.
+def test_collective_continuation_prices_each_stakeholder_as_its_singleton_twin():
+    """Every stakeholder slice of a collective value equals its singleton twin's.
 
-    The continuation arithmetic accepts any regime-transition mass within a
-    thousandth of one, and divides the aggregated continuation by the mass it
-    summed. A mass of `1 + 1e-4` therefore prices a collective regime exactly as
-    a mass of one does, and every stakeholder slice of its value equals the value
-    of the singleton regime carrying that stakeholder's utility.
+    The single target carries the regime's whole unit mass, so each twin's value
+    is the hand-computed `EXPECTED_TWIN_V`.
     """
     rtol = 10.0**-DECIMAL_PRECISION
 
     collective = _build_single_target_model(household=STAKEHOLDERS)
-    # Runtime validation rejects a probability above one. The assertion below is
-    # about the continuation arithmetic, which carries its own, wider guard on
-    # the mass it sums.
     collective_V = collective.solve(
-        params=_single_target_params(mass=INFLATED_MASS),
+        params=_single_target_params(mass=1.0),
         log_level="off",
     ).values[0]["couple"]
 
@@ -85,14 +80,14 @@ def test_collective_continuation_divides_by_represented_mass():
         twin = _build_single_target_model(household=None, stakeholder=stakeholder)
         twin_values.append(
             twin.solve(
-                params=_single_target_params(mass=INFLATED_MASS),
+                params=_single_target_params(mass=1.0),
                 log_level="off",
             ).values[0]["couple"]
         )
     expected_V = jnp.stack(twin_values, axis=-1)
 
-    # Certify the reference against the hand-computed unit-mass values, so a
-    # defect in the twins cannot hide one in the collective path.
+    # Certify the reference against the hand-computed values, so a defect in the
+    # twins cannot hide one in the collective path.
     assert_allclose(
         expected_V,
         jnp.asarray([EXPECTED_TWIN_V["f"], EXPECTED_TWIN_V["m"]]).T,
@@ -105,33 +100,59 @@ def test_collective_continuation_divides_by_represented_mass():
     assert_allclose(collective_V, expected_V, rtol=rtol)
 
 
-def test_collective_continuation_poisons_a_negative_probability():
-    """A negative regime-transition probability publishes `NaN`.
+_OUTSIDE_UNIT_INTERVAL = (
+    r"^Regime transition probabilities from 'couple' between ages 0 and 1 "
+    r"contain values outside \[0, 1\]\. "
+)
+_NOT_SUMMING_TO_ONE = (
+    r"^Regime transition probabilities from 'couple' between ages 0 and 1 "
+    r"do not sum to 1\.0\. 1 of 1 probability vectors do not sum to 1\.0\."
+)
 
-    Unit mass alone does not make a set of transition probabilities a
-    distribution: 1.5 and -0.5 sum to one. A collective regime whose two targets
-    carry those probabilities publishes `NaN` at every state and for every
-    stakeholder, the same answer a singleton regime publishes there.
+
+@pytest.mark.parametrize("log_level", ["off", "warning", "debug"])
+@pytest.mark.parametrize(
+    ("mass", "match"),
+    [(INFLATED_MASS, _OUTSIDE_UNIT_INTERVAL), (1.0 - 1e-4, _NOT_SUMMING_TO_ONE)],
+)
+def test_collective_regime_selection_refuses_a_non_unit_mass(
+    *, mass: float, match: str, log_level: LogLevel
+) -> None:
+    """A regime-transition mass other than one is refused at the source's age 0."""
+    collective = _build_single_target_model(household=STAKEHOLDERS)
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match=match):
+        collective.solve(params=_single_target_params(mass=mass), log_level=log_level)
+
+
+@pytest.mark.parametrize("log_level", ["off", "warning", "debug"])
+@pytest.mark.parametrize("household", [STAKEHOLDERS, None])
+def test_collective_regime_selection_refuses_a_negative_probability(
+    *, household: tuple[str, ...] | None, log_level: LogLevel
+) -> None:
+    """Probabilities 1.5 and -0.5 sum to one but are refused at the source's age 0.
+
+    The collective regime and its singleton twin refuse them alike.
     """
-    collective = _build_two_target_model(household=STAKEHOLDERS)
-    # Runtime validation rejects a probability outside `[0, 1]`. The assertion
-    # below is about the continuation arithmetic, which reads each probability's
-    # sign off its own bits.
-    solution = collective.solve(
-        params=_two_target_params(),
-        log_level="off",
-    ).values
+    model = _build_two_target_model(household=household)
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError, match=_OUTSIDE_UNIT_INTERVAL
+    ):
+        model.solve(params=_two_target_params(), log_level=log_level)
 
-    twin = _build_two_target_model(household=None, stakeholder="f")
-    twin_solution = twin.solve(params=_two_target_params(), log_level="off").values
-    # The singleton contract the collective regime states as well.
-    assert bool(jnp.isnan(twin_solution[0]["couple"]).all())
-    # The source regime's last period reaches its terminal target with
-    # probability one, so a `NaN` there would mean an ill-posed model rather than
-    # the negative probability under test.
-    assert bool(jnp.isfinite(solution[1]["couple"]).all())
 
-    assert bool(jnp.isnan(solution[0]["couple"]).all())
+def test_two_target_model_with_a_distribution_has_a_finite_last_source_period():
+    """With probabilities 0.5 and 0.5 the source's last period solves to finite values.
+
+    At age 1 the source reaches its terminal target with probability one, so the
+    refusal above is about the age-0 probabilities alone.
+    """
+    params = _two_target_params(stay_probability=0.5, leave_probability=0.5)
+    values = (
+        _build_two_target_model(household=STAKEHOLDERS)
+        .solve(params=params, log_level="off")
+        .values
+    )
+    assert bool(jnp.isfinite(values[1]["couple"]).all())
 
 
 def _build_single_target_model(
@@ -139,9 +160,9 @@ def _build_single_target_model(
 ) -> Model:
     """Build a source regime whose only target carries the whole declared mass.
 
-    `couple` is active at age 0 and reaches `couple_terminal` — active from age 1
-    — with the probability named by the `regime_mass` parameter, which is the
-    regime's entire transition mass.
+    `couple` has a transition law at age 0 and reaches `couple_terminal` — solved
+    from age 1 — with the probability named by the `regime_mass` parameter, which
+    is the regime's entire transition mass.
 
     Args:
         household: Stakeholder names of both regimes, or `None` for the
@@ -154,7 +175,9 @@ def _build_single_target_model(
 
     """
     return _build_model(
-        transition={"couple_terminal": MarkovTransition(_target_probability)},
+        regime_transitions={
+            "couple_terminal": MarkovTransition(func=_target_probability)
+        },
         household=household,
         stakeholder=stakeholder,
         source_ends_at_age=1,
@@ -166,9 +189,10 @@ def _build_two_target_model(
 ) -> Model:
     """Build a source regime reaching two targets, one of them itself.
 
-    `couple` is active at ages 0 and 1 and `couple_terminal` from age 1 on, so at
-    age 0 both are reachable and the transition splits its mass between them,
-    while at age 1 only the terminal regime is left and takes all of it.
+    `couple` has a transition law at ages 0 and 1 and `couple_terminal` is solved
+    from age 1 on, so at age 0 both are reachable and the transition splits its
+    mass between them, while at age 1 only the terminal regime is left and takes
+    all of it.
 
     Args:
         household: Stakeholder names of both regimes, or `None` for the
@@ -181,9 +205,9 @@ def _build_two_target_model(
 
     """
     return _build_model(
-        transition={
-            "couple": MarkovTransition(_stay_probability),
-            "couple_terminal": MarkovTransition(_leave_probability),
+        regime_transitions={
+            "couple": MarkovTransition(func=_stay_probability),
+            "couple_terminal": MarkovTransition(func=_leave_probability),
         },
         household=household,
         stakeholder=stakeholder,
@@ -193,7 +217,7 @@ def _build_two_target_model(
 
 def _build_model(
     *,
-    transition: Mapping[RegimeName, MarkovTransition],
+    regime_transitions: Mapping[RegimeName, MarkovTransition],
     household: tuple[str, ...] | None,
     stakeholder: str,
     source_ends_at_age: int,
@@ -209,23 +233,25 @@ def _build_model(
         household: Stakeholder names of both regimes, or `None` for a
             singleton twin.
         stakeholder: Whose utility a singleton twin carries.
-        source_ends_at_age: First age at which the source regime is inactive.
+        source_ends_at_age: First age at which the source regime is not solved.
 
     Returns:
         The model, ready to solve once its params are supplied.
 
     """
     couple = Regime(
-        transition=transition,
-        active=lambda age: age < source_ends_at_age,
+        regime_transitions=until_exit(
+            source_ends_at_age,
+            law=choose_among(regime_transitions, targets=("couple", "couple_terminal")),
+            exits=("couple_terminal",),
+        ),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions=_source_functions(household=household, stakeholder=stakeholder),
     )
     couple_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions=_terminal_functions(household=household, stakeholder=stakeholder),
@@ -234,6 +260,7 @@ def _build_model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 
@@ -276,14 +303,18 @@ def _single_target_params(*, mass: float) -> UserParams:
     }
 
 
-def _two_target_params() -> UserParams:
+def _two_target_params(
+    *,
+    stay_probability: float = STAY_PROBABILITY,
+    leave_probability: float = LEAVE_PROBABILITY,
+) -> UserParams:
     """Return the two-target model's params, with the split probabilities."""
     return {
         "couple": {
             "koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR},
-            "couple": {"next_regime": {"stay_probability": STAY_PROBABILITY}},
+            "couple": {"next_regime": {"stay_probability": stay_probability}},
             "couple_terminal": {
-                "next_regime": {"leave_probability": LEAVE_PROBABILITY}
+                "next_regime": {"leave_probability": leave_probability}
             },
         },
         "couple_terminal": {},

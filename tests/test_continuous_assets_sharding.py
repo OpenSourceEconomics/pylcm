@@ -31,6 +31,7 @@ from _lcm.simulation import chunk_admission
 from _lcm.variables import from_regime
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -44,6 +45,11 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
+from tests.test_continuous_assets_aca_vocabulary import (
+    TAUCHEN_AND_LOG_NORMAL,
+)
+from tests.test_continuous_assets_aca_vocabulary import _model as _process_model
+from tests.test_models.initial_regimes import initial_regimes_of
 
 
 @categorical(ordered=False)
@@ -83,8 +89,11 @@ def _regime(*, source: int, identity: bool) -> Regime:
         )
 
     return Regime(
-        active=lambda age: age < 2,
-        transition=MarkovTransition(probabilities),
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=2,
+            law=MarkovTransition(func=probabilities, targets=("r0", "r1")),
+            then=MarkovTransition(func=probabilities, targets=("terminal",)),
+        ),
         actions={"decision": DiscreteGrid(_Three)},
         functions={"utility": utility, "landing": _landing},
         constraints={"feasible": lambda landing: (landing >= -4) & (landing <= 19)},
@@ -113,8 +122,7 @@ def _model(
             "r0": _regime(source=0, identity=identity),
             "r1": _regime(source=1, identity=identity),
             "terminal": Regime(
-                active=lambda age: age == 2,
-                transition=None,
+                regime_transitions=None,
                 functions={
                     "utility": lambda assets, pref_type, spousal_income: (
                         -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
@@ -145,6 +153,8 @@ def _model(
             },
             device_memory_bytes=budget,
         ),
+        # The tests start subjects in both living regimes at both living ages.
+        initial_regimes={(0, 1): ("r0", "r1")},
     )
 
 
@@ -661,7 +671,7 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
 
     _require_eight()
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         states={
             "liquid": LinSpacedGrid(start=-4, stop=19, n_points=24),
             "pref_type": DiscreteGrid(_Three),
@@ -733,6 +743,7 @@ def _renamed_public_model(*, original: Model) -> Model:
             axis_widths={"action_product": 3, "cell": 9, "subject": 432},
             device_memory_bytes=2**30,
         ),
+        initial_regimes=initial_regimes_of(model=original),
     )
 
 
@@ -975,3 +986,38 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
     _assert_assets_shards(tracked["source"])
     np.testing.assert_array_equal(tracked["source"], tracked["expected"])
     np.testing.assert_array_equal(solution.values[2]["terminal"], tracked["expected"])
+
+
+@pytest.mark.parametrize("widths", [(1, 1), (3, 24)])
+def test_tauchen_and_log_normal_nodes_solve_like_the_unsharded_model(
+    *, widths: tuple[int, int], record_property: Any
+) -> None:
+    """Eight assets shards reproduce one-device values to 8 ULP with these nodes."""
+    _require_eight()
+    params = {"discount_factor": 0.5}
+    model = _process_model(widths=widths, state_overrides=TAUCHEN_AND_LOG_NORMAL)
+    control_model = _process_model(
+        sharded=False, widths=widths, state_overrides=TAUCHEN_AND_LOG_NORMAL
+    )
+    assert model._execution.continuous_sharded_state == "assets"
+    solution = model.solve(params=params, log_level="off")
+    control = control_model.solve(params=params, log_level="off")
+    assert {(t, r) for t, arrays in solution.values.items() for r in arrays} == {
+        (t, r) for t, arrays in control.values.items() for r in arrays
+    }
+    max_abs = 0.0
+    for period, arrays in solution.values.items():
+        for regime, value in arrays.items():
+            assert len(value.sharding.device_set) == 8
+            names = model._regimes[regime].solution.state_names
+            control_names = control_model._regimes[regime].solution.state_names
+            assert sorted(names) == sorted(control_names)
+            got = np.asarray(value)
+            want = np.transpose(
+                np.asarray(control.values[period][regime]),
+                [control_names.index(name) for name in names],
+            )
+            assert np.isfinite(want).all()
+            max_abs = max(max_abs, float(np.max(np.abs(got - want))))
+            assert_agrees_to_ulp(got=got, expected=want, n_ulp=8)
+    record_property("max_abs_value_difference", max_abs)

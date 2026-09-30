@@ -35,6 +35,8 @@ from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from lcm import (
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     NormalIIDProcess,
@@ -51,7 +53,8 @@ from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -103,7 +106,7 @@ def _solve_kwargs(*, regimes: dict[str, Regime], ages: AgeGrid) -> dict:
         certainty_equivalent=LinearExpectation(),
     )
     return {
-        "user_regimes": finalized,
+        "user_regimes": lower_declarations(finalized, ages=ages),
         "ages": ages,
         "regime_names_to_ids": MappingProxyType(
             {name: jnp.int32(i) for i, name in enumerate(names)}
@@ -121,31 +124,32 @@ _AGES_2P = AgeGrid(start=0, stop=2, step="Y")
 def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (SINGLETON, folds `wage_shock`)."""
     source = Regime(
-        transition={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_true_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="source_terminal", projection={}
-                        )
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(func=_prob_one),
+                        gate=_true_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="source_terminal", projection={}
+                                )
+                            )
+                        },
                     )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     source_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         functions={"utility": _u_zero},
     )
     target = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
@@ -180,15 +184,17 @@ def _dummy_constraint(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
 def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     """`reader` (collective) --same_period_refs--> `ref_target` (SINGLETON, folded)."""
     ref_target = Regime(
-        transition=None,
-        active=lambda age: age < 1,
+        regime_transitions=None,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     reader = Regime(
-        transition={"reader_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {"reader_terminal": MarkovTransition(func=_prob_one)}
+            }
+        ),
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
@@ -206,8 +212,7 @@ def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
         },
     )
     reader_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
@@ -248,35 +253,36 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
     either kind of reference name.
     """
     source = Regime(
-        transition={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_no_dissolution_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="fallback_regime",
-                            projection={"wage_shock": lambda: 0.0},
-                        ),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(func=_prob_one),
+                        gate=_no_dissolution_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback_regime",
+                                    projection={"wage_shock": lambda: 0.0},
+                                ),
+                            )
+                        },
                     )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     fallback_regime = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     target = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
@@ -321,8 +327,9 @@ def test_fold_with_nonlinear_certainty_equivalent_is_rejected():
     """
     with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
         Regime(
-            transition={"terminal": MarkovTransition(_prob_one)},
-            active=lambda age: age < 1,
+            regime_transitions=ByAge(
+                cases={AgeRange(stop=1): {"terminal": MarkovTransition(func=_prob_one)}}
+            ),
             states={"wage_shock": _shock(fold=True)},
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_work},
@@ -333,8 +340,9 @@ def test_fold_with_nonlinear_certainty_equivalent_is_rejected():
 def test_fold_without_certainty_equivalent_still_constructs():
     """Pin: the SAME topology with no `certainty_equivalent` still constructs."""
     Regime(
-        transition={"terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={AgeRange(stop=1): {"terminal": MarkovTransition(func=_prob_one)}}
+        ),
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
@@ -355,32 +363,33 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
     so no rule may fire.
     """
     source = Regime(
-        transition={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=lambda wage_shock: wage_shock > 0.0,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="source_terminal", projection={}
+        regime_transitions=until_exit(
+            1,
+            law={
+                "target": ValueDependentTransition(
+                    probability=MarkovTransition(func=_prob_one),
+                    gate=lambda wage_shock: wage_shock > 0.0,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="source_terminal", projection={}
+                            )
                         )
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                    },
+                )
+            },
+            exits=("target",),
+        ),
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_f},
     )
     source_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         functions={"utility": _u_zero},
     )
     target = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},

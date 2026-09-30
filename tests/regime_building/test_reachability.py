@@ -11,12 +11,12 @@ from _lcm.reachability import (
 )
 
 
-def test_activity_is_source_t_and_target_t_plus_one() -> None:
-    """An edge exists only when its source and next-period target are active."""
+def test_an_edge_is_the_declared_support_at_its_period() -> None:
+    """An edge exists exactly at the periods whose support declares its target."""
     graph = build_phase_reachability(
         n_periods=3,
         active_periods_by_regime={"source": {0}, "target": {1}},
-        candidate_targets_by_source={"source": {"target"}},
+        support_by_period={"source": {0: ("target",)}},
     )
 
     assert (
@@ -26,31 +26,14 @@ def test_activity_is_source_t_and_target_t_plus_one() -> None:
     assert not graph.has_edge(period=1, source="source", target="target")
 
 
-def test_forcedout_cannot_transition_back_to_canwork() -> None:
-    """A later-life regime cannot transition into an earlier-life regime."""
-    ages = tuple(range(60, 69))
-    cutoff = 65
-    active_by_regime = {
-        "canwork": lambda age: age < cutoff,
-        "forcedout": lambda age: age >= cutoff,
-    }
-    active = {
-        regime: frozenset(
-            period for period, age in enumerate(ages) if bool(is_active(age))
+def test_a_declared_target_not_covered_next_period_is_rejected() -> None:
+    """The graph never drops a declared target; it refuses an uncovered one."""
+    with pytest.raises(ValueError, match="covered at the next period"):
+        build_phase_reachability(
+            n_periods=2,
+            active_periods_by_regime={"source": {0}, "target": {0}},
+            support_by_period={"source": {0: ("target",)}},
         )
-        for regime, is_active in active_by_regime.items()
-    }
-    graph = build_phase_reachability(
-        n_periods=len(ages),
-        active_periods_by_regime=active,
-        candidate_targets_by_source={
-            "forcedout": {"canwork", "forcedout"},
-            "canwork": {"canwork", "forcedout"},
-        },
-    )
-
-    assert graph.periods_for_edge(source="forcedout", target="canwork") == ()
-    assert graph.periods_for_edge(source="canwork", target="forcedout") == (4,)
 
 
 def test_conditional_edge_is_retained_without_runtime_resolution() -> None:
@@ -58,7 +41,7 @@ def test_conditional_edge_is_retained_without_runtime_resolution() -> None:
     graph = build_phase_reachability(
         n_periods=2,
         active_periods_by_regime={"a": {0}, "b": {1}},
-        candidate_targets_by_source={"a": {"b"}},
+        support_by_period={"a": {0: ("b",)}},
     )
 
     assert graph.targets(period=0, source="a") == ("b",)
@@ -66,46 +49,12 @@ def test_conditional_edge_is_retained_without_runtime_resolution() -> None:
     assert not hasattr(graph, "resolve")
 
 
-def test_coarse_transition_retains_all_activity_compatible_regimes() -> None:
-    """A coarse transition treats every regime as a conditional candidate."""
-    regime_names = ("source", "low", "high")
-    coarse_transition = object()
-    graph = build_model_reachability(
-        n_periods=2,
-        active_periods_by_regime=dict.fromkeys(regime_names, (0, 1)),
-        transitions_by_phase={
-            "solution": {
-                "source": coarse_transition,
-                "low": None,
-                "high": None,
-            },
-            "simulation": {
-                "source": coarse_transition,
-                "low": None,
-                "high": None,
-            },
-        },
-        terminal_regimes={"low", "high"},
-    )
-
-    assert graph.solution.targets(period=0, source="source") == (
-        "high",
-        "low",
-        "source",
-    )
-    assert all(
-        graph.solution.edge_status(period=0, source="source", target=target)
-        == EdgeStatus.CONDITIONAL
-        for target in regime_names
-    )
-
-
 def test_terminal_source_has_no_edge() -> None:
     """A terminal source has no outgoing edge even when support is declared."""
     graph = build_phase_reachability(
         n_periods=2,
         active_periods_by_regime={"dead": {0}, "alive": {1}},
-        candidate_targets_by_source={"dead": {"alive"}},
+        support_by_period={"dead": {0: ("alive",)}},
         terminal_regimes={"dead"},
     )
 
@@ -117,7 +66,7 @@ def test_forward_closure_is_derived_from_the_static_graph() -> None:
     graph = build_phase_reachability(
         n_periods=3,
         active_periods_by_regime={"a": {0}, "b": {1}, "c": {2}, "x": {1}},
-        candidate_targets_by_source={"a": {"b"}, "b": {"c"}, "x": {"c"}},
+        support_by_period={"a": {0: ("b",)}, "b": {1: ("c",)}, "x": {1: ("c",)}},
     )
 
     assert graph.reachable_from({"a"}) == (
@@ -133,7 +82,7 @@ def test_unknown_target_is_rejected() -> None:
         build_phase_reachability(
             n_periods=2,
             active_periods_by_regime={"a": {0}},
-            candidate_targets_by_source={"a": {"missing"}},
+            support_by_period={"a": {0: ("missing",)}},
         )
 
 
@@ -142,21 +91,13 @@ def test_solution_and_simulation_graphs_use_the_same_builder() -> None:
     graph = build_model_reachability(
         n_periods=2,
         active_periods_by_regime={
-            "source": (0, 1),
+            "source": (0,),
             "solve_target": (0, 1),
             "simulate_target": (0, 1),
         },
-        transitions_by_phase={
-            "solution": {
-                "source": {"solve_target": object()},
-                "solve_target": None,
-                "simulate_target": None,
-            },
-            "simulation": {
-                "source": {"simulate_target": object()},
-                "solve_target": None,
-                "simulate_target": None,
-            },
+        support_by_phase={
+            "solution": {"source": {0: ("solve_target",)}},
+            "simulation": {"source": {0: ("simulate_target",)}},
         },
         terminal_regimes={"solve_target", "simulate_target"},
     )
@@ -205,26 +146,6 @@ def _solver_runtime_paths() -> list[Path]:
         package_root / "simulation" / "simulate.py",
         package_root / "simulation" / "transitions.py",
     ]
-
-
-def test_solver_runtime_does_not_call_activity_predicates() -> None:
-    """Solver runtime modules consume the graph, not `Regime.active` directly.
-
-    Only `compute_active_periods_by_regime` (the single canonical activity
-    schedule) may call an activity predicate or `AgeGrid.get_periods_where`;
-    every other consumer, including the solve/simulate runtime, reads the
-    prepared `active_periods_by_regime` mapping instead.
-    """
-    calls = [
-        (path, node.lineno)
-        for path in _solver_runtime_paths()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in {"active", "get_periods_where"}
-    ]
-
-    assert calls == []
 
 
 def _is_simulation_program_bundle(node: ast.expr | None) -> bool:
@@ -303,7 +224,7 @@ def _raw_transition_reads(source: str) -> list[ast.Attribute]:
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Attribute)
-        and node.attr in {"transition", "state_transitions"}
+        and node.attr in {"regime_transitions", "transition", "state_transitions"}
         and not (
             node.attr == "transition"
             and (
@@ -400,22 +321,3 @@ def test_continuation_targets_are_not_derived_from_law_bundle_keys() -> None:
     ]
 
     assert hits == []
-
-
-def test_active_periods_are_computed_at_a_single_call_site() -> None:
-    """`AgeGrid.get_periods_where` is combined with `Regime.active` exactly once.
-
-    `compute_active_periods_by_regime` is that single canonical evaluation
-    point; a second call site would let two subsystems compute active
-    periods independently and risk disagreement (e.g. Fraction vs.
-    float32-rounded ages).
-    """
-    src_root = Path(__file__).parents[2] / "src"
-    hits = [
-        path
-        for path in src_root.rglob("*.py")
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if "get_periods_where(" in line and ".active" in line
-    ]
-
-    assert hits == [src_root / "_lcm" / "regime_building" / "processing.py"]

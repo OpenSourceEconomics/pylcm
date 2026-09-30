@@ -82,6 +82,9 @@ from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -117,6 +120,7 @@ from tests.candidate_certificate.verify import (
     reference_masked_argmax,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _SRC_ROOT = Path(__file__).parent.parent / "src"
 
@@ -1153,8 +1157,11 @@ def _build_model(
         The built model.
     """
     acting = Regime(
-        transition=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_next_regime, targets=("acting", "done")),
+            exits=("done",),
+        ),
         states={
             "wealth": LinSpacedGrid(
                 start=float(_WEALTH_VALUES[0]),
@@ -1169,8 +1176,7 @@ def _build_model(
         taste_shocks=ExtremeValueTasteShocks() if taste_shocks else None,
     )
     done = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         functions={"utility": terminal_utility},
     )
     return Model(
@@ -1180,6 +1186,7 @@ def _build_model(
         execution_config=ExecutionConfig(
             axis_widths={} if subject_width is None else {"subject": subject_width}
         ),
+        initial_regimes={0: "acting"},
     )
 
 
@@ -1225,8 +1232,11 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
 
     def decision_regime(utility: Callable[..., FloatND]) -> Regime:
         return Regime(
-            transition=_next_dedup_done,
-            active=lambda age: age < 1,
+            regime_transitions=ByAge(
+                cases={
+                    AgeRange(stop=1): Choose(func=_next_dedup_done, targets=("done",))
+                }
+            ),
             states={"wealth": wealth_grid},
             state_transitions={"wealth": fixed_transition("wealth")},
             actions=_actions(),
@@ -1238,8 +1248,7 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
             "left": decision_regime(_dedup_utility_left),
             "right": decision_regime(_dedup_utility_right),
             "done": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"wealth": wealth_grid},
                 functions={"utility": _dedup_terminal_utility},
             ),
@@ -1249,6 +1258,7 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
         execution_config=ExecutionConfig(
             axis_widths={} if subject_width is None else {"subject": subject_width}
         ),
+        initial_regimes={0: ("left", "right")},
     )
 
 
@@ -1694,8 +1704,11 @@ def _build_runtime_action_model(
     return Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
+                    exits=("done",),
+                ),
                 states={
                     "wealth": LinSpacedGrid(
                         start=float(_WEALTH_VALUES[0]),
@@ -1708,8 +1721,7 @@ def _build_runtime_action_model(
                 functions={"utility": _runtime_action_utility},
             ),
             "done": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={
                     "wealth": LinSpacedGrid(
                         start=float(_WEALTH_VALUES[0]),
@@ -1723,6 +1735,7 @@ def _build_runtime_action_model(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
+        initial_regimes={0: "acting"},
     )
 
 
@@ -2027,19 +2040,21 @@ def _folded_terminal_utility(*, folded_shock: FloatND, work: DiscreteAction) -> 
 def _build_zero_weight_fold_model() -> Model:
     """Build a folded process whose quadrature weights are exactly ``[0, 1, 0]``."""
     src = Regime(
-        transition={
-            "folded": MarkovTransition(_route_to_folded),
-            "dead": MarkovTransition(_route_to_dead),
-        },
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law={
+                "folded": MarkovTransition(func=_route_to_folded),
+                "dead": MarkovTransition(func=_route_to_dead),
+            },
+            exits=("folded", "dead"),
+        ),
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _fold_source_utility},
     )
     folded = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={
             "folded_shock": NormalIIDProcess(
                 n_points=3,
@@ -2054,14 +2069,14 @@ def _build_zero_weight_fold_model() -> Model:
         functions={"utility": _folded_terminal_utility},
     )
     dead = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
         regimes={"src": src, "folded": folded, "dead": dead},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=FoldRegimeId,
+        initial_regimes={0: "src"},
     )
 
 

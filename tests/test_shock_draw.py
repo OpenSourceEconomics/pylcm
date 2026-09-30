@@ -4,6 +4,7 @@ from types import MappingProxyType
 from typing import Any
 
 import jax
+import numpy as np
 import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
@@ -198,3 +199,64 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
     expected_std = sigma / jnp.sqrt(1 - rho**2)
     aaae(samples.mean(), expected_mean, decimal=1)
     aaae(samples.std(), expected_std, decimal=1)
+
+
+_RHO = 0.93
+_SIGMA = (1 - _RHO**2) ** 0.5
+
+_AS_WRITTEN_CASES = [
+    (
+        RouwenhorstAR1Process(n_points=7, rho=_RHO, sigma=_SIGMA, mu=0.0),
+        {"rho": _RHO, "sigma": _SIGMA, "mu": 0.0},
+    ),
+    (
+        TauchenAR1Process(
+            n_points=7, rho=0.8, sigma=0.3, mu=0.1, n_std=3.0, gauss_hermite=False
+        ),
+        {"rho": 0.8, "sigma": 0.3, "mu": 0.1},
+    ),
+    (
+        NormalIIDProcess(n_points=7, mu=0.0, sigma=0.7, gauss_hermite=True),
+        {"rho": 0.0, "sigma": 0.7, "mu": 0.0},
+    ),
+]
+
+
+@pytest.mark.parametrize(("process", "params"), _AS_WRITTEN_CASES)
+def test_draw_shock_rounds_sigma_times_the_standard_normal_as_written(
+    *, process: Any, params: dict[str, float]
+) -> None:
+    """A compiled draw equals `mu + rho * x + sigma * z`, `z` the standard normal.
+
+    `sigma` multiplies the finished standard-normal draw, so constant params
+    cannot be folded into the draw's internal scaling, and the draw rounds the
+    same however the surrounding program is partitioned or fused.
+    """
+    n = 20_000
+    keys = jax.random.split(jax.random.key(3), n)
+    x = jnp.linspace(-2.0, 2.0, n, dtype=jnp.float32)
+    frozen = MappingProxyType(
+        {k: v for k, v in params.items() if k in _DRAW_KEYS[type(process)]}
+    )
+    if type(process) is NormalIIDProcess:
+        draw = lambda k, _v: process.draw_shock(params=frozen, key=k)  # noqa: E731
+    else:
+        draw = lambda k, v: process.draw_shock(  # noqa: E731
+            params=frozen, key=k, current_value=v
+        )
+    drawn = jax.jit(jax.vmap(draw))(keys, x)
+    z = np.asarray(jax.jit(jax.vmap(lambda k: jax.random.normal(key=k)))(keys))
+    mean = np.float32(params["mu"]) + np.float32(params["rho"]) * np.asarray(x)
+    if type(process) is NormalIIDProcess:
+        mean = np.full(n, np.float32(params["mu"]), dtype=np.float32)
+    # The standard normal comes out in the working float format, and `sigma`, a
+    # weakly typed Python float, multiplies it in that format.
+    expected = mean + z.dtype.type(params["sigma"]) * z
+    np.testing.assert_array_equal(np.asarray(drawn), expected)
+
+
+_DRAW_KEYS = {
+    RouwenhorstAR1Process: ("rho", "sigma", "mu"),
+    TauchenAR1Process: ("rho", "sigma", "mu"),
+    NormalIIDProcess: ("sigma", "mu"),
+}

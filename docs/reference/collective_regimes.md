@@ -17,7 +17,7 @@ a collective model has no extra constructor arguments to learn.
 | `CollectiveUtility`        | `functions={"utility": ...}`                                                      | the regime's stakeholders and their flow utilities  |
 | `ParetoObjective`          | `CollectiveUtility(objective=...)`                                                | how stakeholder action values are scalarized        |
 | `ValueDependentConstraint` | `constraints={"name": ...}`                                                       | a feasibility predicate that may read values        |
-| `ValueDependentTransition` | `transition={"target": ...}`                                                      | a transition into one target, gated on values there |
+| `ValueDependentTransition` | `regime_transitions={"target": ...}`                                              | a transition into one target, gated on values there |
 | `StakeholderRoute`         | `ValueDependentTransition(routes=...)`                                            | where one source stakeholder goes on each branch    |
 | `ProjectedRegimeValue`     | a constraint's `references`, an edge's `gate_references`, or a route's `fallback` | another regime's current-period value, at a mapping |
 
@@ -151,7 +151,7 @@ stakeholder: str | None = None
 
 Another regime's **current-period** value, read at mapped state coordinates. The
 reference regime is solved earlier in the same period — the solver orders each period's
-active regimes topologically by these declarations — and its value function is
+solved regimes topologically by these declarations — and its value function is
 interpolated at the projected coordinates: linear on continuous axes, lookup on discrete
 axes.
 
@@ -159,9 +159,10 @@ Reading the current period rather than the continuation is what a within-period
 participation constraint needs: a couple's period-$t$ decision is checked against the
 values its members would have as singles in that same period $t$.
 
-`regime` names another regime of the model, active in every period the declaring regime
-is active. No transition edge between the two is required — a reference read works
-across otherwise unconnected regime islands.
+`regime` names another regime of the model. A reference read requires its value in every
+period the declaring regime is solved, so the reference regime is solved there too
+without being declared as a start. No transition edge between the two is required — a
+reference read works across otherwise unconnected regime islands.
 
 `stakeholder` names whose value to read from a **collective** reference regime. It is
 required there and must be `None` for a singleton reference.
@@ -233,8 +234,8 @@ gate_references: Mapping[str, ProjectedRegimeValue] = field(
 off_grid: Literal["pointwise", "reject"] = "pointwise"
 ```
 
-Declared inside `transition`, keyed by target regime name, so target selection and
-value-dependent routing are one declaration of one semantic transition.
+Declared inside `regime_transitions`, keyed by target regime name, so target selection
+and value-dependent routing are one declaration of one semantic transition.
 
 **The key is always the gate-open target** — the regime a row enters when the gate is
 true. A dissolution edge is therefore keyed by the *continuing* collective regime under
@@ -245,9 +246,9 @@ stays together.
 `probability` accepts either a `MarkovTransition` or, as a convenience specific to
 `ValueDependentTransition`, a bare probability callable. The latter is wrapped in
 `MarkovTransition` in `decomposed_transition`, because that is the grammar the canonical
-per-target cell consumes. An ordinary per-target `transition` cell still requires an
-explicit `MarkovTransition`; a bare callable there is rejected as an unsupported
-deterministic per-target transition.
+per-target cell consumes. An ordinary per-target `regime_transitions` cell still
+requires an explicit `MarkovTransition`; a bare callable there is rejected as an
+unsupported deterministic per-target transition.
 
 `probability` and `gate` are two distinct operations: `probability` selects whether this
 target edge is attempted at all, while `gate` keeps that target or takes the route's
@@ -510,7 +511,7 @@ passed to `Regime(...)` or to `Regime.replace`.
 | `ValueDependentTransition` | `gated_edges[target]`                                    | `decomposed_transition[target]`: the selection `probability`                                                   |
 
 The declaration objects themselves stay where the author wrote them, in `functions`,
-`constraints` and `transition`. The engine reads the decomposed views
+`constraints` and `regime_transitions`. The engine reads the decomposed views
 (`decomposed_functions`, `decomposed_constraints`, `decomposed_transition`) rather than
 the raw slots. Reading either a stored derived field or a decomposed view therefore
 reveals what a declaration produced without creating a second way to declare it.

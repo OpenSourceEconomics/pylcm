@@ -328,6 +328,12 @@ class StateActionSpace:
         )
 
 
+# Per-period function and constraint pools a phase's feasibility reads.
+type FeasibilityPoolsByPeriod = MappingProxyType[
+    int, tuple[EconFunctionsMapping, ConstraintFunctionsMapping]
+]
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SolutionPhase:
     """Solve-phase view of a canonical regime.
@@ -358,6 +364,14 @@ class SolutionPhase:
     concrete function, not the one belonging to a particular period. Pricing a
     continuation does need the period's own age; that reads
     `continuation_functions` instead.
+    """
+
+    feasibility_pools_by_period: FeasibilityPoolsByPeriod
+    """Function and constraint pools resolved at each of the phase's periods.
+
+    Economic feasibility at a period is the conjunction of that period's
+    constraints, evaluated with that period's functions. Periods with equal
+    age signatures share one pair.
     """
 
     _continuation_functions: EconFunctionsMapping | None = None
@@ -1011,6 +1025,14 @@ class SimulationPhase:
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of constraint names to feasibility predicates."""
 
+    feasibility_pools_by_period: FeasibilityPoolsByPeriod
+    """Function and constraint pools resolved at each of the phase's periods.
+
+    Economic feasibility at a period is the conjunction of that period's
+    constraints, evaluated with that period's functions. Periods with equal
+    age signatures share one pair.
+    """
+
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
@@ -1070,6 +1092,14 @@ class SimulationPhase:
     carry the true per-age closures. Consumers computing period-specific outputs
     from `functions` (e.g. `additional_targets`) must reject targets that depend
     on these names."""
+
+    validation_regime_transition_probs: RegimeTransitionFunction | None = None
+    """Grid-evaluable realized regime law, or `None` where it is the solve law.
+
+    Present only for a nonterminal regime whose `Phased` regime transition
+    realizes a different law than the one the solve phase reads; the
+    regime-selection checker evaluates it on every visited period.
+    """
 
     egm_policy_read: EGMPolicyRead | NNBEGMPolicyRead | None = None
     """Off-grid read of the published EGM simulation policy, or `None`.

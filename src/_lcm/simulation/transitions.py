@@ -22,6 +22,7 @@ from _lcm.simulation.program_arguments import transition_arguments
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.simulation.runtime import execute_simulation_program
 from _lcm.state_action_space import _validate_all_states_present
+from _lcm.transition_checks import validate_realized_regime_transition_probs
 from _lcm.typing import (
     ActionName,
     FlatRegimeParams,
@@ -276,6 +277,18 @@ def calculate_next_regime_membership(
             ),
         ),
     )
+    # The realized rows are checked on the law's full output, before the
+    # projection below could hide mass outside the targets and before the draw,
+    # regardless of the log level.
+    validate_realized_regime_transition_probs(
+        regime_transition_probs=regime_transition_probs,
+        rows=subjects_in_regime,
+        active_regimes_next_period=active_regimes_next_period,
+        regime_name=regime.name,
+        age=age,
+        period=period,
+        memory=memory,
+    )
     # A per-target regime transition's probs dict covers only its declared
     # targets — anything else is structurally unreachable (zero probability).
     active_regime_probs = MappingProxyType(
@@ -297,11 +310,11 @@ def calculate_next_regime_membership(
             f"Regime '{regime.name}' has no regime to move into at period "
             f"{period + 1}: none of its declared transition targets "
             f"({', '.join(repr(name) for name in sorted(regime_transition_probs))}) "
-            f"is active there, and the regimes that are "
+            f"is solved there, and the regimes that are "
             f"({', '.join(repr(name) for name in sorted(active_regimes_next_period))}) "
             f"are not among them. Subjects simulated in '{regime.name}' at "
-            f"period {period} (age {age}) have nowhere to go. Either widen a "
-            f"target's `active` to cover that period, or keep '{regime.name}' "
+            f"period {period} (age {age}) have nowhere to go. Either extend a "
+            f"target's schedule to cover that period, or keep '{regime.name}' "
             f"from being occupied there."
         )
         raise InvalidRegimeTransitionProbabilitiesError(msg)

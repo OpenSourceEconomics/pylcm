@@ -566,23 +566,19 @@ def _build_lcm_model(*, scale: float = 2.0) -> Model:
             "total"
         ][0]
 
-    def transition() -> ScalarInt:
-        return _RegimeId.retired
-
     return Model(
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "working"},
         regimes={
             "working": Regime(
-                transition=transition,
-                active=lambda age: age == 0,
+                regime_transitions="retired",
                 states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": utility},
             ),
             "retired": Regime(
-                transition=None,
-                active=lambda age: age == 1,
+                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
                 functions={"utility": lambda wealth: wealth * 0.0},
             ),

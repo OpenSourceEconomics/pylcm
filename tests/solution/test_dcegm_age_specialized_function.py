@@ -91,6 +91,7 @@ def _twin(
         },
         ages=AgeGrid(start=MIN_AGE, stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
+        initial_regimes={20: "working_life"},
     )
 
 

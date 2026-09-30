@@ -18,40 +18,54 @@ from tests.simulation.test_population_allocation_budget import (
 )
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
+_N_SUBJECTS = 7
 
+
+@pytest.mark.parametrize("subject_width", [1, 3, 7])
 def test_complete_spaces_are_call_local_across_subject_chunks(
-    monkeypatch: pytest.MonkeyPatch,
+    *, monkeypatch: pytest.MonkeyPatch, subject_width: int
 ) -> None:
+    """Each regime's space is completed a fixed number of times per simulate call.
+
+    The count does not depend on the subject-chunk width: each regime is
+    completed once for the simulation inputs. The regime-selection check
+    already passed for these params in `solve`, so simulate reuses it.
+    """
     model = get_model(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
-        execution_config=ExecutionConfig(axis_widths={"subject": 3}),
+        execution_config=ExecutionConfig(axis_widths={"subject": subject_width}),
     )
     params = get_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")
-    counts: dict[int, int] = {}
+    names = {id(regime.solution): name for name, regime in model._regimes.items()}
+    counts: dict[str, int] = {}
     original = SolutionPhase.state_action_space
 
     def observe(self: SolutionPhase, **kwargs: Any) -> object:
-        counts[id(self)] = counts.get(id(self), 0) + 1
+        counts[names[id(self)]] = counts.get(names[id(self)], 0) + 1
         return original(self, **kwargs)
 
-    monkeypatch.setattr(SolutionPhase, "state_action_space", observe)
-    result = model.simulate(
-        params=params,
-        solution=solution,
-        initial_conditions={
-            "wealth": jnp.linspace(1, 3, 7),
-            "age": jnp.full(7, 18.0),
-            "regime_id": jnp.full(7, RegimeId.working_life, dtype=jnp.int32),
-        },
-        seed=17,
-        log_level="off",
+    with monkeypatch.context() as patch:
+        patch.setattr(SolutionPhase, "state_action_space", observe)
+        result = model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "wealth": jnp.linspace(1, 3, _N_SUBJECTS),
+                "age": jnp.full(_N_SUBJECTS, 18.0),
+                "regime_id": jnp.full(
+                    _N_SUBJECTS, RegimeId.working_life, dtype=jnp.int32
+                ),
+            },
+            seed=17,
+            log_level="off",
+        )
+    assert (result.n_subjects, counts) == (
+        _N_SUBJECTS,
+        {"working_life": 1, "dead": 1},
     )
-    assert result.n_subjects == 7
-    assert len(counts) == len(model._regimes)
-    assert tuple(counts.values()) == (1,) * len(model._regimes)
 
 
 @pytest.mark.parametrize("scalar", [False, True])

@@ -181,7 +181,8 @@ class MockRegime(Regime):
     Inherits from `Regime` so `isinstance(x, Regime)`
     holds at `create_params_template`'s beartype-checked perimeter, but
     bypasses `Regime.__init__` to keep test fixtures minimal —
-    `create_params_template` only reads `regime_params_template`.
+    `create_params_template` only reads `regime_params_template` and
+    `active_periods`.
 
     """
 
@@ -191,6 +192,7 @@ class MockRegime(Regime):
             "regime_params_template",
             MappingProxyType(regime_params_template),
         )
+        object.__setattr__(self, "active_periods", (0,))
 
 
 def test_function_params_no_qname_separator():

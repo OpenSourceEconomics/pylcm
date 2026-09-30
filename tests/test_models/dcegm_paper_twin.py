@@ -28,6 +28,7 @@ import jax.numpy as jnp
 from _lcm.grids import ContinuousGrid
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -47,6 +48,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 MIN_AGE = 20
 N_PERIODS = 10
@@ -191,13 +193,13 @@ def next_regime_from_retirement(age: float) -> ScalarInt:
 
 
 done_from_working = UserRegime(
-    transition=None,
+    regime_transitions=None,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_done_from_working},
 )
 
 done_retired = UserRegime(
-    transition=None,
+    regime_transitions=None,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_done_retired},
 )
@@ -212,14 +214,25 @@ def _working_life(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        transition=next_regime_from_working,
+        regime_transitions=until_exit(
+            LAST_ALIVE_AGE + 1,
+            law=Choose(
+                func=next_regime_from_working,
+                targets=(
+                    "working_life",
+                    "retirement",
+                    "done_from_working",
+                    "done_retired",
+                ),
+            ),
+            exits=("done_from_working", "done_retired"),
+        ),
         states={"wealth": WEALTH_GRID},
         actions={
             "work_choice": DiscreteGrid(category_class=WorkChoice),
             "consumption": CONSUMPTION_GRID,
         },
         taste_shocks=ExtremeValueTasteShocks(),
-        active=lambda age: age <= LAST_ALIVE_AGE,
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={
@@ -231,11 +244,10 @@ def _working_life(
     if solver == "brute_force":
         return brute
     return ConsumptionSavingsRegime(
-        transition=brute.transition,
+        regime_transitions=brute.regime_transitions,
         states=brute.states,
         actions=brute.actions,
         taste_shocks=brute.taste_shocks,
-        active=brute.active,
         state_transitions={"wealth": next_wealth_from_savings},
         constraints={},
         functions={
@@ -259,10 +271,15 @@ def _retirement(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        transition=next_regime_from_retirement,
+        regime_transitions=until_exit(
+            LAST_ALIVE_AGE + 1,
+            law=Choose(
+                func=next_regime_from_retirement, targets=("retirement", "done_retired")
+            ),
+            exits=("done_retired",),
+        ),
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
-        active=lambda age: age <= LAST_ALIVE_AGE,
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retired},
@@ -270,11 +287,10 @@ def _retirement(
     if solver == "brute_force":
         return brute
     return ConsumptionSavingsRegime(
-        transition=brute.transition,
+        regime_transitions=brute.regime_transitions,
         states=brute.states,
         actions=brute.actions,
         taste_shocks=brute.taste_shocks,
-        active=brute.active,
         state_transitions={"wealth": next_wealth_from_savings},
         constraints={},
         functions={
@@ -306,6 +322,7 @@ def get_model(solver: Literal["brute_force", "dcegm"]) -> Model:
         },
         ages=AgeGrid(start=MIN_AGE, stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
+        initial_regimes={20: ("working_life", "retirement")},
     )
 
 
@@ -334,6 +351,7 @@ def build_dcegm_model(
         },
         ages=AgeGrid(start=MIN_AGE, stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
+        initial_regimes={20: ("working_life", "retirement")},
     )
 
 

@@ -26,8 +26,8 @@ def _component(*, signature: Hashable, name: str) -> Hashable:
     return dict(components)[name]
 
 
-def test_period_signatures_cover_exactly_the_regimes_active_periods() -> None:
-    """Every active period of a regime carries a signature, and no other period does."""
+def test_period_signatures_cover_exactly_the_regimes_covered_periods() -> None:
+    """Every covered period of a regime carries a signature, and no other does."""
     regime = get_model(n_periods=_N_PERIODS)._regimes["working_life"]
     assert set(regime.solution.period_signatures) == set(regime.active_periods)
 

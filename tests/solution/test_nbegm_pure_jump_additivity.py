@@ -11,15 +11,18 @@ the preimage machinery) and floored/clipped budgets (which carry a `continuous_k
 and route to the mixed step).
 """
 
+import gc
 import itertools
-from types import MappingProxyType
-from typing import Literal
+import weakref
+from types import MappingProxyType, SimpleNamespace
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.solution import nbegm
 from _lcm.solution.nbegm import (
     _fail_if_budget_nonaffine_in_liquid,
     _NBEGMSource,
@@ -28,6 +31,7 @@ from _lcm.solution.nbegm import (
 from _lcm.solution.preconditions import check_solver_params
 from lcm.exceptions import RegimeInitializationError
 from lcm.model import Model
+from lcm.typing import FloatND
 from tests.test_models import nbegm_jump_schedule_toy as toy
 
 
@@ -534,3 +538,115 @@ def test_legal_non_unit_derived_ride_route_matches_scalar_oracle(
 
     assert oracle is True
     assert production is oracle
+
+
+def _make_reuse_check(
+    *, family: str, traces: list[None]
+) -> Any:  # Inspect model-owned JIT caches in lifetime controls.
+    """Build a deferred check with a known derivative and observable scalar traces."""
+
+    def func(*, liquid: FloatND, curvature: object) -> FloatND:
+        traces.append(None)
+        return liquid * (0.0 if family == "continuation" else 1.0) + (
+            jnp.asarray(curvature).reshape(()) * liquid**2
+        )
+
+    grid = jnp.asarray([0.0, 1.0, 3.0])
+    bound: dict[str, Any] = (
+        {
+            "coh_dag": func,
+            "require_unit_slope": False,
+            "liquid_grid": grid,
+            "liquid_samples": grid,
+        }
+        if family == "budget"
+        else {
+            "continuation_plan": SimpleNamespace(
+                stateful_targets=(), compute_regime_transition_probs=func
+            )
+        }
+    )
+    return nbegm._deferred_probe(
+        probe=(
+            nbegm._fail_if_budget_nonaffine_in_liquid
+            if family == "budget"
+            else nbegm._fail_if_liquid_reading_next_state_varies_within_interval
+        ),
+        regime_name="test",
+        probe_arguments=nbegm._ProbeArguments(),
+        liquid_name="liquid",
+        **bound,
+    )
+
+
+def _probe_draw(value: object) -> nbegm.FlatParams:
+    """Supply the current curvature value to the deferred check."""
+    return MappingProxyType(
+        {"test": MappingProxyType({"curvature": jnp.asarray(value)})}
+    )
+
+
+@pytest.mark.parametrize("family", ["budget", "continuation"])
+def test_deferred_liquid_probes_reuse_traces_and_recheck_draws(family: str) -> None:
+    """Current parameters change verdicts without retracing a fixed model program."""
+    traces = []
+    check = _make_reuse_check(family=family, traces=traces)
+    outcomes = []
+    counts = []
+    for curvature in [0.0, 0.0, 0.1, 0.0]:
+        try:
+            check(flat_params=_probe_draw(curvature))
+        except RegimeInitializationError:
+            outcomes.append(False)
+        else:
+            outcomes.append(True)
+        counts.append(len(traces))
+    assert (outcomes, counts) == ([True, True, False, True], [counts[0]] * 4)
+
+
+@pytest.mark.parametrize("family", ["budget", "continuation"])
+def test_deferred_liquid_probes_release_failed_shapes(family: str) -> None:
+    """Invalid parameter shapes do not accumulate retained JIT cache entries."""
+    check = _make_reuse_check(family=family, traces=[])
+    check(flat_params=_probe_draw(0.0))
+    programs = tuple(check.bound["derivative_programs"].values())
+    sizes = []
+    for length in range(2, 10):
+        with pytest.raises(RegimeInitializationError):
+            check(flat_params=_probe_draw(jnp.zeros(length)))
+        sizes.append(sum(program._cache_size() for program in programs))
+    check(flat_params=_probe_draw(0.0))
+    assert sizes == [0] * 8
+
+
+@pytest.mark.parametrize("family", ["budget", "continuation"])
+def test_deferred_liquid_probes_release_programs_and_parameter_draws(
+    family: str,
+) -> None:
+    """Derivative programs live with their check and do not retain current draws."""
+    check = _make_reuse_check(family=family, traces=[])
+    current = _probe_draw(0.0)
+    parameter = weakref.ref(current["test"]["curvature"])
+    programs = [
+        weakref.ref(program) for program in check.bound["derivative_programs"].values()
+    ]
+    func = weakref.ref(
+        check.bound["coh_dag"]
+        if family == "budget"
+        else check.bound["continuation_plan"].compute_regime_transition_probs
+    )
+    check(flat_params=current)
+    del current
+    gc.collect()
+    parameter_released = parameter() is None
+    del check
+    gc.collect()
+    assert (
+        parameter_released,
+        func() is None,
+        [program() is None for program in programs],
+    ) == (
+        True,
+        True,
+        [True] * len(programs),
+    )

@@ -37,6 +37,7 @@ from tests.solution.test_egm_solver import (
     terminal_utility,
     utility,
 )
+from tests.test_models.schedules import until_exit
 
 _FIXED_COST = 0.5
 
@@ -64,12 +65,16 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": law},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        transition={
-            "saving": MarkovTransition(prob_continue),
-            "done": MarkovTransition(prob_stop),
-        },
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "saving": MarkovTransition(func=prob_continue),
+                "done": MarkovTransition(func=prob_stop),
+            },
+            exits=("done",),
+            stays=("saving",),
+        ),
         functions={"utility": utility, "savings": savings},
-        active=lambda age, la=last_age: age < la,
         solver=solver,
         **(
             {
@@ -85,16 +90,16 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         ),
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
-        active=lambda age, la=last_age: age >= la,
         solver=GridSearch(),
     )
     return Model(
         regimes={"saving": saving, "done": done},
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "saving"},
     )
 
 

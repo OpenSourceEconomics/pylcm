@@ -61,6 +61,8 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -82,7 +84,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
@@ -174,52 +176,52 @@ def _hand_computed_gate(shock: np.ndarray) -> np.ndarray:
 
 def _make_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        transition={
-            "married_terminal": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_consent_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f_terminal",
-                            projection={"wage": _identity_wage},
-                        ),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "married_terminal": ValueDependentTransition(
+                        probability=MarkovTransition(func=_prob_one),
+                        gate=_consent_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f_terminal",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            )
+                        },
+                        gate_references={
+                            "V_single_f_ref": ProjectedRegimeValue(
+                                regime="single_f_terminal",
+                                projection={"wage": _identity_wage},
+                            ),
+                            "V_single_m_ref": ProjectedRegimeValue(
+                                regime="single_m_terminal",
+                                projection={"wage": _identity_wage},
+                            ),
+                        },
                     )
-                },
-                gate_references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f_terminal",
-                        projection={"wage": _identity_wage},
-                    ),
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m_terminal",
-                        projection={"wage": _identity_wage},
-                    ),
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         states={"wage": _WAGE, "shock": _SHOCK},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_f_terminal},
     )
     single_m_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE, "shock": _SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -260,11 +262,14 @@ def _build_solve_and_simulate(*, n_subjects: int, seed: int):
             ),
             ages=_AGES,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes=_make_regimes(),
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes=_make_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=_AGES,
         ),
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
@@ -272,7 +277,7 @@ def _build_solve_and_simulate(*, n_subjects: int, seed: int):
     )
     flat_params = _flat_params()
     _bi_result = solve(
-        model_fingerprint="test_gated_edge_gate_process_state_interpolation",
+        program_fingerprint="test_gated_edge_gate_process_state_interpolation",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,

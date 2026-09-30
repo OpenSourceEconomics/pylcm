@@ -21,6 +21,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
 
@@ -67,14 +68,17 @@ def model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(lambda: jnp.float32(1))},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=lambda: jnp.float32(1))},
+                    exits=("target",),
+                ),
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=Health),
                 },
                 state_transitions={
-                    "health": MarkovTransition(_health_probs),
+                    "health": MarkovTransition(func=_health_probs),
                     "wealth": Phased(
                         solve=_keep_wealth, simulate=_wealth_from_realized_health
                     ),
@@ -82,7 +86,7 @@ def model() -> Model:
                 functions={"utility": _wealth_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=Health),
@@ -92,6 +96,7 @@ def model() -> Model:
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

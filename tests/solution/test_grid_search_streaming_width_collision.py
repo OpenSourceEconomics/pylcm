@@ -14,9 +14,10 @@ from _lcm.regime_building import processing
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import _select_action_width_keyword
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
 from lcm.regime import Regime
 from lcm.typing import ContinuousAction, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -76,22 +77,25 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
     Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
+                    exits=("done",),
+                ),
                 actions={
                     "action": LinSpacedGrid(start=1.0, stop=3.0, n_points=3),
                 },
                 functions={"utility": _selector_model_utility},
             ),
             "done": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 functions={"utility": _terminal_utility},
             ),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=True,
+        initial_regimes={0: "acting"},
     )
 
     acting_context = next(
@@ -160,20 +164,23 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
     model = Model(
         regimes={
             "acting": Regime(
-                transition=_next_regime,
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law=Choose(func=_next_regime, targets=("acting", "done")),
+                    exits=("done",),
+                ),
                 actions=actions,
                 functions={"utility": utility},
             ),
             "done": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 functions={"utility": _terminal_utility},
             ),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=True,
+        initial_regimes={0: "acting"},
     )
 
     kernel = model._regimes["acting"].solution.period_kernels[0]

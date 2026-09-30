@@ -12,6 +12,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
     CESAggregator,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinearAggregator,
@@ -33,6 +34,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -160,10 +162,13 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         states=working_life_states,
         state_transitions=working_life_state_transitions,
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        regime_transitions=until_exit(
+            FINAL_AGE_ALIVE + 1,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         functions=functions,
         koopmans_aggregator=custom_W,
-        active=lambda age: age <= FINAL_AGE_ALIVE,
     )
 
     # Terminal regime: when pref_type is declared as a state across
@@ -180,10 +185,9 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
             return 0.0
 
     dead_regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": dead_utility},
         states=dead_states,
-        active=lambda age: age > FINAL_AGE_ALIVE,
     )
 
     return Model(
@@ -191,6 +195,7 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         ages=AgeGrid(start=START_AGE, stop=FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -201,18 +206,16 @@ def test_custom_ces_aggregator_differs_from_default():
 
     params_default = {
         "discount_factor": 0.95,
-        "working_life": {
-            "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-        },
+        "working_life": {"utility": {"disutility_of_work": 0.5}},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
     params_ces = {
         "working_life": {
             "koopmans_aggregator": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
         "dead": {},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
 
     V_default = model_default.solve(log_level="debug", params=params_default).values
@@ -237,8 +240,7 @@ def test_default_H_injected_for_non_terminal():
     """The model-level aggregator is injected on the non-terminal finalized regime."""
     regime = UserRegime(
         functions={"utility": lambda: 0.0},
-        transition=lambda: {"a": 1.0},
-        active=lambda age: age < 1,
+        regime_transitions=lambda: {"a": 1.0},
     )
     finalized = finalize_regimes(
         user_regimes={"regime": regime},
@@ -252,7 +254,7 @@ def test_default_H_injected_for_non_terminal():
 def test_default_W_not_injected_for_terminal():
     """Terminal regimes have no continuation, so they get no aggregator."""
     r = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     finalized = finalize_regimes(
@@ -271,8 +273,7 @@ def test_custom_W_not_overwritten():
         return utility + CE
 
     r = UserRegime(
-        transition=lambda: {"a": 1.0},
-        active=lambda age: age < 1,
+        regime_transitions=lambda: {"a": 1.0},
         functions={"utility": lambda: 0.0},
         koopmans_aggregator=my_W,
     )
@@ -307,18 +308,16 @@ def test_terminal_regime_value_unchanged_by_W():
 
     params_default = {
         "discount_factor": 0.95,
-        "working_life": {
-            "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-        },
+        "working_life": {"utility": {"disutility_of_work": 0.5}},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
     params_ces = {
         "working_life": {
             "koopmans_aggregator": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
         "dead": {},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
 
     V_default = model_default.solve(log_level="debug", params=params_default).values
@@ -360,11 +359,9 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
     model = _make_model(with_pref_type=True)
 
     params = {
-        "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
-        "working_life": {
-            "utility": {"disutility_of_work": 0.5},
-            "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-        },
+        "discount_factor_by_type": jnp.array([0.7, 0.85, 0.99]),
+        "working_life": {"utility": {"disutility_of_work": 0.5}},
+        "final_age_alive": FINAL_AGE_ALIVE,
     }
     V = model.solve(log_level="debug", params=params).values
 
@@ -519,9 +516,9 @@ def test_h_consumes_discrete_action():
             "working_life": {
                 "koopmans_aggregator": {"discount_factor": 0.95, "bonus": 0.1},
                 "utility": {"disutility_of_work": 0.5},
-                "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },
             "dead": {},
+            "final_age_alive": FINAL_AGE_ALIVE,
         },
     ).values
     baseline = (
@@ -530,10 +527,8 @@ def test_h_consumes_discrete_action():
             log_level="debug",
             params={
                 "discount_factor": 0.95,
-                "working_life": {
-                    "utility": {"disutility_of_work": 0.5},
-                    "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-                },
+                "working_life": {"utility": {"disutility_of_work": 0.5}},
+                "final_age_alive": FINAL_AGE_ALIVE,
             },
         )
         .values
@@ -566,11 +561,9 @@ def test_h_consumes_discrete_state():
     V = model.solve(
         log_level="debug",
         params={
-            "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
-            "working_life": {
-                "utility": {"disutility_of_work": 0.5},
-                "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-            },
+            "discount_factor_by_type": jnp.array([0.7, 0.85, 0.99]),
+            "working_life": {"utility": {"disutility_of_work": 0.5}},
+            "final_age_alive": FINAL_AGE_ALIVE,
         },
     ).values
     non_terminal = [p for p in V if p <= FINAL_AGE_ALIVE]
@@ -611,12 +604,12 @@ def test_h_consumes_flat_param_state_action_and_dag_output():
     V = model.solve(
         log_level="debug",
         params={
-            "discount_factor_by_type": jnp.array([0.70, 0.85, 0.99]),
+            "discount_factor_by_type": jnp.array([0.7, 0.85, 0.99]),
             "working_life": {
                 "koopmans_aggregator": {"ies": 0.5},
                 "utility": {"disutility_of_work": 0.5},
-                "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },
+            "final_age_alive": FINAL_AGE_ALIVE,
         },
     ).values
     for period in V:
@@ -655,10 +648,16 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
     """Solve a two-regime model whose discount factor is a `Series` over ages."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        transition=lambda age: jnp.where(
-            age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+        regime_transitions=until_exit(
+            2,
+            law=Choose(
+                func=lambda age: jnp.where(
+                    age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+                ),
+                targets=("alive", "dead"),
+            ),
+            exits=("dead",),
         ),
-        active=lambda age: age < 2,
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -666,7 +665,7 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         koopmans_aggregator=koopmans_aggregator,  # ty: ignore[invalid-argument-type]
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
@@ -674,6 +673,7 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
+        initial_regimes={0: "alive"},
     )
     discount_factor = pd.Series(
         [0.99, 0.90, 0.80], index=pd.Index([0.0, 1.0, 2.0], name="age")
@@ -701,10 +701,16 @@ def _solve_with_aggregator_slot(
     """Return the aggregator params template and `alive`'s first V array."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        transition=lambda age: jnp.where(
-            age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+        regime_transitions=until_exit(
+            2,
+            law=Choose(
+                func=lambda age: jnp.where(
+                    age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+                ),
+                targets=("alive", "dead"),
+            ),
+            exits=("dead",),
         ),
-        active=lambda age: age < 2,
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -713,7 +719,7 @@ def _solve_with_aggregator_slot(
         certainty_equivalent=PowerMean(),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
@@ -721,6 +727,7 @@ def _solve_with_aggregator_slot(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
+        initial_regimes={0: "alive"},
     )
     template = dict(model.get_params_template()["alive"]["koopmans_aggregator"])
     params = {

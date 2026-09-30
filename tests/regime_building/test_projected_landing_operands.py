@@ -48,6 +48,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 # Nodes 0, 1, 2 on every regime's grid.
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
@@ -105,41 +106,43 @@ def _projection_model(projection) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
-                    "target": ValueDependentTransition(
-                        probability=MarkovTransition(_certain_target),
-                        gate=_closed_above_one,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": projection}
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "target": ValueDependentTransition(
+                            probability=MarkovTransition(func=_certain_target),
+                            gate=_closed_above_one,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="fallback", projection={"x": projection}
+                                    )
                                 )
-                            )
-                        },
-                        off_grid="pointwise",
-                    )
-                },
-                active=lambda age: age < 1,
+                            },
+                            off_grid="pointwise",
+                        )
+                    },
+                    exits=("target",),
+                ),
                 states={"x": _X},
                 state_transitions={"x": _next_x},
                 actions={"saving": _SAVING},
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _zero_utility},
             ),
             "fallback": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _fallback_value},
             ),
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=ProjectionRegimeId,
+        initial_regimes={0: "source"},
     )
 
 
@@ -273,31 +276,33 @@ def _coupled_model(saving_points) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
-                    "pair": ValueDependentTransition(
-                        probability=MarkovTransition(_to_pair),
-                        gate=_no_dissolution,
-                        routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="alone_m",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            )
-                        },
-                        off_grid="pointwise",
-                    )
-                },
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "pair": ValueDependentTransition(
+                            probability=MarkovTransition(func=_to_pair),
+                            gate=_no_dissolution,
+                            routes={
+                                "only": StakeholderRoute(
+                                    target_stakeholder="f",
+                                    fallback=ProjectedRegimeValue(
+                                        regime="alone_m",
+                                        projection={"wage": _identity_wage},
+                                    ),
+                                )
+                            },
+                            off_grid="pointwise",
+                        )
+                    },
+                    exits=("pair",),
+                ),
                 states={"wage": _WAGE},
                 state_transitions={"wage": _next_wage},
                 actions={"saving": IrregSpacedGrid(points=saving_points)},
                 functions={"utility": _u_source},
             ),
             "pair": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"wage": _WAGE},
                 actions={"work": DiscreteGrid(category_class=Work)},
                 functions={
@@ -317,20 +322,19 @@ def _coupled_model(saving_points) -> Model:
                 },
             ),
             "alone_f": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"wage": _WAGE},
                 functions={"utility": _outside_option_f},
             ),
             "alone_m": Regime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"wage": _WAGE},
                 functions={"utility": _outside_option_m},
             ),
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=CoupledRegimeId,
+        initial_regimes={0: "source"},
     )
 
 

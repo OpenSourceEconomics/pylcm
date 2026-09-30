@@ -3,6 +3,9 @@
 import jax.numpy as jnp
 
 from lcm import (
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -23,6 +26,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models.basic_discrete import Health
+from tests.test_models.schedules import until_exit
 
 
 def make_minimal_model() -> Model:
@@ -61,20 +65,23 @@ def make_minimal_model() -> Model:
             "wealth": lambda wealth: wealth,
             "health": lambda health: health,
         },
-        transition=next_regime,
-        active=lambda age: age < n_periods - 1,
+        regime_transitions=until_exit(
+            n_periods - 1,
+            law=Choose(func=next_regime, targets=("active", "terminal")),
+            exits=("terminal",),
+        ),
     )
 
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= n_periods - 1,
     )
 
     return Model(
         regimes={"active": alive, "terminal": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "active"},
     )
 
 
@@ -111,19 +118,22 @@ def make_constraint_model(wealth_grid) -> Model:
         states={"wealth": wealth_grid},
         state_transitions={"wealth": _next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        regime_transitions=until_exit(
+            final_age + 1,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": utility},
-        active=lambda age: age <= final_age,
     )
     dead_regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age > final_age,
     )
     return Model(
         regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -169,23 +179,24 @@ def make_constrained_asymmetric_model() -> Model:
             "consumption": LinSpacedGrid(start=51, stop=100, n_points=10),
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
 
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda wealth: wealth},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
-        active=lambda age: age >= 2,
     )
 
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -225,23 +236,24 @@ def make_asymmetric_state_model() -> Model:
             "wealth": lambda wealth: wealth,
             "health": lambda health: health,
         },
-        transition=next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
 
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda wealth: wealth},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
-        active=lambda age: age >= 2,
     )
 
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive", 1: "alive", 2: "dead"},
     )
 
 
@@ -288,21 +300,22 @@ def make_state_only_constraint_model(
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": dead_utility},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         constraints={"solvent": solvent},
-        active=lambda age: age >= 2,
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
+        initial_regimes={0: "alive", 1: "alive", 2: "dead"},
     )
 
 
@@ -347,19 +360,20 @@ def make_period_constraint_model() -> Model:
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=10)},
         constraints={"affordable": affordable},
-        transition=next_regime,
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 3,
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"alive": {"affordable": {"floor": 0.5}}},
+        initial_regimes={0: "alive", 1: "alive", 2: "alive"},
     )
 
 
@@ -400,18 +414,19 @@ def make_joint_constraint_model() -> Model:
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=10)},
         constraints={"at_least": at_least, "borrowing": borrowing},
-        transition=next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive", 1: "alive"},
     )
 
 
@@ -452,8 +467,9 @@ def make_heterogeneous_health_model() -> Model:
     and `dead` has no states; ages 50, 60, 70 in steps of ten years.
     """
     pre65 = UserRegime(
-        transition=_het_next_regime,
-        active=lambda age: age < 65,
+        regime_transitions=ByAge(
+            cases={AgeRange(stop=65): Choose(func=_het_next_regime, targets=("dead",))}
+        ),
         states={
             "health": DiscreteGrid(category_class=HealthWithDisability),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -465,8 +481,13 @@ def make_heterogeneous_health_model() -> Model:
         functions={"utility": _het_utility},
     )
     post65 = UserRegime(
-        transition=_het_next_regime,
-        active=lambda age: 65 <= age < 80,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=65, stop=80): Choose(
+                    func=_het_next_regime, targets=("dead",)
+                )
+            }
+        ),
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -478,11 +499,12 @@ def make_heterogeneous_health_model() -> Model:
         functions={"utility": _het_utility},
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _het_dead_utility},
     )
     return Model(
         regimes={"pre65": pre65, "post65": post65, "dead": dead},
         ages=AgeGrid(start=50, stop=80, step="10Y"),
         regime_id_class=HetRegimeId,
+        initial_regimes={50: "pre65", 70: "post65"},
     )

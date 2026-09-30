@@ -211,6 +211,35 @@ def resolve_periodized_nodes(
     )
 
 
+def resolve_periodized_pools_by_period(
+    *,
+    functions: Mapping[str, object],
+    constraints: Mapping[str, object],
+    periods: tuple[int, ...],
+) -> MappingProxyType[int, tuple[Mapping[str, object], Mapping[str, object]]]:
+    """Resolve a function pool and a constraint pool at each of `periods`.
+
+    Periods whose explicit signatures agree on both pools share one resolved
+    pair, so a consumer keyed by object identity builds once per signature.
+    """
+    pools_by_signature: dict[
+        Hashable, tuple[Mapping[str, object], Mapping[str, object]]
+    ] = {}
+    pools_by_period = {}
+    for period in periods:
+        signature = (
+            periodized_tree_signature(tree=functions, period=period),
+            periodized_tree_signature(tree=constraints, period=period),
+        )
+        if signature not in pools_by_signature:
+            pools_by_signature[signature] = (
+                resolve_periodized_nodes(mapping=functions, period=period),
+                resolve_periodized_nodes(mapping=constraints, period=period),
+            )
+        pools_by_period[period] = pools_by_signature[signature]
+    return MappingProxyType(pools_by_period)
+
+
 def resolve_periodized_tree(
     *, tree: Mapping[str, object], period: int
 ) -> Mapping[str, object]:
@@ -880,6 +909,16 @@ def _collect_function_markers(
     return markers
 
 
+def _marker_ids_in_slice(*, phase_slice: RegimePhaseSpec) -> frozenset[int]:
+    """Identities of the function markers one phase slice reads."""
+    markers: dict[int, AgeSpecializedFunction] = {}
+    for value in phase_slice.functions.values():
+        _visit_function_marker(value=value, markers=markers)
+    for constraint in phase_slice.constraints.values():
+        _visit_function_marker(value=constraint.declaration, markers=markers)
+    return frozenset(markers)
+
+
 def _visit_function_marker(
     *, value: object, markers: dict[int, AgeSpecializedFunction]
 ) -> None:
@@ -897,11 +936,12 @@ def normalize_age_specialization(
     phased_specs: Mapping[RegimeName, PhasedRegimeSpec],
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+    visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> AgeNormalizationResult:
     """Resolve every age-specialized marker into concrete model-creation objects.
 
     For each regime, build every age-specialized function and grid factory once per
-    active period, validate the grids' shape-invariance contract, and:
+    period that requires it, validate the grids' shape-invariance contract, and:
 
     - replace public markers in the representative regime by first-active concrete
       objects (functions/constraints) and representative-age grids (states);
@@ -909,13 +949,16 @@ def normalize_age_specialization(
       /constraints) and representative-age grids (grid states);
     - record all concrete period grids in an `AgeGridSchedule`.
 
+    A marker the solve slice reads is required at every active period. A
+    marker only the simulate slice reads is required where a subject can be:
+    `visited_periods_by_regime`, which defaults to the active periods.
+
     Regimes with no markers pass through unchanged (byte-identical), so an
     age-invariant model normalizes to exactly its input. `grid_schedule` is `None`
     when no regime declares an `AgeSpecializedGrid`.
 
     Raises:
-        RegimeInitializationError: If a regime declares an age-specialized marker
-            but is active at no model age, if a grid marker violates the
+        RegimeInitializationError: If a grid marker violates the
             shape-invariance contract, or if a grid marker resolves to a
             runtime-points grid.
     """
@@ -929,28 +972,34 @@ def normalize_age_specialization(
 
     for regime_name, user_regime in user_regimes.items():
         spec = phased_specs[regime_name]
-        if not _regime_has_markers(user_regime):
+        # A regime solved at no age has no age to resolve its markers at.
+        if (
+            not _regime_has_markers(user_regime)
+            or not active_periods_by_regime[regime_name]
+        ):
             representative[regime_name] = user_regime
             rewritten_specs[regime_name] = spec
             continue
 
         active_periods = active_periods_by_regime[regime_name]
-        if not active_periods:
-            msg = (
-                f"Regime '{regime_name}' declares age-specialized objects but is "
-                f"active at no model age. Remove the marker or make the regime "
-                f"active at least once."
-            )
-            raise RegimeInitializationError(msg)
+        solve_marker_ids = _marker_ids_in_slice(phase_slice=spec.solution)
+        visited_periods = (
+            active_periods
+            if visited_periods_by_regime is None
+            else visited_periods_by_regime[regime_name]
+        )
 
         function_cache: dict[int, _ResolvedFunctionMarker] = {
             marker_id: _resolve_function_marker(
                 regime_name=regime_name,
                 marker=marker,
-                active_periods=active_periods,
+                active_periods=(
+                    active_periods if marker_id in solve_marker_ids else visited_periods
+                ),
                 ages=ages,
             )
             for marker_id, marker in _collect_function_markers(user_regime).items()
+            if marker_id in solve_marker_ids or visited_periods
         }
         grid_cache: dict[int, _ResolvedGridMarker] = {
             id(spec_grid): _resolve_grid_marker(

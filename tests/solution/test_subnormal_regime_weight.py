@@ -39,6 +39,7 @@ from lcm import (
 )
 from lcm.certainty_equivalent import CertaintyEquivalent, QuasiArithmeticMean
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -113,23 +114,29 @@ def _model(
     return Model(
         regimes={
             "source": Regime(
-                transition={
-                    "common": MarkovTransition(_certain),
-                    "rare": MarkovTransition(rare_probability),
-                },
-                active=lambda age: age < 21,
+                regime_transitions=until_exit(
+                    21,
+                    law={
+                        "common": MarkovTransition(func=_certain),
+                        "rare": MarkovTransition(func=rare_probability),
+                    },
+                    exits=("common", "rare"),
+                ),
                 functions={"utility": _no_utility},
                 certainty_equivalent=certainty_equivalent,
             ),
-            "common": Regime(transition=None, functions={"utility": _common_payoff}),
+            "common": Regime(
+                regime_transitions=None, functions={"utility": _common_payoff}
+            ),
             "rare": Regime(
-                transition=None,
+                regime_transitions=None,
                 states=rare_states,
                 functions={"utility": rare_utility},
             ),
         },
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

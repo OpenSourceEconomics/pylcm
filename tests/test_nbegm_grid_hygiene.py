@@ -19,6 +19,7 @@ from _lcm.grids import IrregSpacedGrid
 from lcm import Model
 from lcm.exceptions import ModelInitializationError
 from tests.test_models import n_nbegm_toy, nbegm_common, nbegm_tax_toy
+from tests.test_models.initial_regimes import initial_regimes_of
 
 
 def _rebuilt(*, model, regime_id_class, regime_name, kind, name):
@@ -50,6 +51,7 @@ def _rebuilt(*, model, regime_id_class, regime_name, kind, name):
         regimes={**model.user_regimes, regime_name: regime},
         ages=model.ages,
         regime_id_class=regime_id_class,
+        initial_regimes=initial_regimes_of(model=model),
     )
 
 

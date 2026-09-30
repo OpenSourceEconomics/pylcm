@@ -21,6 +21,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -40,6 +41,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -203,17 +205,17 @@ def _get_model(variant: str) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(*, age: int, la: float = last_age) -> bool:
-        return age < la
-
     actions = {
         "labor_supply": DiscreteGrid(category_class=LaborChoice),
         "consumption": CONSUMPTION_GRID,
     }
     if variant == "dcegm_bonus":
         working = ConsumptionSavingsRegime(
-            transition=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(func=next_regime, targets=("working_life", "dead")),
+                exits=("dead",),
+            ),
             actions=actions,
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_from_savings},
@@ -235,8 +237,11 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "brute_bonus":
         working = UserRegime(
-            transition=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(func=next_regime, targets=("working_life", "dead")),
+                exits=("dead",),
+            ),
             actions=actions,
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_brute_bonus},
@@ -249,8 +254,11 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "dcegm_bonus_pension":
         working = ConsumptionSavingsRegime(
-            transition=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(func=next_regime, targets=("working_life", "dead")),
+                exits=("dead",),
+            ),
             actions=actions,
             states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},
             state_transitions={
@@ -275,8 +283,11 @@ def _get_model(variant: str) -> Model:
         )
     else:
         working = UserRegime(
-            transition=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(func=next_regime, targets=("working_life", "dead")),
+                exits=("dead",),
+            ),
             actions=actions,
             states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},
             state_transitions={
@@ -294,6 +305,7 @@ def _get_model(variant: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=ages,
         regime_id_class=BonusRegimeId,
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
 

@@ -41,6 +41,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -153,11 +154,14 @@ def _model(width: int | None = None) -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        transition={
-            "working": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -165,7 +169,7 @@ def _model(width: int | None = None) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
         },
         functions={
             "utility": utility,
@@ -184,7 +188,7 @@ def _model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -193,6 +197,7 @@ def _model(width: int | None = None) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 
@@ -210,11 +215,14 @@ def _model_with_batched_health() -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        transition={
-            "working": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -222,7 +230,7 @@ def _model_with_batched_health() -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
         },
         functions={
             "utility": utility,
@@ -238,7 +246,7 @@ def _model_with_batched_health() -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -246,6 +254,7 @@ def _model_with_batched_health() -> Model:
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 
@@ -272,11 +281,14 @@ def _action_model(width: int | None = None) -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        transition={
-            "working": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={
             "consumption": CONSUMPTION_GRID,
             "works": DiscreteGrid(category_class=Work),
@@ -287,7 +299,7 @@ def _action_model(width: int | None = None) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
         },
         functions={
             "utility": utility_with_action,
@@ -303,7 +315,7 @@ def _action_model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -312,6 +324,7 @@ def _action_model(width: int | None = None) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 
@@ -451,11 +464,14 @@ def _two_combo_model(width: int | None = None) -> Model:
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        transition={
-            "working": MarkovTransition(stay_prob),
-            "dead": MarkovTransition(death_prob),
-        },
-        active=lambda age, la=last_age: age < la,
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "working": MarkovTransition(func=stay_prob),
+                "dead": MarkovTransition(func=death_prob),
+            },
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -464,7 +480,7 @@ def _two_combo_model(width: int | None = None) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
             "married": fixed_transition("married"),
         },
         functions={
@@ -484,7 +500,7 @@ def _two_combo_model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -493,6 +509,7 @@ def _two_combo_model(width: int | None = None) -> Model:
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 

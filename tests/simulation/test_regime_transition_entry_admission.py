@@ -37,19 +37,11 @@ def _utility() -> ScalarFloat:
     return jnp.asarray(0, dtype=_FLOAT_DTYPE)
 
 
-def _active_alive(age: float) -> bool:
-    return age == 0
-
-
-def _active_done(age: float) -> bool:
-    return age == 1
-
-
 def _invalid_costly_regime_probabilities() -> FloatND:
     """Return invalid mass after a visible sort workspace completes."""
     sample = jnp.sin(jnp.arange(4096, dtype=_FLOAT_DTYPE))
     probability = _FLOAT_DTYPE(0.25) + _FLOAT_DTYPE(0) * jnp.sort(sample)[2048]
-    return jnp.stack((probability, probability))
+    return jnp.stack((jnp.zeros_like(probability), probability))
 
 
 def _valid_regime_probabilities() -> FloatND:
@@ -65,19 +57,20 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=MarkovTransition(probabilities),
-                active=_active_alive,
+                regime_transitions=MarkovTransition(
+                    func=probabilities, targets=("done",)
+                ),
                 functions={"utility": _utility},
             ),
             "done": Regime(
-                transition=None,
-                active=_active_done,
+                regime_transitions=None,
                 functions={"utility": _utility},
             ),
         },
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
+        initial_regimes={0: "alive"},
     )
     return (
         model,
@@ -144,7 +137,7 @@ def _done_payoff() -> ScalarFloat:
 
 
 def _parameterized_regime_probabilities(done_probability: float) -> FloatND:
-    return jnp.stack((jnp.asarray(0, dtype=_FLOAT_DTYPE), done_probability))
+    return jnp.stack((jnp.zeros_like(done_probability), done_probability))
 
 
 def _numerical_inputs(
@@ -154,19 +147,20 @@ def _numerical_inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=MarkovTransition(_parameterized_regime_probabilities),
-                active=_active_alive,
+                regime_transitions=MarkovTransition(
+                    func=_parameterized_regime_probabilities, targets=("done",)
+                ),
                 functions={"utility": _alive_payoff},
             ),
             "done": Regime(
-                transition=None,
-                active=_active_done,
+                regime_transitions=None,
                 functions={"utility": _done_payoff},
             ),
         },
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
+        initial_regimes={0: "alive"},
     )
     return (
         model,

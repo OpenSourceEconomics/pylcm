@@ -11,6 +11,7 @@ from _lcm.simulation.runtime import SimulationRuntime
 from lcm import ExecutionConfig, Model
 from tests.test_models import n_nbegm_discrete_toy as discrete_toy
 from tests.test_models import n_nbegm_toy as smooth_toy
+from tests.test_models.initial_regimes import initial_regimes_of
 
 
 def _inputs(
@@ -27,6 +28,7 @@ def _inputs(
         execution_config=ExecutionConfig(
             device_memory_bytes=budget, axis_widths={"subject": width}
         ),
+        initial_regimes=initial_regimes_of(model=base),
     )
     params = {"discount_factor": 0.95}
     if discrete:

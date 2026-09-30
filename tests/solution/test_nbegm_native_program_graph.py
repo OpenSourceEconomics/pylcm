@@ -36,19 +36,33 @@ from tests.test_models import (
 
 _SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16}
 
+# The three-period toys are alive at ages 0 and 1 only, so their survival law
+# ends life after age 1; the toys' own default fits four periods.
+_THREE_PERIOD_FINAL_AGE_ALIVE = 2.0
+
 
 def _smooth_kernel(**overrides: Any) -> tuple[Any, dict[str, Any]]:
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm", n_periods=3, **_SMALL, **overrides
     )
-    return ride_along_kernel(model=model, params=nbegm_ride_along_toy.build_params())
+    return ride_along_kernel(
+        model=model,
+        params=nbegm_ride_along_toy.build_params(
+            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
+        ),
+    )
 
 
 def _discrete_kernel() -> tuple[Any, dict[str, Any]]:
     model = nbegm_ride_discrete_toy.build_model(
         variant="nbegm", n_periods=3, n_liquid=12, n_savings=16, n_consumption=24
     )
-    return ride_along_kernel(model=model, params=nbegm_ride_discrete_toy.build_params())
+    return ride_along_kernel(
+        model=model,
+        params=nbegm_ride_discrete_toy.build_params(
+            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
+        ),
+    )
 
 
 def _jump_kernel() -> tuple[Any, dict[str, Any]]:
@@ -216,6 +230,7 @@ def test_main_and_replay_publish_the_same_value_and_carry():
         kernel=kernel, context=context, name="replay"
     )
 
+    assert not np.isnan(np.asarray(main_value)).any()
     np.testing.assert_array_equal(np.asarray(main_value), np.asarray(replay_value))
     for main_leaf, replay_leaf in zip(
         jax.tree.leaves(main_carry), jax.tree.leaves(replay_carry), strict=True

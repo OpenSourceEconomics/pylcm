@@ -18,6 +18,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _ONE_NODE = UniformIIDProcess(n_points=1, start=0.0, stop=2.0)
 
@@ -77,19 +78,23 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
+                ),
                 state_transitions={"shock": {"target": _enter_at_the_node}},
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _ONE_NODE},
                 functions={"utility": _shock_plus_ten},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
     V = model.solve(
@@ -107,8 +112,11 @@ def _model_entering_at(enter_law) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={
                     "shock": {"target": enter_law},
@@ -117,13 +125,14 @@ def _model_entering_at(enter_law) -> Model:
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _ONE_NODE, "wealth": _WEALTH},
                 functions={"utility": _shock_and_wealth},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

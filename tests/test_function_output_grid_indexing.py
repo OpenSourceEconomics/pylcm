@@ -17,6 +17,7 @@ import pytest
 from _lcm.regime_building.finalize import finalize_regimes
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
@@ -35,6 +36,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -92,18 +94,19 @@ def _make_clashing_model() -> Model:
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        transition=_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -138,18 +141,19 @@ def test_safe_pattern_does_not_raise():
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        transition=_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
     Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -173,18 +177,19 @@ def test_array_valued_producer_indexed_by_state_does_not_raise():
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        transition=_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
     Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -233,8 +238,11 @@ def test_function_output_indexed_by_derived_categorical_raises():
             state_transitions={"spousal_income": fixed_transition("spousal_income")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             derived_categoricals={"is_married": DiscreteGrid(category_class=IsMarried)},
-            transition=_next_regime,
-            active=lambda age: age < 2,
+            regime_transitions=until_exit(
+                2,
+                law=Choose(func=_next_regime, targets=("dead", "alive")),
+                exits=("dead",),
+            ),
         )
 
 
@@ -274,8 +282,11 @@ def test_function_output_indexed_by_discrete_action_raises():
                 "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5),
                 "labor_supply": DiscreteGrid(category_class=WorkChoice),
             },
-            transition=_next_regime,
-            active=lambda age: age < 2,
+            regime_transitions=until_exit(
+                2,
+                law=Choose(func=_next_regime, targets=("dead", "alive")),
+                exits=("dead",),
+            ),
         )
 
 
@@ -305,8 +316,11 @@ def test_constraint_indexing_function_output_by_state_raises():
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             constraints={"feasibility": _constraint_indexing_function_output},
-            transition=_next_regime,
-            active=lambda age: age < 2,
+            regime_transitions=until_exit(
+                2,
+                law=Choose(func=_next_regime, targets=("dead", "alive")),
+                exits=("dead",),
+            ),
         )
 
 
@@ -335,18 +349,19 @@ def test_phased_function_in_functions_does_not_crash_validation():
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        transition=_next_regime,
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
     Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -378,6 +393,9 @@ def test_phased_function_solve_variant_unsafe_indexing_raises():
             states={"pref_type": DiscreteGrid(category_class=PrefType)},
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-            transition=_next_regime,
-            active=lambda age: age < 2,
+            regime_transitions=until_exit(
+                2,
+                law=Choose(func=_next_regime, targets=("dead", "alive")),
+                exits=("dead",),
+            ),
         )

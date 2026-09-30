@@ -23,6 +23,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     MarkovTransition,
@@ -88,6 +90,7 @@ def dissolution_model_and_solution():
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
+        initial_regimes={0: "married"},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     return model, solution
@@ -104,6 +107,7 @@ def consent_model_and_solution():
         regimes=_make_consent_regimes(),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
+        initial_regimes={0: "single_f"},
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off")
     return model, solution
@@ -258,8 +262,11 @@ def _make_unreachable_role_routing_regimes():
     select on a role a subject started in `alone` with.
     """
     alone = Regime(
-        transition={"alone_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {"alone_terminal": MarkovTransition(func=_prob_one)}
+            }
+        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -270,8 +277,7 @@ def _make_unreachable_role_routing_regimes():
         },
     )
     alone_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -300,6 +306,7 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
         regimes=_make_unreachable_role_routing_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=UnreachableRoleRoutingRegimeId,
+        initial_regimes={0: ("alone", "married")},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     result = model.simulate(
@@ -342,17 +349,26 @@ def _shift_dissolution_one_age() -> dict:
     """Move the dissolution miniature one age later, freeing age 0 for a start."""
     regimes = _make_dissolution_regimes()
     windows = {
-        "married": lambda age: (age >= 1) & (age < 2),
-        "married_ir": lambda age: (age >= 2) & (age < 3),
-        "married_terminal": lambda age: age >= 3,
-        "single_f": lambda age: (age >= 2) & (age < 3),
-        "single_f_terminal": lambda age: age >= 3,
-        "single_m": lambda age: (age >= 2) & (age < 3),
-        "single_m_terminal": lambda age: age >= 3,
+        "married": AgeRange(start=1, stop=2),
+        "married_ir": AgeRange(start=2, stop=3),
+        "single_f": AgeRange(start=2, stop=3),
+        "single_m": AgeRange(start=2, stop=3),
     }
     return {
-        name: regime.replace(active=windows[name]) for name, regime in regimes.items()
+        name: regime.replace(
+            regime_transitions=ByAge(
+                cases={windows[name]: _law(regime.regime_transitions)}
+            )
+        )
+        if name in windows
+        else regime
+        for name, regime in regimes.items()
     }
+
+
+def _law(transitions: object) -> object:
+    """The single law a regime's transitions declare."""
+    return transitions.laws[0] if isinstance(transitions, ByAge) else transitions
 
 
 def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role():
@@ -365,8 +381,9 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
     every row following one partner's dissolution path.
     """
     prelude = Regime(
-        transition={"married": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={AgeRange(stop=1): {"married": MarkovTransition(func=_prob_one)}}
+        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -380,6 +397,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
         regimes={"prelude": prelude, **_shift_dissolution_one_age()},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=ReachableRoleRoutingRegimeId,
+        initial_regimes={0: "prelude"},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     with pytest.raises(InvalidInitialConditionsError, match="prelude"):

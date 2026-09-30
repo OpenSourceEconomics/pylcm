@@ -60,10 +60,13 @@ from _lcm.execution.reductions import (
 )
 from _lcm.grids import Grid
 from _lcm.logsum import logsum_and_softmax
-from _lcm.probability import scaled_by_power_of_two
+from _lcm.probability import is_negative, scaled_by_power_of_two
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
-from _lcm.regime_building.Q_and_F import partition_continuation_targets
+from _lcm.regime_building.Q_and_F import (
+    _regime_mass_is_a_distribution,
+    partition_continuation_targets,
+)
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
@@ -400,6 +403,12 @@ class _BoundContinuation:
     certainty equivalent spans the joint (regime x shock) lottery — the
     regime split (e.g. survival) is inside the CE, not a linear average of
     per-regime certainty equivalents.
+
+    Both modes publish NaN in both channels wherever the reachable targets'
+    probabilities are not a distribution — a mass away from one, as when a
+    target inactive next period carries positive probability, or a negative
+    probability — with the same tolerance the grid-search continuation applies.
+    The arithmetic states it, so no log level can skip it.
     """
 
     plan: ContinuationPlan
@@ -428,6 +437,7 @@ class _BoundContinuation:
         plan = self.plan
         risk_aversion = self.risk_aversion
         regime_transition_probs = self.regime_transition_probs
+        is_distribution = self._retains_a_distribution()
         if risk_aversion is not None:
             certainty_equivalents: list[ScalarFloat] = []
             weight_sums: list[ScalarFloat] = []
@@ -477,12 +487,16 @@ class _BoundContinuation:
                 probs=jnp.stack(probs),
                 risk_aversion=risk_aversion,
             )
-            return ez_invert_partials(
+            nu, dnu_ds = ez_invert_partials(
                 certainty_equivalent=joint_certainty_equivalent,
                 weight_sum=blended_weight,
                 marginal_log_scale=joint_marginal_scale,
                 marginal_mantissa=blended_mantissa,
                 risk_aversion=risk_aversion,
+            )
+            return (
+                jnp.where(is_distribution, nu, jnp.nan),
+                jnp.where(is_distribution, dnu_ds, jnp.nan),
             )
         blended_marginal = jnp.asarray(0.0, dtype=self.dtype)
         blended_value = jnp.asarray(0.0, dtype=self.dtype)
@@ -509,7 +523,29 @@ class _BoundContinuation:
             blended_value = blended_value + jnp.where(
                 prob > 0.0, prob * constant_value, prob * 0.0
             )
-        return blended_value, blended_marginal
+        return (
+            jnp.where(is_distribution, blended_value, jnp.nan),
+            jnp.where(is_distribution, blended_marginal, jnp.nan),
+        )
+
+    def _retains_a_distribution(self) -> BoolND:
+        """Whether the reachable targets' probabilities form a distribution.
+
+        Every target the plan reads — stateful and stateless — contributes to the
+        represented mass. Negativity is read off each probability's own bits,
+        since a negative weight too small for the dtype to hold as a normal
+        number arrives at an arithmetic sign test as `-0` and passes it.
+        """
+        probability_mass = jnp.asarray(0.0, dtype=self.dtype)
+        has_negative_probability = jnp.zeros((), dtype=bool)
+        for target in (*self.plan.stateful_targets, *self.plan.scalar_targets):
+            prob = self.regime_transition_probs[target]
+            probability_mass = probability_mass + prob
+            has_negative_probability = has_negative_probability | is_negative(prob)
+        return _regime_mass_is_a_distribution(
+            probability_mass=probability_mass,
+            has_negative_probability=has_negative_probability,
+        )
 
 
 def build_continuation_plan(

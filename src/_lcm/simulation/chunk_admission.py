@@ -33,7 +33,7 @@ from _lcm.simulation.chunk_planning import (
 from _lcm.simulation.chunk_profile_cache import profile_cache_registry
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.programs import gated_simulation_programs_ready
+from _lcm.simulation.programs import budgeted_simulation_programs_ready
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -128,8 +128,13 @@ def prepare_simulation_chunks(
     log_level: LogLevel,
     policies: Mapping[int, Mapping[str, object]] | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    max_compilation_workers: int | None = None,
 ) -> PreparedSimulationChunks:
-    """Select a complete admitted outer cohort with the top-first planner."""
+    """Select a complete admitted outer cohort with the top-first planner.
+
+    `max_compilation_workers` bounds the threads compiling each profiled
+    candidate's forward programs, as it does for the solve's compilation waves.
+    """
     runtime = next(iter(regimes.values())).simulation.programs.executor
     if (
         not isinstance(runtime, SimulationRuntime)
@@ -138,16 +143,8 @@ def prepare_simulation_chunks(
         raise ExecutionPlanningError(
             "Chunk admission requires a budgeted simulation runtime."
         )
-    if not runtime.enable_jit or any(
-        (
-            (regime.gated_edges and not gated_simulation_programs_ready(regime=regime))
-            or (
-                regime.simulation.replay_route.policy_applicable
-                and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
-            )
-        )
-        or regime.simulation.external_replay_route is not None
-        for regime in regimes.values()
+    if not budgeted_simulation_programs_ready(
+        regimes=regimes, n_periods=ages.n_periods, enable_jit=runtime.enable_jit
     ):
         raise ExecutionPlanningError(
             "Budgeted chunk admission requires compiled decision programs; "
@@ -210,6 +207,7 @@ def prepare_simulation_chunks(
         log_level=log_level,
         resident=resident,
         devices=devices,
+        max_compilation_workers=max_compilation_workers,
     )
     plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
     return PreparedSimulationChunks(
@@ -335,6 +333,7 @@ class _ChunkProfiler:
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
     policies: Mapping[int, Mapping[str, object]] | None = None
+    max_compilation_workers: int | None = None
 
     def __call__(self, *, n_subjects: int) -> SimulationChunkProfile:
         """Return a fitting common inner choice, or the smallest required bound."""
@@ -345,6 +344,7 @@ class _ChunkProfiler:
         choices = workspace_width_candidates(
             axes=axes,
             fixed_widths=self.runtime.execution.axis_widths,
+            width_ceilings=self.runtime.execution.axis_width_ceilings,
             budget_bytes=self.runtime.execution.device_memory_bytes,
         )
         best = None
@@ -409,6 +409,7 @@ class _ChunkProfiler:
                 profile_simulation_chunk,
                 flat_params=self.call_inputs.flat_params,
                 base_spaces=self.call_inputs.base_state_action_spaces,
+                max_compilation_workers=self.max_compilation_workers,
                 **arguments,
             ),
         )
@@ -467,7 +468,10 @@ def _independent_outer_candidates(
 
 
 def _independent_anchor_widths(
-    *, axes: tuple[ReducedAxis | TiledOutputAxis, ...], configured: Mapping[str, int]
+    *,
+    axes: tuple[ReducedAxis | TiledOutputAxis, ...],
+    configured: Mapping[str, int],
+    ceilings: Mapping[str, int],
 ) -> tuple[Mapping[str, int], ...]:
     """Generate two maps and retain pins absent from a scalar anchor's axes.
 
@@ -481,7 +485,10 @@ def _independent_anchor_widths(
             dict(configured)
             | dict(
                 workspace_width_candidates(
-                    axes=axes, fixed_widths=pins, budget_bytes=None
+                    axes=axes,
+                    fixed_widths=pins,
+                    width_ceilings=ceilings,
+                    budget_bytes=None,
                 )[0]
             )
         )
@@ -516,7 +523,11 @@ def _plan_independent_chunks(
     anchor = candidates[0]
     largest = candidates[-1]
     axes = _common_axes(regimes=profiler.regimes, n_subjects=anchor)
-    choices = _independent_anchor_widths(axes=axes, configured=configured)
+    choices = _independent_anchor_widths(
+        axes=axes,
+        configured=configured,
+        ceilings=profiler.runtime.execution.axis_width_ceilings,
+    )
     attempts: list[ChunkCandidateReceipt] = []
     selected = _profile_independent_candidate(
         profiler=profiler, n_subjects=largest, widths=choices[0], attempts=attempts

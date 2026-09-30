@@ -79,7 +79,7 @@ def _functions() -> dict[str, UserFunction]:
 
 def _one_margin(*, solver: NBEGM) -> ConsumptionSavingsRegime:
     return ConsumptionSavingsRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         states={"liquid": _GRID},
         actions={"consumption": _GRID},
         functions={
@@ -92,7 +92,7 @@ def _one_margin(*, solver: NBEGM) -> ConsumptionSavingsRegime:
 
 def _two_margin(*, solver: NNBEGM) -> NestedConsumptionSavingsRegime:
     return NestedConsumptionSavingsRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         states={"liquid": _GRID, "illiquid": _GRID},
         actions={"consumption": _GRID, "illiquid_investment": _GRID},
         functions=_functions(),
@@ -194,7 +194,7 @@ def test_solver_that_cannot_execute_a_nontrivial_fold_refuses_it(
         match=r"does not implement .*UniformObservedFixedCost",
     ):
         NestedConsumptionSavingsRegime(
-            transition=lambda: 0,
+            regime_transitions=lambda: 0,
             states={"liquid": _GRID, "illiquid": _GRID},
             actions={"consumption": _GRID, "illiquid_investment": _GRID},
             functions=_functions(),
@@ -219,7 +219,7 @@ def test_solver_accepts_an_explicitly_declared_deterministic_maximum(
 ) -> None:
     """Naming the default fold changes nothing, so no solver may refuse it."""
     regime = NestedConsumptionSavingsRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         states={"liquid": _GRID, "illiquid": _GRID},
         actions={"consumption": _GRID, "illiquid_investment": _GRID},
         functions=_functions(),

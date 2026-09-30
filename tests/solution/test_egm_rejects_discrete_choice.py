@@ -36,6 +36,7 @@ from tests.solution.test_egm_solver import (
     savings,
     terminal_utility,
 )
+from tests.test_models.schedules import until_exit
 
 _LAST_AGE = float(_N_PERIODS - 1)
 
@@ -63,12 +64,15 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"saving": next_wealth, "done": next_wealth}},
         constraints={"feasible": feasible},
-        transition={
-            "saving": MarkovTransition(prob_continue),
-            "done": MarkovTransition(prob_stop),
-        },
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law={
+                "saving": MarkovTransition(func=prob_continue),
+                "done": MarkovTransition(func=prob_stop),
+            },
+            exits=("done",),
+        ),
         functions={"utility": utility, "savings": savings},
-        active=lambda age: age < _LAST_AGE,
         solver=EGM(savings_grid=_SAVINGS_GRID),
         liquid=LiquidMargin(
             state="wealth",
@@ -78,10 +82,9 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         ),
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
-        active=lambda age: age >= _LAST_AGE,
         solver=GridSearch(),
     )
     with pytest.raises(ModelInitializationError, match="effort"):
@@ -89,4 +92,5 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
             regimes={"saving": saving, "done": done},
             ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={0: "saving"},
         )

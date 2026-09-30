@@ -39,6 +39,7 @@ from tests.test_models.nbegm_common import (
     savings,
     utility,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -134,12 +135,15 @@ def _build_living_regime(
             "alive_b": lcm.fixed_transition("kind"),
         },
     }
-    regime_transition = {
-        "alive_a": MarkovTransition(prob_to_alive_a),
-        "alive_b": MarkovTransition(prob_to_alive_b),
-        "dead": MarkovTransition(prob_to_dead),
-    }
-    active = lambda age, fa=final_age: age < fa  # noqa: E731
+    regime_transition = until_exit(
+        final_age,
+        law={
+            "alive_a": MarkovTransition(func=prob_to_alive_a),
+            "alive_b": MarkovTransition(func=prob_to_alive_b),
+            "dead": MarkovTransition(func=prob_to_dead),
+        },
+        exits=("dead",),
+    )
     # Built per branch: the NBEGM schedule solver takes its DAG role names from
     # the regime's liquid margin, which only the margin-declaring class carries.
     if isinstance(solver, NBEGM):
@@ -148,9 +152,8 @@ def _build_living_regime(
             states=regime_states,
             state_transitions=regime_state_transitions,
             constraints=constraints,
-            transition=regime_transition,
+            regime_transitions=regime_transition,
             functions=functions,
-            active=active,
             solver=solver,
             liquid=LiquidMargin(
                 state="liquid",
@@ -164,9 +167,8 @@ def _build_living_regime(
         states=regime_states,
         state_transitions=regime_state_transitions,
         constraints=constraints,
-        transition=regime_transition,
+        regime_transitions=regime_transition,
         functions=functions,
-        active=active,
         solver=solver,
     )
 
@@ -214,16 +216,16 @@ def build_model(
         )
 
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions={"utility": bequest},
-        active=lambda age, fa=final_age: age >= fa,
         solver=GridSearch(),
     )
     return Model(
         regimes={"alive_a": make(), "alive_b": make(), "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "alive_a"},
     )
 
 
@@ -249,7 +251,6 @@ def build_params(
     base_a = jnp.array([base_income_lo, base_income_hi])
     base_b = base_a + base_income_shift_b
     budget = {"return_liquid": return_liquid, "income": income}
-    regime_age = {"next_regime": {"final_age_alive": final_age_alive}}
 
     def living(base_income: FloatND) -> dict:
         return {
@@ -257,9 +258,10 @@ def build_params(
             "koopmans_aggregator": {"discount_factor": discount_factor},
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption},
             "resources": {"base_income": base_income},
-            "alive_a": {"next_liquid": budget, **regime_age},
-            "alive_b": {"next_liquid": budget, **regime_age},
-            "dead": {"next_liquid": budget, **regime_age},
+            "alive_a": {"next_liquid": budget},
+            "alive_b": {"next_liquid": budget},
+            "dead": {"next_liquid": budget},
+            "final_age_alive": final_age_alive,
         }
 
     return {

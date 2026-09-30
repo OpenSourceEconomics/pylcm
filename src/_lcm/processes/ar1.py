@@ -22,6 +22,8 @@ from _lcm.processes.base import (
     _gauss_hermite_normal,
     _mixture_cdf,
     _validate_gauss_hermite_grid,
+    sealed,
+    standard_normal,
 )
 from _lcm.typing import PRNGKeyND
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
@@ -143,8 +145,8 @@ class TauchenAR1Process(_AR1Process):
     ) -> ScalarFloat:
         return (
             params["mu"]
-            + params["rho"] * current_value
-            + params["sigma"] * jax.random.normal(key=key)
+            + sealed(params["rho"] * current_value)
+            + sealed(params["sigma"] * standard_normal(key))
         )
 
 
@@ -218,8 +220,8 @@ class RouwenhorstAR1Process(_AR1Process):
     ) -> ScalarFloat:
         return (
             params["mu"]
-            + params["rho"] * current_value
-            + params["sigma"] * jax.random.normal(key=key)
+            + sealed(params["rho"] * current_value)
+            + sealed(params["sigma"] * standard_normal(key))
         )
 
 
@@ -333,10 +335,10 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
     ) -> ScalarFloat:
         key1, key2 = jax.random.split(key=key)
         component = jax.random.bernoulli(key1, params["p1"])
-        normal = jax.random.normal(key2)
+        normal = standard_normal(key2)
         eps = jnp.where(
             component,
-            params["mu1"] + params["sigma1"] * normal,
-            params["mu2"] + params["sigma2"] * normal,
+            params["mu1"] + sealed(params["sigma1"] * normal),
+            params["mu2"] + sealed(params["sigma2"] * normal),
         )
-        return params["mu"] + params["rho"] * current_value + eps
+        return params["mu"] + sealed(params["rho"] * current_value) + eps

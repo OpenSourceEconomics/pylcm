@@ -57,6 +57,8 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -70,7 +72,7 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
@@ -121,15 +123,19 @@ def _project_shock(wage: FloatND) -> FloatND:
 
 def _make_shock_ref_regimes() -> dict[str, Regime]:
     shock_ref = Regime(
-        transition={"shock_ref_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "shock_ref_terminal": MarkovTransition(func=_prob_one)
+                }
+            }
+        ),
         states={"shock": _SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_shock_ref},
     )
     shock_ref_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return {"shock_ref": shock_ref, "shock_ref_terminal": shock_ref_terminal}
@@ -154,11 +160,14 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
             ),
             ages=_AGES,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes=_make_shock_ref_regimes(),
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes=_make_shock_ref_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=_AGES,
         ),
         ages=_AGES,
         regime_names_to_ids=regime_names_to_ids,
@@ -173,7 +182,7 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
         }
     )
     _bi_result = solve(
-        model_fingerprint="test_same_period_ref_process_state_interpolation",
+        program_fingerprint="test_same_period_ref_process_state_interpolation",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
@@ -241,8 +250,11 @@ def _vc_f(*, Q_f: FloatND, V_shock_ref: FloatND) -> BoolND:
 def _make_regimes() -> dict[str, Regime]:
     regimes = _make_shock_ref_regimes()
     married = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+            }
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -263,8 +275,7 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -307,11 +318,14 @@ def _build_and_solve():
             ),
             ages=_AGES,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes=_make_regimes(),
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes=_make_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=_AGES,
         ),
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
@@ -319,7 +333,7 @@ def _build_and_solve():
     )
     flat_params = _flat_params()
     _bi_result = solve(
-        model_fingerprint="test_same_period_ref_process_state_interpolation",
+        program_fingerprint="test_same_period_ref_process_state_interpolation",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,

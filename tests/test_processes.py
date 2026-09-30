@@ -1,3 +1,9 @@
+import json
+import os
+import shutil
+import subprocess
+import textwrap
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -630,3 +636,112 @@ def test_ar1_stationary_moments_and_autocorrelation(*, grid_cls, extra_kw):
 
     got_rho = _lag1_autocorrelation(gridpoints=points, P=P)
     aaae(got_rho, rho, decimal=1)
+
+
+@pytest.mark.parametrize("hash_seed", [0, 1, 2])
+def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
+    hash_seed: int,
+) -> None:
+    """Continuation lottery axes retain process declaration order in fresh processes."""
+    root = Path(__file__).resolve().parents[1]
+    script = textwrap.dedent("""
+        import json
+        import os
+        from typing import Any
+        import jax.numpy as jnp
+        import numpy as np
+        from lcm import (AgeGrid, AgeRange, ByAge, Choose, Model, Regime,
+                         UniformIIDProcess, categorical)
+        from lcm.typing import ContinuousState, FloatND, ScalarInt
+        from _lcm.regime_building import Q_and_F
+
+        @categorical(ordered=False)
+        class RegimeId:
+            alive: ScalarInt
+            dead: ScalarInt
+
+        def utility(*, gamma: ContinuousState, alpha: ContinuousState,
+                    beta: ContinuousState) -> FloatND:
+            return gamma + 2 * alpha + 3 * beta
+
+        def next_regime(period: int) -> ScalarInt:
+            return jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
+
+        observed = []
+        original = Q_and_F._build_target_continuation
+        def observe(**kwargs: Any) -> Any:
+            result = original(**kwargs)
+            if kwargs['target_regime_name'] == 'alive':
+                observed.append(list(result.lottery_axis_names))
+            return result
+        Q_and_F._build_target_continuation = observe
+        try:
+            model = Model(
+                regimes={
+                    'alive': Regime(
+                        states={
+                            'gamma': UniformIIDProcess(n_points=4, start=0, stop=3),
+                            'alpha': UniformIIDProcess(n_points=2, start=0, stop=1),
+                            'beta': UniformIIDProcess(n_points=3, start=0, stop=2),
+                        },
+                        functions={'utility': utility},
+                        regime_transitions=ByAge(cases={
+                            AgeRange(stop=1): Choose(
+                                func=next_regime, targets=('alive',)),
+                            AgeRange(start=1, stop=2): Choose(
+                                func=next_regime, targets=('dead',)),
+                        }),
+                    ),
+                    'dead': Regime(functions={'utility': lambda: 0.0},
+                                   regime_transitions=None),
+                },
+                ages=AgeGrid(start=0, stop=2, step='Y'),
+                regime_id_class=RegimeId,
+                initial_regimes={0: 'alive'},
+            )
+            solution = model.solve(params={'discount_factor': 1.0}, log_level='off')
+            values = solution.values
+            grids = model.user_regimes['alive'].states
+            gamma = np.asarray(grids['gamma'].get_gridpoints())[:, None, None]
+            alpha = np.asarray(grids['alpha'].get_gridpoints())[None, :, None]
+            beta = np.asarray(grids['beta'].get_gridpoints())[None, None, :]
+            terminal = gamma + 2 * alpha + 3 * beta
+            decimal_precision = int(os.environ['TEST_DECIMAL_PRECISION'])
+            np.testing.assert_allclose(values[1]['alive'], terminal,
+                atol=10**(-decimal_precision), rtol=10**(-decimal_precision))
+            np.testing.assert_allclose(values[0]['alive'], terminal + 5.5,
+                atol=10**(-decimal_precision), rtol=10**(-decimal_precision))
+        finally:
+            Q_and_F._build_target_continuation = original
+        print('LOTTERY_AXES=' + json.dumps(observed))
+    """)
+    pixi = shutil.which("pixi")
+    assert pixi is not None
+    completed = subprocess.run(  # noqa: S603 - fixed, repository-owned test script
+        [pixi, "run", "-e", "tests-cpu", "python", "-c", script],
+        cwd=root,
+        env={
+            **os.environ,
+            "PYTHONHASHSEED": str(hash_seed),
+            "JAX_PLATFORMS": "cpu",
+            "JAX_ENABLE_X64": str(X64_ENABLED).lower(),
+            "TEST_DECIMAL_PRECISION": str(DECIMAL_PRECISION),
+            "PYTHONPATH": os.pathsep.join((str(root / "src"), str(root))),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    lines = [
+        line
+        for line in completed.stdout.splitlines()
+        if line.startswith("LOTTERY_AXES=")
+    ]
+    assert len(lines) == 1, completed.stdout
+    observed = json.loads(lines[0].removeprefix("LOTTERY_AXES="))
+    assert observed, "The public model must construct an alive continuation"
+    assert all(
+        order == ["next_gamma", "next_alpha", "next_beta"] for order in observed
+    ), (hash_seed, observed)

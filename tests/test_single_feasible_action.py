@@ -29,6 +29,7 @@ from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.regime_building.ndimage import map_coordinates
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -45,6 +46,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -102,18 +104,21 @@ def _build_model(
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": IrregSpacedGrid(n_points=n_consumption)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
-        active=lambda age: age <= last_alive_age,
+        regime_transitions=until_exit(
+            last_alive_age + 1,
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age > last_alive_age,
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
     consumption_points = jnp.linspace(consumption_lo, consumption_hi, n_consumption)
     params = {
@@ -360,23 +365,26 @@ def _build_alive_dead_model(
         },
         actions={"consumption": IrregSpacedGrid(n_points=5)},
         constraints={"borrowing_constraint": _alive_borrow},
-        transition=_alive_to_dead,
-        active=lambda age: age <= last_alive_age,
+        regime_transitions=until_exit(
+            last_alive_age + 1,
+            law=Choose(func=_alive_to_dead, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _crra_bequest},
         states={
             "assets": LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
             "pref_type": DiscreteGrid(category_class=PrefType),
         },
-        active=lambda _age: True,
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         regime_id_class=AliveDeadRegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
+        initial_regimes={0: "alive"},
     )
     cw_arr = jnp.asarray(consumption_weight)
     params = {
@@ -510,18 +518,21 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=5.0, n_points=5)},
         constraints={"borrow": borrow},
-        transition=next_regime,
-        active=lambda age: age <= last_alive_age,
+        regime_transitions=until_exit(
+            last_alive_age + 1,
+            law=Choose(func=next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age > last_alive_age,
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RuntimeRegimeId,
+        initial_regimes={0: "alive"},
     )
     params = {
         "discount_factor": 0.95,

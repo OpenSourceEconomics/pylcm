@@ -223,8 +223,9 @@ def test_nbegm_matches_grid_search_on_a_breakpoint_aligned_grid() -> None:
     )
 
     params = _smooth_params(asset_limit=None)
-    for target in ("alive", "dead"):
-        params["alive"][target]["next_regime"]["final_age_alive"] = 1.0
+    # With two periods the alive regime's only law is its exit into `dead`.
+    del params["alive"]["alive"]["next_regime"]
+    params["alive"]["dead"]["next_regime"] = {"final_age_alive": 1.0}
 
     nbegm_value = np.asarray(
         nbegm.solve(params=params, log_level="off").values[0]["alive"]
@@ -754,7 +755,8 @@ def test_declaring_the_bound_leaves_the_nbegm_solution_unchanged():
     that it was disposed of without effect. Solving both arms says the
     admitted declaration adds no mask, no candidate, and no shift in value.
     """
-    params = nbegm_medicaid_toy.build_params(final_age_alive=3.0)
+    # Three periods: alive at ages 0 and 1, so life ends after age 1.
+    params = nbegm_medicaid_toy.build_params(final_age_alive=2.0)
     declared = _build_model(
         variant="nbegm",
         constraints={
@@ -770,6 +772,7 @@ def test_declaring_the_bound_leaves_the_nbegm_solution_unchanged():
 
     for period, regime_to_V in without.items():
         for regime_name, V_arr in regime_to_V.items():
+            assert not np.isnan(np.asarray(V_arr)).any(), (period, regime_name)
             aaae(
                 with_declaration[period][regime_name],
                 V_arr,

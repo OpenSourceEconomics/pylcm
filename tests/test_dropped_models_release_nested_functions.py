@@ -32,6 +32,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
+    working_life_transitions,
 )
 
 _ENGINE_SOURCE_ROOTS = (
@@ -74,16 +75,12 @@ def _live_nested_functions(*, source_roots: tuple[Path, ...]) -> int:
     )
 
 
-def _active_in_the_first_period_only(age: int) -> bool:
-    return age <= START_AGE
-
-
 def _grid_search_model() -> Model:
     """Build the smallest one-period grid-search model."""
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=_active_in_the_first_period_only,
+                regime_transitions=working_life_transitions(last_age=START_AGE + 1),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -95,6 +92,7 @@ def _grid_search_model() -> Model:
         },
         ages=AgeGrid(start=START_AGE, stop=START_AGE + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={START_AGE: "working_life"},
     )
 
 

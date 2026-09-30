@@ -62,6 +62,10 @@ class SimulationMemory:
     subject_devices: tuple[jax.Device, ...]
     operations: ProfiledSimulationOperations
     inputs: DeviceBufferFootprint
+    producers: ProfiledSimulationOperations = field(
+        default_factory=ProfiledSimulationOperations, repr=False
+    )
+    """Executables of user-law producers; a Model passes its own owner."""
     axis_widths: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     outputs: DeviceBufferFootprint = field(
         default_factory=lambda: DeviceBufferFootprint(spans={})

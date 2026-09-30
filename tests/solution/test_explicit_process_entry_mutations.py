@@ -33,10 +33,6 @@ def square(shock: ScalarFloat) -> FloatND:
     return shock**2
 
 
-def active(age: float) -> bool:
-    return age < 22
-
-
 def source_value(model: Model) -> float:
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
     period = max(p for p, regimes in solution.items() if "source" in regimes)
@@ -68,13 +64,12 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(one_probability)},
-                active=active,
+                regime_transitions={"target": MarkovTransition(func=one_probability)},
                 state_transitions={"shock": {"target": enter_at_mean}},
                 functions={"utility": zero},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=n_points,
@@ -89,6 +84,7 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
     got = source_value(model)

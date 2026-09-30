@@ -11,8 +11,17 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, MarkovTransition, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    Choose,
+    DiscreteGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -61,15 +70,17 @@ def model() -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
-                active=lambda age: age < 26,
+                regime_transitions=until_exit(
+                    26,
+                    law=Choose(func=_next_regime, targets=("alive", "last")),
+                    exits=("last",),
+                ),
                 states={"health": DiscreteGrid(category_class=_Health)},
-                state_transitions={"health": MarkovTransition(_health_probs)},
+                state_transitions={"health": MarkovTransition(func=_health_probs)},
                 functions={"utility": _alive_utility},
             ),
             "last": Regime(
-                transition=None,
-                active=lambda age: age >= 26,
+                regime_transitions=None,
                 states={"health": DiscreteGrid(category_class=_Health)},
                 actions={"spend": DiscreteGrid(category_class=_Spend)},
                 constraints={"survives_to_spend": _survives_to_spend},
@@ -78,6 +89,7 @@ def model() -> Model:
         },
         ages=AgeGrid(start=25, stop=26, step="1Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={25: "alive"},
     )
 
 

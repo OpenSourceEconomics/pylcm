@@ -26,7 +26,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    categorical,
+)
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
@@ -37,6 +43,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 _CRRA = 2.0
 _DISCOUNT_FACTOR = 0.95
@@ -124,12 +131,16 @@ def _model(
             "wealth": {"saving": next_wealth, "done": next_wealth},
         },
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        transition={
-            "saving": MarkovTransition(prob_continue),
-            "done": MarkovTransition(prob_stop),
-        },
+        regime_transitions=until_exit(
+            last_age,
+            law={
+                "saving": MarkovTransition(func=prob_continue),
+                "done": MarkovTransition(func=prob_stop),
+            },
+            exits=("done",),
+            stays=("saving",),
+        ),
         functions=functions,
-        active=lambda age, la=last_age: age < la,
         solver=solver,
         **(
             {
@@ -147,16 +158,16 @@ def _model(
         ),
     )
     done = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": terminal_utility},
-        active=lambda age, la=last_age: age >= la,
         solver=GridSearch(),
     )
     return Model(
         regimes={"saving": saving, "done": done},
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "saving"},
     )
 
 

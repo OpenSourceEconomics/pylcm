@@ -13,12 +13,14 @@ from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import ClassVar
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.scipy.stats.norm import cdf
 
 from _lcm.grids import ContinuousGrid
 from _lcm.grids import coordinates as grid_coordinates
+from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
 
@@ -77,6 +79,27 @@ class StateConditioned:
 
     by: Mapping[str, float]
     """Mapping of that state's category names to the value used for each."""
+
+
+def standard_normal(key: PRNGKeyND) -> ScalarFloat:
+    """Draw one standard normal that a constant scale cannot be folded into.
+
+    `jax.random.normal` scales its internal draw by `sqrt(2)`. Unsealed, XLA may
+    fold a constant `sigma` multiplying the result into that scaling, depending
+    on how the surrounding program is partitioned and fused.
+    """
+    return sealed(jax.random.normal(key=key))
+
+
+def sealed(value: FloatND) -> FloatND:
+    """Round `value` on its own, before any consumer sees it.
+
+    Shock draws seal each product so that it is neither folded with constants
+    nor contracted into a fused multiply-add with the sum it feeds. A draw then
+    rounds exactly as written in every compiled program, so simulating the same
+    subjects partitioned over devices or not gives bitwise-equal states.
+    """
+    return jax.lax.optimization_barrier(value)
 
 
 def _gauss_hermite_normal(

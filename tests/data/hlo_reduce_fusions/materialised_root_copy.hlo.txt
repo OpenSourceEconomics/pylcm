@@ -1,0 +1,31 @@
+HloModule materialised_root_copy
+
+%sum (sum_x: f32[], sum_y: f32[]) -> f32[] {
+  %sum_x = f32[] parameter(0)
+  %sum_y = f32[] parameter(1)
+  ROOT %sum_add = f32[] add(%sum_x, %sum_y)
+}
+
+%producer (producer_table: f32[3,2], producer_indices: s32[2,1]) -> f32[2,2] {
+  %producer_table = f32[3,2]{1,0} parameter(0)
+  %producer_indices = s32[2,1]{1,0} parameter(1)
+  %producer_gather = f32[2,2]{1,0} gather(%producer_table, %producer_indices), offset_dims={1}, collapsed_slice_dims={0}, start_index_map={0}, index_vector_dim=1, slice_sizes={1,2}
+  ROOT %producer_view = f32[2,2]{1,0} copy(%producer_gather)
+}
+
+%consumer (consumer_table: f32[2,2], consumer_indices: s32[2,1]) -> f32[] {
+  %consumer_table = f32[2,2]{1,0} parameter(0)
+  %consumer_indices = s32[2,1]{1,0} parameter(1)
+  %consumer_flat = f32[4]{0} bitcast(%consumer_table)
+  %consumer_gather = f32[2]{0} gather(%consumer_flat, %consumer_indices), offset_dims={}, collapsed_slice_dims={0}, start_index_map={0}, index_vector_dim=1, slice_sizes={1}
+  %zero = f32[] constant(0)
+  ROOT %consumer_reduce = f32[] reduce(%consumer_gather, %zero), dimensions={0}, to_apply=%sum
+}
+
+ENTRY %main (input_table: f32[3,2], input_indices: s32[2,1], second_indices: s32[2,1]) -> f32[] {
+  %input_table = f32[3,2]{1,0} parameter(0)
+  %input_indices = s32[2,1]{1,0} parameter(1)
+  %second_indices = s32[2,1]{1,0} parameter(2)
+  %gather_fusion = f32[2,2]{1,0} fusion(%input_table, %input_indices), kind=kLoop, calls=%producer
+  ROOT %input_reduce_fusion = f32[] fusion(%gather_fusion, %second_indices), kind=kInput, calls=%consumer
+}

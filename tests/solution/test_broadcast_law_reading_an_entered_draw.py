@@ -70,24 +70,26 @@ def _build(state_transitions) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={t: MarkovTransition(_half) for t in ("a", "b")},
-                active=lambda age: age < 22,
+                regime_transitions={
+                    t: MarkovTransition(func=_half) for t in ("a", "b")
+                },
                 state_transitions=state_transitions,
                 functions={"utility": _no_utility},
             ),
             "a": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK_A},
                 functions={"utility": _wealth_plus_shock},
             ),
             "b": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK_B},
                 functions={"utility": _wealth_plus_shock},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

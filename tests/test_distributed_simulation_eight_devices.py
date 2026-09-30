@@ -15,6 +15,7 @@ from _lcm.simulation import value_reads
 from _lcm.solution.artifacts import OwnedSolutionView
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -24,6 +25,7 @@ from lcm import (
 )
 from lcm.execution import ExecutionConfig
 from lcm.typing import ScalarInt
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.skipif(
     jax.default_backend() != "cpu" or jax.device_count() != 8,
@@ -49,9 +51,15 @@ def _model(*, devices: tuple[int, ...]) -> Model:
     return Model(
         regimes={
             "working": Regime(
-                active=lambda age: age < 2,
-                transition=lambda age: jax.numpy.where(
-                    age < 1, _RegimeId.working, _RegimeId.retired
+                regime_transitions=until_exit(
+                    2,
+                    law=Choose(
+                        func=lambda age: jax.numpy.where(
+                            age < 1, _RegimeId.working, _RegimeId.retired
+                        ),
+                        targets=("working", "retired"),
+                    ),
+                    exits=("retired",),
                 ),
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
@@ -65,7 +73,7 @@ def _model(*, devices: tuple[int, ...]) -> Model:
                 },
             ),
             "retired": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 functions={"utility": lambda wealth, kind: wealth * (kind + 1)},
             ),
@@ -79,6 +87,7 @@ def _model(*, devices: tuple[int, ...]) -> Model:
             sharded_states=("kind",),
             axis_widths={"subject": 16},
         ),
+        initial_regimes={0: "working"},
     )
 
 

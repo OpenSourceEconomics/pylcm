@@ -7,6 +7,9 @@ from numpy.testing import assert_allclose, assert_array_almost_equal
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -14,7 +17,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import SolutionResult
 from lcm.typing import (
@@ -26,7 +29,9 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from lcm_examples.mortality import retirement_transitions, working_life_transitions
 from tests.conftest import X64_ENABLED
+from tests.test_models.schedules import until_exit
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -113,30 +118,30 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": next_health_deterministic,
         },
-        active=lambda age: age < last_age,
+        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement_deterministic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": next_health_deterministic,
         },
-        active=lambda age: age < last_age,
+        regime_transitions=retirement_transitions(last_age=last_age),
     )
 
     # Create stochastic model with identity transition function
     working_stochastic = working_life.replace(
         state_transitions={
             **working_life.state_transitions,
-            "health": MarkovTransition(next_health_stochastic),
+            "health": MarkovTransition(func=next_health_stochastic),
         },
-        active=lambda age: age < last_age,
+        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement_stochastic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
-            "health": MarkovTransition(next_health_stochastic),
+            "health": MarkovTransition(func=next_health_stochastic),
         },
-        active=lambda age: age < last_age,
+        regime_transitions=retirement_transitions(last_age=last_age),
     )
 
     model_deterministic = Model(
@@ -147,6 +152,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
     model_stochastic = Model(
@@ -157,6 +163,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
     # Use survival_probs=1.0 for all but the last period so no subject dies early.
@@ -264,16 +271,19 @@ def _make_minimal_stochastic_model(
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         state_transitions={
-            "draw": MarkovTransition(next_draw),
+            "draw": MarkovTransition(func=next_draw),
             "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        regime_transitions=until_exit(
+            final_age + 1,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": utility},
-        active=lambda age: age <= final_age,
     )
     dead_regime = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -283,6 +293,7 @@ def _make_minimal_stochastic_model(
         execution_config=ExecutionConfig(
             axis_widths={"cell": draw_batch_size} if draw_batch_size else {}
         ),
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -302,10 +313,7 @@ def test_stochastic_zero_arg_weight_adds_discounted_expected_bonus() -> None:
     `[0.5, 0.5]` weights — at every state grid point.
     """
     discount_factor = 0.95
-    params = {
-        "discount_factor": discount_factor,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": discount_factor, "final_age_alive": 1}
 
     def next_draw_5050() -> FloatND:
         return jnp.array([0.5, 0.5])
@@ -336,10 +344,7 @@ def test_stochastic_weight_on_continuous_state_varies_continuation_by_wealth() -
     `discount_factor * P(good)(wealth)` at each wealth grid point.
     """
     discount_factor = 0.95
-    params = {
-        "discount_factor": discount_factor,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": discount_factor, "final_age_alive": 1}
 
     def next_draw_wealth_dependent(wealth: ContinuousState) -> FloatND:
         p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
@@ -375,10 +380,7 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
     not touch the fused shock integration, so the solved value function matches
     an unsplayed solve at every state grid point.
     """
-    params = {
-        "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": 0.95, "final_age_alive": 1}
 
     def next_draw_5050() -> FloatND:
         return jnp.array([0.5, 0.5])
@@ -399,29 +401,26 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
     )
 
 
-def test_stochastic_regime_transition_active_at_last_period_raises():
-    """Non-terminal regimes active at the last period must raise an error.
+def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
+    """A nonterminal regime cannot be required at the last age.
 
-    A non-terminal regime has to place probability one on some target regime, but
-    at the last period there is no period left to transition into, so no set of
-    transition probabilities can be valid. `solve` reports that instead of
-    solving a model whose last period is silently inconsistent.
+    It has to place probability one on some target regime, but at the last age
+    there is no age left to transition into.
     """
-    from lcm_examples import mortality  # noqa: PLC0415
-
-    # Deliberately set active=always to trigger the validation error.
-    model = Model(
-        regimes={
-            "working_life": mortality.working_life.replace(active=lambda _age: True),
-            "retirement": mortality.retirement.replace(active=lambda _age: True),
-            "dead": mortality.dead,
-        },
-        ages=AgeGrid(start=40, stop=70, step="10Y"),
-        regime_id_class=mortality.RegimeId,
-    )
-
-    with pytest.raises(
-        InvalidRegimeTransitionProbabilitiesError,
-        match=r"Non-terminal regime.*active at the last period",
-    ):
-        model.solve(log_level="debug", params=mortality.get_params(n_periods=4))
+    with pytest.raises(ModelInitializationError, match="nonterminal at the last age"):
+        Model(
+            regimes={
+                "working_life": working_life.replace(
+                    regime_transitions=ByAge(
+                        cases={AgeRange(start=40, stop=80): "dead"}
+                    )
+                ),
+                "retirement": retirement.replace(
+                    regime_transitions=retirement_transitions(last_age=70)
+                ),
+                "dead": dead,
+            },
+            ages=AgeGrid(start=40, stop=70, step="10Y"),
+            regime_id_class=RegimeId,
+            initial_regimes={70: "working_life"},
+        )

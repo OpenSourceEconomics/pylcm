@@ -75,7 +75,7 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 def _bonus_model() -> Model:
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
     alive = dcegm_retirement.replace(
-        active=lambda age: age < 50,
+        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         solver=solver,
         liquid=dataclasses.replace(dcegm_retirement.liquid, resources="resources"),
         actions={
@@ -90,7 +90,7 @@ def _bonus_model() -> Model:
         },
     )
     bequest_dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
@@ -98,6 +98,7 @@ def _bonus_model() -> Model:
         regimes={"retirement": alive, "dead": bequest_dead},
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

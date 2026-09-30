@@ -6,7 +6,7 @@ surface as beartype's own `BeartypeCallHintViolation`, marking them as
 internal pylcm bugs rather than user error.
 
 The remaining confs (`MODEL_CONF`, `REGIME_CONF`, `GRID_CONF`,
-`PARAMS_CONF`, `CATEGORICAL_CONF`) are used by explicit
+`PARAMS_CONF`, `CATEGORICAL_CONF`, `SIMULATION_INPUT_CONF`) are used by explicit
 `@beartype(conf=...)` decorators on user-facing constructors and entry
 points. They map type violations to the existing project exception
 class, preserving the documented exception hierarchy at the user
@@ -21,6 +21,7 @@ from lcm.exceptions import (
     CategoricalDefinitionError,
     GridInitializationError,
     InvalidParamsError,
+    InvalidSimulationInputError,
     ModelInitializationError,
     RegimeInitializationError,
 )
@@ -55,6 +56,9 @@ CATEGORICAL_CONF = _conf(CategoricalDefinitionError)
 
 # Used on `Model.solve`, `Model.simulate`, and the `as_leaf` factory.
 PARAMS_CONF = _conf(InvalidParamsError)
+
+# Used on `Model.state_grid`.
+SIMULATION_INPUT_CONF = _conf(InvalidSimulationInputError)
 
 # Default conf for the package-wide claw on `lcm` and `_lcm` registered
 # in `lcm/__init__.py`. A type violation in any internal helper surfaces as

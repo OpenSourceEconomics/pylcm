@@ -13,7 +13,8 @@ regime needs exactly one producer for that `(target, state)` cell: an ordinary
 `state_transitions` law or a `JointTransition` output. In `state_transitions`:
 
 - an ordinary callable is deterministic;
-- `MarkovTransition(func)` wraps a probability-vector function;
+- `MarkovTransition(func=func)` wraps a probability-vector function; `fixed_component=`
+  declares a component the law never changes (see [tuning](../user_guide/tuning.md));
 - `fixed_transition("state_name")` declares the identity law;
 - a per-target mapping gives different laws for different reachable target regimes.
 
@@ -21,17 +22,17 @@ Stochastic process states already own their transitions and must not appear in
 `state_transitions`. A terminal regime has no state transitions.
 
 Per-target state-transition mappings must cover exactly the reachable targets that carry
-the state. Reachability comes from the regime's `transition` declaration; extra or
-missing targets are errors.
+the state. Reachability comes from the regime's `regime_transitions` declaration; extra
+or missing targets are errors.
 
 ## Regime transitions
 
-`Regime.transition` accepts:
+`Regime.regime_transitions` accepts:
 
 - `None` for a terminal regime;
 - a deterministic callable returning a regime code;
-- `MarkovTransition(func)` returning probabilities over all regimes;
-- a mapping from target name to `MarkovTransition(probability_function)` or
+- `MarkovTransition(func=func)` returning probabilities over all regimes;
+- a mapping from target name to `MarkovTransition(func=probability_function)` or
   `ValueDependentTransition(...)`.
 
 The key set of the mapping declares structural reachability. An ordinary mapping cell
@@ -40,6 +41,31 @@ accepts a bare probability callable, which its decomposed engine view wraps. See
 [Collective regimes](collective_regimes.md#api-value-dependent-transition). Use a
 mapping when some regimes cannot follow the source; do not encode structural
 impossibility only as a zero probability in an all-regime vector.
+
+(api-dated-regime-transitions)=
+
+### Age-indexed regime transitions
+
+These forms declare which law a regime uses at each age:
+
+- a regime name, e.g. `"retirement"`: a deterministic move to that regime;
+- `Choose(func=func, targets=(...))`: deterministic, and `func` returns the global code
+  of one of `targets`;
+- `MarkovTransition(func=func, targets=(...))`: a probability vector over all regimes
+  that is nonzero only on `targets`;
+- `ByAge(cases={selector: law, ...}, default=...)` and
+  `ByAge.until(stop_age_exclusive=..., law=..., then=..., start_age_inclusive=...)`: one
+  of the laws above, or a per-target mapping, per exact grid age. Selectors are ages,
+  tuples, integer `range`s, or `AgeRange(start=..., stop=...)` half-open intervals.
+  `ByAge.until` uses `law` at source ages in `[start_age_inclusive, stop_age_exclusive)`
+  except the last one, which uses `then`.
+
+A plain law is available at every non-final age; a `ByAge` is available exactly at the
+non-final ages it selects, or at every non-final age with a `default`. Availability does
+not mark a problem as solved: the solved problems are derived from the model's required
+`initial_regimes`. Every model rejects a bare callable as a regime transition and a
+vector law without `targets`. See
+[Age-indexed regimes](../user_guide/dated_regime_graph.md).
 
 (api-joint-transitions)=
 
@@ -56,7 +82,7 @@ mapping from target regime, to local joint-node name, to the `JointTransition`:
 
 ```python
 source = Regime(
-    transition={"target_regime": MarkovTransition(target_probability)},
+    regime_transitions={"target_regime": MarkovTransition(func=target_probability)},
     joint_transitions={
         "target_regime": {
             "joint_draw": JointTransition(
@@ -178,16 +204,16 @@ select the already-resolved period objects and never call `build(age)`.
 differ by phase:
 
 - `functions` and `state_transitions` accept phase-specific variants;
-- `transition` accepts variants with the same transition form and target keys;
+- `regime_transitions` accepts variants with the same transition form and target keys;
 - `koopmans_aggregator` accepts one callable per phase;
 - `states` accepts the special carried-state form
   `Phased(solve=callable, simulate=Grid)`.
 - `joint_transitions[target][kernel]` accepts `Phased` around the whole
   `JointTransition`.
 
-Constraints, actions, `active`, and derived categoricals are phase-invariant and reject
-`Phased`. Ordinary nested phase wrappers and wrappers inside per-target transition
-mappings are invalid. Structured declarations own two additional, explicit seams:
+Constraints, actions and derived categoricals are phase-invariant and reject `Phased`.
+Ordinary nested phase wrappers and wrappers inside per-target transition mappings are
+invalid. Structured declarations own two additional, explicit seams:
 `CollectiveUtility.utilities[stakeholder]` may hold a phase-specific utility, and a
 `StakeholderRoute` may use a phase-specific `fallback`. These field-specific seams and
 the whole-joint-kernel seam above are not permission to place `Phased` arbitrarily

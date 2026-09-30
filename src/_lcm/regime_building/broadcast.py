@@ -180,8 +180,8 @@ def prune_broadcast_variables(
         ages: The model's `AgeGrid`, used to convert a representative period
             to an age before resolving `AgeSpecializedFunction` markers.
             `None` skips resolution (no marker can appear then).
-        active_periods_by_regime: The canonical per-regime activity mapping
-            (from `compute_active_periods_by_regime`), used to pick each
+        active_periods_by_regime: The canonical per-regime coverage, resolved
+            from the declarations, used to pick each
             regime's representative active period before resolving
             `AgeSpecializedFunction` markers to a representative age so a
             broadcast variable read only through a marker is not misread as

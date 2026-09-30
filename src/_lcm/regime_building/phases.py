@@ -10,6 +10,7 @@ This is the single place that resolves phase-variant values into per-phase
 slices; everything downstream consumes the slices.
 """
 
+import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -25,6 +26,7 @@ from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
+from lcm.collective import CollectiveUtility
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.transition import (
@@ -142,7 +144,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         ]
     else:
         solve_aggregator = simulate_aggregator = aggregator
-    terminal = user_regime.transition is None
+    terminal = user_regime.regime_transitions is None
     terminal_errors = (
         [
             (
@@ -307,15 +309,77 @@ def phase_variation_paths(
             ):
                 varied.append(f"joint_transitions[{target_name!r}][{kernel_name!r}]")
 
-    transition = user_regime.transition
+    transition = user_regime.regime_transitions
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:
-        varied.append("transition")
+        varied.append("regime_transitions")
 
     aggregator = user_regime.koopmans_aggregator
     if isinstance(aggregator, Phased) and aggregator.solve is not aggregator.simulate:
         varied.append("koopmans_aggregator")
 
     return tuple(varied)
+
+
+def project_onto_solve_phase(user_regime: lcm.regime.Regime) -> lcm.regime.Regime:
+    """Return the regime a backward problem alone reads.
+
+    A regime that is valued but never visited owes its backward problem only,
+    so its declaration keeps the solve variant of every `Phased` slot:
+
+    - a `Phased` function, stakeholder utility, state transition, joint
+      transition, regime transition or aggregator becomes its solve variant;
+    - a carried state becomes its solve-phase imputation, a function under the
+      state's name, and its carried law of motion is dropped.
+
+    The projection's solve slice is the original's, so its value is unchanged;
+    no simulate-side callable contributes a parameter, a factory call or a
+    program.
+    """
+    carried = {
+        name: spec.solve
+        for name, spec in user_regime.states.items()
+        if isinstance(spec, Phased)
+    }
+    return user_regime.replace(
+        functions={
+            **{
+                name: _solve_variant(value)
+                for name, value in user_regime.functions.items()
+            },
+            **carried,
+        },
+        states={
+            name: spec
+            for name, spec in user_regime.states.items()
+            if name not in carried
+        },
+        state_transitions={
+            name: _solve_variant(law)
+            for name, law in user_regime.state_transitions.items()
+            if name not in carried
+        },
+        joint_transitions={
+            target: {name: _solve_variant(kernel) for name, kernel in kernels.items()}
+            for target, kernels in user_regime.joint_transitions.items()
+        },
+        regime_transitions=_solve_variant(user_regime.regime_transitions),
+        koopmans_aggregator=_solve_variant(user_regime.koopmans_aggregator),
+    )
+
+
+def _solve_variant[T](value: T | Phased) -> T:
+    if isinstance(value, CollectiveUtility):
+        return cast(
+            "T",
+            dataclasses.replace(
+                value,
+                utilities={
+                    name: _solve_variant(utility)
+                    for name, utility in value.utilities.items()
+                },
+            ),
+        )
+    return cast("T", value.solve) if isinstance(value, Phased) else value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -693,7 +757,7 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
 def _split_regime_transition(
     *, user_regime: lcm.regime.Regime
 ) -> tuple[_PhaseRegimeTransition, _PhaseRegimeTransition, list[str]]:
-    """Split the regime `transition` into per-phase variants.
+    """Split the regime `regime_transitions` into per-phase variants.
 
     Returns the solve-phase variant, the simulate-phase variant, and the
     grammar violations found along the way.
@@ -711,7 +775,7 @@ def _split_regime_transition(
         if side is None:
             errors.append(
                 "Regime transition variants cannot be `None` — terminality is "
-                "phase-invariant; use `transition=None` for a terminal regime."
+                "phase-invariant; use `regime_transitions=None` for a terminal regime."
             )
         elif not callable(side) and not isinstance(side, Mapping):
             errors.append(

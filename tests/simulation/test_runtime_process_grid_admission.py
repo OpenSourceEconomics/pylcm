@@ -19,7 +19,16 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     resident_bytes_by_device,
 )
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, RouwenhorstAR1Process
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    RouwenhorstAR1Process,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
@@ -226,15 +235,20 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_support_next_regime,
-                active=lambda age: age == 0,
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(start=0, stop=1): Choose(
+                            func=_support_next_regime, targets=("done",)
+                        )
+                    }
+                ),
                 states=states,
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 state_transitions={"assets": _support_next_assets},
                 functions={"utility": _support_current_payoff},
             ),
             "done": Regime(
-                transition=None,
+                regime_transitions=None,
                 states=states,
                 functions={"utility": _support_terminal_payoff},
             ),
@@ -242,6 +256,7 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=2**28),
+        initial_regimes={0: "alive"},
     )
     for mu, expected in ((0.0, [0.0, 0.0]), (2.0, [1.0, 2.5]), (0.0, [0.0, 0.0])):
         result = model.simulate(

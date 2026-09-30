@@ -18,6 +18,7 @@ from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     MarkovTransition,
@@ -59,10 +60,6 @@ def _utility(*, health: ScalarInt) -> ScalarFloat:
 
 def _next_regime() -> ScalarInt:
     return _RegimeId.done
-
-
-def _alive(age: float) -> bool:
-    return age == 0
 
 
 def _done(age: float) -> bool:
@@ -108,15 +105,13 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
-                active=_alive,
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={"health": grid},
-                state_transitions={"health": MarkovTransition(law)},
+                state_transitions={"health": MarkovTransition(func=law)},
                 functions={"utility": _utility},
             ),
             "done": Regime(
-                transition=None,
-                active=_done,
+                regime_transitions=None,
                 states={"health": grid},
                 functions={"utility": _utility},
             ),
@@ -124,6 +119,7 @@ def _inputs(
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
+        initial_regimes={0: "alive"},
     )
     return (
         model,
@@ -141,6 +137,7 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
     import jax
 
     from _lcm import transition_checks
+    from _lcm.simulation.host_operations import ProfiledSimulationOperations
     from lcm.exceptions import InvalidStateTransitionProbabilitiesError
     from tests.simulation.test_state_transition_entry_admission import _inputs
 
@@ -156,19 +153,20 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
 
     compiled = []
     completed_on = []
-    original_compile = transition_checks._TransitionLawCompiler.__call__
+    original_admit = ProfiledSimulationOperations.admit_producer
     original_check = transition_checks._check_state_probs
 
-    def compile_and_record(self, widths):
-        executable = original_compile(self, widths)
-        compiled.append(executable)
+    def admit_and_record(self, **kwargs):
+        executable = original_admit(self, **kwargs)
+        if kwargs["output_sharding"] is not None:
+            compiled.append(executable)
         return executable
 
     def check_and_record(**kwargs):
         completed_on.append(tuple(device.id for device in kwargs["probs"].devices()))
         return original_check(**kwargs)
 
-    transition_checks._TransitionLawCompiler.__call__ = compile_and_record
+    ProfiledSimulationOperations.admit_producer = admit_and_record
     transition_checks._check_state_probs = check_and_record
     try:
         model.simulate(
@@ -218,13 +216,11 @@ class _CompilerBoundary:
         assert all(declined is not item for item in self.dispatched[offset:])
 
     def require_dispatched_transitions(self, *, count: int) -> None:
-        """Require each costly producer to dispatch after its compiler profile."""
+        """Require the costly producer, profiled once, to dispatch `count` times."""
         profiles = self.transition_profiles()
-        assert len(profiles) == count
-        assert all(
-            any(compiled is item for item in self.dispatched[offset:])
-            for compiled, offset in profiles
-        )
+        assert len(profiles) == 1
+        compiled, offset = profiles[0]
+        assert sum(item is compiled for item in self.dispatched[offset:]) == count
 
 
 @pytest.fixture
@@ -287,7 +283,7 @@ def test_state_transition_workspace_refuses_before_user_law_dispatch(
 def test_invalid_state_transition_replay_uses_admitted_producer(
     compiler_boundary: _CompilerBoundary,
 ) -> None:
-    """The summary and ordered diagnostic replay each admit the user law."""
+    """The summary and ordered diagnostic replay each dispatch the one profile."""
     oracle, params, initial = _inputs(budget=None, valid=False)
     with pytest.raises(InvalidStateTransitionProbabilitiesError) as expected:
         oracle.simulate(params=params, initial_conditions=initial, log_level="debug")

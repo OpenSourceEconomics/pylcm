@@ -21,6 +21,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     Model,
     Phased,
@@ -31,6 +32,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -69,28 +71,31 @@ def _next_regime(period: Period) -> ScalarInt:
 
 def _last_regime() -> Regime:
     return Regime(
-        transition=None,
+        regime_transitions=None,
         state_transitions={},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": _flat_utility},
-    ).replace(active=lambda age: age >= 2)
+    ).replace()
 
 
 def _model(*, live_functions, state_transitions, constraints) -> Model:
     live = Regime(
-        transition=_next_regime,
+        regime_transitions=until_exit(
+            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+        ),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions=live_functions,
         constraints=constraints,
-    ).replace(active=lambda age: age < 2)
+    ).replace()
     return Model(
         regimes={"live": live, "last": _last_regime()},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="constraint phase-invariance",
+        initial_regimes={0: "live"},
     )
 
 

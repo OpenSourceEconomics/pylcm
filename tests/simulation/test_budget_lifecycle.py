@@ -19,7 +19,7 @@ from _lcm.simulation.program_types import DECISION_PROGRAM, ROUTE_PROGRAM
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
 from _lcm.solution.retained_buffers import retained_solution_buffers
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
@@ -50,21 +50,19 @@ def _lifecycle_next_regime() -> ScalarInt:
     return _LifecycleRegimeId.done
 
 
-def _only_initial_age(age: float) -> bool:
-    return age == 0
-
-
 def _stateful_target_model() -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=_lifecycle_next_regime,
-                active=_only_initial_age,
+                regime_transitions=Choose(
+                    func=_lifecycle_next_regime, targets=("done",)
+                ),
                 functions={"utility": _lifecycle_utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),
             "done": Regime(
-                transition=None, functions={"utility": _lifecycle_terminal_utility}
+                regime_transitions=None,
+                functions={"utility": _lifecycle_terminal_utility},
             ),
         },
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=5)},
@@ -72,6 +70,7 @@ def _stateful_target_model() -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
+        initial_regimes={0: "alive"},
     )
 
 

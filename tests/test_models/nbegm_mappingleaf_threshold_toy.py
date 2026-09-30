@@ -171,14 +171,9 @@ def build_params(
                 "subsidy_high": subsidy_high,
                 "tax_schedule": tax_schedule,
             },
-            "alive": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
-            "dead": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
+            "alive": {"next_liquid": alive_budget},
+            "dead": {"next_liquid": alive_budget},
+            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

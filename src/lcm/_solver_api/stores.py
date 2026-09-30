@@ -10,6 +10,8 @@ from typing import (
     cast,
 )
 
+import jax
+
 from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import (
     ArtifactRef,
@@ -303,6 +305,21 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                 )
             )
         return cast("FloatND", value)
+
+    def _block_until_ready(self) -> None:
+        """Wait for every owned eager value without handing out a copy.
+
+        A read through the public mapping returns an independent buffer, so a
+        wait routed through it would copy every value it waited on. Lazy
+        entries hold no device computation to wait for and are left alone.
+        """
+        jax.block_until_ready(
+            [
+                entry.value
+                for entry in self._entries.values()
+                if type(entry) is _CanonicalValueEntry
+            ]
+        )
 
     def _raw(
         self, *, period: _ValuePeriodBoundary, regime: _RegimeNameBoundary

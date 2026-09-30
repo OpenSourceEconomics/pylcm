@@ -3,6 +3,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -13,6 +14,7 @@ from lcm.execution import ExecutionConfig
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import GridSearch, Solver
 from lcm.typing import ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -57,7 +59,6 @@ def _make_three_type_model(
     `devices` restricts the model to a subset of the four.
     """
     working = UserRegime(
-        active=lambda age: age < 4,
         solver=GridSearch() if solver is None else solver,
         functions={
             "utility": lambda wealth, consumption, type1: (
@@ -67,12 +68,19 @@ def _make_three_type_model(
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=lambda age: jnp.where(
-            age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+        regime_transitions=until_exit(
+            4,
+            law=Choose(
+                func=lambda age: jnp.where(
+                    age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+                ),
+                targets=("working", "retired"),
+            ),
+            exits=("retired",),
         ),
     )
     retired = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={
             "utility": (
                 _constant_retired_value
@@ -86,6 +94,7 @@ def _make_three_type_model(
         regimes={"working": working, "retired": retired},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_ThreeTypeRegimeId,
+        initial_regimes={0: "working"},
         enable_jit=enable_jit,
         states={"type1": DiscreteGrid(category_class=_Type)},
         state_transitions={"type1": fixed_transition("type1")},

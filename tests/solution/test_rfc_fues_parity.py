@@ -24,7 +24,11 @@ import pytest
 
 from lcm import AgeGrid, MarkovTransition, Model
 from lcm.typing import BoolND, DiscreteAction
-from lcm_examples.iskhakov_et_al_2017 import dead
+from lcm_examples.iskhakov_et_al_2017 import (
+    dead,
+    retirement_transitions,
+    working_life_transitions,
+)
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
@@ -34,6 +38,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_full_params,
     get_retirement_only_params,
 )
+from tests.test_models.schedules import until_exit
 
 # The no-crossing-insertion delta is a kink-placement error of order the local
 # grid spacing, propagated through the exact-slope Hermite carry. On the
@@ -56,11 +61,16 @@ def _retirement_only_model(*, envelope, n_periods):
         regimes={
             "retirement": _with_backend(
                 regime=dcegm_retirement, envelope=envelope_config(envelope)
-            ).replace(active=lambda age, la=last_age: age < la),
+            ).replace(
+                regime_transitions=retirement_only.retirement_transitions(
+                    last_age=last_age
+                )
+            ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -71,14 +81,15 @@ def _full_model(*, envelope, n_periods):
         regimes={
             "working_life": _with_backend(
                 regime=dcegm_working_life, envelope=envelope
-            ).replace(active=lambda age, la=last_age: age < la),
+            ).replace(regime_transitions=working_life_transitions(last_age=last_age)),
             "retirement": _with_backend(
                 regime=dcegm_retirement_full, envelope=envelope
-            ).replace(active=lambda age, la=last_age: age < la),
+            ).replace(regime_transitions=retirement_transitions(last_age=last_age)),
             "dead": base.dead,
         },
         ages=ages,
         regime_id_class=base.RegimeId,
+        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
     )
 
 
@@ -128,10 +139,14 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
     n_periods = 4
     retirement_transition = {
         "retirement": MarkovTransition(
-            lambda age, final_age_alive: jnp.where(age >= final_age_alive, 0.0, 1.0)
+            func=lambda age, final_age_alive: jnp.where(
+                age >= final_age_alive, 0.0, 1.0
+            )
         ),
         "dead": MarkovTransition(
-            lambda age, final_age_alive: jnp.where(age >= final_age_alive, 1.0, 0.0)
+            func=lambda age, final_age_alive: jnp.where(
+                age >= final_age_alive, 1.0, 0.0
+            )
         ),
     }
 
@@ -143,21 +158,23 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
                     regime=dcegm_working_life, envelope=envelope
                 ).replace(
                     constraints={"nothing_is_feasible": _nothing_is_feasible},
-                    active=lambda age: age < 70,
+                    regime_transitions=working_life_transitions(last_age=70),
                 ),
                 "retirement": _with_backend(
                     regime=dcegm_retirement_full, envelope=envelope
                 ).replace(
-                    transition=retirement_transition,
+                    regime_transitions=until_exit(
+                        70, law=retirement_transition, exits=("dead",)
+                    ),
                     state_transitions={
                         "wealth": dcegm_retirement_full.state_transitions["wealth"],
                     },
-                    active=lambda age: age < 70,
                 ),
                 "dead": base.dead,
             },
             ages=ages,
             regime_id_class=base.RegimeId,
+            initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
         )
 
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)

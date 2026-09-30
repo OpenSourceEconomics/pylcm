@@ -133,7 +133,7 @@ def test_create_v_interpolation_info():
         bad: ScalarInt
 
     regime = UserRegime(
-        transition=lambda: 0,  # non-terminal
+        regime_transitions=lambda: 0,  # non-terminal
         functions={"utility": lambda wealth: wealth},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -143,7 +143,6 @@ def test_create_v_interpolation_info():
             "wealth": lambda wealth: wealth,
             "health": lambda health: health,
         },
-        active=lambda age: age < 5,
     )
 
     v_interpolation_info = create_v_interpolation_info(user_regime=regime)

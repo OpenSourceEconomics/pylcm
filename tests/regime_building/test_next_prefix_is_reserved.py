@@ -28,6 +28,7 @@ from lcm import (
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
 _SHOCK = NormalIIDProcess(n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0)
@@ -62,8 +63,11 @@ def _build(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
+                ),
                 states={"wealth": _WEALTH} if states is None else states,
                 state_transitions=(
                     {"wealth": {"target": _keep_wealth}}
@@ -74,13 +78,14 @@ def _build(
                 koopmans_aggregator=koopmans_aggregator,
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK},
                 functions={"utility": _wealth_and_shock},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 
@@ -149,21 +154,25 @@ def test_a_constraint_may_not_read_a_targets_draw() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_to_target)},
-                    active=lambda age: age < 22,
+                    regime_transitions=until_exit(
+                        22,
+                        law={"target": MarkovTransition(func=_to_target)},
+                        exits=("target",),
+                    ),
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
                     constraints={"affordable": _constraint_of_a_next_name},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),
             },
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={20: "source"},
         )
 
 
@@ -216,8 +225,11 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
+                ),
                 states={"wealth": _WEALTH, "aime": aime},
                 state_transitions={
                     "wealth": {"target": _next_wealth_reading_a_sibling},
@@ -226,13 +238,14 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
                 functions={"utility": _wealth_and_aime},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH, "aime": aime},
                 functions={"utility": _wealth_and_aime},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
     V = model.solve(
@@ -330,22 +343,28 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    transition={
-                        "target": MarkovTransition(_probability_reading_a_next_name)
-                    },
-                    active=lambda age: age < 22,
+                    regime_transitions=until_exit(
+                        22,
+                        law={
+                            "target": MarkovTransition(
+                                func=_probability_reading_a_next_name
+                            )
+                        },
+                        exits=("target",),
+                    ),
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),
             },
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={20: "source"},
         )
 
 
@@ -366,8 +385,11 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
         Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_to_target)},
-                    active=lambda age: age < 22,
+                    regime_transitions=until_exit(
+                        22,
+                        law={"target": MarkovTransition(func=_to_target)},
+                        exits=("target",),
+                    ),
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
@@ -377,11 +399,12 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
                     ),
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),
             },
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={20: "source"},
         )

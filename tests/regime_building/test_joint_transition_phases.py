@@ -36,9 +36,11 @@ def _next_regime() -> FloatND:
     return jnp.asarray(0, dtype=jnp.int32)
 
 
-def _regime(*, joint_transitions: object, transition: object = _next_regime) -> Regime:
+def _regime(
+    *, joint_transitions: object, regime_transitions: object = _next_regime
+) -> Regime:
     return Regime(
-        transition=transition,  # ty: ignore[invalid-argument-type]
+        regime_transitions=regime_transitions,  # ty: ignore[invalid-argument-type]
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions=joint_transitions,  # ty: ignore[invalid-argument-type]
     )
@@ -113,7 +115,7 @@ def test_joint_node_name_cannot_collide_with_source_function() -> None:
     """A transition-local node cannot shadow a source DAG producer."""
     with pytest.raises(RegimeInitializationError, match=r"node name.*match.*collides"):
         Regime(
-            transition=_next_regime,
+            regime_transitions=_next_regime,
             functions={
                 "utility": lambda: jnp.asarray(0.0),
                 "match": lambda: jnp.asarray(1.0),
@@ -132,7 +134,7 @@ def test_joint_transition_target_must_be_declared_reachable() -> None:
     """An edge-owned joint kernel cannot name a structurally unreachable target."""
     with pytest.raises(RegimeInitializationError, match=r"reachable.*couple"):
         _regime(
-            transition={"single": MarkovTransition(_probabilities)},
+            regime_transitions={"single": MarkovTransition(func=_probabilities)},
             joint_transitions={"couple": {"match": _kernel()}},
         )
 
@@ -140,7 +142,9 @@ def test_joint_transition_target_must_be_declared_reachable() -> None:
 def test_terminal_regime_cannot_declare_joint_transition() -> None:
     """A terminal regime has no target edge on which to own a joint kernel."""
     with pytest.raises(RegimeInitializationError, match=r"Terminal.*joint_transitions"):
-        _regime(transition=None, joint_transitions={"couple": {"match": _kernel()}})
+        _regime(
+            regime_transitions=None, joint_transitions={"couple": {"match": _kernel()}}
+        )
 
 
 def test_literal_support_leading_axis_matches_support_size() -> None:

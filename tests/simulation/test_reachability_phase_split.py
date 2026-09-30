@@ -46,39 +46,29 @@ def _probability_low(probability_high: ScalarFloat) -> ScalarFloat:
     return 1 - probability_high
 
 
-def _source_is_active(age: float) -> bool:
-    return age < 1
-
-
-def _target_is_active(age: float) -> bool:
-    return age >= 1
-
-
 def _build_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
-                    "low": MarkovTransition(_probability_low),
-                    "high": MarkovTransition(_probability_high),
+                regime_transitions={
+                    "low": MarkovTransition(func=_probability_low),
+                    "high": MarkovTransition(func=_probability_high),
                 },
-                active=_source_is_active,
                 functions={"utility": _zero_utility},
             ),
             "low": Regime(
-                transition=None,
-                active=_target_is_active,
+                regime_transitions=None,
                 functions={"utility": _low_utility},
             ),
             "high": Regime(
-                transition=None,
-                active=_target_is_active,
+                regime_transitions=None,
                 functions={"utility": _high_utility},
             ),
         },
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=False,
+        initial_regimes={0: "source"},
     )
 
 

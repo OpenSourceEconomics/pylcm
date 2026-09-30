@@ -27,6 +27,7 @@ from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
+    ByAge,
     ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
@@ -39,6 +40,7 @@ from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargi
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -216,15 +218,17 @@ def make_alive_dead_model(
         liquid_state: {"alive": liquid_law, "dead": liquid_law},
         **(dict(extra_state_transitions) if extra_state_transitions else {}),
     }
-    alive_transition = (
-        dict(survival_transition)
+    # Default survival is deterministic: stay alive until the age before
+    # `final_age`, then die, one declared target per age.
+    alive_transitions = (
+        until_exit(final_age, law=dict(survival_transition), exits=("dead",))
         if survival_transition is not None
-        else {
-            "alive": MarkovTransition(prob_stay_alive),
-            "dead": MarkovTransition(prob_die),
-        }
+        else ByAge.until(
+            stop_age_exclusive=final_age,
+            law={"alive": MarkovTransition(func=prob_stay_alive)},
+            then={"dead": MarkovTransition(func=prob_die)},
+        )
     )
-    alive_active = lambda age, fa=final_age: age < fa  # noqa: E731
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
     # argument types the narrowing is expressed in.
@@ -234,9 +238,8 @@ def make_alive_dead_model(
             states=alive_states,
             state_transitions=alive_state_transitions,
             constraints=dict(constraints),
-            transition=alive_transition,
+            regime_transitions=alive_transitions,
             functions=dict(alive_functions),
-            active=alive_active,
             solver=alive_solver,
             liquid=LiquidMargin(
                 state=liquid_state,
@@ -251,28 +254,16 @@ def make_alive_dead_model(
             states=alive_states,
             state_transitions=alive_state_transitions,
             constraints=dict(constraints),
-            transition=alive_transition,
+            regime_transitions=alive_transitions,
             functions=dict(alive_functions),
-            active=alive_active,
             solver=alive_solver,
         )
-    # The default survival law dies deterministically into the final age, so the
-    # absorbing regime is needed only there. A caller-supplied law may put mass on
-    # `dead` at any transition, and mass sent to a target that is inactive when it
-    # is reached goes unrepresented, leaving the continuation short of unit mass
-    # and the solved value NaN — so `dead` is active from the first age it can be
-    # entered.
-    first_dead_age = 1 if survival_transition is not None else final_age
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions=dict(dead_functions)
         if dead_functions is not None
         else {"utility": bequest},
-        # `first_dead_age`, not `final_age`: with a survival transition the dead
-        # regime must be active from the first age it can be entered, or the
-        # mass sent to it is dropped and the survivors renormalized.
-        active=lambda age, fa=first_dead_age: age >= fa,
         solver=GridSearch(),
     )
     return Model(
@@ -282,4 +273,5 @@ def make_alive_dead_model(
         states=dict(model_states) if model_states else {},
         fixed_params=dict(fixed_params) if fixed_params else {},
         execution_config=execution_config,
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
