@@ -24,8 +24,10 @@ from typing import Any, Literal, cast
 
 import cloudpickle
 import jax
+import numpy as np
 
-from _lcm.engine import StateActionSpace
+from _lcm.engine import StateActionSpace, _RegimeSharding
+from _lcm.execution.abstract_program_inputs import abstract_program_inputs
 from _lcm.execution.compiler_memory import (
     CompilerMemoryBytes,
     compiler_memory_bytes,
@@ -351,10 +353,14 @@ def _compile_cores_for_one_period(
 
     A core donates exactly the arguments `core_donations` names for it, which is
     empty unless the caller reinstates a captured lowering's donation. The
-    placement it lowers against is the placement of the arrays it is handed: the
-    backend's default under `replay_period`, and the recorded production layout
-    under `replay_period_on_recorded_layout`. The latter also reinstates each
-    recorded value transfer instead of inferring it from the stored input alone.
+    placement it lowers against depends on the caller:
+    - `replay_period` lowers against the arrays it is handed, at the backend's
+      default placement.
+    - `replay_period_on_recorded_layout` passes the recorded core layouts. It
+      reinstates each recorded value transfer instead of inferring it from the
+      stored input alone, and lowers against the same operand descriptors the
+      solve does: committed inputs keep their layout, uncommitted ones take the
+      source value's mesh, replicated.
     """
     period_kernel = regime.solution.period_kernels[period]
     context = _core_build_context_for_one_period(
@@ -388,22 +394,36 @@ def _compile_cores_for_one_period(
             if captured_widths is not None
             else _project_axis_widths(program=materialized, axis_widths=declared_widths)
         )
+        source_value_template = context.next_regime_to_V_arr[
+            kernel_kwargs["regime_name"]
+        ]
+        input_transfer_plan = (
+            _restore_input_transfer_plan(
+                program=materialized,
+                recorded=recorded_core_layouts[core_name],
+                devices_by_id=replay_devices_by_id,
+            )
+            if recorded_core_layouts is not None
+            else None
+        )
+        if input_transfer_plan is not None:
+            # Lower against the operand descriptors the solve lowers against: an
+            # uncommitted operand takes the source value's mesh, replicated. A
+            # concrete lowering leaves that choice to JAX, which picks among the
+            # committed inputs' meshes — the wrong one whenever the inputs span
+            # several same-device meshes under different axis names.
+            materialized = abstract_program_inputs(
+                program=materialized,
+                transfers=input_transfer_plan,
+                execution_sharding=cast("jax.Array", source_value_template).sharding,
+            )
         resolved = _resolve_program_for_execution(
             program=materialized,
             tile_widths=widths,
-            source_value_template=context.next_regime_to_V_arr[
-                kernel_kwargs["regime_name"]
-            ],
+            source_value_template=source_value_template,
             source=(kernel_kwargs["regime_name"], period, core_name),
-            input_transfer_plan=(
-                _restore_input_transfer_plan(
-                    program=materialized,
-                    recorded=recorded_core_layouts[core_name],
-                    devices_by_id=replay_devices_by_id,
-                )
-                if recorded_core_layouts is not None
-                else None
-            ),
+            input_transfer_plan=input_transfer_plan,
+            abstract_inputs=input_transfer_plan is not None,
         )
         if core_name in consumed:
             records: dict[Hashable, ResolvedProducer] = {
@@ -566,6 +586,7 @@ def replay_period_on_recorded_layout(
         leaves=layouts.leaves,
         device_by_recorded_id=device_by_recorded_id,
     )
+    kernel_kwargs = _restore_state_action_space_layout(kernel_kwargs=kernel_kwargs)
 
     compiled_cores = _compile_cores_for_one_period(
         regime=regime,
@@ -818,6 +839,75 @@ def _restore_recorded_layout(
         )
         restored.append(placed)
     return cast("dict[str, Any]", jax.tree.unflatten(treedef, restored))
+
+
+def _restore_state_action_space_layout(
+    *, kernel_kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    """Place the state-action space's grids where the solve's builder put them.
+
+    The state-action space is not a pytree, so a capture records no descriptor
+    for its grids and they come back from the pickle unplaced. Their placement
+    is re-derived by the rules `Regime.state_action_space` applies, from inputs
+    whose layout was restored:
+    - a grid whose points are a runtime parameter (`<name>__points`) is that
+      parameter array, so it takes the restored parameter itself, after a check
+      that the values agree;
+    - a distributed state is split along its own axis of the regime's mesh,
+      which the regime's restored value template carries;
+    - every other grid stays where the pickle put it, which the solve's lowering
+      treats like any other uncommitted operand.
+
+    The compiled-input check then compares the result with the recorded placement.
+
+    Raises:
+        ValueError: A runtime-points parameter disagrees with the captured grid.
+
+    """
+    regime_name = kernel_kwargs["regime_name"]
+    regime_params = kernel_kwargs["flat_params"][regime_name]
+    template_sharding = kernel_kwargs["next_regime_to_V_arr"][regime_name].sharding
+    plan = (
+        _RegimeSharding(
+            mesh=template_sharding.mesh,
+            distributed_state_names=tuple(template_sharding.mesh.axis_names),
+        )
+        if isinstance(template_sharding, jax.NamedSharding)
+        else None
+    )
+
+    def placed(*, name: str, grid: Any) -> Any:  # noqa: ANN401
+        points = regime_params.get(f"{name}__points")
+        if points is not None:
+            if not np.array_equal(np.asarray(points), np.asarray(grid)):
+                msg = (
+                    f"The captured grid {name!r} of regime {regime_name!r} differs "
+                    f"from its runtime parameter '{name}__points'."
+                )
+                raise ValueError(msg)
+            grid = points
+        if plan is not None and name in plan.distributed_state_names:
+            return jax.device_put(grid, plan.state_sharding(name))
+        return grid
+
+    space: StateActionSpace = kernel_kwargs["state_action_space"]
+    return {
+        **kernel_kwargs,
+        "state_action_space": space.replace(
+            states=MappingProxyType(
+                {
+                    name: placed(name=name, grid=grid)
+                    for name, grid in space.states.items()
+                }
+            ),
+            continuous_actions=MappingProxyType(
+                {
+                    name: placed(name=name, grid=grid)
+                    for name, grid in space.continuous_actions.items()
+                }
+            ),
+        ),
+    }
 
 
 def _assert_cores_match_recorded_layout(
