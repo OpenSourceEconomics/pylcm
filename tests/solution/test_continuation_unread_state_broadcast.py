@@ -479,7 +479,9 @@ def _execution_config(*, setting: str) -> ExecutionConfig:
 
 
 @functools.cache
-def _solve_under(*, setting: str, broadcast: bool) -> tuple[Any, int, frozenset]:
+def _solve_under(
+    *, setting: str, broadcast: bool
+) -> tuple[Any, int, frozenset[tuple[tuple[str, ...], int]]]:
     """Solve the three-habit model under one width setting.
 
     Under a `budget-refuses-broadcast-windows-*` setting, every compiled program
@@ -487,15 +489,17 @@ def _solve_under(*, setting: str, broadcast: bool) -> tuple[Any, int, frozenset]
     budget admits, so only narrower windows fit.
 
     Return the solution, the cell width the first `alive` period dispatched at,
-    and the set of state tuples every traced cell window mapped.
+    and every traced cell window as its mapped state tuple and its width in
+    cells. Refused budget candidates and later periods are traced too, so a
+    window is attributed to the dispatched program by its width.
     """
-    windows: list[tuple[str, ...]] = []
+    windows: list[tuple[tuple[str, ...], int]] = []
     select = grid_search._continuation_unread_state_names
     map_window = dispatchers._TiledProductMap.__call__
     reserve = backward_induction.compiler_memory_reservation
 
     def observed_map_window(self: Any, **kwargs: Any) -> Any:
-        windows.append(self.variables)
+        windows.append((self.variables, kwargs.get(self.width_keyword, 1)))
         return map_window(self, **kwargs)
 
     def refusing_reserve(*, compiled: Any, widths: Any) -> Any:
@@ -531,7 +535,7 @@ def _solve_under(*, setting: str, broadcast: bool) -> tuple[Any, int, frozenset]
         result = model.solve(params=_params(), log_level="off")
         with (Path(capture_dir) / "alive@0" / _PAYLOAD_NAME).open("rb") as stream:
             widths = cloudpickle.load(stream)["core_tile_widths"]["main"]
-    cells = frozenset(variables for variables in windows if "wealth" in variables)
+    cells = frozenset(window for window in windows if "wealth" in window[0])
     return result, widths[CELL_AXIS], cells
 
 
@@ -561,20 +565,20 @@ def test_budget_refusing_every_broadcast_window_selects_a_narrower_width(
 def test_incompatible_width_setting_maps_every_cell_state_in_the_window(
     *, setting: str
 ) -> None:
-    """A width the broadcast cannot serve runs the plain layout: every traced cell
-    window maps `habit` together with the other cell states."""
-    cells = _solve_under(setting=setting, broadcast=True)[2]
+    """A width the broadcast cannot serve runs the plain layout: a cell window of
+    the dispatched width maps `habit` together with the other cell states."""
+    _, width, cells = _solve_under(setting=setting, broadcast=True)
 
-    assert cells == {("health", "habit", "wealth")}
+    assert (("health", "habit", "wealth"), width) in cells
 
 
 @pytest.mark.parametrize("setting", _COMPATIBLE)
 def test_compatible_width_setting_broadcasts_habit(*, setting: str) -> None:
-    """A width of whole broadcast-extent multiples keeps `habit` outside every
-    traced cell window."""
-    cells = _solve_under(setting=setting, broadcast=True)[2]
+    """A width of whole broadcast-extent multiples keeps `habit` outside the cell
+    window: the window maps the dispatched width's share of the other states."""
+    _, width, cells = _solve_under(setting=setting, broadcast=True)
 
-    assert cells == {("health", "wealth")}
+    assert (("health", "wealth"), width // _BROADCAST_EXTENT) in cells
 
 
 @pytest.mark.parametrize("setting", [*_INCOMPATIBLE, *_COMPATIBLE])
