@@ -48,12 +48,14 @@ from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution.external_fingerprint import (
+    external_annotation_record,
     external_backend_binding,
     external_enum_record,
     external_function_versions,
     external_parameter_record,
     external_policy_record_version,
     external_typed_forwarder,
+    external_unit_reference,
     external_wrapper_metadata,
     is_external_declaration,
     unwrap_beartype_guard,
@@ -82,6 +84,8 @@ _BEARTYPE_CLAW_STATE = vars(certainty_equivalent_declarations).get(
 )
 _INSPECT_SIGNATURE_FUNCTION = inspect.signature
 _INSPECT_SIGNATURE_CODE = inspect.signature.__code__
+_INSPECT_SIGNATURE_BIND = inspect.Signature.bind
+_INSPECT_SIGNATURE_BIND_CODE = inspect.Signature.bind.__code__
 _DATACLASSES_MISSING = dataclasses.MISSING
 _DATACLASSES_FIELD_MARKERS: tuple[tuple[str, object], ...] = tuple(
     (name, vars(dataclasses)[name])
@@ -1404,6 +1408,10 @@ class _SemanticHasher:
         except TypeError, ValueError:
             self.frame(label="signature-unavailable")
             return
+        self._visit_signature_object(signature)
+
+    def _visit_signature_object(self, signature: inspect.Signature) -> None:
+        """Hash parameter names, kinds, defaults and annotations of a signature."""
         self.frame(label="signature-start")
         for parameter in signature.parameters.values():
             self.frame(label="parameter", payload=parameter.name.encode())
@@ -1451,6 +1459,11 @@ class _SemanticHasher:
                 label="annotation-type",
                 payload=f"{annotation.__module__}.{annotation.__qualname__}".encode(),
             )
+            return
+
+        if (record := external_annotation_record(annotation)) is not None:
+            self.frame(label="annotation-external")
+            self.visit(value=record)
             return
 
         origin = typing.get_origin(annotation)
@@ -1681,6 +1694,9 @@ class _SemanticHasher:
                 # projection is justified.
                 self._visit_direct_global_reference(value)
                 continue
+            if (unit := external_unit_reference(value=value, path=path)) is not None:
+                self._visit_terminal_reference(unit)
+                continue
             current = value
             for attribute in path:
                 current = self._resolve_referenced_attribute(
@@ -1720,6 +1736,17 @@ class _SemanticHasher:
 
     def _visit_referenced_bound_method(self, method: types.MethodType) -> None:
         """Hash a method and exactly the receiver attributes its code reads."""
+        if (
+            method.__func__ is _INSPECT_SIGNATURE_BIND
+            and _INSPECT_SIGNATURE_BIND.__code__ is _INSPECT_SIGNATURE_BIND_CODE
+            and type(method.__self__) is inspect.Signature
+        ):
+            # Binding arguments to an exact signature is sealed by the interpreter;
+            # what varies is the signature it binds against.
+            self.frame(label="inspect-signature-bind-python-seal")
+            self.visit(value=_PYTHON_IMPLEMENTATION_SEAL)
+            self._visit_signature_object(method.__self__)
+            return
         raw_function = method.__func__
         if not isinstance(raw_function, types.FunctionType):
             callable_type = (
@@ -1825,7 +1852,11 @@ class _SemanticHasher:
                 raise TypeError(msg)
             self.frame(label="module-attribute-path", payload=".".join(path).encode())
             current: object = module
-            for attribute in path:
+            for index, attribute in enumerate(path):
+                unit = external_unit_reference(value=current, path=path[index:])
+                if unit is not None:
+                    current = unit
+                    break
                 if isinstance(current, types.ModuleType):
                     _validate_static_attribute_access(value=current, path=path)
                     try:

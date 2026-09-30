@@ -2164,6 +2164,42 @@ def test_a_function_closing_over_a_lowered_law_is_fingerprinted_by_its_fields(
     assert (digests[0] == digests[1]) is (left == right)
 
 
+def _signature_dispatcher(template: Callable) -> Callable:
+    signature = inspect.signature(template)
+
+    def dispatcher(*args: float, **kwargs: float) -> float:
+        bound = signature.bind(*args, **kwargs)
+        return sum(bound.arguments.values())
+
+    return dispatcher
+
+
+def _wealth_and_income(*, wealth: float, income: float) -> float:
+    return wealth + income
+
+
+def _wealth_and_labor_income(*, wealth: float, labor_income: float) -> float:
+    return wealth + labor_income
+
+
+@pytest.mark.parametrize(
+    ("template", "expected_equal"),
+    [
+        pytest.param(_wealth_and_income, True, id="same-signature"),
+        pytest.param(_wealth_and_labor_income, False, id="renamed-parameter"),
+    ],
+)
+def test_signature_bind_in_closure_binds_the_signature(
+    *, template: Callable, expected_equal: bool
+) -> None:
+    """Binding against a closed-over signature is identified by that signature."""
+    baseline = fingerprints._semantic_fingerprint(
+        _signature_dispatcher(_wealth_and_income)
+    )
+    other = fingerprints._semantic_fingerprint(_signature_dispatcher(template))
+    assert (baseline == other) is expected_equal
+
+
 class _WalksEveryPath(dict):
     """A completed-visit store that never keeps a visit."""
 

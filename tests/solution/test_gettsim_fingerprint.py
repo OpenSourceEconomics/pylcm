@@ -10,7 +10,7 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from types import CodeType, FunctionType, ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import cloudpickle
 import dags.tree as dt
@@ -38,8 +38,10 @@ tt = pytest.importorskip("gettsim.tt")
 param_objects = pytest.importorskip("ttsim.tt.param_objects")
 rounding = pytest.importorskip("ttsim.tt.rounding")
 type_resolution = pytest.importorskip("ttsim.tt.type_resolution")
+time_converters = pytest.importorskip("ttsim.time_converters")
 
 _UNIT = tt.TTSIMUnit.DIMENSIONLESS
+_UNIT_NAMESPACE = tt.TTSIMUnit
 FloatColumn = pytest.importorskip("ttsim.typing").FloatColumn
 IntColumn = pytest.importorskip("ttsim.typing").IntColumn
 
@@ -618,6 +620,169 @@ def _typed_forwarder(*, scale: float) -> Any:
         annotations={"value": "FloatColumn", "return": "FloatColumn"},
         node_name="body",
     )
+
+
+@pytest.mark.parametrize(
+    ("target", "inputs", "expected"),
+    [
+        pytest.param(
+            "sozialversicherung__rente__alter_bei_renteneintritt",
+            {
+                "geburtsjahr": [1960],
+                "geburtsmonat": [1],
+                "sozialversicherung__rente__jahr_renteneintritt": [2025],
+                "sozialversicherung__rente__monat_renteneintritt": [7],
+            },
+            [65 + 5 / 12],
+            id="months-to-years",
+        ),
+        pytest.param(
+            "sozialversicherung__rente__altersrente__langjährig__altersgrenze",
+            {"geburtsjahr": [1965], "geburtsmonat": [1]},
+            [67.0],
+            id="years-to-months",
+        ),
+        pytest.param(
+            "anzahl_personen_hh",
+            {"hh_id": [0, 0, 1]},
+            [2, 2, 1],
+            id="group-count",
+        ),
+        pytest.param(
+            "familie__alter_monate_jüngstes_mitglied_fg",
+            {"alter_monate": [400, 30, 500], "fg_id": [0, 0, 1]},
+            [30, 30, 500],
+            id="group-minimum",
+        ),
+        pytest.param(
+            "familie__alleinerziehend_sn",
+            {"familie__alleinerziehend": [True, False, False], "sn_id": [0, 0, 1]},
+            [True, True, False],
+            id="group-any",
+        ),
+        pytest.param(
+            "ehe_id",
+            {"p_id": [0, 1, 2], "familie__p_id_ehepartner": [1, 0, -1]},
+            [0, 0, 1],
+            id="reordered-group-creation",
+        ),
+        pytest.param(
+            "familie__ist_kind_in_familiengemeinschaft",
+            {
+                "p_id": [0, 1, 2],
+                "familie__p_id_elternteil_1": [-1, 0, 5],
+                "familie__p_id_elternteil_2": [-1, -1, -1],
+                "fg_id": [0, 0, 1],
+            },
+            [False, True, False],
+            id="foreign-key-join",
+        ),
+    ],
+)
+def test_real_policy_graph_operations_have_numerical_and_durable_identity(
+    *, target: str, inputs: dict[str, list[float]], expected: list[float]
+) -> None:
+    """Reviewed time, group and join operations reached by 2025 GETTSIM graphs."""
+    n_obs = len(next(iter(inputs.values())))
+    data = {name: jnp.array(values) for name, values in inputs.items()}
+    build_data = {"p_id": jnp.arange(n_obs), **data}
+
+    def build() -> Callable:
+        return gettsim.main(
+            main_target=gettsim.MainTarget.tt_function,
+            policy_date_str="2025-01-01",
+            input_data=gettsim.InputData.tree(dt.unflatten_from_qnames(build_data)),
+            tt_targets=gettsim.TTTargets.qname([target]),
+            backend="jax",
+            include_fail_nodes=False,
+            include_warn_nodes=False,
+        )
+
+    first = build()
+    np.testing.assert_allclose(first(data)[target], expected, rtol=1e-6)
+    assert _semantic_fingerprint(first) == _semantic_fingerprint(build())
+
+
+def _monthly_via_module(value: float) -> object:
+    return tt.cast_ttsim_unit(value, unit=tt.TTSIMUnit.CURRENCY.PER_MONTH)
+
+
+def _yearly_via_module(value: float) -> object:
+    return tt.cast_ttsim_unit(value, unit=tt.TTSIMUnit.CURRENCY.PER_YEAR)
+
+
+def _monthly_via_namespace(value: float) -> object:
+    return tt.cast_ttsim_unit(value, unit=_UNIT_NAMESPACE.CURRENCY.PER_MONTH)
+
+
+def _yearly_via_namespace(value: float) -> object:
+    return tt.cast_ttsim_unit(value, unit=_UNIT_NAMESPACE.CURRENCY.PER_YEAR)
+
+
+@pytest.mark.parametrize(
+    ("monthly", "yearly"),
+    [
+        pytest.param(_monthly_via_module, _yearly_via_module, id="module"),
+        pytest.param(_monthly_via_namespace, _yearly_via_namespace, id="namespace"),
+    ],
+)
+def test_units_spelled_in_policy_code_bind_identity(
+    *, monthly: Callable, yearly: Callable
+) -> None:
+    """A unit spelled off the builder namespace inside a body is bound by value."""
+    assert _semantic_fingerprint(monthly) != _semantic_fingerprint(yearly)
+
+
+def _hours_per_year_from_weekly(hours: float) -> float:
+    return time_converters.per_w_to_per_y(hours)
+
+
+def _hours_per_year_from_monthly(hours: float) -> float:
+    return time_converters.per_m_to_per_y(hours)
+
+
+def test_weekly_flow_conversion_binds_its_period() -> None:
+    """Weekly and monthly flow conversions called from model code are told apart."""
+    assert _semantic_fingerprint(_hours_per_year_from_weekly) != (
+        _semantic_fingerprint(_hours_per_year_from_monthly)
+    )
+
+
+def test_policy_record_from_a_reexecuted_module_keeps_its_identity() -> None:
+    """A record survives GETTSIM re-executing its policy module on a later load."""
+    stale = _wohngeld_record()
+    gettsim.main(
+        main_target=gettsim.MainTarget.policy_environment,
+        policy_date_str="2025-01-01",
+    )
+    current = _wohngeld_record()
+    assert type(stale) is not type(current)
+    assert _semantic_fingerprint(stale) == _semantic_fingerprint(current)
+
+
+def test_policy_record_imitating_a_reexecuted_module_is_not_a_policy_record() -> None:
+    """A record whose class only borrows a GETTSIM name is not a policy record."""
+    sample = _wohngeld_record()
+    genuine = cast("Any", type(sample))
+    imitation = dataclasses.make_dataclass(
+        genuine.__name__,
+        [(field.name, field.type) for field in dataclasses.fields(genuine)],
+        frozen=True,
+        namespace={"skaliert": lambda self: self.skalierungsfaktor * 2},
+    )
+    imitation.__module__ = genuine.__module__
+    record = imitation(
+        *(getattr(sample, field.name) for field in dataclasses.fields(genuine))
+    )
+    assert external_fingerprint.external_policy_record_version(record) is None
+
+
+def _wohngeld_record() -> object:
+    policy = importlib.import_module("gettsim.germany.wohngeld.wohngeld")
+    table = param_objects.ConsecutiveIntLookupTableParamValue(
+        xnp=jnp, values_to_look_up=jnp.array([1.0]), bases_to_subtract=jnp.array([0])
+    )
+    return policy.BasisformelParamValues(1.0, table, table, table)
 
 
 @categorical(ordered=False)

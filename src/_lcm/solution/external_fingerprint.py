@@ -125,7 +125,12 @@ def external_parameter_record(value: object) -> tuple[object, ...] | None:
 
 
 def external_backend_binding(value: object) -> tuple[str, str] | None:
-    """Identify JAX bound to a reviewed TTSIM policy declaration."""
+    """Identify JAX bound to a reviewed TTSIM policy declaration or its forwarder.
+
+    ttsim binds its backend into the final column callable: the policy declaration
+    itself, the generated typed forwarder of a rounded declaration, or the wrapper that
+    broadcasts scalar columns for a declaration that is not auto-vectorized.
+    """
     if (
         not isinstance(value, partial)
         or value.keywords is None
@@ -133,7 +138,11 @@ def external_backend_binding(value: object) -> tuple[str, str] | None:
     ):
         return None
     contract = _ttsim_contract_for(value.func)
-    if contract is None or type(value.func) is not contract.policy_function:
+    if (
+        (contract is None or type(value.func) is not contract.policy_function)
+        and external_typed_forwarder(value.func) is None
+        and not _is_broadcast_wrapper(value.func)
+    ):
         return None
     return "jax.numpy", jax.__version__
 
@@ -236,11 +245,52 @@ def external_typed_forwarder(
     return forwarder, forwarder.__globals__["_ttsim_wrapped_impl"]
 
 
+def external_unit_reference(*, value: object, path: tuple[str, ...]) -> object | None:
+    """Resolve a unit spelled off ttsim's `TTSIMUnit` builder namespace.
+
+    Policy code spells units as attribute chains such as
+    `TTSIMUnit.CURRENCY.PER_MONTH`. Each step is an installed builder attribute that
+    returns a new unit declaration, so the spelled unit is bound by value.
+    """
+    if not isinstance(value, type) or not path:
+        return None
+    contract = _ttsim_contract_for(value)
+    if contract is None or value is not contract.unit_namespace:
+        return None
+    _require_supported_version(distribution="ttsim-backend", version=contract.version)
+    composite = contract.units[0]
+    unit = inspect.getattr_static(value, path[0], None)
+    for name in path[1:]:
+        if type(unit) is not composite:
+            return None
+        unit = getattr(unit, name)
+    return unit if type(unit) is composite else None
+
+
+def external_annotation_record(annotation: object) -> tuple[object, ...] | None:
+    """Identify ttsim's validator-carrying column alias by identity.
+
+    `DatetimeColumn` pairs a column type with an opaque beartype predicate on the
+    dtype. The alias is bound by name and the backend version instead.
+    """
+    typing_module = sys.modules.get("ttsim.typing")
+    if typing_module is None or annotation is not vars(typing_module).get(
+        "DatetimeColumn"
+    ):
+        return None
+    contract = _capture_ttsim_contract()
+    if contract is None:
+        return None
+    _require_supported_version(distribution="ttsim-backend", version=contract.version)
+    return "ttsim-annotation", contract.version, "ttsim.typing.DatetimeColumn"
+
+
 def external_policy_record_version(value: object) -> str | None:
     """Recognize frozen records sourced from the installed GETTSIM policy tree.
 
-    GETTSIM loads modules under domain aliases such as wohngeld.wohngeld. Resolve
-    the actual class in its module and check that module's installed source path.
+    GETTSIM registers policy modules under their canonical name and re-executes them
+    on every environment load. Resolve the class in its registered module, or its
+    exact reload there, and check that module's installed source path.
     """
     if isinstance(value, type) or not dataclasses.is_dataclass(value):
         return None
@@ -248,6 +298,8 @@ def external_policy_record_version(value: object) -> str | None:
     if not cast("Any", value_type).__dataclass_params__.frozen:
         return None
     origin = _resolved_source(value=value_type)
+    if origin is None:
+        origin = _reloaded_record_source(value_type)
     root, version = _installed_package(
         distribution_name="gettsim", package="gettsim/germany"
     )
@@ -365,6 +417,18 @@ def _fail_if_guard_is_not_regenerated(
         )
 
 
+def _is_broadcast_wrapper(value: object) -> bool:
+    """Whether a signature wrapper forwards to ttsim's scalar-column broadcaster."""
+    wrapped = getattr(value, "__dict__", {}).get("__wrapped__")
+    contract = (
+        _capture_ttsim_contract() if isinstance(wrapped, types.FunctionType) else None
+    )
+    return contract is not None and any(
+        _normalized_code(cast("types.FunctionType", wrapped).__code__) == code
+        for code in contract.broadcast_code
+    )
+
+
 def _carries_only_annotation_caches(function: types.FunctionType) -> bool:
     """Whether a function's own state is limited to typing and beartype caches."""
     state = function.__dict__
@@ -403,10 +467,14 @@ class _TTSimContract:
     """Declaration type that may bind the JAX backend in a generated partial."""
     units: tuple[type, ...]
     """Exact frozen unit declaration types bound as fields of column declarations."""
+    unit_namespace: type
+    """Builder namespace from which policy code spells unit declarations."""
     parameters: tuple[tuple[type, tuple[str, ...], str], ...]
     """Array carriers, their fields and executable operation names."""
     rounding_code: tuple[types.CodeType, ...]
     """Normalized bodies of generated rounding wrappers."""
+    broadcast_code: tuple[types.CodeType, ...]
+    """Normalized bodies of generated scalar-column broadcast wrappers."""
 
 
 @cache
@@ -421,6 +489,9 @@ def _capture_ttsim_contract() -> _TTSimContract | None:
     columns = importlib.import_module("ttsim.tt.column_objects_param_function")
     params = importlib.import_module("ttsim.tt.param_objects")
     rounding = importlib.import_module("ttsim.tt.rounding")
+    environment = importlib.import_module(
+        "ttsim.interface_dag_elements.specialized_environment"
+    )
     units = importlib.import_module("ttsim.tt.units")
     return _TTSimContract(
         version=version,
@@ -447,6 +518,7 @@ def _capture_ttsim_contract() -> _TTSimContract | None:
         ),
         policy_function=columns.PolicyFunction,
         units=(units.CompositeUnit, units.UnsetUnit, units.InputOutputUnits),
+        unit_namespace=units.TTSIMUnit,
         parameters=(
             (
                 params.ConsecutiveIntLookupTableParamValue,
@@ -466,6 +538,17 @@ def _capture_ttsim_contract() -> _TTSimContract | None:
                 unwrap_beartype_guard(rounding.RoundingSpec.apply_rounding),
             ).__code__.co_consts
             if isinstance(code, types.CodeType) and code.co_name == "wrapper"
+        ),
+        broadcast_code=tuple(
+            _normalized_code(code)
+            for code in cast(
+                "types.FunctionType",
+                unwrap_beartype_guard(
+                    environment._broadcast_scalar_columns_at_call_time  # noqa: SLF001
+                ),
+            ).__code__.co_consts
+            if isinstance(code, types.CodeType)
+            and code.co_name == "broadcast_scalar_columns"
         ),
     )
 
@@ -489,6 +572,60 @@ def _resolved_source(*, value: type | types.FunctionType) -> pathlib.Path | None
         return None
     origin = getattr(getattr(module, "__spec__", None), "origin", None)
     return pathlib.Path(origin).resolve() if isinstance(origin, str) else None
+
+
+def _reloaded_record_source(record_type: type) -> pathlib.Path | None:
+    """Locate a record class whose defining module GETTSIM has since re-executed.
+
+    A class from an earlier environment load belongs to a replaced module object. It
+    is accepted only if the class of the same name in the registered module is its
+    exact reload: the same class chain by name, attribute names, dataclass fields and
+    function code.
+    """
+    module = sys.modules.get(record_type.__module__)
+    current: object = module
+    for name in record_type.__qualname__.split("."):
+        current = inspect.getattr_static(current, name, None)
+    if not isinstance(current, type) or not _is_exact_reload(
+        stale=record_type, current=current
+    ):
+        return None
+    origin = getattr(getattr(module, "__spec__", None), "origin", None)
+    return pathlib.Path(origin).resolve() if isinstance(origin, str) else None
+
+
+def _is_exact_reload(*, stale: type, current: type) -> bool:
+    """Whether two classes are the same source executed twice."""
+    if len(stale.__mro__) != len(current.__mro__):
+        return False
+    for old, new in zip(stale.__mro__, current.__mro__, strict=True):
+        if old is new:
+            continue
+        old_state, new_state = vars(old), vars(new)
+        if (
+            (old.__module__, old.__qualname__) != (new.__module__, new.__qualname__)
+            or old_state.keys() != new_state.keys()
+            or _dataclass_field_spec(old) != _dataclass_field_spec(new)
+        ):
+            return False
+        for name, member in old_state.items():
+            other = new_state[name]
+            if isinstance(member, types.FunctionType) != isinstance(
+                other, types.FunctionType
+            ):
+                return False
+            if isinstance(member, types.FunctionType) and _normalized_code(
+                member.__code__
+            ) != _normalized_code(cast("types.FunctionType", other).__code__):
+                return False
+    return True
+
+
+def _dataclass_field_spec(cls: type) -> tuple[tuple[str, str], ...] | None:
+    """Field names and declared types of a dataclass, else `None`."""
+    if not dataclasses.is_dataclass(cls):
+        return None
+    return tuple((field.name, str(field.type)) for field in dataclasses.fields(cls))
 
 
 @cache
@@ -548,12 +685,20 @@ _SUPPORTED_VERSIONS = {
 _SUPPORTED_OPERATIONS = frozenset(
     {
         "dags.tree.tree_utils.flatten_to_qnames",
+        "ttsim.tt.aggregation.grouped_any",
+        "ttsim.tt.aggregation.grouped_count",
+        "ttsim.tt.aggregation.grouped_min",
         "ttsim.tt.aggregation.grouped_sum",
         "ttsim.tt.aggregation.sum_by_p_id",
         "ttsim.tt.column_objects_param_function.ColumnFunction.__call__",
+        "ttsim.tt.column_objects_param_function.reorder_ids",
         "ttsim.tt.piecewise_polynomial.piecewise_polynomial",
+        "ttsim.tt.shared.join",
+        "ttsim.time_converters.m_to_y",
         "ttsim.time_converters.per_m_to_per_y",
+        "ttsim.time_converters.per_w_to_per_y",
         "ttsim.time_converters.per_y_to_per_m",
+        "ttsim.time_converters.y_to_m",
         "ttsim.tt.units.cast_ttsim_unit",
     }
 )
