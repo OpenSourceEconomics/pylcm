@@ -53,8 +53,10 @@ from _lcm.solution.external_fingerprint import (
     external_function_versions,
     external_parameter_record,
     external_policy_record_version,
+    external_typed_forwarder,
     external_wrapper_metadata,
     is_external_declaration,
+    unwrap_beartype_guard,
 )
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
@@ -1178,8 +1180,24 @@ class _SemanticHasher:
 
     def _visit_external_function(self, value: object) -> bool:
         """Hash an authenticated fixed library implementation."""
-        if (versions := external_function_versions(value)) is not None:
-            function = cast("types.FunctionType", value)
+        if (forwarded := external_typed_forwarder(value)) is not None:
+            forwarder, implementation = forwarded
+            self.frame(label="external-typed-forwarder-start")
+            self._visit_signature(forwarder)
+            self.visit(value=implementation)
+            self.frame(label="external-typed-forwarder-end")
+            return True
+        # A reviewed operation is identified by its implementation, whether or not
+        # the library's import-time beartype claw guarded it.
+        callee = unwrap_beartype_guard(value)
+        if (versions := external_function_versions(callee)) is not None:
+            function = cast("types.FunctionType", callee)
+            if function is not value and (
+                _unwrap_exact_beartype_wrapper(cast("types.FunctionType", value))
+                is not function
+            ):
+                msg = "Cannot durably fingerprint an inexact external beartype guard."
+                raise TypeError(msg)
             self._validate_function_defaults(function)
             self.frame(label="external-library-function-start")
             self.visit(value=versions)

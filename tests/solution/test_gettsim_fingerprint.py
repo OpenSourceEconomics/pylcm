@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from types import FunctionType, ModuleType, SimpleNamespace
+from types import CodeType, FunctionType, ModuleType, SimpleNamespace
 from typing import Any
 
 import cloudpickle
@@ -37,6 +37,11 @@ gettsim = pytest.importorskip("gettsim")
 tt = pytest.importorskip("gettsim.tt")
 param_objects = pytest.importorskip("ttsim.tt.param_objects")
 rounding = pytest.importorskip("ttsim.tt.rounding")
+type_resolution = pytest.importorskip("ttsim.tt.type_resolution")
+
+_UNIT = tt.TTSIMUnit.DIMENSIONLESS
+FloatColumn = pytest.importorskip("ttsim.typing").FloatColumn
+IntColumn = pytest.importorskip("ttsim.typing").IntColumn
 
 
 def test_generated_gettsim_graph_has_repeatable_semantic_identity() -> None:
@@ -106,7 +111,7 @@ def test_real_pension_lookup_graph_has_numerical_and_durable_identity() -> None:
 
 def test_real_wage_tax_polynomial_graph_has_numerical_and_durable_identity() -> None:
     """The selected 2025 wage-tax tariff yields its expected annual value."""
-    target = "lohnsteuer__basistarif"
+    target = "lohnsteuer__basistarif_y"
     inputs = {
         "alter": jnp.array([30]),
         "einnahmen__bruttolohn_m": jnp.array([3000.0]),
@@ -183,8 +188,8 @@ def test_unreviewed_partial_rejects_backend_module() -> None:
 def test_policy_function_can_be_captured_directly() -> None:
     """A generated wrapper can retain its decorated policy callable."""
 
-    @tt.policy_function(vectorization_strategy="not_required")
-    def policy(value: float) -> float:
+    @tt.policy_function(vectorization_strategy="not_required", unit=_UNIT)
+    def policy(value: FloatColumn) -> FloatColumn:
         return value * 2
 
     def wrapper(value: float) -> float:
@@ -198,8 +203,8 @@ def test_rounded_policy_retains_policy_and_rounding_semantics() -> None:
     """Rounding a policy callable binds its closure and rounding rule."""
 
     def build(*, scale: float, base: float) -> Callable:
-        @tt.policy_function(vectorization_strategy="not_required")
-        def policy(value: float) -> float:
+        @tt.policy_function(vectorization_strategy="not_required", unit=_UNIT)
+        def policy(value: FloatColumn) -> FloatColumn:
             return value * scale
 
         return rounding.RoundingSpec(base=base, direction="up").apply_rounding(
@@ -207,7 +212,7 @@ def test_rounded_policy_retains_policy_and_rounding_semantics() -> None:
         )
 
     baseline = build(scale=2.0, base=1.0)
-    np.testing.assert_array_equal(baseline(1.1), 3.0)
+    np.testing.assert_array_equal(baseline(jnp.array([1.1])), [3.0])
     assert _semantic_fingerprint(baseline) == _semantic_fingerprint(
         build(scale=2.0, base=1.0)
     )
@@ -323,7 +328,10 @@ def test_rounding_wrapper_survives_serialization() -> None:
 
     # Model a generated policy module with ordinary, serializable globals.
     function = FunctionType(body.__code__, {"__name__": "policy_fixture"})
-    policy = tt.policy_function(vectorization_strategy="not_required")(function)
+    function.__annotations__ = {"value": "FloatColumn", "return": "FloatColumn"}
+    policy = tt.policy_function(vectorization_strategy="not_required", unit=_UNIT)(
+        function
+    )
 
     wrapped = rounding.RoundingSpec(base=1.0, direction="up").apply_rounding(
         policy, jnp
@@ -380,12 +388,12 @@ def test_generated_graph_ignores_declaration_insertion_order() -> None:
 def test_foreign_key_declarations_have_distinct_identities() -> None:
     """The three foreign-key meanings remain distinguishable for the same body."""
 
-    def key(person_id: int) -> int:
+    def key(person_id: IntColumn) -> IntColumn:
         return person_id
 
     declarations = [
         tt.policy_function(
-            foreign_key_type=kind, vectorization_strategy="not_required"
+            foreign_key_type=kind, vectorization_strategy="not_required", unit=_UNIT
         )(key)
         for kind in tt.FKType
     ]
@@ -400,8 +408,8 @@ def test_foreign_key_declarations_have_distinct_identities() -> None:
 def test_generated_policy_rejects_unsupported_captured_objects(opaque: object) -> None:
     """Generated policy wrappers cannot hide opaque state or fake backend modules."""
 
-    @tt.policy_function(vectorization_strategy="not_required")
-    def policy(_value: float) -> object:
+    @tt.policy_function(vectorization_strategy="not_required", unit=_UNIT)
+    def policy(_value: FloatColumn) -> object:
         return opaque
 
     with pytest.raises(TypeError, match="durably fingerprint"):
@@ -552,6 +560,66 @@ def test_polynomial_parameters_reject_unsupported_state(defect: str) -> None:
         _semantic_fingerprint(parameter)
 
 
+def test_unit_declarations_have_distinct_identities() -> None:
+    """A declaration's unit participates in its identity."""
+
+    def amount(value: FloatColumn) -> FloatColumn:
+        return value
+
+    first, second = (
+        tt.policy_function(vectorization_strategy="not_required", unit=unit)(amount)
+        for unit in (tt.TTSIMUnit.CURRENCY, tt.TTSIMUnit.CURRENCY.PER_MONTH)
+    )
+    assert _semantic_fingerprint(first) != _semantic_fingerprint(second)
+
+
+def test_typed_forwarder_is_identified_by_its_callee() -> None:
+    """The generated column-typed forwarder binds the callable it forwards to."""
+    assert _semantic_fingerprint(_typed_forwarder(scale=2.0)) != (
+        _semantic_fingerprint(_typed_forwarder(scale=3.0))
+    )
+
+
+def test_typed_forwarder_rejects_a_modified_body() -> None:
+    """A forwarder whose generated body does more than forward is refused."""
+    guard = _typed_forwarder(scale=2.0)
+    forwarder = guard.__dict__.get("__wrapped__", guard)
+    source = "def _typed_body(value):\n    return _ttsim_wrapped_impl(value) + 1\n"
+    code = next(
+        constant
+        for constant in compile(source, "<ttsim-typed-wrapper>", "exec").co_consts
+        if isinstance(constant, CodeType)
+    )
+    modified = FunctionType(code, forwarder.__globals__, "body")
+    modified.__module__ = "ttsim.typing"
+    with pytest.raises(TypeError, match="modified ttsim typed forwarder"):
+        _semantic_fingerprint(modified)
+
+
+def test_typed_forwarder_guard_must_regenerate_from_its_hints() -> None:
+    """A guard whose recorded hints do not reproduce its checks is refused."""
+    guard = _typed_forwarder(scale=2.0)
+    if guard.__dict__.get("__beartype_wrapper") is not True:
+        pytest.skip("ttsim runs without its import-time beartype claw.")
+    forged = FunctionType(guard.__code__, guard.__globals__, guard.__name__)
+    forged.__kwdefaults__ = dict(guard.__kwdefaults__)
+    forged.__dict__.update(guard.__dict__)
+    forged.__dict__["__beartype_annotations"] = {"value": int, "return": int}
+    with pytest.raises(TypeError, match="does not regenerate"):
+        _semantic_fingerprint(forged)
+
+
+def _typed_forwarder(*, scale: float) -> Any:
+    def body(value: FloatColumn) -> FloatColumn:
+        return value * scale
+
+    return type_resolution.build_beartype_checkable_wrapper(
+        body,
+        annotations={"value": "FloatColumn", "return": "FloatColumn"},
+        node_name="body",
+    )
+
+
 @categorical(ordered=False)
 class _RegimeId:
     working: ScalarInt
@@ -611,10 +679,10 @@ def _build_income_function(
         "return": "FloatColumn | IntColumn | BoolColumn",
     }
     policy_income = tt.policy_function(
-        vectorization_strategy="not_required", start_date=start_date
+        vectorization_strategy="not_required", start_date=start_date, unit=_UNIT
     )(income)
 
-    @tt.agg_by_group_function(agg_type=tt.AggType.SUM)
+    @tt.agg_by_group_function(agg_type=tt.AggType.SUM, unit=_UNIT)
     def total(*, income: float, hh_id: int) -> float:  # noqa: ARG001
         # GETTSIM consumes this declaration's signature.
         """Declare the household sum of income."""
@@ -632,6 +700,7 @@ def _build_income_function(
     return gettsim.main(
         main_target=gettsim.MainTarget.tt_function,
         policy_environment=environment,
+        policy_date_str=f"{year}-01-01",
         input_data=gettsim.InputData.tree(_input_data()),
         tt_targets=gettsim.TTTargets.tree(dict.fromkeys(targets, True)),
         include_warn_nodes=False,

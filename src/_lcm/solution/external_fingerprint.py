@@ -3,12 +3,19 @@
 The semantic walk separates installed implementations from constructed model data:
 
 - Reviewed exports of dags, flatten-dict, ttsim and NumPy-groupies are sealed by their
-  executable code, defaults and the versions of both numerical backend stacks.
+  executable code, defaults and the versions of both numerical backend stacks and
+  of pint, from which ttsim derives its time-conversion factors.
   A function must resolve by identity at its installed source location and carry
-  no closure or instance state. Generated functions and GETTSIM policy bodies
-  retain the full recursive walk.
-- Exact ttsim column declarations and installed GETTSIM frozen policy records
-  bind every field. FKType binds its complete member schema and selected member.
+  no closure or instance state beyond typing caches. Generated functions and
+  GETTSIM policy bodies retain the full recursive walk.
+- ttsim guards its functions with an import-time beartype claw by default. A guard
+  of a reviewed export is transparent only if beartype regenerates it.
+- Exact ttsim column and unit declarations and installed GETTSIM frozen policy
+  records bind every field. The foreign-key, aggregation and quantity-kind enums
+  bind their complete member schema and selected member.
+- ttsim's generated column-typed forwarder must match its one-line template; it is
+  identified by its signature and the callable it forwards to. Its beartype guard
+  must regenerate from the hints it recorded.
 - Exact JAX lookup/polynomial parameter carriers bind their arrays and operation
   code. JAX NumPy has a versioned meaning only in a reviewed TTSIM backend binding.
   Other module-valued data, custom classes, carrier subclasses and opaque/mutable
@@ -37,29 +44,40 @@ from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
+from beartype import BeartypeConf, beartype
 
 
 def external_enum_record(value: object) -> tuple[object, ...] | None:
-    """Return the versioned schema and value of a genuine ttsim FKType member."""
+    """Return the versioned schema and value of a genuine reviewed ttsim enum member."""
     contract = _ttsim_contract_for(value)
-    if contract is None or type(value) is not contract.enum_type:
+    if contract is None:
+        return None
+    schema = next(
+        (members for enum_type, members in contract.enums if type(value) is enum_type),
+        None,
+    )
+    if schema is None:
         return None
     _require_supported_version(distribution="ttsim-backend", version=contract.version)
-    member = value
-    enum_members = contract.enum_type.__members__
+    member = cast("Enum", value)
+    enum_members = type(member).__members__
     if (
         any(
-            type(item.value) is not str
+            type(item.value) not in (str, int)
             or set(vars(item)) != {"_value_", "_name_", "__objclass__", "_sort_order_"}
             for item in enum_members.values()
         )
-        or tuple((name, item.value) for name, item in enum_members.items())
-        != contract.members
+        or tuple((name, item.value) for name, item in enum_members.items()) != schema
     ):
-        raise TypeError(
-            "Cannot durably fingerprint a modified ttsim FKType declaration."
-        )
-    return "ttsim-FKType", contract.version, contract.members, member.name, member.value
+        raise TypeError("Cannot durably fingerprint a modified ttsim enum declaration.")
+    return (
+        "ttsim-enum",
+        contract.version,
+        type(member).__qualname__,
+        schema,
+        member.name,
+        member.value,
+    )
 
 
 def external_parameter_record(value: object) -> tuple[object, ...] | None:
@@ -87,7 +105,9 @@ def external_parameter_record(value: object) -> tuple[object, ...] | None:
             raise TypeError(
                 "Cannot durably fingerprint non-array ttsim parameter data."
             )
-        operation = inspect.getattr_static(value_type, operation_name)
+        operation = unwrap_beartype_guard(
+            inspect.getattr_static(value_type, operation_name)
+        )
         if not isinstance(operation, types.FunctionType):
             raise TypeError(
                 "Cannot durably fingerprint opaque ttsim parameter behavior."
@@ -123,17 +143,24 @@ def is_external_declaration(value: object) -> bool:
     if external_policy_record_version(value) is not None:
         metadata = frozenset()
     elif (contract := _ttsim_contract_for(value)) is not None and any(
-        type(value) is cls for cls in contract.columns
+        type(value) is cls for cls in (*contract.columns, *contract.units)
     ):
         _require_supported_version(
             distribution="ttsim-backend", version=contract.version
         )
-        metadata = _COLUMN_METADATA
+        metadata = (
+            _COLUMN_METADATA | _copied_function_marks(value)
+            if type(value) in contract.columns
+            else frozenset()
+        )
     else:
         return False
     fields = {field.name for field in dataclasses.fields(cast("Any", value))}
-    if set(vars(value)) - fields - metadata:
-        raise TypeError("Cannot durably fingerprint extra external declaration state.")
+    if extra := set(vars(value)) - fields - metadata:
+        raise TypeError(
+            "Cannot durably fingerprint extra external declaration state "
+            f"{sorted(extra)}."
+        )
     return True
 
 
@@ -157,6 +184,56 @@ def external_wrapper_metadata(function: types.FunctionType) -> frozenset[str]:
         if function.__dict__[name] is not vars(wrapped).get(name):
             raise TypeError("Cannot durably fingerprint modified rounding metadata.")
     return names
+
+
+def external_typed_forwarder(
+    value: object,
+) -> tuple[types.FunctionType, object] | None:
+    """Recognize ttsim's synthesized column-typed forwarder and its callee.
+
+    ttsim wraps vectorized and rounded policy callables in a generated function whose
+    body only forwards its parameters to `_ttsim_wrapped_impl`, then guards it with
+    beartype and resets its annotations. The guard is transparent only if beartype
+    regenerates its code from the annotations it recorded. The forwarder is
+    identified by its signature and callee.
+    """
+    if not isinstance(value, types.FunctionType):
+        return None
+    guarded = value.__dict__.get("__beartype_wrapper") is True
+    forwarder = value.__dict__.get("__wrapped__") if guarded else value
+    if (
+        not isinstance(forwarder, types.FunctionType)
+        or forwarder.__module__ != "ttsim.typing"
+        or forwarder.__code__.co_filename != _TYPED_FORWARDER_FILENAME
+    ):
+        return None
+    contract = _capture_ttsim_contract()
+    if contract is None:
+        return None
+    _require_supported_version(distribution="ttsim-backend", version=contract.version)
+    if guarded:
+        _fail_if_guard_is_not_regenerated(guard=value, callee=forwarder)
+    code = forwarder.__code__
+    parameters = ", ".join(code.co_varnames[: code.co_argcount])
+    source = (
+        f"def {code.co_name}({parameters}):\n"
+        f"    return _ttsim_wrapped_impl({parameters})\n"
+    )
+    reference = next(
+        constant
+        for constant in compile(source, _TYPED_FORWARDER_FILENAME, "exec").co_consts
+        if isinstance(constant, types.CodeType)
+    )
+    if (
+        _normalized_code(code) != _normalized_code(reference)
+        or forwarder.__closure__
+        or forwarder.__defaults__
+        or forwarder.__kwdefaults__
+        or set(forwarder.__dict__) - _ANNOTATION_CACHES - {"__signature__"}
+        or "_ttsim_wrapped_impl" not in forwarder.__globals__
+    ):
+        raise TypeError("Cannot durably fingerprint a modified ttsim typed forwarder.")
+    return forwarder, forwarder.__globals__["_ttsim_wrapped_impl"]
 
 
 def external_policy_record_version(value: object) -> str | None:
@@ -186,7 +263,11 @@ def external_function_versions(value: object) -> tuple[tuple[str, str], ...] | N
         return None
     package = value.__module__.split(".", 1)[0]
     distribution = _INFRASTRUCTURE_PACKAGES.get(package)
-    if distribution is None or value.__closure__ or value.__dict__:
+    if (
+        distribution is None
+        or value.__closure__
+        or not _carries_only_annotation_caches(value)
+    ):
         return None
     source = _resolved_source(value=value)
     root, _version = _installed_package(distribution_name=distribution, package=package)
@@ -202,6 +283,26 @@ def external_function_versions(value: object) -> tuple[tuple[str, str], ...] | N
         version=_installed_package(distribution_name=distribution, package=package)[1],
     )
     return _infrastructure_versions()
+
+
+def unwrap_beartype_guard(function: object) -> object:
+    """Return the bound callee of an exact beartype guard, else the callable itself.
+
+    ttsim guards its functions with an import-time beartype claw by default. The
+    guard only checks argument types, so the reviewed implementation is its callee.
+    """
+    if not isinstance(function, types.FunctionType):
+        return function
+    state = function.__dict__
+    wrapped = state.get("__wrapped__")
+    if (
+        state.get("__beartype_wrapper") is True
+        and isinstance(wrapped, types.FunctionType)
+        and (function.__kwdefaults__ or {}).get("__beartype_func") is wrapped
+        and function.__code__.co_filename.startswith(_BEARTYPE_BODY_FILENAME_PREFIX)
+    ):
+        return wrapped
+    return function
 
 
 def _require_supported_version(*, distribution: str, version: str) -> None:
@@ -226,20 +327,82 @@ def _require_supported_version(*, distribution: str, version: str) -> None:
             )
 
 
+def _fail_if_guard_is_not_regenerated(
+    *, guard: types.FunctionType, callee: types.FunctionType
+) -> None:
+    """Require beartype to reproduce a guard from its callee and recorded hints."""
+    state = guard.__dict__
+    keyword_defaults = guard.__kwdefaults__
+    conf = (
+        keyword_defaults.get("__beartype_conf")
+        if type(keyword_defaults) is dict
+        else None
+    )
+    annotations = state.get("__beartype_annotations")
+    if not (
+        type(keyword_defaults) is dict
+        and keyword_defaults.get("__beartype_func") is callee
+        and isinstance(conf, BeartypeConf)
+        and type(annotations) is dict
+        and guard.__code__.co_filename.startswith(_BEARTYPE_BODY_FILENAME_PREFIX)
+    ):
+        raise TypeError("Cannot durably fingerprint an inexact ttsim beartype guard.")
+    clone = types.FunctionType(callee.__code__, callee.__globals__, callee.__name__)
+    clone.__qualname__ = callee.__qualname__
+    clone.__module__ = callee.__module__
+    clone.__annotations__ = dict(annotations)
+    regenerated = beartype(conf=conf)(clone)
+    code = guard.__code__
+    if (
+        not isinstance(regenerated, types.FunctionType)
+        or regenerated.__code__.co_code != code.co_code
+        or regenerated.__code__.co_consts != code.co_consts
+        or regenerated.__code__.co_names != code.co_names
+    ):
+        raise TypeError(
+            "Cannot durably fingerprint a ttsim beartype guard that beartype does not "
+            "regenerate from its callee."
+        )
+
+
+def _carries_only_annotation_caches(function: types.FunctionType) -> bool:
+    """Whether a function's own state is limited to typing and beartype caches."""
+    state = function.__dict__
+    return (
+        set(state) <= _ANNOTATION_CACHES
+        and state.get("__no_type_check__", True) is True
+    )
+
+
+def _copied_function_marks(declaration: object) -> frozenset[str]:
+    """Name typing and beartype marks a declaration copied from its function field.
+
+    ttsim copies the function's `__dict__` onto the declaration. The function field
+    is hashed itself, so marks identical to its own add no state.
+    """
+    source = getattr(getattr(declaration, "function", None), "__dict__", {})
+    state = vars(declaration)
+    return frozenset(
+        name
+        for name in _COPIED_FUNCTION_MARKS
+        if name in state and name in source and state[name] is source[name]
+    )
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _TTSimContract:
     """Genuine optional backend declarations captured when an integration is used."""
 
     version: str
     """Installed backend release."""
-    enum_type: type[Enum]
-    """Exact foreign-key enum class."""
-    members: tuple[tuple[str, str], ...]
-    """Ordered foreign-key member schema."""
+    enums: tuple[tuple[type[Enum], tuple[tuple[str, object], ...]], ...]
+    """Exact foreign-key, aggregation and quantity-kind enums with member schemas."""
     columns: tuple[type, ...]
     """Exact frozen column and rounding declaration types."""
     policy_function: type
     """Declaration type that may bind the JAX backend in a generated partial."""
+    units: tuple[type, ...]
+    """Exact frozen unit declaration types bound as fields of column declarations."""
     parameters: tuple[tuple[type, tuple[str, ...], str], ...]
     """Array carriers, their fields and executable operation names."""
     rounding_code: tuple[types.CodeType, ...]
@@ -258,11 +421,18 @@ def _capture_ttsim_contract() -> _TTSimContract | None:
     columns = importlib.import_module("ttsim.tt.column_objects_param_function")
     params = importlib.import_module("ttsim.tt.param_objects")
     rounding = importlib.import_module("ttsim.tt.rounding")
+    units = importlib.import_module("ttsim.tt.units")
     return _TTSimContract(
         version=version,
-        enum_type=columns.FKType,
-        members=tuple(
-            (name, member.value) for name, member in columns.FKType.__members__.items()
+        enums=tuple(
+            (
+                enum_type,
+                tuple(
+                    (name, member.value)
+                    for name, member in enum_type.__members__.items()
+                ),
+            )
+            for enum_type in (columns.FKType, columns.AggType, units.QuantityKind)
         ),
         columns=(
             columns.ColumnObject,
@@ -276,6 +446,7 @@ def _capture_ttsim_contract() -> _TTSimContract | None:
             rounding.RoundingSpec,
         ),
         policy_function=columns.PolicyFunction,
+        units=(units.CompositeUnit, units.UnsetUnit, units.InputOutputUnits),
         parameters=(
             (
                 params.ConsecutiveIntLookupTableParamValue,
@@ -290,7 +461,10 @@ def _capture_ttsim_contract() -> _TTSimContract | None:
         ),
         rounding_code=tuple(
             _normalized_code(code)
-            for code in rounding.RoundingSpec.apply_rounding.__code__.co_consts
+            for code in cast(
+                "types.FunctionType",
+                unwrap_beartype_guard(rounding.RoundingSpec.apply_rounding),
+            ).__code__.co_consts
             if isinstance(code, types.CodeType) and code.co_name == "wrapper"
         ),
     )
@@ -311,7 +485,7 @@ def _resolved_source(*, value: type | types.FunctionType) -> pathlib.Path | None
     resolved: object = module
     for name in value.__qualname__.split("."):
         resolved = inspect.getattr_static(resolved, name, None)
-    if resolved is not value:
+    if resolved is not value and unwrap_beartype_guard(resolved) is not value:
         return None
     origin = getattr(getattr(module, "__spec__", None), "origin", None)
     return pathlib.Path(origin).resolve() if isinstance(origin, str) else None
@@ -350,6 +524,7 @@ def _infrastructure_versions() -> tuple[tuple[str, str], ...]:
         "jaxlib",
         "numba",
         "llvmlite",
+        "pint",
     )
     return tuple(
         (name, _installed_package(distribution_name=name, package="")[1])
@@ -366,9 +541,9 @@ _INFRASTRUCTURE_PACKAGES = {
 _SUPPORTED_VERSIONS = {
     "dags": "0.6.0",
     "flatten-dict": "0.5.0",
-    "gettsim": "1.2",
+    "gettsim": "1.3.1",
     "numpy-groupies": "0.11.3",
-    "ttsim-backend": "1.2.1",
+    "ttsim-backend": "1.3.2",
 }
 _SUPPORTED_OPERATIONS = frozenset(
     {
@@ -377,7 +552,22 @@ _SUPPORTED_OPERATIONS = frozenset(
         "ttsim.tt.aggregation.sum_by_p_id",
         "ttsim.tt.column_objects_param_function.ColumnFunction.__call__",
         "ttsim.tt.piecewise_polynomial.piecewise_polynomial",
-        "ttsim.unit_converters.per_m_to_per_y",
+        "ttsim.time_converters.per_m_to_per_y",
+        "ttsim.time_converters.per_y_to_per_m",
+        "ttsim.tt.units.cast_ttsim_unit",
+    }
+)
+_TYPED_FORWARDER_FILENAME = "<ttsim-typed-wrapper>"
+_BEARTYPE_BODY_FILENAME_PREFIX = "<@beartype("
+_ANNOTATION_CACHES = frozenset(
+    {"__beartype_annotations", "__beartype_args_lens", "__no_type_check__"}
+)
+_COPIED_FUNCTION_MARKS = frozenset(
+    {
+        "__beartype_annotations",
+        "__beartype_args_lens",
+        "__beartype_wrapper",
+        "__no_type_check__",
     }
 )
 _COLUMN_METADATA = frozenset(
