@@ -1,5 +1,6 @@
 """Actual pending producer outputs are completed before conflicting budgeted cores."""
 
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -45,6 +46,7 @@ from tests.test_solver_api_out_of_tree import RegimeId as CounterRegimeId
 
 _SIZE = 1024
 _BUDGET = 128 * 1024 * 1024
+_GATE_TIMEOUT_SECONDS = 120.0
 
 
 @categorical(ordered=False)
@@ -59,6 +61,34 @@ def _utility(*, wealth: jax.Array, work: jax.Array) -> jax.Array:
 
 def _produce(*, wealth: jax.Array, work: jax.Array) -> tuple[jax.Array, jax.Array]:
     return wealth, work @ work
+
+
+def _hold_until_released(*, work: np.ndarray, gate: threading.Event) -> np.ndarray:
+    """Keep the producer's execution unfinished until the test opens the gate."""
+    if not gate.wait(timeout=_GATE_TIMEOUT_SECONDS):
+        msg = "The producer gate was never opened."
+        raise TimeoutError(msg)
+    return np.asarray(work)
+
+
+def _gated_produce(
+    *, gate: threading.Event
+) -> Callable[..., tuple[jax.Array, jax.Array]]:
+    """Build a producer whose matrix stays pending until `gate` is set.
+
+    The matrix depends on a host callback that blocks on the gate, so its
+    readiness is decided by the test, not by how fast the host runs the matmul.
+    """
+
+    def produce(*, wealth: jax.Array, work: jax.Array) -> tuple[jax.Array, jax.Array]:
+        held = jax.pure_callback(
+            lambda array: _hold_until_released(work=array, gate=gate),
+            jax.ShapeDtypeStruct(work.shape, work.dtype),
+            work,
+        )
+        return _produce(wealth=wealth, work=held)
+
+    return produce
 
 
 def _consume(*, previous_value: jax.Array, previous_matrix: jax.Array) -> jax.Array:
@@ -123,6 +153,9 @@ class _TwoProgramKernel:
 
 @dataclass(frozen=True)
 class _TwoProgramSolver(Solver):
+    gate: threading.Event
+    """Opened by the test; the producer's matrix is pending until then."""
+
     @property
     def capabilities(self) -> SolverExecutionCapabilities:
         return SolverExecutionCapabilities(
@@ -135,7 +168,7 @@ class _TwoProgramSolver(Solver):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         producer = CoreProgram(
             name="producer",
-            function=_produce,
+            function=_gated_produce(gate=self.gate),
             argument_builder=_producer_arguments,
             requirements=CoreExecutionRequirements(),
             output_roles=(
@@ -183,7 +216,7 @@ class _TwoProgramSolver(Solver):
         )
 
 
-def _model(*, budget: int | None) -> Model:
+def _model(*, budget: int | None, gate: threading.Event) -> Model:
     grid = LinSpacedGrid(start=1, stop=2, n_points=2)
     return Model(
         regimes={
@@ -193,7 +226,7 @@ def _model(*, budget: int | None) -> Model:
                 states={"wealth": grid},
                 state_transitions={"wealth": lambda wealth: wealth},
                 functions={"utility": _utility},
-                solver=_TwoProgramSolver(),
+                solver=_TwoProgramSolver(gate=gate),
             ),
             "terminal": Regime(
                 active=lambda age: age == 1,
@@ -214,7 +247,8 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
     budget: int | None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    model = _model(budget=budget)
+    gate = threading.Event()
+    model = _model(budget=budget, gate=gate)
     left = (np.arange(_SIZE) % 8 + 1) / 8
     right = (np.arange(_SIZE) % 16 + 1) / 16
     host_work = np.outer(left, right)
@@ -230,6 +264,15 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
         names.update({id(core.compiled): name for name, core in cores.items()})
         return cores
 
+    array_type = type(work)
+    original_complete = array_type.block_until_ready
+
+    def complete(array: jax.Array) -> jax.Array:
+        # A completion request is the waiting behaviour under test: open the
+        # gate so the held producer can finish instead of blocking forever.
+        gate.set()
+        return original_complete(array)
+
     def observe(
         compiled: jax.stages.Compiled, *args: object, **kwargs: object
     ) -> object:
@@ -238,6 +281,7 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
             observations.append(
                 ("consumer_entry", tuple(_is_ready(array=array) for array in returned))
             )
+            gate.set()
         output = original_call(compiled, *args, **kwargs)
         if name == "producer":
             returned.extend(jax.tree.leaves(output))
@@ -248,6 +292,7 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
 
     monkeypatch.setattr(backward_induction, "_cores_with_transfer_cache", bind)
     monkeypatch.setattr(jax.stages.Compiled, "__call__", observe)
+    monkeypatch.setattr(array_type, "block_until_ready", complete)
     try:
         solution = model.solve(
             params={"discount_factor": 0.0, "work": work},
@@ -255,6 +300,7 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
             log_level="off",
         )
     finally:
+        gate.set()
         jax.block_until_ready(returned)
     assert len(returned) == 2
     assert all(array.devices() == {jax.devices()[0]} for array in returned)
