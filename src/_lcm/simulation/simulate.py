@@ -106,7 +106,10 @@ from _lcm.simulation.program_arguments import (
     policy_prepare_arguments,
     policy_rank_arguments,
 )
-from _lcm.simulation.programs import gated_simulation_programs_ready
+from _lcm.simulation.programs import (
+    forward_regimes_by_period,
+    gated_simulation_programs_ready,
+)
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
@@ -730,7 +733,9 @@ def _simulate_subject_chunk(
         regime_name: {} for regime_name in regimes
     }
 
-    for period in range(ages.n_periods):
+    for period, active_regimes in enumerate(
+        forward_regimes_by_period(regimes=regimes, n_periods=ages.n_periods)
+    ):
         period_start = time.monotonic()
         if memory is not None:
             memory.unit_inputs = (
@@ -771,16 +776,6 @@ def _simulate_subject_chunk(
         prev_regime_ids = subject_regime_ids
         new_subject_regime_ids = subject_regime_ids
         new_own_stakeholder = own_stakeholder
-
-        # Only pairs a subject can occupy are simulated; a pair solved only
-        # for its value holds no subject.
-        active_regimes = {
-            regime_name: regime
-            for regime_name, regime in regimes.items()
-            if period in regime.active_periods
-            and regime_name
-            in regime.simulation.reachability.active_regimes_by_period[period]
-        }
 
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
 

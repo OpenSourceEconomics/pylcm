@@ -80,6 +80,7 @@ from _lcm.simulation.membership import (
 from _lcm.simulation.operand_placement import subject_operand_sharding
 from _lcm.simulation.policy_diagnostics import dropped_candidate_counts
 from _lcm.simulation.program_arguments import gate_route_arguments
+from _lcm.simulation.programs import forward_regimes_by_period
 from _lcm.simulation.random import (
     _create_simulation_key,
     _generate_windowed_simulation_keys,
@@ -118,7 +119,7 @@ type _FiniteRankOutput = tuple[
 
 
 # Keep setup, per-unit publication and period cleanup in their lifetime order.
-def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
+def profile_simulation_chunk(  # noqa: C901, PLR0915
     *,
     runtime: SimulationRuntime,
     regimes: Mapping[str, Regime],
@@ -203,6 +204,9 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     carrier = _profile_initial_carrier(
         inventory=inventory, initial=initial, regimes=regimes
     )
+    forward_regimes = forward_regimes_by_period(
+        regimes=regimes, n_periods=ages.n_periods
+    )
     _compile_forward_units_in_parallel(
         n_workers=_resolve_compilation_workers(
             max_compilation_workers=max_compilation_workers
@@ -229,8 +233,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 policy=(policies or {}).get(period, {}).get(name),
             )
             for period in range(ages.n_periods)
-            for name, regime in regimes.items()
-            if period in regime.active_periods
+            for name, regime in forward_regimes[period].items()
         ),
     )
     regime_ids, own_roles = cast(
@@ -285,9 +288,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         pending = payload_bytes(tree=(carrier, regime_ids, own_roles, key, taste_key))
         inventory.close_unit()
         new_ids = regime_ids
-        for name, regime in regimes.items():
-            if period not in regime.active_periods:
-                continue
+        for name, regime in forward_regimes[period].items():
             cores = profile_forward_unit(
                 runtime=runtime,
                 regimes=regimes,
@@ -446,7 +447,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         add_bytes(
             target=pending,
             source=_period_copy_reservation(
-                regimes=regimes,
+                regimes=forward_regimes[period],
                 values=values,
                 flags=flags,
                 policies=policies,
