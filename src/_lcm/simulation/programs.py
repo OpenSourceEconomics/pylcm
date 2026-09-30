@@ -362,6 +362,34 @@ def gated_simulation_programs_ready(*, regime: Regime) -> bool:
     )
 
 
+def forward_regimes_by_period(
+    *, regimes: Mapping[RegimeName, Regime], n_periods: int
+) -> tuple[MappingProxyType[RegimeName, Regime], ...]:
+    """Return, per period, the regimes whose forward programs simulation runs.
+
+    A `(period, regime)` pair is forward work only when a subject can occupy it:
+    the regime is active at the period and the simulation graph reaches it. A
+    pair solved only for its value (a perceived target no subject physically
+    enters) has no decision program and is absent here, while its solved value
+    stays available to the decisions that read it. Each period keeps the
+    insertion order of `regimes`, so traversal order and random-site identity
+    follow the regime mapping. Chunk profiling (parallel compilation and the
+    sequential carrier walk) and dispatch all read this one inventory.
+    """
+    return tuple(
+        MappingProxyType(
+            {
+                name: regime
+                for name, regime in regimes.items()
+                if period in regime.active_periods
+                and name
+                in regime.simulation.reachability.active_regimes_by_period[period]
+            }
+        )
+        for period in range(n_periods)
+    )
+
+
 #: Gate-route operands partitioned across subjects; every other one is shared.
 _GATE_ROUTE_SUBJECT_ARG_NAMES = (
     "next_states",
