@@ -298,7 +298,7 @@
           },
           {
             "path": "src/_lcm/simulation/runtime.py",
-            "sha256": "4c6db9baeb6b02d8a6cdcf96275a994eb5cfcfe536d7210844383f2ad33ae119"
+            "sha256": "e28c9df32a0c7f242d65b414988df330d491dce4de7585ad2773c740492fa27a"
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "c0713fbbbf734f31dd89d16992b4e98a3a369d0adcc833374ec140d0eb109526"
+        "source_inventory_sha256": "48996d0e432f0dd4113051f987ec341d5ca9c478a99f59f7cdd22ccf5ba850fa"
       },
       "fast": {
         "candidate_sources": [
@@ -768,7 +768,7 @@
           },
           {
             "path": "src/_lcm/simulation/runtime.py",
-            "sha256": "4c6db9baeb6b02d8a6cdcf96275a994eb5cfcfe536d7210844383f2ad33ae119"
+            "sha256": "e28c9df32a0c7f242d65b414988df330d491dce4de7585ad2773c740492fa27a"
           },
           {
             "path": "src/_lcm/simulation/simulate.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "c0713fbbbf734f31dd89d16992b4e98a3a369d0adcc833374ec140d0eb109526"
+        "source_inventory_sha256": "48996d0e432f0dd4113051f987ec341d5ca9c478a99f59f7cdd22ccf5ba850fa"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "c0713fbbbf734f31dd89d16992b4e98a3a369d0adcc833374ec140d0eb109526",
+  "source_inventory_sha256": "48996d0e432f0dd4113051f987ec341d5ca9c478a99f59f7cdd22ccf5ba850fa",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1242,7 +1242,7 @@
     },
     {
       "path": "src/_lcm/simulation/runtime.py",
-      "sha256": "4c6db9baeb6b02d8a6cdcf96275a994eb5cfcfe536d7210844383f2ad33ae119"
+      "sha256": "e28c9df32a0c7f242d65b414988df330d491dce4de7585ad2773c740492fa27a"
     },
     {
       "path": "src/_lcm/simulation/simulate.py",

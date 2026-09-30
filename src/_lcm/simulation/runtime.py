@@ -473,8 +473,15 @@ class SimulationRuntime:
             cached = self.cache.get(key)
         if cached is not None:
             return cast("jax.stages.Compiled", cached.executable).out_info
-        compiler = self._candidate_compiler(
-            program=materialized, n_subjects=n_subjects, abstract_inputs=True
+        compiler = _SimulationCandidateCompiler(
+            program=materialized,
+            enable_jit=self.enable_jit,
+            abstract_inputs=True,
+            subject_devices=self.subject_devices,
+            shard_subjects=self.execution.simulation_sharding == "subjects",
+            subject_width=min(
+                self.execution.axis_widths.get(SUBJECT_AXIS, n_subjects), n_subjects
+            ),
         )
         return wave.lower(
             lowering_key=key,
@@ -595,8 +602,16 @@ class SimulationRuntime:
         if not owns_compilation:
             return future.result()
         try:
-            compile_candidate = self._candidate_compiler(
-                program=program, n_subjects=n_subjects, abstract_inputs=abstract_inputs
+            compile_candidate = _SimulationCandidateCompiler(
+                program=program,
+                enable_jit=self.enable_jit,
+                abstract_inputs=abstract_inputs,
+                subject_devices=self.subject_devices,
+                shard_subjects=self.execution.simulation_sharding == "subjects",
+                subject_width=min(
+                    self.execution.axis_widths.get(SUBJECT_AXIS, n_subjects),
+                    n_subjects,
+                ),
             )
             with nested_phase(name="simulation_compilation"):
                 compiled = dataclasses.replace(
@@ -614,25 +629,6 @@ class SimulationRuntime:
             del self.in_flight[key]
             future.set_result(compiled)
         return compiled
-
-    def _candidate_compiler(
-        self,
-        *,
-        program: MaterializedCoreProgram,
-        n_subjects: int,
-        abstract_inputs: bool,
-    ) -> _SimulationCandidateCompiler:
-        """Bind a materialized program to this runtime's placement and widths."""
-        return _SimulationCandidateCompiler(
-            program=program,
-            enable_jit=self.enable_jit,
-            abstract_inputs=abstract_inputs,
-            subject_devices=self.subject_devices,
-            shard_subjects=self.execution.simulation_sharding == "subjects",
-            subject_width=min(
-                self.execution.axis_widths.get(SUBJECT_AXIS, n_subjects), n_subjects
-            ),
-        )
 
     def _publish(
         self,
