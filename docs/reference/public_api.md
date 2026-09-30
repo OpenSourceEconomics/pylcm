@@ -83,6 +83,7 @@ and the correctness of destinations require page-specific documentation and test
 | [`lcm.PowerMean`](../methods/preferences.md)                                    | Power-mean reduction            |
 | [`lcm.QuasiArithmeticMean`](../methods/preferences.md)                          | Quasi-arithmetic reduction      |
 | [`lcm.SimulationResult`](runtime_and_results.md#api-simulation-result)          | Deferred simulation result      |
+| [`lcm.PolicyLookup`](runtime_and_results.md#api-policy-lookup)                  | Per-period policy lookup result |
 | [`lcm.save_solution`](runtime_and_results.md#api-standalone-persistence)        | Save a complete solution        |
 | [`lcm.load_solution`](runtime_and_results.md#api-standalone-persistence)        | Load a complete solution lazily |
 | [`lcm.load_legacy_solution`](runtime_and_results.md#api-standalone-persistence) | Read the old value-only format  |

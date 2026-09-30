@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import lcm
+import lcm.solvers
 from lcm import PolicyLookup
 from lcm.exceptions import InvalidSimulationInputError
 from lcm_examples.mortality import LaborSupply
@@ -215,9 +216,9 @@ def test_state_grid_rejects_an_unknown_state(solved):
         model.state_grid(params=params, regime_name="working_life", state_name="income")
 
 
-def test_solution_result_is_exported_from_lcm(solved):
+def test_solution_result_is_public_in_lcm_solvers(solved):
     _, _, solution = solved
-    assert isinstance(solution, lcm.SolutionResult)
+    assert isinstance(solution, lcm.solvers.SolutionResult)
 
 
 def test_state_names_is_the_value_function_axis_order(solved):
