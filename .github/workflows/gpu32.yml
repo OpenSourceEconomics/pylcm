@@ -92,7 +92,9 @@ jobs:
         if: contains(needs.*.result, 'cancelled')
         uses: ./.github/actions/superseded
       - name: Fail unless the bounded GPU policy succeeded
-        if: steps.superseded.outputs.superseded != 'true'
+        if: >-
+          steps.superseded.outputs.superseded != 'true'
+          || contains(needs.*.result, 'failure')
         run: test "${{ needs.tests.result }}" = "success"
   gpu64:
     name: gpu64
@@ -110,5 +112,7 @@ jobs:
         if: contains(needs.*.result, 'cancelled')
         uses: ./.github/actions/superseded
       - name: Fail unless the bounded GPU policy succeeded
-        if: steps.superseded.outputs.superseded != 'true'
+        if: >-
+          steps.superseded.outputs.superseded != 'true'
+          || contains(needs.*.result, 'failure')
         run: test "${{ needs.tests.result }}" = "success"

@@ -2336,7 +2336,9 @@ jobs:
         if: contains(needs.*.result, 'cancelled')
         uses: ./.github/actions/superseded
       - name: Fail unless every lane succeeded
-        if: steps.superseded.outputs.superseded != 'true'
+        if: >-
+          steps.superseded.outputs.superseded != 'true'
+          || contains(needs.*.result, 'failure')
         run: |-
           echo "tests: ${{needs.tests.result}}"
           echo "fp32: ${{needs.tests-fp32.result}}"

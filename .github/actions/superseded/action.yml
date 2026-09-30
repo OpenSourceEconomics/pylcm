@@ -1,11 +1,14 @@
 ---
 name: superseded
 description: >-
-  Report whether a newer run of this workflow on the same branch exists, i.e. the
-  current run was cancelled because the concurrency group replaced it.
+  Report whether a newer pull-request run of this workflow for the same head
+  (same head repository and branch) exists, i.e. the current run was cancelled
+  because the concurrency group replaced it.
 outputs:
   superseded:
-    description: '`true` when a newer run of this workflow on this branch exists.'
+    description: >-
+      `true` only for a pull-request run when a newer run of this workflow from
+      the same head repository and branch exists.
     value: ${{ steps.check.outputs.superseded }}
 runs:
   using: composite
@@ -16,13 +19,21 @@ runs:
         GH_TOKEN: ${{ github.token }}
         BRANCH: ${{ github.head_ref || github.ref_name }}
       run: |-
-        repo="repos/${GITHUB_REPOSITORY}/actions"
-        workflow_id=$(gh api "${repo}/runs/${GITHUB_RUN_ID}" --jq .workflow_id)
-        newer=$(
-          gh api "${repo}/workflows/${workflow_id}/runs?branch=${BRANCH}" \
-            --jq "[.workflow_runs[] | select(.id > ${GITHUB_RUN_ID})] | length"
-        )
-        echo "newer runs on ${BRANCH}: ${newer}"
         superseded=false
-        if test "${newer}" -gt 0; then superseded=true; fi
+        if test "${GITHUB_EVENT_NAME}" = pull_request; then
+          repo="repos/${GITHUB_REPOSITORY}/actions"
+          run="${repo}/runs/${GITHUB_RUN_ID}"
+          workflow_id=$(gh api "${run}" --jq .workflow_id)
+          head_repo=$(gh api "${run}" --jq .head_repository.full_name)
+          runs="${repo}/workflows/${workflow_id}/runs"
+          same_head="select(.id > ${GITHUB_RUN_ID}"
+          same_head+=" and .event == \"pull_request\""
+          same_head+=" and .head_repository.full_name == \"${head_repo}\")"
+          newer=$(
+            gh api "${runs}?branch=${BRANCH}&event=pull_request" \
+              --jq "[.workflow_runs[] | ${same_head}] | length"
+          )
+          echo "newer runs from ${head_repo}:${BRANCH}: ${newer}"
+          if test "${newer}" -gt 0; then superseded=true; fi
+        fi
         echo "superseded=${superseded}" >> "$GITHUB_OUTPUT"

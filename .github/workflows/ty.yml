@@ -60,7 +60,9 @@ jobs:
         if: contains(needs.*.result, 'cancelled')
         uses: ./.github/actions/superseded
       - name: Fail unless the check succeeded
-        if: steps.superseded.outputs.superseded != 'true'
+        if: >-
+          steps.superseded.outputs.superseded != 'true'
+          || contains(needs.*.result, 'failure')
         run: |-
           echo "run: ${{ needs.run.result }}"
           test "${{ needs.run.result }}" = "success"
