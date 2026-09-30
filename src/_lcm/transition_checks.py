@@ -32,7 +32,7 @@ import logging
 import struct
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from math import prod
 from types import MappingProxyType
@@ -56,7 +56,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
-from _lcm.transition_plans import LotteryLifetime
+from _lcm.transition_plans import LotteryLifetime, declared_law_over_codes
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, StateOrActionName
 from _lcm.utils.logging import raise_or_warn, validation_enabled
 from _lcm.utils.namespace import ParamsQnameDepth
@@ -182,14 +182,21 @@ def _regime_probability_flags(
 
 
 @jax.jit
-def _state_probability_flags(*, probabilities: jax.Array) -> jax.Array:
-    """Keep the separate state-law mass rule, including its existing rtol."""
-    return jnp.stack(
-        (
-            jnp.any((probabilities < 0) | (probabilities > 1)),
-            ~jnp.allclose(jnp.sum(probabilities, axis=-1), 1.0, atol=1e-6),
-        )
+def _state_probability_flags(
+    *, probabilities: jax.Array, outside_group: jax.Array | None = None
+) -> jax.Array:
+    """Keep the separate state-law mass rule, including its existing rtol.
+
+    With a fixed-component mask, a third flag reports any positive mass on a
+    target outside the source code's group.
+    """
+    flags = (
+        jnp.any((probabilities < 0) | (probabilities > 1)),
+        ~jnp.allclose(jnp.sum(probabilities, axis=-1), 1.0, atol=1e-6),
     )
+    if outside_group is not None:
+        flags = (*flags, jnp.any(outside_group & (probabilities > 0)))
+    return jnp.stack(flags)
 
 
 @jax.jit
@@ -1442,7 +1449,14 @@ def _validate_state_transition_single(
     summary: _ValidationSummary | None = None,
     memory: SimulationMemory | None = None,
 ) -> None:
-    """Evaluate one MarkovTransition on its grid args and validate the output."""
+    """Evaluate one MarkovTransition on its grid args and validate the output.
+
+    A restricted fixed-component law is validated as its declared law over the
+    original codes: the full outcome axis, every original source code, and zero
+    mass outside each source code's group.
+    """
+    transition, original_codes, fixed_of_code = _as_declared_law(transition)
+    states = {**state_action_space.states, **original_codes}
     func = transition.func
     sig_params = tuple(inspect.signature(func).parameters)
 
@@ -1477,8 +1491,8 @@ def _validate_state_transition_single(
             scalar_kwargs["period"] = period_int32
         elif name == "age":
             scalar_kwargs["age"] = age
-        elif name in state_action_space.states:
-            grid_args[name] = state_action_space.states[name]
+        elif name in states:
+            grid_args[name] = states[name]
         elif name in state_action_space.actions:
             grid_args[name] = state_action_space.actions[name]
         elif name in regime_params:
@@ -1506,6 +1520,11 @@ def _validate_state_transition_single(
             )
             return
 
+    source_codes = (
+        None
+        if fixed_of_code is None
+        else _source_codes(grid_args=grid_args, state_name=transition.state_name)
+    )
     current_memory = (
         summary.memory if summary is not None and summary.memory is not None else memory
     )
@@ -1522,8 +1541,37 @@ def _validate_state_transition_single(
         age=age,
         summary=summary,
         memory=current_memory,
+        source_codes=source_codes,
+        fixed_of_code=fixed_of_code,
     )
     _remember_state_probability(summary=summary, binding=binding, shape=probs.shape)
+
+
+def _as_declared_law(
+    transition: _StochasticStateTransition,
+) -> tuple[
+    _StochasticStateTransition,
+    Mapping[StateOrActionName, IntND],
+    tuple[int, ...] | None,
+]:
+    """Replace a restricted fixed-component law by its declared law over codes.
+
+    Returns the transition to evaluate, the original state's code grid, and the
+    group of each original code. Any other law is returned unchanged, with no
+    extra grid and no groups.
+    """
+    declared = declared_law_over_codes(transition.func)
+    if declared is None:
+        return transition, MappingProxyType({}), None
+    layout, func = declared
+    n_codes = len(layout.fixed_of_code)
+    return (
+        replace(
+            transition, func=func, state_name=layout.state_name, n_outcomes=n_codes
+        ),
+        MappingProxyType({layout.state_name: jnp.arange(n_codes, dtype=jnp.int32)}),
+        layout.fixed_of_code,
+    )
 
 
 def _check_and_release_state_probability(
@@ -1534,6 +1582,8 @@ def _check_and_release_state_probability(
     age: float | ScalarInt | ScalarFloat,
     summary: _ValidationSummary | None,
     memory: SimulationMemory | None,
+    source_codes: np.ndarray | None = None,
+    fixed_of_code: tuple[int, ...] | None = None,
 ) -> None:
     """Own one completed state law until its admitted reduction is retained."""
     if memory is not None:
@@ -1546,6 +1596,8 @@ def _check_and_release_state_probability(
             age=age,
             summary=summary,
             memory=memory,
+            source_codes=source_codes,
+            fixed_of_code=fixed_of_code,
         )
     finally:
         if memory is not None:
@@ -1774,8 +1826,14 @@ def _check_state_probs(
     age: float | ScalarInt | ScalarFloat,
     summary: _ValidationSummary | None = None,
     memory: SimulationMemory | None = None,
+    source_codes: np.ndarray | None = None,
+    fixed_of_code: tuple[int, ...] | None = None,
 ) -> None:
-    """Assert outcome-axis size, [0, 1] range, and sum-to-1 on a probs array."""
+    """Assert outcome-axis size, [0, 1] range, and sum-to-1 on a probs array.
+
+    Given each evaluated point's source code and the fixed component's groups,
+    also assert that no mass leaves the source code's group.
+    """
     state_label = _check_state_outcome_axis(
         shape=probs.shape,
         transition=transition,
@@ -1784,21 +1842,29 @@ def _check_state_probs(
         summary=summary,
     )
 
-    if summary is not None:
-        summary.append(
-            function=_state_probability_flags,
-            arguments={"probabilities": probs},
+    arguments: dict[str, object] = {"probabilities": probs}
+    if source_codes is not None and fixed_of_code is not None:
+        groups = np.asarray(fixed_of_code)
+        outside_group = groups[source_codes][:, None] != groups
+        arguments["outside_group"] = jnp.asarray(
+            outside_group.reshape(
+                outside_group.shape[0],
+                *([1] * (probs.ndim - 2)),
+                outside_group.shape[1],
+            )
         )
+    if summary is not None:
+        summary.append(function=_state_probability_flags, arguments=arguments)
         return
     if memory is None:
-        flags = _state_probability_flags(probabilities=probs)
+        flags = _state_probability_flags(**arguments)
     else:
         flags = run_simulation_operation(
             memory=memory,
             function=_state_probability_flags,
-            arguments={"probabilities": probs},
+            arguments=arguments,
         )
-    outside_bounds, invalid_mass = np.asarray(flags).tolist()
+    outside_bounds, invalid_mass, *leaks = np.asarray(flags).tolist()
     if outside_bounds:
         raise InvalidStateTransitionProbabilitiesError(
             f"MarkovTransition for {state_label} in regime '{regime_name}' "
@@ -1810,6 +1876,19 @@ def _check_state_probs(
             f"MarkovTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned rows that do not sum to 1 along the "
             f"outcome axis."
+        )
+
+    if any(leaks):
+        point, *_, target = np.argwhere(
+            np.asarray(arguments["outside_group"]) & (np.asarray(probs) > 0)
+        )[0].tolist()
+        groups = np.asarray(fixed_of_code)
+        source = int(np.asarray(source_codes)[point])
+        raise InvalidStateTransitionProbabilitiesError(
+            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"at age {age} moves mass from code {source} (group {groups[source]}) "
+            f"to code {target} (group {groups[target]}); its fixed_component "
+            f"requires zero mass outside the source code's group."
         )
 
 
@@ -1844,6 +1923,19 @@ def _check_state_outcome_axis(
         )
 
     return state_label
+
+
+def _source_codes(
+    *,
+    grid_args: Mapping[StateOrActionName, FloatND | IntND],
+    state_name: StateOrActionName,
+) -> np.ndarray:
+    """Return the state's code at each point of the flattened Cartesian grid."""
+    names = tuple(grid_args)
+    sizes = [len(grid_args[name]) for name in names]
+    axis = names.index(state_name)
+    codes = np.asarray(grid_args[state_name])
+    return np.tile(np.repeat(codes, prod(sizes[axis + 1 :])), prod(sizes[:axis]))
 
 
 def _unit_mass_violations(sum_all: FloatND) -> BoolND:

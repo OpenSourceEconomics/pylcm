@@ -10,13 +10,15 @@ TargetTransitionPlan is the sole representation consumed by solve, simulation,
 validation, diagnostics, and solver-specific continuation machinery.
 """
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from types import MappingProxyType
+from typing import no_type_check
 
 from _lcm.typing import RegimeName, TransitionFunctionName
-from lcm.typing import FloatND
+from lcm.typing import DiscreteState, FloatND
 
 
 class SupportOrigin(Enum):
@@ -105,6 +107,62 @@ class OriginalLotteryLayout:
     rest_of_code: tuple[int, ...]
     fixed_of_code: tuple[int, ...]
     probabilities: Callable[..., FloatND]
+
+
+def declared_law_over_codes(
+    func: Callable[..., FloatND],
+) -> tuple[OriginalLotteryLayout, Callable[..., FloatND]] | None:
+    """Return a restricted law's original layout and its declared law over codes.
+
+    A restricted fixed-component law forwards to a bound method whose receiver
+    carries the original layout. The declared law takes the original state code
+    as an argument even when it does not read it, so every original source code
+    can be evaluated. Returns `None` for any other law.
+    """
+    wrapped = getattr(func, "__wrapped__", None)
+    layout = getattr(getattr(wrapped, "__self__", None), "original_layout", None)
+    if not (inspect.ismethod(wrapped) and isinstance(layout, OriginalLotteryLayout)):
+        return None
+    declared = layout.probabilities
+    state_name = layout.state_name
+    signature, reads_state_directly = signature_with_state(
+        func=declared, state_name=state_name
+    )
+    if reads_state_directly:
+        return layout, declared
+
+    @no_type_check
+    def over_codes(**kwargs: object) -> FloatND:
+        return declared(**{k: v for k, v in kwargs.items() if k != state_name})
+
+    over_codes.__signature__ = signature  # ty: ignore[unresolved-attribute]
+    over_codes.__name__ = f"next_{state_name}"
+    return layout, over_codes
+
+
+def signature_with_state(
+    *, func: Callable[..., FloatND], state_name: str
+) -> tuple[inspect.Signature, bool]:
+    """Return `func`'s signature declaring `state_name`, and whether `func` reads it."""
+    signature = inspect.signature(func)
+    if state_name in signature.parameters:
+        return signature, True
+    parameters = list(signature.parameters.values())
+    position = next(
+        (
+            i
+            for i, parameter in enumerate(parameters)
+            if parameter.kind is inspect.Parameter.VAR_KEYWORD
+        ),
+        len(parameters),
+    )
+    parameters.insert(
+        position,
+        inspect.Parameter(
+            state_name, inspect.Parameter.KEYWORD_ONLY, annotation=DiscreteState
+        ),
+    )
+    return signature.replace(parameters=parameters), False
 
 
 @dataclass(frozen=True)

@@ -24,7 +24,7 @@ from _lcm.grids.categorical import categorical
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.regime_building.broadcast import merge_model_slots
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
-from _lcm.transition_plans import OriginalLotteryLayout
+from _lcm.transition_plans import OriginalLotteryLayout, signature_with_state
 from _lcm.typing import RegimeNamesToIds
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
@@ -637,28 +637,12 @@ def _restricted_law(
     fixed_table = jnp.asarray(fixed_of_code)
     parts_table = jnp.asarray(code_by_parts)
 
-    signature = inspect.signature(func)
-    reads_state_directly = state_name in signature.parameters
-    if not reads_state_directly:
-        # The original law may reach the state through named DAG helpers, or not
-        # need it at all (one group). The restriction itself still needs the
-        # current group. Declare that dependency on this adapter, not on func.
-        parameters = list(signature.parameters.values())
-        position = next(
-            (
-                i
-                for i, parameter in enumerate(parameters)
-                if parameter.kind is inspect.Parameter.VAR_KEYWORD
-            ),
-            len(parameters),
-        )
-        parameters.insert(
-            position,
-            inspect.Parameter(
-                state_name, inspect.Parameter.KEYWORD_ONLY, annotation=DiscreteState
-            ),
-        )
-        signature = signature.replace(parameters=parameters)
+    # The original law may reach the state through named DAG helpers, or not
+    # need it at all (one group). The restriction itself still needs the
+    # current group. Declare that dependency on this adapter, not on func.
+    signature, reads_state_directly = signature_with_state(
+        func=func, state_name=state_name
+    )
     names = tuple(signature.parameters)
 
     # Generated per model, so the claw must not wrap it: model fingerprinting reads
