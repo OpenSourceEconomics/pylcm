@@ -18,7 +18,7 @@ import pandas as pd
 from beartype import beartype
 from beartype.roar import BeartypeCallHintViolation
 
-from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF
+from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF, SIMULATION_INPUT_CONF
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import (
@@ -3046,6 +3046,7 @@ class Model:
             raise InvalidSimulationInputError(msg)
         return tuple(regime.solution.state_names)
 
+    @beartype(conf=SIMULATION_INPUT_CONF)
     def state_grid(
         self,
         *,
