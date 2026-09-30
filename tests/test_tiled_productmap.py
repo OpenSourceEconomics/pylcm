@@ -496,12 +496,21 @@ def _max_operand_size(*, width: int, broadcast: tuple[str, ...], primitive: str)
     )
 
 
-@pytest.mark.parametrize(("broadcast", "expected"), [((), 30), (("first",), 15)])
+@pytest.mark.parametrize(
+    ("broadcast", "width", "expected"),
+    [((), 10, 10), (("first",), 10, 5), ((), 30, 15), (("first",), 30, 15)],
+)
 def test_broadcast_axis_leaves_work_blind_to_it_unbatched(
-    *, broadcast: tuple[str, ...], expected: int
+    *, broadcast: tuple[str, ...], width: int, expected: int
 ) -> None:
-    """Work that never reads a broadcast coordinate runs once per remaining cell."""
-    assert _max_operand_size(width=30, broadcast=broadcast, primitive="exp") == expected
+    """Work that never reads a broadcast coordinate runs once per remaining cell.
+
+    A window covering the whole product maps the named grids, which leaves such work
+    unbatched along the coordinate it never reads even without a broadcast axis.
+    """
+    assert (
+        _max_operand_size(width=width, broadcast=broadcast, primitive="exp") == expected
+    )
 
 
 @pytest.mark.parametrize("width", [2, 6, 10, 30])
