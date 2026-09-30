@@ -14,7 +14,7 @@ import pathlib
 import sys
 import types
 import typing
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Mapping
 from enum import Enum
 from fractions import Fraction
 from types import MappingProxyType
@@ -75,7 +75,7 @@ from lcm.solver_api import (
     PersistencePolicy,
     SolverIdentity,
 )
-from lcm.transition import AgeRange
+from lcm.transition import AgeRange, AgeSpecializedFunction
 
 # beartype compiles every guard it writes under this synthetic filename.
 _BEARTYPE_BODY_FILENAME_PREFIX = "<@beartype("
@@ -714,7 +714,20 @@ def fingerprint_model_structure(
                 # hasher. The declaration retains user-level function bodies,
                 # defaults, closures and globals instead of relying on compiled
                 # wrapper identity.
-                "declaration": _project_user_regime_declaration(user_regimes[name]),
+                "declaration": _project_user_regime_declaration(
+                    user_regimes[name],
+                    age_specialization=_AgeSpecializationPeriods(
+                        ages=ages,
+                        solve_periods=regime.active_periods,
+                        simulate_periods=tuple(
+                            period
+                            for period, visited in enumerate(
+                                regime.simulation.reachability.active_regimes_by_period
+                            )
+                            if name in visited
+                        ),
+                    ),
+                ),
                 "fixed_params": projected_fixed_params[name],
             }
             for name, regime in regimes.items()
@@ -748,8 +761,26 @@ def _grid_support(
 # Regime slots whose simulate-phase truth a stored solution is independent of.
 _TRANSITION_SLOTS = frozenset({"state_transitions", "regime_transitions"})
 
+# Regime slots in which an `AgeSpecializedFunction` may appear.
+_AGE_SPECIALIZED_FUNCTION_SLOTS = frozenset({"functions", "constraints", "states"})
 
-def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, object]:
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _AgeSpecializationPeriods:
+    """The periods at which a regime resolves its age-specialized functions."""
+
+    ages: AgeGrid
+    """The model's age grid."""
+    solve_periods: tuple[int, ...]
+    """Periods at which a function the solve phase reads is resolved."""
+    simulate_periods: tuple[int, ...]
+    """Periods at which a function only the simulate phase reads is resolved."""
+
+
+# keyword-only-exempt: primary-argument=regime
+def _project_user_regime_declaration(
+    regime: object, *, age_specialization: _AgeSpecializationPeriods | None = None
+) -> MappingProxyType[str, object]:
     """Return the semantic dataclass fields without importing declaration topology.
 
     A stored policy is priced against the solve-phase laws of motion and regime
@@ -758,6 +789,9 @@ def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, ob
     Every other slot keeps both phases: a simulate-phase utility, constraint,
     aggregator, or carried-state grid changes what the solution is replayed
     with, so two models that differ there are different models.
+
+    With `age_specialization`, every `AgeSpecializedFunction` is replaced by the
+    concrete function each period runs; see `_resolve_age_specialized_function`.
     """
     if type(regime) is types.SimpleNamespace:
         fields = vars(regime).items()
@@ -778,6 +812,11 @@ def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, ob
                     name: (
                         _project_transition_slot_to_solve(value)
                         if name in _TRANSITION_SLOTS
+                        else _resolve_age_specialized_slot(
+                            value=value, age_specialization=age_specialization
+                        )
+                        if name in _AGE_SPECIALIZED_FUNCTION_SLOTS
+                        and age_specialization is not None
                         else value
                     )
                     for name, value in fields
@@ -786,6 +825,87 @@ def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, ob
             ),
         }
     )
+
+
+def _resolve_age_specialized_slot(
+    *, value: object, age_specialization: _AgeSpecializationPeriods
+) -> object:
+    """Resolve the age-specialized functions one declaration slot holds.
+
+    A slot maps names to entries; an entry is a marker, or a `Phased` with a marker
+    on either side. A marker the solve phase reads is resolved at the solve periods,
+    one only the simulate phase reads at the simulate periods, as model building
+    does.
+    """
+    if not isinstance(value, Mapping):
+        return value
+    mapping = cast("Mapping[str, object]", value)
+    if not any(_holds_age_specialized_function(entry) for entry in mapping.values()):
+        return value
+    solve_markers = {
+        id(side)
+        for entry in mapping.values()
+        for side in ((entry.solve,) if type(entry) is Phased else (entry,))
+        if isinstance(side, AgeSpecializedFunction)
+    }
+
+    def resolve(side: object) -> object:
+        if not isinstance(side, AgeSpecializedFunction):
+            return side
+        periods = (
+            age_specialization.solve_periods
+            if id(side) in solve_markers
+            else age_specialization.simulate_periods
+        )
+        return _resolve_age_specialized_function(
+            marker=side, ages=age_specialization.ages, periods=periods
+        )
+
+    return MappingProxyType(
+        {
+            name: (
+                (
+                    "pylcm-phased-age-specialized",
+                    resolve(entry.solve),
+                    resolve(entry.simulate),
+                )
+                if type(entry) is Phased and _holds_age_specialized_function(entry)
+                else resolve(entry)
+            )
+            for name, entry in mapping.items()
+        }
+    )
+
+
+def _holds_age_specialized_function(entry: object) -> bool:
+    """Whether a slot entry is, or has a `Phased` side that is, a function marker."""
+    if type(entry) is Phased:
+        return isinstance(entry.solve, AgeSpecializedFunction) or isinstance(
+            entry.simulate, AgeSpecializedFunction
+        )
+    return isinstance(entry, AgeSpecializedFunction)
+
+
+def _resolve_age_specialized_function(
+    *, marker: AgeSpecializedFunction, ages: AgeGrid, periods: tuple[int, ...]
+) -> tuple[str, MappingProxyType[int, object]]:
+    """Return the concrete function each period runs, keyed by period.
+
+    The factory is a build-time recipe: model building calls `build(age)` and
+    keeps only the concrete functions, so they, not the factory, are the model.
+    Periods with equal `signature(age)` share the program built from the first
+    of them, so each maps to that period's function. A signature is a sharing
+    key, not semantics, and does not itself enter the record.
+    """
+    first_by_signature: dict[Hashable, object] = {}
+    resolved: dict[int, object] = {}
+    for period in periods:
+        age = float(ages.period_to_age(period))
+        signature = marker.signature(age)
+        if signature not in first_by_signature:
+            first_by_signature[signature] = marker.build(age)
+        resolved[period] = first_by_signature[signature]
+    return "pylcm-age-specialized-function", MappingProxyType(resolved)
 
 
 def _project_transition_slot_to_solve(value: object) -> object:

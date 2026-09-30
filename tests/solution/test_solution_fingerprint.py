@@ -1,6 +1,7 @@
 """Collision-focused tests for durable solution fingerprints."""
 
 import dataclasses
+import functools
 import inspect
 from abc import ABCMeta
 from collections.abc import Callable, Mapping
@@ -56,7 +57,9 @@ from lcm.solvers import (
     Solver,
     SolverBuildContext,
 )
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import ContinuousState, FloatND, IntND, ScalarInt
+from tests.solution import test_age_specialized_solve as age_specialized_models
 from tests.test_models.taste_shocks_toy import (
     get_model as get_toy_model,
 )
@@ -2264,3 +2267,68 @@ def test_shared_objects_are_walked_once(*, monkeypatch) -> None:
     monkeypatch.setattr(fingerprints._SemanticHasher, "_visit_active", counting)
     fingerprints._semantic_fingerprint(_diamond(depth=16))
     assert len(walked) == len(set(walked))
+
+
+# keyword-only-exempt: library-callback=functools.partial
+def _bonus_through_cached_factory(
+    factory: Callable[[float], Callable[[], float]], age: float
+) -> Callable[[], float]:
+    return factory(age)
+
+
+def _structure_digest(policy_bonus: object) -> str:
+    model = age_specialized_models._make_model(cast("Any", policy_bonus))
+    return model._model_structure_fingerprint
+
+
+def _age_bonus(
+    *, build: Callable, signature: Callable = float
+) -> AgeSpecializedFunction:
+    return AgeSpecializedFunction(build=build, signature=signature)
+
+
+def _bonus_frozen_at_45(age: float) -> Callable[[], float]:
+    return age_specialized_models._bonus_of_age(45.0 if age == 55.0 else age)
+
+
+def _bonus_of_group_start(age: float) -> Callable[[], float]:
+    return age_specialized_models._bonus_of_age(25.0 if age < 50.0 else 55.0)
+
+
+def _is_young(age: float) -> bool:
+    return age < 50.0
+
+
+@pytest.mark.parametrize(
+    ("other", "expected_equal"),
+    [
+        pytest.param(
+            _age_bonus(
+                build=partial(
+                    _bonus_through_cached_factory,
+                    functools.cache(age_specialized_models._bonus_of_age),
+                )
+            ),
+            True,
+            id="cached-factory-same-functions",
+        ),
+        pytest.param(
+            _age_bonus(build=_bonus_frozen_at_45), False, id="one-period-differs"
+        ),
+    ],
+)
+def test_age_specialized_function_is_identified_by_what_each_period_runs(
+    *, other: AgeSpecializedFunction, expected_equal: bool
+) -> None:
+    """The factory is a recipe; the per-period functions it builds are the model."""
+    baseline = _structure_digest(_age_bonus(build=age_specialized_models._bonus_of_age))
+    assert (baseline == _structure_digest(other)) is expected_equal
+
+
+def test_periods_sharing_a_signature_run_the_first_periods_function() -> None:
+    """Periods with one signature are identified by the first period's function."""
+    grouped = _age_bonus(
+        build=age_specialized_models._bonus_of_age, signature=_is_young
+    )
+    explicit = _age_bonus(build=_bonus_of_group_start, signature=_is_young)
+    assert _structure_digest(grouped) == _structure_digest(explicit)
