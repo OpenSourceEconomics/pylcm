@@ -450,12 +450,14 @@ class SimulationRuntime:
         widths: Mapping[str, int],
         wave: CompilationWave,
         label: str,
+        wait: bool = False,
     ) -> object:
         """Lower an abstract candidate into `wave` and return its output descriptors.
 
         The wave compiles it off the calling thread and publishes the executable
         to the shared compiler cache when it closes. A candidate already in the
-        cache is not lowered again.
+        cache is not lowered again. With `wait`, the descriptors are the compiled
+        executable's, carrying the shardings the compiler chose.
         """
         materialized = _materialize_abstract(
             runtime=self,
@@ -479,6 +481,7 @@ class SimulationRuntime:
             label=label,
             lower=partial(compiler.lower, widths),
             publish=partial(self._publish, key=key, widths=widths),
+            wait=wait,
         )
 
     def is_prepared(self, *, program: CoreProgram, period: int) -> bool:

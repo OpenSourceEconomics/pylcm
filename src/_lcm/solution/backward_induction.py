@@ -4776,6 +4776,10 @@ class CompilationWave:
     the wave waits for every compile and hands each executable to the publisher
     its `lower` call named.
 
+    A lowered program's output descriptors carry the shardings its lowering
+    declares; outputs whose placement the compiler chooses carry none. A caller
+    whose next program needs those shardings asks `lower` to wait for the compile.
+
     The first error is raised on the caller as soon as the caller sees it, with a
     note naming the program:
     - a lowering error at once, noted `while lowering <label>`;
@@ -4811,6 +4815,9 @@ class CompilationWave:
         self._compiled = compiled
         self._compile_phase = compile_phase
         self._futures: dict[Future[tuple[Hashable, jax.stages.Compiled]], str] = {}
+        self._futures_by_key: dict[
+            Hashable, tuple[Future[tuple[Hashable, jax.stages.Compiled]], str]
+        ] = {}
         self._out_info: dict[Hashable, object] = {}
         self._publishers: dict[Hashable, Callable[..., object] | None] = {}
 
@@ -4824,6 +4831,7 @@ class CompilationWave:
         label: str,
         lower: Callable[[], jax.stages.Lowered],
         publish: Callable[..., object] | None = None,
+        wait: bool = False,
     ) -> object:
         """Lower one program here, submit its compile, and return its outputs.
 
@@ -4835,13 +4843,36 @@ class CompilationWave:
             lower: Traces and lowers the program.
             publish: Receives the executable as `executable=` on the caller when
                 the wave closes.
+            wait: Whether to wait for the compile and return the executable's
+                output descriptors, whose shardings are the compiler's.
 
         Returns:
-            The lowered program's output tree of shape descriptors.
+            The program's output tree of shape descriptors.
 
         """
-        if lowering_key in self._out_info:
+        if lowering_key not in self._out_info:
+            self._submit(
+                lowering_key=lowering_key, label=label, lower=lower, publish=publish
+            )
+        if not wait:
             return self._out_info[lowering_key]
+        future, label = self._futures_by_key[lowering_key]
+        try:
+            _, executable = future.result()
+        except BaseException as error:
+            error.add_note(f"while compiling {label}")
+            raise
+        return executable.out_info
+
+    def _submit(
+        self,
+        *,
+        lowering_key: Hashable,
+        label: str,
+        lower: Callable[[], jax.stages.Lowered],
+        publish: Callable[..., object] | None,
+    ) -> None:
+        """Lower one program on the calling thread and hand its compile to the pool."""
         self._raise_first_compile_error()
         self._logger.info("  lowering %s ...", label)
         start = time.monotonic()
@@ -4866,9 +4897,9 @@ class CompilationWave:
             ),
         )
         self._futures[future] = label
+        self._futures_by_key[lowering_key] = (future, label)
         self._out_info[lowering_key] = low.out_info
         self._publishers[lowering_key] = publish
-        return low.out_info
 
     # keyword-only-exempt: library-callback=contextlib.AbstractContextManager
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:

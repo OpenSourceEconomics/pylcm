@@ -208,11 +208,12 @@ class ProfiledSimulationOperations:
         wave: CompilationWave,
         label: str,
     ) -> object:
-        """Lower placed shape descriptors into `wave`; return output descriptors.
+        """Lower placed shape descriptors into `wave`; return compiled descriptors.
 
         The wave compiles the operation off the calling thread and publishes its
         executable and compiler accounting to the shared cache when it closes. An
-        operation already in the cache is not lowered again.
+        operation already in the cache is not lowered again. The call waits for
+        the compile, so the descriptors carry the shardings the compiler chose.
         """
         key, abstract, static, output_sharding = _abstract_operation(
             function=function,
@@ -237,6 +238,7 @@ class ProfiledSimulationOperations:
                 output_sharding=output_sharding,
             ),
             publish=partial(self._publish, key=key),
+            wait=True,
         )
 
     def admit_producer(

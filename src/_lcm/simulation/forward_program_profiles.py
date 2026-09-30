@@ -273,6 +273,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             regime_name=name,
             profiles=profiles,
             wave=wave,
+            feeds_forward=True,
         )
         next_values = MappingProxyType(
             {**next_values, **cast("Mapping[str, object]", folded)}
@@ -480,6 +481,7 @@ def _profile_finite_decision(
         regime_name=name,
         profiles=profiles,
         wave=wave,
+        feeds_forward=True,
     )
     return _prepare_program(
         runtime=runtime,
@@ -500,6 +502,7 @@ def _profile_finite_decision(
         regime_name=name,
         profiles=profiles,
         wave=wave,
+        feeds_forward=True,
     )
 
 
@@ -528,12 +531,15 @@ def _prepare_program(
     regime_name: str,
     profiles: dict[str, ForwardProgramProfile],
     wave: CompilationWave | None,
+    feeds_forward: bool = False,
 ) -> object:
     """Compile a forward program here, or lower it into `wave`.
 
     A compiled program's profile is stored in `profiles` under `family`. A lowered
     one is named in the wave's logs and error notes by regime, family, period and
-    widths.
+    widths. When a later program of the unit reads this one's outputs unplaced,
+    the caller sets `feeds_forward`: the wave then waits for the compile, so the
+    descriptors carry the compiler's shardings, as the ordered walk sees them.
 
     Returns:
         The program's output descriptors.
@@ -561,6 +567,7 @@ def _prepare_program(
         widths=concrete_widths,
         wave=wave,
         label=(f"{regime_name} {family} (period {period}, widths={concrete_widths!r})"),
+        wait=feeds_forward,
     )
 
 
