@@ -46,7 +46,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from _lcm.execution.workspace_planning import CompilerMemoryReservation
+from _lcm.execution.core_program import TiledOutputAxis
+from _lcm.execution.workspace_planning import (
+    CompilerMemoryReservation,
+    workspace_width_candidates,
+)
 from _lcm.solution import backward_induction, grid_search
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from _lcm.utils import dispatchers
@@ -583,3 +587,20 @@ def test_width_setting_solves_to_the_values_of_the_plain_layout(
     off = _solve_under(setting=setting, broadcast=False)[0]
 
     assert _ulp_excess(covered=on, uncovered=off) == {}
+
+
+def test_budgeted_cell_frontier_rounds_widths_at_or_above_the_broadcast_extent() -> (
+    None
+):
+    """The frontier is the plain ladder with every width at or above the broadcast
+    extent rounded down onto its multiples; narrower widths stay as they are."""
+    axis = TiledOutputAxis(
+        name=CELL_AXIS,
+        state_names=("health", "habit", "wealth"),
+        extent=72,
+        width_keyword="_lcm_cell_width",
+        preferred_alignment=_BROADCAST_EXTENT,
+    )
+    candidates = workspace_width_candidates(axes=(axis,), budget_bytes=_BUDGET)
+
+    assert [widths[CELL_AXIS] for widths in candidates] == [72, 63, 30, 15, 6, 3, 2, 1]

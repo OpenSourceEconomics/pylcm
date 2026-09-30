@@ -374,11 +374,11 @@ class GridSearch(Solver):
                             state_names=inner_state_names,
                             extent=cell_extent,
                             width_keyword=cell_width_keyword,
-                            # A broadcast state stays in the utility and argmax
-                            # work of every cell, so a width counts whole
-                            # product points: a multiple of the broadcast extent.
-                            minimum_width=broadcast_extents[q_id],
-                            alignment=broadcast_extents[q_id],
+                            # A width counts whole product points. The
+                            # continuation is broadcast only at multiples of
+                            # the broadcast extent, so the planner prefers them;
+                            # every other width runs the plain layout.
+                            preferred_alignment=broadcast_extents[q_id],
                             halve_on_materialised_gather=True,
                         ),
                     )
