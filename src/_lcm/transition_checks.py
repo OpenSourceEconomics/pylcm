@@ -1529,6 +1529,11 @@ def _validate_state_transition_single(
         scalar_kwargs=MappingProxyType(scalar_kwargs),
         memory=current_memory,
     )
+    source_codes = (
+        None
+        if fixed_of_code is None
+        else _source_codes(grid_args=grid_args, state_name=transition.state_name)
+    )
     _check_and_release_state_probability(
         probs=probs,
         transition=transition,
@@ -1536,12 +1541,7 @@ def _validate_state_transition_single(
         age=age,
         summary=summary,
         memory=current_memory,
-        source_codes=None
-        if fixed_of_code is None
-        else _source_codes(
-            grid_args=grid_args,
-            state_name=transition.state_name,
-        ),
+        source_codes=source_codes,
         fixed_of_code=fixed_of_code,
     )
     _remember_state_probability(summary=summary, binding=binding, shape=probs.shape)
@@ -1860,7 +1860,9 @@ def _check_state_probs(
         flags = _state_probability_flags(**arguments)
     else:
         flags = run_simulation_operation(
-            memory=memory, function=_state_probability_flags, arguments=arguments
+            memory=memory,
+            function=_state_probability_flags,
+            arguments=arguments,
         )
     outside_bounds, invalid_mass, *leaks = np.asarray(flags).tolist()
     if outside_bounds:
