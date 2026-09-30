@@ -387,3 +387,32 @@ def test_residual_counts_only_top_level_phases() -> None:
     ]
     (call,) = parse_phase_records(lines=lines)
     assert call.residual_seconds() == pytest.approx(0.2, abs=1e-9)
+
+
+def test_parse_phase_records_reads_overlapping_same_named_phases_as_siblings() -> None:
+    """Same-named phases open at once (compiles on a worker pool) share one depth,
+    and each keeps its own duration."""
+    call_id = "0123456789ab"
+    lines = [
+        f"solve call {call_id} phase public_simulate begin",
+        f"solve call {call_id} phase chunk_planning begin",
+        f"solve call {call_id} phase simulation_compilation begin",
+        f"solve call {call_id} phase simulation_compilation begin",
+        (
+            f"solve call {call_id} phase simulation_compilation end status=ok "
+            "seconds=0.100000"
+        ),
+        (
+            f"solve call {call_id} phase simulation_compilation end status=ok "
+            "seconds=0.200000"
+        ),
+        f"solve call {call_id} phase chunk_planning end status=ok seconds=0.300000",
+        f"solve call {call_id} phase public_simulate end status=ok seconds=0.500000",
+    ]
+    (call,) = parse_phase_records(lines=lines)
+    assert [(p.name, p.depth, p.seconds) for p in call.phases] == [
+        ("public_simulate", 0, 0.5),
+        ("chunk_planning", 1, 0.3),
+        ("simulation_compilation", 2, 0.1),
+        ("simulation_compilation", 2, 0.2),
+    ]

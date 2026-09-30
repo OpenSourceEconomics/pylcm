@@ -128,8 +128,13 @@ def prepare_simulation_chunks(
     log_level: LogLevel,
     policies: Mapping[int, Mapping[str, object]] | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
+    max_compilation_workers: int | None = None,
 ) -> PreparedSimulationChunks:
-    """Select a complete admitted outer cohort with the top-first planner."""
+    """Select a complete admitted outer cohort with the top-first planner.
+
+    `max_compilation_workers` bounds the threads compiling each profiled
+    candidate's forward programs, as it does for the solve's compilation waves.
+    """
     runtime = next(iter(regimes.values())).simulation.programs.executor
     if (
         not isinstance(runtime, SimulationRuntime)
@@ -210,6 +215,7 @@ def prepare_simulation_chunks(
         log_level=log_level,
         resident=resident,
         devices=devices,
+        max_compilation_workers=max_compilation_workers,
     )
     plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
     return PreparedSimulationChunks(
@@ -335,6 +341,7 @@ class _ChunkProfiler:
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
     policies: Mapping[int, Mapping[str, object]] | None = None
+    max_compilation_workers: int | None = None
 
     def __call__(self, *, n_subjects: int) -> SimulationChunkProfile:
         """Return a fitting common inner choice, or the smallest required bound."""
@@ -410,6 +417,7 @@ class _ChunkProfiler:
                 profile_simulation_chunk,
                 flat_params=self.call_inputs.flat_params,
                 base_spaces=self.call_inputs.base_state_action_spaces,
+                max_compilation_workers=self.max_compilation_workers,
                 **arguments,
             ),
         )
