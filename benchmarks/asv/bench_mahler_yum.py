@@ -6,7 +6,7 @@ import statistics
 import time
 
 from . import _gpu_mem
-from ._mahler_execution import create_mahler_gpu_model
+from ._mahler_execution import POLICY_LABEL, create_mahler_gpu_model
 
 _N_SUBJECTS = 100
 
@@ -148,7 +148,8 @@ class MahlerYumBudgetedGpu(_MahlerYum):
     still need a genuinely separate process.
     """
 
-    version = "4"
+    # A different capacity/width policy is a different measurement series.
+    version = f"4-{POLICY_LABEL}"
     simulation_seed = 0
     time_execution = None
     peakmem_execution = None
@@ -222,7 +223,7 @@ class MahlerYumBudgetedGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
     phases -- solve+save and load+simulate -- that genuinely need one.
     """
 
-    version = "3"
+    version = f"3-{POLICY_LABEL}"
     phases = (
         _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE,
         _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE,
