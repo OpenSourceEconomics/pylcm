@@ -33,7 +33,7 @@ from _lcm.simulation.chunk_planning import (
 from _lcm.simulation.chunk_profile_cache import profile_cache_registry
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.programs import gated_simulation_programs_ready
+from _lcm.simulation.programs import budgeted_simulation_programs_ready
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
@@ -143,16 +143,8 @@ def prepare_simulation_chunks(
         raise ExecutionPlanningError(
             "Chunk admission requires a budgeted simulation runtime."
         )
-    if not runtime.enable_jit or any(
-        (
-            (regime.gated_edges and not gated_simulation_programs_ready(regime=regime))
-            or (
-                regime.simulation.replay_route.policy_applicable
-                and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
-            )
-        )
-        or regime.simulation.external_replay_route is not None
-        for regime in regimes.values()
+    if not budgeted_simulation_programs_ready(
+        regimes=regimes, n_periods=ages.n_periods, enable_jit=runtime.enable_jit
     ):
         raise ExecutionPlanningError(
             "Budgeted chunk admission requires compiled decision programs; "

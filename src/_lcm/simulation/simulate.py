@@ -107,8 +107,8 @@ from _lcm.simulation.program_arguments import (
     policy_rank_arguments,
 )
 from _lcm.simulation.programs import (
+    budgeted_simulation_programs_ready,
     forward_regimes_by_period,
-    gated_simulation_programs_ready,
 )
 from _lcm.simulation.random import (
     create_simulation_key,
@@ -337,17 +337,10 @@ def simulate(  # noqa: C901, PLR0915
                 raise ExecutionPlanningError(
                     "Budgeted simulation requires retained solution residency."
                 )
-            if not runtime.enable_jit or any(
-                (
-                    regime.gated_edges
-                    and not gated_simulation_programs_ready(regime=regime)
-                )
-                or (
-                    regime.simulation.replay_route.policy_applicable
-                    and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
-                )
-                or regime.simulation.external_replay_route is not None
-                for regime in regimes.values()
+            if not budgeted_simulation_programs_ready(
+                regimes=regimes,
+                n_periods=ages.n_periods,
+                enable_jit=runtime.enable_jit,
             ):
                 raise ExecutionPlanningError(
                     "Budgeted simulation currently requires compiled decision "

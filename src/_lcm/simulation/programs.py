@@ -346,19 +346,50 @@ def attach_gated_simulation_programs(
     return attached
 
 
-def gated_simulation_programs_ready(*, regime: Regime) -> bool:
-    """Return whether every declared gate stage has a planned companion."""
-    if not regime.gated_edges:
+def budgeted_simulation_programs_ready(
+    *, regimes: Mapping[RegimeName, Regime], n_periods: int, enable_jit: bool
+) -> bool:
+    """Return whether budgeted simulation can profile every forward unit it runs.
+
+    Requirements derive from `forward_regimes_by_period`, the inventory profiling
+    and dispatch walk. A unit needs compiled programs, an in-graph decision route
+    and the gate stages it folds; a registered regime no subject can occupy owes
+    nothing, so its declaration never vetoes admission. Chunk admission and the
+    simulation loop both ask this one question.
+    """
+    return enable_jit and all(
+        gated_simulation_programs_ready(
+            regime=regime, period=period, n_periods=n_periods
+        )
+        and not (
+            regime.simulation.replay_route.policy_applicable
+            and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+        )
+        and regime.simulation.external_replay_route is None
+        for period, active in enumerate(
+            forward_regimes_by_period(regimes=regimes, n_periods=n_periods)
+        )
+        for regime in active.values()
+    )
+
+
+def gated_simulation_programs_ready(
+    *, regime: Regime, period: int, n_periods: int
+) -> bool:
+    """Return whether a forward unit's gate stages have planned programs.
+
+    The unit owes a fold and a route program exactly when a gated edge folds at
+    the next period. Otherwise its required gate domain is empty and satisfied.
+    """
+    if period + 1 >= n_periods or not any(
+        period + 1 in edge.folds_by_period for edge in regime.gated_edges.values()
+    ):
         return True
     programs = regime.simulation.programs
-    return (
-        bool(programs.gate_fold)
-        and programs.gate_fold.keys() == programs.gate_route.keys()
-        and all(
-            program.disposition is CoreExecutionDisposition.PLANNED
-            for family in (programs.gate_fold, programs.gate_route)
-            for program in family.values()
-        )
+    return all(
+        period in family
+        and family[period].disposition is CoreExecutionDisposition.PLANNED
+        for family in (programs.gate_fold, programs.gate_route)
     )
 
 
