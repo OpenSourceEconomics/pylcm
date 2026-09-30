@@ -3047,18 +3047,37 @@ class Model:
         return tuple(regime.solution.state_names)
 
     def state_grid(
-        self, *, params: UserParams, regime_name: RegimeName, state_name: StateName
+        self,
+        *,
+        params: UserParams,
+        regime_name: RegimeName,
+        state_name: StateName,
+        period: int | None = None,
     ) -> jax.Array:
-        """Return one state's grid node values under `params`.
+        """Return one state's value-array coordinates under `params`.
 
-        Covers grids whose nodes depend on runtime parameters, such as a shock
-        process with a runtime `sigma`.
-        These are the node values along the `state_name` axis of
-        `solution.values[period][regime_name]`; `state_names` gives the axis order.
+        `period` is the zero-based model period, not an age. It is required
+        for an age-specialized state: its coordinates are the period's own
+        nodes, exactly as used to tabulate `solution.values[period][regime_name]`.
+        For an age-invariant state it can be omitted, including a process grid
+        whose nodes depend on runtime parameters such as `sigma`.
+
+        An explicit period must be one at which the regime is valued. A
+        value-only node is valid even when it is never physically visited.
+        `state_names` gives the order of the state axes.
         """
         regime = self._regimes.get(regime_name)
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
+            raise InvalidSimulationInputError(msg)
+        if period is not None and (
+            type(period) is not int or period not in regime.active_periods
+        ):
+            msg = (
+                f"State grid period must be an integer at which regime "
+                f"{regime_name!r} is valued; got {period!r}. "
+                f"Valued periods: {tuple(regime.active_periods)}."
+            )
             raise InvalidSimulationInputError(msg)
         states = regime.solution.state_action_space(
             regime_params=self._process_params(params)[regime_name]
@@ -3067,6 +3086,18 @@ class Model:
             msg = f"Regime {regime_name!r} has no state {state_name!r}; known: "
             msg += f"{tuple(states)}."
             raise InvalidSimulationInputError(msg)
+        period_axes = regime.solution.period_state_axes
+        if period_axes is not None and any(
+            state_name in axes for axes in period_axes.values()
+        ):
+            if period is None:
+                msg = (
+                    f"State {state_name!r} of regime {regime_name!r} is "
+                    "age-specialized; specify period to identify its value-array "
+                    "coordinates."
+                )
+                raise InvalidSimulationInputError(msg)
+            return cast("jax.Array", period_axes[period][state_name])
         return states[state_name]
 
     @beartype(conf=PARAMS_CONF)
