@@ -168,9 +168,11 @@ Candidate measurement uses compilation, and admission fails closed:
   route, is refused under a budget;
 - the selected widths are execution choices: they enter neither the model nor the
   parameter fingerprint, and a period capture records them so `replay_period` lowers the
-  same executable without planning again. The capture serializes neither sharding nor
-  device placement, so a replayed period is lowered against the restored arrays' default
-  placement rather than the submesh the solve dispatched the period on.
+  same executable without planning again. The capture also records each array's sharding
+  and each core's compiled placements as descriptors, without buffers: `replay_period`
+  lowers against the restored arrays' default placement, while
+  `replay_period_on_recorded_layout` reinstates the recorded layout and lowers against
+  the submesh the solve dispatched the period on.
 
 For each complete device record, compiler admission reserves the larger of the raw
 reported peak and `argument + output - alias + temporary` bytes. The latter counts

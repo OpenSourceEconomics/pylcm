@@ -386,7 +386,7 @@
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
-            "sha256": "54a1ae3a0a0ae104512aec40ba140350295255ad6f1ec894c00e0fc44ed554c5"
+            "sha256": "5e9c0af42643c8aa52c22d9bd46484e58b76e64ac4fb2cc5d2fd910b5310f57c"
           },
           {
             "path": "src/_lcm/solution/preconditions.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "2dd494904a53bd88eefc4775d7c7f1f101cdac65fe9f3cf037c3634474556bd8"
+        "source_inventory_sha256": "c3d59b8f7126fd02cb79dd14daf806cbadf19cbd8c0ea17b4a90c26820c48cc7"
       },
       "fast": {
         "candidate_sources": [
@@ -856,7 +856,7 @@
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
-            "sha256": "54a1ae3a0a0ae104512aec40ba140350295255ad6f1ec894c00e0fc44ed554c5"
+            "sha256": "5e9c0af42643c8aa52c22d9bd46484e58b76e64ac4fb2cc5d2fd910b5310f57c"
           },
           {
             "path": "src/_lcm/solution/preconditions.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "2dd494904a53bd88eefc4775d7c7f1f101cdac65fe9f3cf037c3634474556bd8"
+        "source_inventory_sha256": "c3d59b8f7126fd02cb79dd14daf806cbadf19cbd8c0ea17b4a90c26820c48cc7"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "2dd494904a53bd88eefc4775d7c7f1f101cdac65fe9f3cf037c3634474556bd8",
+  "source_inventory_sha256": "c3d59b8f7126fd02cb79dd14daf806cbadf19cbd8c0ea17b4a90c26820c48cc7",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1330,7 +1330,7 @@
     },
     {
       "path": "src/_lcm/solution/period_replay.py",
-      "sha256": "54a1ae3a0a0ae104512aec40ba140350295255ad6f1ec894c00e0fc44ed554c5"
+      "sha256": "5e9c0af42643c8aa52c22d9bd46484e58b76e64ac4fb2cc5d2fd910b5310f57c"
     },
     {
       "path": "src/_lcm/solution/preconditions.py",
