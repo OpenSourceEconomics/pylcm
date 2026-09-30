@@ -8,6 +8,8 @@ device-memory budget it also selects the period's workspace widths and admits
 the resulting residency before anything is compiled.
 """
 
+import contextlib
+import contextvars
 import dataclasses
 import functools
 import gc
@@ -26,7 +28,7 @@ from collections.abc import (
 )
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from types import MappingProxyType
-from typing import cast
+from typing import Self, cast
 
 import jax
 from jax._src import config as jax_config
@@ -177,7 +179,7 @@ from _lcm.solution.solve_inputs import (
     register_rolled_inputs,
     substitute_artifact,
 )
-from _lcm.solution.solve_phase_records import CallId, solve_phase
+from _lcm.solution.solve_phase_records import CallId, nested_phase, solve_phase
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.solution.undeclared_reads import undeclared_read_pins
 from _lcm.solution.v_topology import (
@@ -4696,27 +4698,22 @@ def _lower_and_compile_wave(
     compiled: dict[Hashable, jax.stages.Compiled],
     labels: dict[Hashable, str],
 ) -> None:
-    """Lower one wave's new candidates sequentially, compiling each as it lands.
+    """Lower one wave's new candidates in order and compile them on the pool.
 
-    Tracing is single-threaded, so lowering runs on the calling thread; XLA releases
-    the GIL, so each lowered program goes to a compile thread pool at once and
-    compiles while the next one is being lowered. Executables and their log labels
-    land in `compiled` and `labels`, keyed by lowering key.
-
-    A lowering error is raised at once: compiles not yet started are cancelled,
-    running ones are left to finish in the background with their results
-    discarded, and the error carries a note naming the program being lowered.
+    Executables and their log labels land in `compiled` and `labels`, keyed by
+    lowering key; `CompilationWave` owns the threading and error contract.
     """
     n_unique = len(new_lowerings)
-    pool = ThreadPoolExecutor(max_workers=n_workers)
-    futures: dict[Future[tuple[Hashable, jax.stages.Compiled]], str] = {}
-    label = "the first program"
-    try:
+    with CompilationWave(
+        n_workers=n_workers,
+        logger=logger,
+        log_kernel_memory=log_kernel_memory,
+        compiled=compiled,
+    ) as wave:
         for i, (lowering_key, candidate) in enumerate(new_lowerings.items(), 1):
             triple, _ = candidate
             regime_name, period, core_key = triple
             resolved = resolved_programs[candidate]
-            static_kwargs = resolved.static_kwargs
             label = (
                 f"{regime_name} {core_key} (age {ages.values[period].item()}, "
                 f"widths={dict(resolved.tile_widths)!r})"
@@ -4728,48 +4725,177 @@ def _lower_and_compile_wave(
                 logger=logger,
             )
             logger.info("%d/%d  %s", i, n_unique, label)
-            logger.info("  lowering ...")
-            start = time.monotonic()
-            layout = all_layouts[triple]
-            donated = _donated_arguments(donations=donations[candidate])
-            jitted = jax.jit(
-                resolved.function,
-                static_argnames=tuple(static_kwargs),
-                out_shardings=layout.out_shardings,
-                donate_argnames=donated or None,
-            )
-            low = jitted.lower(
-                **resolved.arguments, **internal_templates[candidate], **static_kwargs
-            )
-            _assert_lowered_output_roles(
-                lowered=low,
-                output_roles=resolved.output_roles,
-                layout=layout,
+            wave.lower(
+                lowering_key=lowering_key,
                 label=label,
+                lower=functools.partial(
+                    _lower_resolved_candidate,
+                    resolved=resolved,
+                    layout=all_layouts[triple],
+                    donated=_donated_arguments(donations=donations[candidate]),
+                    internal_templates=internal_templates[candidate],
+                    label=label,
+                ),
             )
-            elapsed = time.monotonic() - start
-            logger.info("  lowered in %s", format_duration(seconds=elapsed))
-            future = pool.submit(
+
+
+def _lower_resolved_candidate(
+    *,
+    resolved: ResolvedCoreProgram,
+    layout: ResolvedOutputLayout,
+    donated: tuple[str, ...],
+    internal_templates: Mapping[str, object],
+    label: str,
+) -> jax.stages.Lowered:
+    """Trace and lower one resolved solve candidate at its output layout."""
+    static_kwargs = resolved.static_kwargs
+    jitted = jax.jit(
+        resolved.function,
+        static_argnames=tuple(static_kwargs),
+        out_shardings=layout.out_shardings,
+        donate_argnames=donated or None,
+    )
+    low = jitted.lower(**resolved.arguments, **internal_templates, **static_kwargs)
+    _assert_lowered_output_roles(
+        lowered=low,
+        output_roles=resolved.output_roles,
+        layout=layout,
+        label=label,
+    )
+    return low
+
+
+class CompilationWave:
+    """Lower programs on the calling thread and compile each on a thread pool.
+
+    Tracing is single-threaded and reads the calling thread's JAX trace settings,
+    so every program is lowered on the thread that opened the wave. XLA releases
+    the GIL, so each lowered program goes to the pool at once and compiles while
+    the next one is being lowered. Pool tasks run in a copy of the caller's
+    contextvars. Executables land in `compiled`, keyed by lowering key; closing
+    the wave waits for every compile and hands each executable to the publisher
+    its `lower` call named.
+
+    The first error is raised on the caller as soon as the caller sees it, with a
+    note naming the program:
+    - a lowering error at once, noted `while lowering <label>`;
+    - a compile error before the next lowering starts, or when the wave closes,
+      noted `while compiling <label>`.
+
+    Either way, compiles not yet started are cancelled and running ones finish in
+    the background with their results discarded.
+    """
+
+    def __init__(
+        self,
+        *,
+        n_workers: int,
+        logger: logging.Logger,
+        log_kernel_memory: bool,
+        compiled: dict[Hashable, jax.stages.Compiled],
+        compile_phase: str | None = None,
+    ) -> None:
+        """Open a pool of `n_workers` compile threads.
+
+        Args:
+            n_workers: Number of compile threads.
+            logger: Receives the lowering and compile timings.
+            log_kernel_memory: Whether to log each executable's memory analysis.
+            compiled: Receives each executable under its lowering key.
+            compile_phase: Phase record bracketing each compile, if any.
+
+        """
+        self._pool = ThreadPoolExecutor(max_workers=n_workers)
+        self._logger = logger
+        self._log_kernel_memory = log_kernel_memory
+        self._compiled = compiled
+        self._compile_phase = compile_phase
+        self._futures: dict[Future[tuple[Hashable, jax.stages.Compiled]], str] = {}
+        self._out_info: dict[Hashable, object] = {}
+        self._publishers: dict[Hashable, Callable[..., object] | None] = {}
+
+    def __enter__(self) -> Self:
+        return self
+
+    def lower(
+        self,
+        *,
+        lowering_key: Hashable,
+        label: str,
+        lower: Callable[[], jax.stages.Lowered],
+        publish: Callable[..., object] | None = None,
+    ) -> object:
+        """Lower one program here, submit its compile, and return its outputs.
+
+        A key this wave already lowered is not lowered again.
+
+        Args:
+            lowering_key: The program's compiler identity.
+            label: Names the program in logs and error notes.
+            lower: Traces and lowers the program.
+            publish: Receives the executable as `executable=` on the caller when
+                the wave closes.
+
+        Returns:
+            The lowered program's output tree of shape descriptors.
+
+        """
+        if lowering_key in self._out_info:
+            return self._out_info[lowering_key]
+        self._raise_first_compile_error()
+        self._logger.info("  lowering %s ...", label)
+        start = time.monotonic()
+        try:
+            low = lower()
+        except BaseException as exc:
+            exc.add_note(f"while lowering {label}")
+            raise
+        self._logger.info(
+            "  lowered in %s", format_duration(seconds=time.monotonic() - start)
+        )
+        future = self._pool.submit(
+            contextvars.copy_context().run,
+            functools.partial(
                 _compile_and_log,
                 lowering_key=lowering_key,
                 low=low,
                 label=label,
-                log_kernel_memory=log_kernel_memory,
-                logger=logger,
-            )
-            futures[future] = label
-    except BaseException as exc:
-        exc.add_note(f"while lowering {label}")
-        pool.shutdown(wait=False, cancel_futures=True)
-        raise
-    with pool:
-        for future in as_completed(futures):
+                log_kernel_memory=self._log_kernel_memory,
+                logger=self._logger,
+                phase=self._compile_phase,
+            ),
+        )
+        self._futures[future] = label
+        self._out_info[lowering_key] = low.out_info
+        self._publishers[lowering_key] = publish
+        return low.out_info
+
+    # keyword-only-exempt: library-callback=contextlib.AbstractContextManager
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if exc is not None:
+            self._pool.shutdown(wait=False, cancel_futures=True)
+            return
+        for future in as_completed(self._futures):
             try:
-                lowering_key, comp = future.result()
-            except Exception as exc:
-                exc.add_note(f"while compiling {futures[future]}")
+                lowering_key, executable = future.result()
+            except BaseException as error:
+                error.add_note(f"while compiling {self._futures[future]}")
+                self._pool.shutdown(wait=False, cancel_futures=True)
                 raise
-            compiled[lowering_key] = comp
+            self._compiled[lowering_key] = executable
+        self._pool.shutdown()
+        for lowering_key, publish in self._publishers.items():
+            if publish is not None:
+                publish(executable=self._compiled[lowering_key])
+
+    def _raise_first_compile_error(self) -> None:
+        """Raise the error of a compile that has already failed, if any."""
+        for future, label in self._futures.items():
+            if future.done() and not future.cancelled():
+                error = future.exception()
+                if error is not None:
+                    error.add_note(f"while compiling {label}")
+                    raise error
 
 
 def _compile_and_log(
@@ -4779,11 +4905,13 @@ def _compile_and_log(
     label: str,
     log_kernel_memory: bool,
     logger: logging.Logger,
+    phase: str | None,
 ) -> tuple[Hashable, jax.stages.Compiled]:
     """Compile one lowered program on a pool thread and log its timing."""
     logger.info("  compiling %s ...", label)
     start = time.monotonic()
-    result = low.compile()
+    with contextlib.nullcontext() if phase is None else nested_phase(name=phase):
+        result = low.compile()
     elapsed = time.monotonic() - start
     # The record carries the compiled program, so a handler can read its HLO.
     logger.info(

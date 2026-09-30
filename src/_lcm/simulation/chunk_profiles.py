@@ -5,11 +5,8 @@ arrays supply only descriptors. Logical future slots are conservative reservatio
 separate from both actual entry-buffer residency and raw compiler peaks.
 """
 
-import contextvars
 import math
-from collections.abc import Callable, Hashable, Mapping
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -100,15 +97,15 @@ from _lcm.simulation.transitions import (
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import (
+    CompilationWave,
     _resolve_compilation_workers,
-    _trace_settings_key,
 )
 from _lcm.transition_checks import (
     regime_probability_flags,
     regime_probability_inactive_indices,
 )
 from _lcm.typing import FlatParams, RegimeNamesToIds
-from _lcm.utils.logging import LogLevel
+from _lcm.utils.logging import LogLevel, get_logger
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG, SIMULATION_POLICY
@@ -119,7 +116,7 @@ type _FiniteRankOutput = tuple[
 
 
 # Keep setup, per-unit publication and period cleanup in their lifetime order.
-def profile_simulation_chunk(  # noqa: C901, PLR0915
+def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     *,
     runtime: SimulationRuntime,
     regimes: Mapping[str, Regime],
@@ -145,10 +142,10 @@ def profile_simulation_chunk(  # noqa: C901, PLR0915
     host gated or other replay adapters. Diagnostics, retained storage and outer
     assembly profiles feed the selector before any candidate chunk is allocated.
 
-    With more than one compilation worker, every forward unit is first compiled on
-    a thread pool from the entry carrier; the ordered walk then finds each
-    executable in the runtime's shared cache under its exact abstract key and
-    compiles only what the pool did not.
+    Every forward unit is first lowered from the entry carrier on the calling
+    thread into one compilation wave, which compiles each program on the worker
+    pool; the ordered walk then finds each executable in the runtime's shared
+    cache under its exact abstract key and compiles only what the wave did not.
     """
     if population < original_population or original_population <= 0 or n_subjects <= 0:
         raise ExecutionPlanningError("Chunk profiles need a valid positive population.")
@@ -207,35 +204,37 @@ def profile_simulation_chunk(  # noqa: C901, PLR0915
     forward_regimes = forward_regimes_by_period(
         regimes=regimes, n_periods=ages.n_periods
     )
-    _compile_forward_units_in_parallel(
+    with CompilationWave(
         n_workers=_resolve_compilation_workers(
             max_compilation_workers=max_compilation_workers
         ),
-        units=tuple(
-            partial(
-                profile_forward_unit,
-                runtime=runtime,
-                regimes=regimes,
-                regime=regime,
-                name=name,
-                period=period,
-                flat_params=flat_params,
-                base=base_spaces[name],
-                base_spaces=base_spaces,
-                values=values,
-                flags=flags,
-                ages=ages,
-                n_subjects=n_subjects,
-                widths=widths,
-                columns=carrier[name],
-                ordinary_key=key,
-                taste_key=taste_key,
-                policy=(policies or {}).get(period, {}).get(name),
-            )
-            for period in range(ages.n_periods)
-            for name, regime in forward_regimes[period].items()
-        ),
-    )
+        logger=get_logger(log_level=log_level),
+        log_kernel_memory=False,
+        compiled={},
+        compile_phase="simulation_compilation",
+    ) as wave:
+        for period in range(ages.n_periods):
+            for name, regime in forward_regimes[period].items():
+                profile_forward_unit(
+                    runtime=runtime,
+                    regimes=regimes,
+                    regime=regime,
+                    name=name,
+                    period=period,
+                    flat_params=flat_params,
+                    base=base_spaces[name],
+                    base_spaces=base_spaces,
+                    values=values,
+                    flags=flags,
+                    ages=ages,
+                    n_subjects=n_subjects,
+                    widths=widths,
+                    columns=carrier[name],
+                    ordinary_key=key,
+                    taste_key=taste_key,
+                    policy=(policies or {}).get(period, {}).get(name),
+                    wave=wave,
+                )
     regime_ids, own_roles = cast(
         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
         inventory.operation(
@@ -482,52 +481,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0915
         axis_widths=widths,
         setup_reservation=setup,
     )
-
-
-def _compile_forward_units_in_parallel(
-    *, n_workers: int, units: tuple[Callable[[], object], ...]
-) -> None:
-    """Fill the runtime's executable cache by profiling forward units concurrently.
-
-    Tracing holds the GIL and XLA compilation releases it, so the pool overlaps
-    compiles the way the solve's compilation waves do. The runtime's cache owns
-    one in-flight compilation per key, so duplicates across units compile once.
-    Each task copies the caller's contextvars for compilation phase records.
-    JAX trace settings are thread-local, not contextvars: a worker whose effective
-    settings differ must do no speculative work. The subsequent ordered walk
-    then fills missing entries under the caller's settings. One worker keeps
-    the ordered walk alone.
-    """
-    if n_workers <= 1 or len(units) <= 1:
-        return
-    trace_settings = _trace_settings_key()
-    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = [
-            pool.submit(
-                contextvars.copy_context().run,
-                partial(
-                    _compile_forward_unit_if_context_matches,
-                    unit=unit,
-                    trace_settings=trace_settings,
-                ),
-            )
-            for unit in units
-        ]
-    for future in futures:
-        future.result()
-
-
-def _compile_forward_unit_if_context_matches(
-    *, unit: Callable[[], object], trace_settings: Hashable
-) -> None:
-    """Warm a unit only under the semantic trace context of the calling thread.
-
-    A mismatch is a safe cache-warming miss, not a compilation failure. Never
-    run the unit first and inspect the resulting key afterwards: tracing can
-    itself reject otherwise valid user functions under different settings.
-    """
-    if _trace_settings_key() == trace_settings:
-        unit()
 
 
 def _profile_next_subjects(

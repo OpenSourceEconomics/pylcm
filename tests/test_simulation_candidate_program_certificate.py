@@ -113,8 +113,8 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_index:scalar_profile_subject_role": (
         "src/_lcm/simulation/forward_program_profiles.py",
-        'subject_arg_names=("flat_indices",) if indices.ndim else (),',
-        'subject_arg_names=("flat_indices",),',
+        'subject_arg_names = ("flat_indices",) if indices.ndim else ()',
+        'subject_arg_names = ("flat_indices",)',
     ),
     "simulation_index:scalar_runtime_subject_role": (
         "src/_lcm/simulation/simulate.py",
@@ -887,7 +887,7 @@ _FINITE_BUDGET_MUTATIONS = {
     ),
     "finite_budget:prepared_bank_schema_bypassed": (
         "src/_lcm/simulation/forward_program_profiles.py",
-        "bank=preparation.executable.out_info,",
+        "bank=bank,",
         "bank=abstract_payload,",
     ),
     "finite_budget:required_policy_layout_ignored": (

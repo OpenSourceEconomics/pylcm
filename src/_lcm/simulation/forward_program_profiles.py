@@ -34,7 +34,7 @@ from _lcm.simulation.program_arguments import (
 )
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.value_placement import simulation_value_sharding
-from _lcm.solution.backward_induction import _states_for_period
+from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.typing import FlatParams
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
@@ -133,7 +133,7 @@ def profile_forward_programs(
     return MappingProxyType(profiles)
 
 
-def profile_forward_unit(  # noqa: C901, PLR0915
+def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     *,
     runtime: SimulationRuntime,
     regimes: Mapping[str, Regime],
@@ -152,12 +152,18 @@ def profile_forward_unit(  # noqa: C901, PLR0915
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
     policy: object = None,
+    wave: CompilationWave | None = None,
 ) -> Mapping[str, ForwardProgramProfile]:
     """Bind one actual current carrier to its decision, transition and route.
 
     All three families consume the pre-advance source states. The caller advances
     its complete carrier from the real merge out_info before profiling the next
     regime, including a successor later in this same period.
+
+    With a `wave`, every program the cache lacks is lowered into it instead of
+    compiled here, each program's inputs following from the lowered outputs of
+    the one before; the wave compiles and publishes them to the runtime's cache,
+    and no profile is returned.
     """
     # The dispatch module imports the complete chunk-profile constructor.
     from _lcm.simulation.simulate import _lookup_values_from_indices  # noqa: PLC0415
@@ -256,16 +262,20 @@ def profile_forward_unit(  # noqa: C901, PLR0915
                 devices=devices,
             ),
         }
-        profiles["gate_fold"] = _profile_program(
+        folded = _prepare_program(
             runtime=runtime,
             program=regime.simulation.programs.gate_fold[period],
             arguments=fold_arguments,
             period=period,
             n_subjects=n_subjects,
             widths=widths,
+            family="gate_fold",
+            regime_name=name,
+            profiles=profiles,
+            wave=wave,
         )
         next_values = MappingProxyType(
-            {**next_values, **profiles["gate_fold"].executable.out_info}
+            {**next_values, **cast("Mapping[str, object]", folded)}
         )
     references = {}
     if regime.same_period_ref_regimes:
@@ -292,10 +302,14 @@ def profile_forward_unit(  # noqa: C901, PLR0915
         sharding=subject,
     )
     if regime.simulation.replay_route.consumer_route == "nnbegm_finite":
-        profiles.update(
+        actions, _, _ = cast(
+            "tuple[Mapping[str, object], object, object]",
             _profile_finite_decision(
                 runtime=runtime,
                 regime=regime,
+                name=name,
+                profiles=profiles,
+                wave=wave,
                 period=period,
                 n_subjects=n_subjects,
                 widths=widths,
@@ -306,9 +320,8 @@ def profile_forward_unit(  # noqa: C901, PLR0915
                 age=age,
                 next_values=_shared_tree(tree=next_values, devices=devices),
                 references=_shared_tree(tree=references, devices=devices),
-            )
+            ),
         )
-        actions, _, _ = profiles["decision"].executable.out_info
     else:
         arguments = decision_arguments(
             states=states,
@@ -325,16 +338,21 @@ def profile_forward_unit(  # noqa: C901, PLR0915
             period=period_value,
             age=age,
         )
-        decision = regime.simulation.programs.decision[period]
-        decision_profile = _profile_program(
-            runtime=runtime,
-            program=decision,
-            arguments=arguments,
-            period=period,
-            n_subjects=n_subjects,
-            widths=widths,
+        indices, _ = cast(
+            "tuple[jax.ShapeDtypeStruct, object]",
+            _prepare_program(
+                runtime=runtime,
+                program=regime.simulation.programs.decision[period],
+                arguments=arguments,
+                period=period,
+                n_subjects=n_subjects,
+                widths=widths,
+                family="decision",
+                regime_name=name,
+                profiles=profiles,
+                wave=wave,
+            ),
         )
-        indices, _ = decision_profile.executable.out_info
         if regime.stakeholders is not None and not states:
             indices = jax.ShapeDtypeStruct(
                 (n_subjects,), indices.dtype, sharding=subject
@@ -345,21 +363,35 @@ def profile_forward_unit(  # noqa: C901, PLR0915
             ),
             "grids": _shared_tree(tree=base.actions, devices=devices),
         }
-        decoded = runtime.operations.prepare_abstract(
-            function=_lookup_values_from_indices,
-            arguments=decoder_arguments,
-            subject_arg_names=("flat_indices",) if indices.ndim else (),
-            devices=devices,
-        )
-        profiles["decision"] = replace(
-            decision_profile,
-            action_decoder=AbstractSimulationProfile(
-                executable=decoded.executable,
+        subject_arg_names = ("flat_indices",) if indices.ndim else ()
+        if wave is None:
+            decoded = runtime.operations.prepare_abstract(
+                function=_lookup_values_from_indices,
                 arguments=decoder_arguments,
-                memory=decoded.memory,
-            ),
-        )
-        actions = decoded.executable.out_info
+                subject_arg_names=subject_arg_names,
+                devices=devices,
+            )
+            profiles["decision"] = replace(
+                profiles["decision"],
+                action_decoder=AbstractSimulationProfile(
+                    executable=decoded.executable,
+                    arguments=decoder_arguments,
+                    memory=decoded.memory,
+                ),
+            )
+            actions = decoded.executable.out_info
+        else:
+            actions = cast(
+                "Mapping[str, object]",
+                runtime.operations.lower_abstract(
+                    function=_lookup_values_from_indices,
+                    arguments=decoder_arguments,
+                    subject_arg_names=subject_arg_names,
+                    devices=devices,
+                    wave=wave,
+                    label=f"{name} action decoder (period {period})",
+                ),
+            )
     for family in ("transition", "route"):
         program = getattr(regime.simulation.programs, family).get(period)
         if program is None:
@@ -378,13 +410,17 @@ def profile_forward_unit(  # noqa: C901, PLR0915
             age=age,
             params=params,
         )
-        profiles[family] = _profile_program(
+        _prepare_program(
             runtime=runtime,
             program=program,
             arguments=arguments,
             period=period,
             n_subjects=n_subjects,
             widths=widths,
+            family=family,
+            regime_name=name,
+            profiles=profiles,
+            wave=wave,
         )
     return MappingProxyType(profiles)
 
@@ -393,6 +429,9 @@ def _profile_finite_decision(
     *,
     runtime: SimulationRuntime,
     regime: Regime,
+    name: str,
+    profiles: dict[str, ForwardProgramProfile],
+    wave: CompilationWave | None,
     period: int,
     n_subjects: int,
     widths: Mapping[str, int],
@@ -403,8 +442,13 @@ def _profile_finite_decision(
     age: jax.ShapeDtypeStruct,
     next_values: Mapping[str, object],
     references: Mapping[str, object],
-) -> dict[str, ForwardProgramProfile]:
-    """Use actual payload metadata and the preparation executable's bank schema."""
+) -> object:
+    """Use actual payload metadata and the preparation stage's bank schema.
+
+    Returns:
+        The ranking stage's output descriptors.
+
+    """
     programs = regime.simulation.programs
     if (
         not isinstance(policy, NNBEGMSimPolicy)
@@ -423,7 +467,7 @@ def _profile_finite_decision(
     abstract_payload = jax.tree.map(
         partial(_abstract_policy_leaf, devices=runtime.subject_devices), payload
     )
-    preparation = _profile_program(
+    bank = _prepare_program(
         runtime=runtime,
         program=programs.policy_prepare[period],
         arguments=policy_prepare_arguments(
@@ -432,13 +476,17 @@ def _profile_finite_decision(
         period=period,
         n_subjects=n_subjects,
         widths=widths,
+        family="policy_prepare",
+        regime_name=name,
+        profiles=profiles,
+        wave=wave,
     )
-    ranking = _profile_program(
+    return _prepare_program(
         runtime=runtime,
         program=programs.policy_rank[period],
         arguments=policy_rank_arguments(
             payload=abstract_payload,
-            bank=preparation.executable.out_info,
+            bank=bank,
             canonical_states=canonical_states,
             params=params,
             age=age,
@@ -448,8 +496,11 @@ def _profile_finite_decision(
         period=period,
         n_subjects=n_subjects,
         widths=widths,
+        family="decision",
+        regime_name=name,
+        profiles=profiles,
+        wave=wave,
     )
-    return {"policy_prepare": preparation, "decision": ranking}
 
 
 # keyword-only-exempt: library-callback=jax.tree.map
@@ -465,6 +516,54 @@ def _abstract_policy_leaf(
     )
 
 
+def _prepare_program(
+    *,
+    runtime: SimulationRuntime,
+    program: CoreProgram,
+    arguments: Mapping[str, object],
+    period: int,
+    n_subjects: int,
+    widths: Mapping[str, int],
+    family: str,
+    regime_name: str,
+    profiles: dict[str, ForwardProgramProfile],
+    wave: CompilationWave | None,
+) -> object:
+    """Compile a forward program here, or lower it into `wave`.
+
+    A compiled program's profile is stored in `profiles` under `family`. A lowered
+    one is named in the wave's logs and error notes by regime, family, period and
+    widths.
+
+    Returns:
+        The program's output descriptors.
+
+    """
+    if wave is None:
+        profile = _profile_program(
+            runtime=runtime,
+            program=program,
+            arguments=arguments,
+            period=period,
+            n_subjects=n_subjects,
+            widths=widths,
+        )
+        profiles[family] = profile
+        return profile.executable.out_info
+    concrete_widths = _concrete_widths(
+        program=program, n_subjects=n_subjects, widths=widths
+    )
+    return runtime.lower_abstract(
+        program=program,
+        arguments=arguments,
+        period=period,
+        n_subjects=n_subjects,
+        widths=concrete_widths,
+        wave=wave,
+        label=(f"{regime_name} {family} (period {period}, widths={concrete_widths!r})"),
+    )
+
+
 def _profile_program(
     *,
     runtime: SimulationRuntime,
@@ -475,22 +574,12 @@ def _profile_program(
     widths: Mapping[str, int],
 ) -> ForwardProgramProfile:
     """Resolve the same declared axes as dispatch at this concrete chunk extent."""
-    concrete_widths = {
-        axis.name: min(
-            widths.get(
-                axis.name, n_subjects if axis.name == "subject" else axis.extent
-            ),
-            n_subjects if axis.name == "subject" else axis.extent,
-        )
-        for axis in program.requirements.axes
-        if axis.name != "subject" or n_subjects > 1
-    }
     compiled = runtime.prepare_abstract(
         program=program,
         arguments=arguments,
         period=period,
         n_subjects=n_subjects,
-        widths=concrete_widths,
+        widths=_concrete_widths(program=program, n_subjects=n_subjects, widths=widths),
     )
     if compiled.memory is None:
         raise ExecutionPlanningError(
@@ -502,6 +591,22 @@ def _profile_program(
         arguments=arguments,
         memory=compiled.memory,
     )
+
+
+def _concrete_widths(
+    *, program: CoreProgram, n_subjects: int, widths: Mapping[str, int]
+) -> dict[str, int]:
+    """Clamp the chunk's widths to each declared axis at this subject extent."""
+    return {
+        axis.name: min(
+            widths.get(
+                axis.name, n_subjects if axis.name == "subject" else axis.extent
+            ),
+            n_subjects if axis.name == "subject" else axis.extent,
+        )
+        for axis in program.requirements.axes
+        if axis.name != "subject" or n_subjects > 1
+    }
 
 
 def _stochastic_keys(
