@@ -465,14 +465,13 @@ def test_mixed_backend_foreign_copy_refuses_before_allocation() -> None:
     np.testing.assert_array_equal(source, np.arange(8, dtype=np.float32))
 
 
-def test_artifact_route_refuses_before_the_foreign_snapshot(
+def test_host_replay_route_refuses_before_the_foreign_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A solver-owned artifact authority cannot start unprofiled authority copies.
+    """A supplied result for a route budgeted simulation cannot run is not copied.
 
-    The dissolution flag is the one authority a budgeted foreign route admits,
-    so the refusal is exercised through a solver that publishes artifacts of
-    its own.
+    The reference solver replays through an external route, which budgeted
+    simulation cannot profile, so the result is refused before its snapshot.
     """
     source = _conformance_model(solver=ReferenceSolver())
     assert any(
@@ -493,7 +492,9 @@ def test_artifact_route_refuses_before_the_foreign_snapshot(
         raise AssertionError("Unprofiled foreign artifact snapshot started")
 
     monkeypatch.setattr(Model, "_snapshot_solution_envelope", staticmethod(forbidden))
-    with pytest.raises(ExecutionPlanningError, match="unprofiled artifact authority"):
+    with pytest.raises(
+        ExecutionPlanningError, match="host replay routes need complete stage profiles"
+    ):
         model.simulate(
             params=_CONFORMANCE_PARAMS,
             initial_conditions=_conformance_initial_conditions(),

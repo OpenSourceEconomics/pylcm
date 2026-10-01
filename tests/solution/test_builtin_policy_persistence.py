@@ -4,6 +4,7 @@ import dataclasses
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
@@ -73,8 +74,9 @@ def _build(
 ) -> Model:
     """Build the NB-EGM toy, unbudgeted unless a config is given.
 
-    A budget refuses simulation from a foreign NB-EGM solution and adaptive replay
-    (pylcm#481), so the round trips here run unbudgeted on every backend.
+    A budget refuses adaptive replay, whose host replay route budgeted simulation
+    cannot profile, so the adaptive round trips here run unbudgeted on every backend
+    and check the refusal separately.
     """
     return toy.build_model(
         variant="n_nbegm",
@@ -82,6 +84,40 @@ def _build(
         outer_search=_ROUTES[route],
         execution_config=execution_config or ExecutionConfig(device_memory_bytes=None),
     )
+
+
+# Any budget refuses adaptive outer-mesh replay before the result is copied.
+_ADAPTIVE_REPLAY_BUDGETS = {"unbudgeted": None, "budgeted": 2**31}
+_HOST_REPLAY_REFUSAL = "host replay routes need complete stage profiles"
+_BUDGET_REMEDIES = "To fit, lower `ExecutionConfig.device_memory_headroom_fraction`"
+
+
+def _replay_adaptive(*, budget: str, solution: SolutionResult) -> Any:
+    """Replay `solution` in a fresh adaptive model.
+
+    Unbudgeted, return the simulated frame. Under a budget, require the host replay
+    refusal and its remedies, and return `None`.
+    """
+    model = _build(
+        route="adaptive",
+        execution_config=ExecutionConfig(
+            device_memory_bytes=_ADAPTIVE_REPLAY_BUDGETS[budget]
+        ),
+    )
+    run = partial(
+        model.simulate,
+        params=_PARAMS,
+        initial_conditions=dict(_INITIAL),
+        solution=solution,
+        log_level="off",
+        seed=_SEED,
+    )
+    if budget == "unbudgeted":
+        return run().to_dataframe()
+    with pytest.raises(ExecutionPlanningError, match=_HOST_REPLAY_REFUSAL) as refusal:
+        run()
+    assert _BUDGET_REMEDIES in str(refusal.value)
+    return None
 
 
 def _policy_refs(solution: SolutionResult) -> tuple[ArtifactRef, ...]:
@@ -307,8 +343,12 @@ def test_finite_nnbegm_continuation_declares_its_stacked_candidate_axis() -> Non
 def test_finite_nnbegm_policy_roundtrips_lazily_into_a_fresh_model(
     tmp_path: Path,
 ) -> None:
-    """A finite candidate bank is model-verifiable without solve-private facts."""
-    source_model = _build(route="finite")
+    """A finite candidate bank is model-verifiable without solve-private facts.
+
+    Both models take the default execution config, so on an accelerator the replay
+    runs under the device-default budget.
+    """
+    source_model = _build(route="finite", execution_config=ExecutionConfig())
     solution = source_model.solve(
         params=_PARAMS,
         log_level="off",
@@ -344,7 +384,7 @@ def test_finite_nnbegm_policy_roundtrips_lazily_into_a_fresh_model(
 
     # This model has never solved and therefore owns no solve-side replay cache. Its
     # declarations alone must reconstruct the finite policy's static PyTree fields.
-    fresh_model = _build(route="finite")
+    fresh_model = _build(route="finite", execution_config=ExecutionConfig())
     actual = fresh_model.simulate(
         params=_PARAMS,
         initial_conditions=dict(_INITIAL),
@@ -429,11 +469,12 @@ def test_adaptive_nnbegm_policy_declares_its_outer_nodes_in_its_descriptor() -> 
         )
 
 
+@pytest.mark.parametrize("budget", list(_ADAPTIVE_REPLAY_BUDGETS))
 def test_adaptive_nnbegm_policy_roundtrips_into_a_fresh_model(
-    tmp_path: Path,
+    *, tmp_path: Path, budget: str
 ) -> None:
     """A fresh equivalent model replays a restored adaptive result exactly as
-    the producing model replays the in-memory one."""
+    the producing model replays the in-memory one; under a budget it refuses."""
     source_model = _build(route="adaptive")
     solution = source_model.solve(params=_PARAMS, log_level="off")
     policy_refs = _policy_refs(solution)
@@ -441,13 +482,9 @@ def test_adaptive_nnbegm_policy_roundtrips_into_a_fresh_model(
     restored = load_solution(path=path)
     assert set(policy_refs) <= set(restored.replay_artifacts)
 
-    from_restored = _build(route="adaptive").simulate(
-        params=_PARAMS,
-        initial_conditions=dict(_INITIAL),
-        solution=restored,
-        log_level="off",
-        seed=_SEED,
-    )
+    from_restored = _replay_adaptive(budget=budget, solution=restored)
+    if from_restored is None:
+        return
     from_source = source_model.simulate(
         params=_PARAMS,
         initial_conditions=dict(_INITIAL),
@@ -456,7 +493,7 @@ def test_adaptive_nnbegm_policy_roundtrips_into_a_fresh_model(
         seed=_SEED,
     )
 
-    assert_frame_equal(from_restored.to_dataframe(), from_source.to_dataframe())
+    assert_frame_equal(from_restored, from_source.to_dataframe())
 
 
 @pytest.mark.parametrize(
@@ -721,23 +758,21 @@ def test_solver_diagnostics_survive_an_archive_roundtrip(tmp_path: Path) -> None
         )
 
 
+@pytest.mark.parametrize("budget", list(_ADAPTIVE_REPLAY_BUDGETS))
 def test_a_restored_result_with_diagnostics_replays_in_a_fresh_model(
-    tmp_path: Path,
+    *, tmp_path: Path, budget: str
 ) -> None:
-    """Diagnostics in a restored result neither block nor alter its replay."""
+    """Diagnostics in a restored result neither block nor alter its replay; under
+    a budget the adaptive replay refuses."""
     source_model = _build(route="adaptive")
     solution = source_model.solve(params=_PARAMS, log_level="warning")
     restored = load_solution(
         path=save_solution(solution=solution, path=tmp_path / "diagnosed.lcm")
     )
 
-    from_restored = _build(route="adaptive").simulate(
-        params=_PARAMS,
-        initial_conditions=dict(_INITIAL),
-        solution=restored,
-        log_level="off",
-        seed=_SEED,
-    )
+    from_restored = _replay_adaptive(budget=budget, solution=restored)
+    if from_restored is None:
+        return
     from_source = source_model.simulate(
         params=_PARAMS,
         initial_conditions=dict(_INITIAL),
@@ -746,7 +781,7 @@ def test_a_restored_result_with_diagnostics_replays_in_a_fresh_model(
         seed=_SEED,
     )
 
-    assert_frame_equal(from_restored.to_dataframe(), from_source.to_dataframe())
+    assert_frame_equal(from_restored, from_source.to_dataframe())
 
 
 def _with_diagnostics_leaves(
@@ -831,8 +866,12 @@ def test_diagnostics_that_no_solver_could_publish_are_refused(
         )
 
 
-def test_a_restored_result_saves_to_an_equivalent_archive(tmp_path: Path) -> None:
-    """Saving a restored result writes an archive that reads and replays alike."""
+@pytest.mark.parametrize("budget", list(_ADAPTIVE_REPLAY_BUDGETS))
+def test_a_restored_result_saves_to_an_equivalent_archive(
+    *, tmp_path: Path, budget: str
+) -> None:
+    """Saving a restored result writes an archive that reads and replays alike;
+    under a budget the adaptive replay refuses."""
     solution = _build(route="adaptive").solve(
         params=_PARAMS,
         log_level="warning",
@@ -858,41 +897,37 @@ def test_a_restored_result_saves_to_an_equivalent_archive(tmp_path: Path) -> Non
         _assert_same_diagnostics(
             actual=second.diagnostics[ref], expected=first.diagnostics[ref]
         )
-    from_second = _build(route="adaptive").simulate(
-        params=_PARAMS,
-        initial_conditions=dict(_INITIAL),
-        solution=second,
-        log_level="off",
-        seed=_SEED,
-    )
-    from_first = _build(route="adaptive").simulate(
-        params=_PARAMS,
-        initial_conditions=dict(_INITIAL),
-        solution=first,
-        log_level="off",
-        seed=_SEED,
-    )
-    assert_frame_equal(from_second.to_dataframe(), from_first.to_dataframe())
+    from_second = _replay_adaptive(budget=budget, solution=second)
+    if from_second is None:
+        return
+    from_first = _replay_adaptive(budget=budget, solution=first)
+    assert_frame_equal(from_second, from_first)
 
 
-def test_budgeted_simulation_from_a_foreign_nnbegm_solution_is_refused(
+def test_budgeted_simulation_from_a_foreign_nnbegm_solution_matches_unbudgeted(
     tmp_path: Path,
 ) -> None:
-    """Under a budget, a restored NB-EGM solution refuses with the remedies."""
-    budgeted = ExecutionConfig(device_memory_bytes=2**31)
-    solution = _build(route="finite", execution_config=budgeted).solve(
+    """Under a budget, a restored finite NB-EGM solution replays exactly as it does
+    without one."""
+    solution = _build(route="finite").solve(
         params=_PARAMS,
         log_level="off",
         retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
     )
     path = save_solution(solution=solution, path=tmp_path / "finite-solution.lcm")
-    restored = load_solution(path=path)
+    run = partial(
+        Model.simulate,
+        params=_PARAMS,
+        initial_conditions=dict(_INITIAL),
+        log_level="off",
+        seed=_SEED,
+    )
+    budgeted = _build(
+        route="finite",
+        execution_config=ExecutionConfig(device_memory_bytes=2**31),
+    )
 
-    with pytest.raises(ExecutionPlanningError, match="device_memory_bytes=None"):
-        _build(route="finite", execution_config=budgeted).simulate(
-            params=_PARAMS,
-            initial_conditions=dict(_INITIAL),
-            solution=restored,
-            log_level="off",
-            seed=_SEED,
-        )
+    actual = run(budgeted, solution=load_solution(path=path))
+    expected = run(_build(route="finite"), solution=load_solution(path=path))
+
+    assert_frame_equal(actual.to_dataframe(), expected.to_dataframe())
