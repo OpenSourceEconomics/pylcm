@@ -4783,11 +4783,12 @@ class CompilationWave:
     The first error is raised on the caller as soon as the caller sees it, with a
     note naming the program:
     - a lowering error at once, noted `while lowering <label>`;
-    - a compile error before the next lowering starts, or when the wave closes,
-      noted `while compiling <label>`.
+    - a compile error before the next lowering starts, on `lower(wait=True)`, or
+      when the wave closes, noted `while compiling <label>`.
 
-    Either way, compiles not yet started are cancelled and running ones finish in
-    the background with their results discarded.
+    Either way no further program is lowered, compiles not yet started are
+    cancelled, running ones finish in the background with their results
+    discarded, and nothing from the wave is published.
     """
 
     def __init__(
@@ -4906,6 +4907,7 @@ class CompilationWave:
         if exc is not None:
             self._pool.shutdown(wait=False, cancel_futures=True)
             return
+        executables: dict[Hashable, jax.stages.Compiled] = {}
         for future in as_completed(self._futures):
             try:
                 lowering_key, executable = future.result()
@@ -4913,8 +4915,9 @@ class CompilationWave:
                 error.add_note(f"while compiling {self._futures[future]}")
                 self._pool.shutdown(wait=False, cancel_futures=True)
                 raise
-            self._compiled[lowering_key] = executable
+            executables[lowering_key] = executable
         self._pool.shutdown()
+        self._compiled.update(executables)
         for lowering_key, publish in self._publishers.items():
             if publish is not None:
                 publish(executable=self._compiled[lowering_key])

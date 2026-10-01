@@ -9,7 +9,7 @@ interleavings.
 import logging
 import threading
 from collections.abc import Callable, Hashable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any, ClassVar
 
 import jax
@@ -345,41 +345,107 @@ def test_lower_and_compile_wave_lowering_error_stops_the_wave_at_once(
 def _run_failing_second_compile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, Any]:
-    """Raise a distinct error from the second program's compile worker."""
-    kwargs, _ = _wave_kwargs(n=1, n_workers=2)
+    """Fail the second of five compiles while the first compile is still running.
+
+    Two compile workers. The first and third compiles are held until released.
+    Submitting the fourth compile releases the second, which fails, and returns
+    only once that failure is recorded. The second's worker then takes the third
+    compile, so the fourth is queued but not started when the wave next checks
+    for compile errors, before the fifth lowering.
+    """
+    keys = ("first", "second", "third", "fourth", "fifth")
+    kwargs, _ = _wave_kwargs(n=1, n_workers=2, keys=keys)
     original_compile = backward_induction._compile_and_log
+    original_roles = backward_induction._assert_lowered_output_roles
     compile_error = ValueError("distinct second-compilation error")
-    completed: set[str] = set()
+    release_held = threading.Event()
+    release_second = threading.Event()
+    first_finished = threading.Event()
+    started: list[str] = []
+    lowered: list[str] = []
     lock = threading.Lock()
 
-    def fail_second(**arguments: Any) -> Any:
+    def held_or_failing_compile(**arguments: Any) -> Any:
         key = arguments["lowering_key"]
-        if key == "second":
-            raise compile_error
-        result = original_compile(**arguments)
         with lock:
-            completed.add(key)
+            started.append(key)
+        if key == "second":
+            release_second.wait(_WAIT_SECONDS)
+            raise compile_error
+        if key in ("first", "third"):
+            release_held.wait(_WAIT_SECONDS)
+        result = original_compile(**arguments)
+        if key == "first":
+            first_finished.set()
         return result
 
-    monkeypatch.setattr(backward_induction, "_compile_and_log", fail_second)
+    def record_lowering(**arguments: Any) -> None:
+        lowered.append(arguments["label"])
+        original_roles(**arguments)
+
+    class FailSecondOnFourthSubmit(_RecordingExecutor):
+        def submit(self, *args: Any, **kwargs: Any) -> Future:
+            future = super().submit(*args, **kwargs)
+            if len(self.futures) == 4:
+                release_second.set()
+                wait(self.futures[1:2], timeout=_WAIT_SECONDS)
+            return future
+
+    _RecordingExecutor.instances = []
+    monkeypatch.setattr(
+        backward_induction, "ThreadPoolExecutor", FailSecondOnFourthSubmit
+    )
+    monkeypatch.setattr(backward_induction, "_compile_and_log", held_or_failing_compile)
+    monkeypatch.setattr(
+        backward_induction, "_assert_lowered_output_roles", record_lowering
+    )
     raised: BaseException | None = None
     try:
         backward_induction._lower_and_compile_wave(**kwargs)
     except Exception as exc:  # noqa: BLE001
         raised = exc
+    returned_while_first_held = not first_finished.is_set()
+    release_held.set()
+    release_second.set()
+    (pool,) = _RecordingExecutor.instances
+    for thread in tuple(pool._threads):
+        thread.join(_WAIT_SECONDS)
     return {
         "raised_is_compile_error": raised is compile_error,
-        "others_completed": completed == {"first", "third"},
+        "raised_while_first_compile_runs": returned_while_first_held,
+        "queued_compile_cancelled": pool.futures[3].cancelled(),
+        "queued_compile_never_started": "fourth" not in started,
+        "no_further_lowering": len(lowered) == 4,
+        "note_names_failing_program": any(
+            note == f"while compiling {kwargs['labels']['second']}"
+            for note in getattr(raised, "__notes__", [])
+        ),
+        "nothing_published": kwargs["compiled"] == {},
     }
 
 
-@pytest.mark.parametrize("observation", ["raised_is_compile_error", "others_completed"])
+@pytest.mark.parametrize(
+    "observation",
+    [
+        "raised_is_compile_error",
+        "raised_while_first_compile_runs",
+        "queued_compile_cancelled",
+        "queued_compile_never_started",
+        "no_further_lowering",
+        "note_names_failing_program",
+        "nothing_published",
+    ],
+)
 def test_lower_and_compile_wave_worker_exception_propagates(
     *, monkeypatch: pytest.MonkeyPatch, observation: str
 ) -> None:
-    """A compile worker's exception propagates as the same object.
+    """A compile worker's exception stops the wave as soon as the caller sees it.
 
-    The wave still waits for every other submitted compile to finish.
+    - the raised exception is the compile error itself, raised while an earlier
+      compile is still running;
+    - compiles queued but not started are cancelled and no later program is lowered;
+    - the exception carries a note naming the program whose compile failed;
+    - no executable is published.
     """
     assert _run_failing_second_compile(monkeypatch)[observation]
 
